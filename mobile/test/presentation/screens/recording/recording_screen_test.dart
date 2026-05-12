@@ -41,6 +41,7 @@ class _RecordingWebViewFactory implements WebViewFactory {
     void Function(InAppWebViewController controller)? onWebViewCreated,
     void Function(InAppWebViewController controller, WebUri? url)? onLoadStop,
     ValueChanged<int>? onProgressChanged,
+    void Function(ConsoleMessage message)? onConsoleMessage,
   }) {
     capturedUrl = initialUrl;
     capturedPolicy = policy;

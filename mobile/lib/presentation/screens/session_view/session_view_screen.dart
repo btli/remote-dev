@@ -22,15 +22,17 @@ import 'smart_key_strip.dart';
 /// Production session view for `/home/session/:id`.
 ///
 /// Composes:
-/// - `SessionStatusBar` (top, fixed 44px)
+/// - `SessionStatusBar` (top, fixed 44px, sits in the column)
 /// - `PinchZoomWrapper` wrapping the WebView (middle, fixed via LayoutBuilder)
-/// - `SmartKeyStrip` (above input, fixed 44px)
-/// - `MobileInputBar` (bottom, fixed 56px, floats above keyboard via Positioned)
+/// - Chrome stack (bottom, 100px reserve): `SmartKeyStrip` (44px) +
+///   `MobileInputBar` (56px), rendered inside a single floating Positioned so
+///   they ride the keyboard together — smart keys ALWAYS stay visible above
+///   the input bar instead of being hidden behind the keyboard.
 ///
 /// All five outbound bridge handlers are registered in `onWebViewCreated`
 /// (Spec §2.2 rule 1). All native→WebView calls go through `BridgeController`
 /// (Spec §2.2 rule 2). The WebView's height is fixed regardless of keyboard
-/// inset (Spec §4) — the input bar floats above it via `Stack + Positioned`.
+/// inset (Spec §4) — the chrome floats above it via `Stack + Positioned`.
 class SessionViewScreen extends ConsumerStatefulWidget {
   const SessionViewScreen({
     required this.sessionId,
@@ -74,6 +76,7 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
     controller.addJavaScriptHandler(
       handlerName: 'onTerminalReady',
       callback: (_) {
+        debugPrint('[SessionView] onTerminalReady fired');
         bridge.markReady();
         // Push the current appearance state on first ready so the PWA
         // starts in sync without waiting for a user toggle. Reads are
@@ -195,14 +198,14 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
             const statusBarHeight = 44.0;
             const smartKeysHeight = 44.0;
             const inputBarHeight = 56.0;
+            const chromeHeight = smartKeysHeight + inputBarHeight; // 100
             // Spec §4: WebView height is FIXED — keyboard inset does NOT
-            // shrink it. The input bar floats above the keyboard via
-            // Stack + Positioned, so xterm.js never sees a resize event,
-            // never fires SIGWINCH, never reflows the terminal grid.
-            final webViewHeight = constraints.maxHeight -
-                statusBarHeight -
-                smartKeysHeight -
-                inputBarHeight;
+            // shrink it. The chrome (smart keys + input bar) floats above
+            // the keyboard as a single block via Stack + Positioned, so
+            // xterm.js never sees a resize event, never fires SIGWINCH,
+            // never reflows the terminal grid.
+            final webViewHeight =
+                constraints.maxHeight - statusBarHeight - chromeHeight;
             return Stack(
               children: [
                 Column(
@@ -230,14 +233,11 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
                         ),
                       ),
                     ),
-                    SizedBox(
-                      height: smartKeysHeight,
-                      child: SmartKeyStrip(onKeyPress: _handleKeyPress),
-                    ),
-                    // Reserve space for the input bar so the column fills
-                    // the screen; the bar itself is rendered in the Stack
-                    // overlay so it can ride the keyboard.
-                    const SizedBox(height: inputBarHeight),
+                    // Reserve space for the floating chrome so the column
+                    // fills the screen; smart keys + input bar are
+                    // rendered in the Stack overlay so they ride the
+                    // keyboard together.
+                    const SizedBox(height: chromeHeight),
                   ],
                 ),
                 Positioned(
@@ -247,12 +247,22 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
                   child: SafeArea(
                     top: false,
                     bottom: keyboardInset == 0,
-                    child: SizedBox(
-                      height: inputBarHeight,
-                      child: MobileInputBar(
-                        onSend: _handleSend,
-                        onPasteWithoutExecute: _handlePasteWithoutExecute,
-                      ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          height: smartKeysHeight,
+                          child:
+                              SmartKeyStrip(onKeyPress: _handleKeyPress),
+                        ),
+                        SizedBox(
+                          height: inputBarHeight,
+                          child: MobileInputBar(
+                            onSend: _handleSend,
+                            onPasteWithoutExecute: _handlePasteWithoutExecute,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -302,6 +312,17 @@ class _Webview extends ConsumerWidget {
             debugPrint('External link suppressed: $uri');
           },
           onWebViewCreated: onWebViewCreated,
+          // Diagnostic logging (bd remote-dev-l4q6 Bug 4). Without an on-
+          // device repro of the blank-screen / submit-does-nothing bug we
+          // surface page-load + console output to `flutter logs` so the
+          // next iteration can see where the embedded PWA stops.
+          onLoadStop: (_, uri) =>
+              debugPrint('[SessionView] loadStop $uri'),
+          onProgressChanged: (progress) =>
+              debugPrint('[SessionView] progress $progress'),
+          onConsoleMessage: (msg) => debugPrint(
+            '[SessionView][console] ${msg.messageLevel}: ${msg.message}',
+          ),
         );
       },
     );

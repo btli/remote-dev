@@ -19,9 +19,9 @@ final projectsProvider = FutureProvider<List<Project>>((ref) async {
   return ref.watch(projectTreeApiProvider).listProjects();
 });
 
-/// Returns the selected project id (null if dismissed).
-Future<String?> showProjectTreeSheet(BuildContext context) {
-  return showModalBottomSheet<String>(
+/// Returns the selected [Project] (null if dismissed).
+Future<Project?> showProjectTreeSheet(BuildContext context) {
+  return showModalBottomSheet<Project>(
     context: context,
     backgroundColor: const Color(0xFF1A1B26),
     isScrollControlled: true,
@@ -127,7 +127,7 @@ class _Tree extends StatelessWidget {
                     p.name,
                     style: const TextStyle(color: Colors.white),
                   ),
-                  onTap: () => Navigator.of(context).pop(p.id),
+                  onTap: () => Navigator.of(context).pop(p),
                 ),
             ],
           ),

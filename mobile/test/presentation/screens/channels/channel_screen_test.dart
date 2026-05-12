@@ -112,6 +112,7 @@ class _ChannelWebViewFactory implements WebViewFactory {
     void Function(InAppWebViewController controller)? onWebViewCreated,
     void Function(InAppWebViewController controller, WebUri? url)? onLoadStop,
     ValueChanged<int>? onProgressChanged,
+    void Function(ConsoleMessage message)? onConsoleMessage,
   }) {
     capturedOnProgressChanged = onProgressChanged;
     // SizedBox stand-in — the real InAppWebView's platform plugin isn't

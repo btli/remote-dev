@@ -100,6 +100,13 @@ class _BiometricLockOverlayState extends ConsumerState<BiometricLockOverlay>
         _locked = false;
         _lastUnlock = DateTime.now();
       });
+    } else {
+      // Surface silent failures (canceled prompt, not-enrolled, etc.) so
+      // the user knows the lock is intentional. The overlay may not have
+      // a Scaffold ancestor on all routes, so we guard the null.
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(content: Text('Authentication failed')),
+      );
     }
   }
 

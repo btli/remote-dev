@@ -61,6 +61,39 @@ class _BiometricSettingsScreenState
     ref.invalidate(biometricSettingsProvider);
   }
 
+  /// Guards the master Biometric-lock switch. iOS-style convention: enabling
+  /// requires proof (availability check + a successful auth challenge);
+  /// disabling is free.
+  Future<void> _handleEnabledChanged(
+    BiometricSettings current,
+    bool next,
+  ) async {
+    if (!next) {
+      await _save(current.copyWith(enabled: false));
+      return;
+    }
+    final port = ref.read(biometricPortProvider);
+    final available = await port.isAvailable();
+    if (!mounted) return;
+    if (!available) {
+      _snack('No biometrics enrolled on this device');
+      return;
+    }
+    final ok = await port.authenticate(reason: 'Enable biometric lock');
+    if (!mounted) return;
+    if (!ok) {
+      _snack('Authentication failed — biometric lock not enabled');
+      return;
+    }
+    await _save(current.copyWith(enabled: true));
+  }
+
+  void _snack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -94,7 +127,7 @@ class _BiometricSettingsScreenState
       children: [
         SwitchListTile(
           value: settings.enabled,
-          onChanged: (v) => _save(settings.copyWith(enabled: v)),
+          onChanged: (v) => _handleEnabledChanged(settings, v),
           title: const Text(
             'Biometric lock',
             style: TextStyle(color: Colors.white),

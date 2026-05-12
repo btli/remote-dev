@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Mobile (Flutter)**: Diagnostic logging added for mobile WebView load/console;
+  blank-screen root cause still pending on-device repro. `WebViewFactory.build`
+  now forwards `onConsoleMessage`, and the session view wires `onLoadStop`,
+  `onProgressChanged`, and a JS console logger plus an `onTerminalReady` trace
+  to `flutter logs` (closes remote-dev-l4q6 Bug 4).
 - **Web**: Clear all notifications now requires confirmation via dialog.
 - **Scripts**: Removed dead `startServers()` from `scripts/deploy.ts`
   (and its only-orphaned helper `getServerEnv()`) — the live deploy
@@ -28,6 +33,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mobile (Flutter)**: Sessions tab — removed the per-row pause IconButton
+  and long-press-to-suspend on the ListTile; swipe-to-close is unchanged
+  (remote-dev-l4q6 Bug 1).
+- **Mobile (Flutter)**: New-session sheet — project is now required (not
+  optional), the picker displays the chosen project's name instead of its
+  UUID, and an Agent dropdown appears when `type == agent` listing
+  installed CLIs from `/api/agent-cli/status` (defaults to Claude Code
+  when available); the API call now passes `agentProvider` +
+  `autoLaunchAgent` for agent sessions (remote-dev-l4q6 Bug 2).
+- **Mobile (Flutter)**: Session view — smart-key strip moved into the
+  floating chrome block above the input bar so the smart keys remain
+  visible above the keyboard instead of being hidden behind it. WebView
+  height stays fixed to avoid xterm.js SIGWINCH reflow
+  (remote-dev-l4q6 Bug 3).
+- **Mobile (Flutter, Android)**: Biometric lock — added
+  `USE_BIOMETRIC` manifest permission and changed `MainActivity` to
+  extend `FlutterFragmentActivity` (required by `local_auth`'s
+  BiometricPrompt). The settings switch now gates enable on
+  `isAvailable()` plus a successful auth challenge, surfacing
+  user-visible SnackBar messages for both failure modes; disabling is
+  free. The lock overlay also surfaces a SnackBar when authentication
+  fails so the failure is no longer silent
+  (remote-dev-l4q6 Bug 5).
 - **Dev**: Resolved three pre-existing ship-it blockers — `packages/mobile`
   tsconfig load failure (inlined `expo/tsconfig.base`), 10 ESLint errors
   → 0 (`react-hooks/use-memo` + `react-hooks/refs`), and `handleTouchEnd`

@@ -46,6 +46,8 @@ class SessionsApi implements SessionsPort {
     required String terminalType,
     String? projectId,
     String? initialCommand,
+    String? agentProvider,
+    bool? autoLaunchAgent,
   }) async {
     final raw = await _client.post(
       '/api/sessions',
@@ -55,6 +57,8 @@ class SessionsApi implements SessionsPort {
         if (projectId != null) 'projectId': projectId,
         if (initialCommand != null && initialCommand.isNotEmpty)
           'initialCommand': initialCommand,
+        if (agentProvider != null) 'agentProvider': agentProvider,
+        if (autoLaunchAgent != null) 'autoLaunchAgent': autoLaunchAgent,
       },
     );
     // Server returns either {session: {...}} wrapped or the raw object.

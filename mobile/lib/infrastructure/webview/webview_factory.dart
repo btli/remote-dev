@@ -24,6 +24,7 @@ class WebViewFactory {
     void Function(InAppWebViewController controller)? onWebViewCreated,
     void Function(InAppWebViewController controller, WebUri? url)? onLoadStop,
     ValueChanged<int>? onProgressChanged,
+    void Function(ConsoleMessage message)? onConsoleMessage,
   }) {
     return InAppWebView(
       initialUrlRequest: URLRequest(url: WebUri(initialUrl.toString())),
@@ -50,6 +51,9 @@ class WebViewFactory {
       onProgressChanged: onProgressChanged == null
           ? null
           : (controller, progress) => onProgressChanged(progress),
+      onConsoleMessage: onConsoleMessage == null
+          ? null
+          : (controller, consoleMessage) => onConsoleMessage(consoleMessage),
       shouldOverrideUrlLoading: (controller, action) async {
         final uri = action.request.url?.uriValue;
         if (uri == null) return NavigationActionPolicy.CANCEL;
