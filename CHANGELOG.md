@@ -34,6 +34,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `startServer()`; unused `head` positional arg on the proxy upgrade
   handler).
 
+## [0.3.14] - 2026-05-12
+
+### Fixed
+
+- **Mobile**: Session list crashed with
+  `'trashed' is not a valid value for SessionStatus` after the user
+  added their first server and the sessions tab fetched
+  `GET /api/sessions`. The server returns sessions in the `trashed`
+  soft-delete state alongside `active` / `suspended` / `closed`, but
+  the mobile `SessionStatus` enum only knew three of the four.
+  Added the `trashed` variant (with `@JsonValue('trashed')`) and
+  taught `SessionsApi.list()` to filter trashed sessions out of the
+  returned list — same pattern the web client uses at render time.
+- **Mobile**: Notification dismiss button 404'd on the server. The
+  mobile client was calling `DELETE /api/notifications/:id`, but the
+  server only exposes a bulk-DELETE at `/api/notifications` accepting
+  `{ids: [...]}` or `{all: true}` in the body. Extended
+  `ApiClientPort.delete()` to accept an optional JSON body, and
+  rewrote `NotificationsApi.dismiss(id)` to call the bulk endpoint
+  with `{ids: [id]}`. No server change required.
+- **Mobile**: Notification filter chips (`All` / `Unread` / `Mentions`)
+  were silently ignored because the mobile client sent
+  `?filter=unread`, but the server expects `?unreadOnly=true`.
+  `NotificationsApi.list()` now translates the enum value
+  to the right query param. (`Mentions` still has no server-side
+  concept; it currently falls back to listing all notifications.)
+
 ## [0.3.13] - 2026-05-12
 
 ### Fixed

@@ -34,6 +34,7 @@ const _$SessionStatusEnumMap = {
   SessionStatus.active: 'active',
   SessionStatus.suspended: 'suspended',
   SessionStatus.closed: 'closed',
+  SessionStatus.trashed: 'trashed',
 };
 
 const _$AgentActivityStatusEnumMap = {

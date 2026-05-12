@@ -8,6 +8,8 @@ abstract class ApiClientPort {
   /// PATCH a path with optional JSON body.
   Future<dynamic> patch(String path, {Map<String, dynamic>? body});
 
-  /// DELETE a path.
-  Future<void> delete(String path);
+  /// DELETE a path, optionally with a JSON body. The body is only used by
+  /// endpoints that accept bulk-payload semantics on DELETE (e.g.
+  /// `/api/notifications` with `{ids: [...]}` instead of `/:id`).
+  Future<void> delete(String path, {Map<String, dynamic>? body});
 }

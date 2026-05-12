@@ -15,7 +15,11 @@ class NotificationsApi implements NotificationsPort {
 
   @override
   Future<List<AppNotification>> list({String? filter}) async {
-    final query = filter == null || filter == 'all' ? '' : '?filter=$filter';
+    // Server accepts `?limit=N&unreadOnly=true|false`. Translate the
+    // mobile filter enum (`all` / `unread` / `mentions`) to that shape.
+    // `mentions` has no server-side concept yet — fall back to listing
+    // all notifications so the tab isn't empty.
+    final query = (filter == 'unread') ? '?unreadOnly=true' : '';
     final raw = await _client.get('/api/notifications$query');
     // Tolerate {notifications: [...]} or [...].
     if (raw is Map<String, dynamic> && raw['notifications'] is List) {
@@ -35,7 +39,10 @@ class NotificationsApi implements NotificationsPort {
 
   @override
   Future<void> dismiss(String id) async {
-    await _client.delete('/api/notifications/$id');
+    // Server has no `/api/notifications/:id` route — only the bulk
+    // DELETE at the base path with a `{ids: [...]}` body. Wrap the
+    // single id in an array so the dismiss button stops 404-ing.
+    await _client.delete('/api/notifications', body: {'ids': [id]});
   }
 
   @override

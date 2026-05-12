@@ -12,6 +12,12 @@ enum SessionStatus {
   suspended,
   @JsonValue('closed')
   closed,
+  // Terminal state on the server (30-day soft-delete before permanent
+  // removal). The mobile UI hides these — see `SessionsApi.list()` —
+  // but we still need a variant so JSON parsing of the raw response
+  // doesn't throw before the filter runs.
+  @JsonValue('trashed')
+  trashed,
 }
 
 enum AgentActivityStatus {

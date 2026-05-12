@@ -12,6 +12,11 @@ class SessionsApi implements SessionsPort {
     final list = _extractSessions(raw);
     return list
         .map((m) => SessionSummary.fromJson(m))
+        // Server returns sessions in the `trashed` soft-delete state too;
+        // the web client filters them out at the rendering layer and the
+        // mobile UI has no trash-management surface. Drop them here so
+        // they never reach the picker / tabs.
+        .where((s) => s.status != SessionStatus.trashed)
         .toList(growable: false);
   }
 
