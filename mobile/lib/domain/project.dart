@@ -8,7 +8,10 @@ class Project with _$Project {
   const factory Project({
     required String id,
     required String name,
-    required String groupId,
+    // Nullable: the server returns `null` for root-level projects that are
+    // not nested under a group. The project picker renders these as a flat
+    // section above grouped projects.
+    String? groupId,
     @Default(0) int sortOrder,
   }) = _Project;
 

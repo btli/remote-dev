@@ -5,6 +5,7 @@ import 'app.dart';
 import 'application/ports/api_client_port.dart';
 import 'application/state/reauth_signal_provider.dart';
 import 'infrastructure/api/account_api.dart';
+import 'infrastructure/api/agent_cli_api.dart';
 import 'infrastructure/api/channels_api.dart';
 import 'infrastructure/api/github_accounts_api.dart';
 import 'infrastructure/api/notifications_api.dart';
@@ -29,6 +30,8 @@ import 'presentation/screens/profile/account_screen.dart'
     show accountApiProvider;
 import 'presentation/screens/profile/github_accounts_screen.dart'
     show githubAccountsApiProvider;
+import 'presentation/screens/sessions/new_session_sheet.dart'
+    show agentCliApiProvider;
 import 'presentation/screens/sessions/project_tree_sheet.dart'
     show projectTreeApiProvider;
 import 'presentation/screens/sessions/sessions_tab_screen.dart'
@@ -81,6 +84,9 @@ List<Override> buildServerScopedOverrides({required String deviceId}) {
   return <Override>[
     sessionsApiProvider.overrideWith(
       (ref) => SessionsApi(ref.watch(_apiClientProvider)),
+    ),
+    agentCliApiProvider.overrideWith(
+      (ref) => AgentCliApi(ref.watch(_apiClientProvider)),
     ),
     projectTreeApiProvider.overrideWith(
       (ref) => ProjectTreeApi(ref.watch(_apiClientProvider)),

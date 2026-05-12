@@ -19,9 +19,9 @@ final projectsProvider = FutureProvider<List<Project>>((ref) async {
   return ref.watch(projectTreeApiProvider).listProjects();
 });
 
-/// Returns the selected project id (null if dismissed).
-Future<String?> showProjectTreeSheet(BuildContext context) {
-  return showModalBottomSheet<String>(
+/// Returns the selected [Project] (null if dismissed).
+Future<Project?> showProjectTreeSheet(BuildContext context) {
+  return showModalBottomSheet<Project>(
     context: context,
     backgroundColor: const Color(0xFF1A1B26),
     isScrollControlled: true,
@@ -98,16 +98,36 @@ class _Tree extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Partition projects by group membership. Root-level projects (groupId
+    // == null, returned by the server for ungrouped roots) get a flat
+    // section at the top so they're still pickable.
+    final rooted = <Project>[];
     final byGroup = <String, List<Project>>{};
     for (final p in projects) {
-      byGroup.putIfAbsent(p.groupId, () => []).add(p);
+      final gid = p.groupId;
+      if (gid == null) {
+        rooted.add(p);
+      } else {
+        byGroup.putIfAbsent(gid, () => []).add(p);
+      }
     }
+    rooted.sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
     final sortedGroups = [...groups]
       ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
 
     return ListView(
       shrinkWrap: true,
       children: [
+        for (final p in rooted)
+          ListTile(
+            dense: true,
+            contentPadding: const EdgeInsets.only(left: 16, right: 16),
+            title: Text(
+              p.name,
+              style: const TextStyle(color: Colors.white),
+            ),
+            onTap: () => Navigator.of(context).pop(p),
+          ),
         for (final g in sortedGroups)
           ExpansionTile(
             iconColor: Colors.white70,
@@ -127,7 +147,7 @@ class _Tree extends StatelessWidget {
                     p.name,
                     style: const TextStyle(color: Colors.white),
                   ),
-                  onTap: () => Navigator.of(context).pop(p.id),
+                  onTap: () => Navigator.of(context).pop(p),
                 ),
             ],
           ),

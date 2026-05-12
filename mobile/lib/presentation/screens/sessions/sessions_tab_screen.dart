@@ -41,19 +41,6 @@ class _SessionsTabScreenState extends ConsumerState<SessionsTabScreen> {
     await ref.read(sessionsListProvider.future);
   }
 
-  Future<void> _suspend(SessionSummary session) async {
-    final api = ref.read(sessionsApiProvider);
-    try {
-      await api.suspend(session.id);
-      await _refresh();
-      if (!mounted) return;
-      _showSnack('Session suspended');
-    } catch (e) {
-      if (!mounted) return;
-      _showSnack('Failed to suspend: $e');
-    }
-  }
-
   Future<bool> _confirmClose(SessionSummary session) async {
     final result = await showDialog<bool>(
       context: context,
@@ -174,7 +161,6 @@ class _SessionsTabScreenState extends ConsumerState<SessionsTabScreen> {
                   session: s,
                   projectName: project,
                   onTap: () => _onTapSession(s),
-                  onSuspend: () => _suspend(s),
                   onClose: () => _close(s),
                   confirmClose: () => _confirmClose(s),
                 );
@@ -192,7 +178,6 @@ class _SessionRow extends StatelessWidget {
     required this.session,
     required this.projectName,
     required this.onTap,
-    required this.onSuspend,
     required this.onClose,
     required this.confirmClose,
   });
@@ -200,7 +185,6 @@ class _SessionRow extends StatelessWidget {
   final SessionSummary session;
   final String? projectName;
   final VoidCallback onTap;
-  final VoidCallback onSuspend;
   final VoidCallback onClose;
   final Future<bool> Function() confirmClose;
 
@@ -210,7 +194,7 @@ class _SessionRow extends StatelessWidget {
     return Dismissible(
       key: ValueKey('session-${session.id}'),
       direction: DismissDirection.endToStart,
-      // Below this, treat the swipe as 'suspend'. Past this, it's a 'close'.
+      // Swipe-to-close: confirm via dialog, then close on accept.
       dismissThresholds: const {DismissDirection.endToStart: 0.6},
       confirmDismiss: (_) async {
         final ok = await confirmClose();
@@ -224,7 +208,6 @@ class _SessionRow extends StatelessWidget {
       secondaryBackground: _SwipeBackground(),
       child: ListTile(
         onTap: onTap,
-        onLongPress: onSuspend,
         leading: _ActivityPip(activity: session.activity),
         title: Text(
           session.name,
@@ -236,20 +219,7 @@ class _SessionRow extends StatelessWidget {
           style: const TextStyle(color: Colors.white60, fontSize: 12),
           overflow: TextOverflow.ellipsis,
         ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: const Icon(
-                Icons.pause_circle_outline,
-                color: Color(0xFFE0AF68),
-              ),
-              tooltip: 'Suspend',
-              onPressed: onSuspend,
-            ),
-            const Icon(Icons.chevron_right, color: Colors.white38),
-          ],
-        ),
+        trailing: const Icon(Icons.chevron_right, color: Colors.white38),
       ),
     );
   }

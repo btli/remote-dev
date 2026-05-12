@@ -6,9 +6,19 @@ import 'package:flutter/material.dart';
 /// [BiometricLockOverlay]. We keep this widget stateless so a parent overlay
 /// can re-render it without resetting any internal state.
 class BiometricLockScreen extends StatelessWidget {
-  const BiometricLockScreen({required this.onAuthenticate, super.key});
+  const BiometricLockScreen({
+    required this.onAuthenticate,
+    this.errorMessage,
+    super.key,
+  });
 
   final VoidCallback onAuthenticate;
+
+  /// Optional inline error to render below the subtitle. Rendered inline
+  /// (not via SnackBar) because the lock screen is an opaque [Material]
+  /// stacked above the underlying route — a SnackBar emitted from an
+  /// ancestor [ScaffoldMessenger] would be hidden behind it.
+  final String? errorMessage;
 
   @override
   Widget build(BuildContext context) {
@@ -36,6 +46,17 @@ class BiometricLockScreen extends StatelessWidget {
                   'Authenticate to continue.',
                   style: TextStyle(color: Colors.white60, fontSize: 14),
                 ),
+                if (errorMessage != null) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    errorMessage!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Color(0xFFF7768E),
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 32),
                 ElevatedButton.icon(
                   onPressed: onAuthenticate,

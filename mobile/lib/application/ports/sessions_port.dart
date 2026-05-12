@@ -9,5 +9,7 @@ abstract class SessionsPort {
     required String terminalType,
     String? projectId,
     String? initialCommand,
+    String? agentProvider,
+    bool? autoLaunchAgent,
   });
 }

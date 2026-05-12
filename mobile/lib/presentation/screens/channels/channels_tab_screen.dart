@@ -145,15 +145,15 @@ class _ChannelsTabScreenState extends ConsumerState<ChannelsTabScreen>
   }
 
   Future<void> _pickProject() async {
-    // Invariant: `showProjectTreeSheet` only returns project IDs. Groups
+    // Invariant: `showProjectTreeSheet` only returns project rows. Groups
     // render as non-tappable `ExpansionTile` headers in the sheet; only
-    // project rows pop with an id. If the sheet ever starts returning
-    // group IDs, this call site MUST be updated to pass the correct
+    // project rows pop with a value. If the sheet ever starts returning
+    // group selections, this call site MUST be updated to pass the correct
     // `ActiveNodeType` (group vs project).
-    final projectId = await showProjectTreeSheet(context);
-    if (projectId == null || !mounted) return;
+    final picked = await showProjectTreeSheet(context);
+    if (picked == null || !mounted) return;
     await ref.read(activeNodeProvider.notifier).select(
-          nodeId: projectId,
+          nodeId: picked.id,
           nodeType: ActiveNodeType.project,
         );
   }

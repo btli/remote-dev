@@ -1,9 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../application/ports/agent_cli_port.dart';
 import '../../../domain/session_summary.dart';
 import 'project_tree_sheet.dart';
 import 'sessions_tab_screen.dart' show sessionsApiProvider;
+
+/// DI seam for the agent CLI status API. Overridden in `main.dart`.
+final agentCliApiProvider = Provider<AgentCliPort>((ref) {
+  throw UnimplementedError(
+    'agentCliApiProvider must be overridden in main.dart',
+  );
+});
+
+/// Installed agent CLIs reported by the active server.
+final installedAgentsProvider = FutureProvider<List<InstalledAgent>>((ref) {
+  return ref.watch(agentCliApiProvider).listInstalled();
+});
 
 /// Returns the created [SessionSummary] (or null if the user cancelled).
 Future<SessionSummary?> showNewSessionSheet(BuildContext context) {
@@ -34,6 +47,7 @@ class _NewSessionSheetState extends ConsumerState<NewSessionSheet> {
   String _terminalType = 'shell';
   String? _projectId;
   String? _projectLabel;
+  String? _agentProvider;
   bool _saving = false;
   String? _error;
 
@@ -45,19 +59,45 @@ class _NewSessionSheetState extends ConsumerState<NewSessionSheet> {
   }
 
   Future<void> _pickProject() async {
-    final id = await showProjectTreeSheet(context);
-    if (id != null) {
+    final picked = await showProjectTreeSheet(context);
+    if (picked != null) {
       setState(() {
-        _projectId = id;
-        // Phase 2 doesn't fetch the project name here; P2.9 / P5 wires a
-        // name lookup. For now show the id as the label.
-        _projectLabel = id;
+        _projectId = picked.id;
+        _projectLabel = picked.name;
       });
+    }
+  }
+
+  /// One-shot resolution of the preferred agent provider when the user
+  /// switches Type to `agent`. We do this here (not inside the dropdown's
+  /// build) so the side effect is tied to a deterministic event and has
+  /// a single mounted-guard at the end.
+  Future<void> _resolveDefaultAgentProvider() async {
+    try {
+      final agents = await ref.read(installedAgentsProvider.future);
+      if (!mounted) return;
+      if (_agentProvider != null || _terminalType != 'agent') return;
+      if (agents.isEmpty) return;
+      final preferred = agents.firstWhere(
+        (a) => a.provider == 'claude',
+        orElse: () => agents.first,
+      );
+      setState(() => _agentProvider = preferred.provider);
+    } catch (_) {
+      // Error UI is handled by `_AgentProviderField` watching the provider.
     }
   }
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
+    // No `_projectId == null` guard: the Create button is disabled when
+    // _projectId is null, so this branch is unreachable. Keep the agent
+    // guard — it CAN trip when type=agent and the default-pick hasn't
+    // resolved yet (user taps Create before agents finish loading).
+    if (_terminalType == 'agent' && _agentProvider == null) {
+      setState(() => _error = 'Pick an agent');
+      return;
+    }
     setState(() {
       _saving = true;
       _error = null;
@@ -71,6 +111,8 @@ class _NewSessionSheetState extends ConsumerState<NewSessionSheet> {
         initialCommand: _commandCtrl.text.trim().isEmpty
             ? null
             : _commandCtrl.text.trim(),
+        agentProvider: _terminalType == 'agent' ? _agentProvider : null,
+        autoLaunchAgent: _terminalType == 'agent' ? true : null,
       );
       if (mounted) Navigator.of(context).pop(created);
     } catch (e) {
@@ -135,16 +177,28 @@ class _NewSessionSheetState extends ConsumerState<NewSessionSheet> {
                   DropdownMenuItem(value: 'agent', child: Text('Agent')),
                 ],
                 onChanged: (v) {
-                  if (v != null) setState(() => _terminalType = v);
+                  if (v != null) {
+                    setState(() {
+                      _terminalType = v;
+                      if (v != 'agent') _agentProvider = null;
+                    });
+                    if (v == 'agent') _resolveDefaultAgentProvider();
+                  }
                 },
               ),
+              if (_terminalType == 'agent') ...[
+                const SizedBox(height: 12),
+                _AgentProviderField(
+                  selected: _agentProvider,
+                  onChanged: (provider) =>
+                      setState(() => _agentProvider = provider),
+                ),
+              ],
               const SizedBox(height: 12),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: Text(
-                  _projectLabel == null
-                      ? 'Pick a project (optional)'
-                      : _projectLabel!,
+                  _projectLabel ?? 'Pick a project',
                   style: const TextStyle(color: Colors.white),
                 ),
                 trailing:
@@ -169,7 +223,7 @@ class _NewSessionSheetState extends ConsumerState<NewSessionSheet> {
               ],
               const SizedBox(height: 20),
               ElevatedButton(
-                onPressed: _saving ? null : _save,
+                onPressed: (_saving || _projectId == null) ? null : _save,
                 child: _saving
                     ? const SizedBox(
                         width: 16,
@@ -182,6 +236,77 @@ class _NewSessionSheetState extends ConsumerState<NewSessionSheet> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Inline dropdown for picking an agent provider when `terminalType == 'agent'`.
+///
+/// Watches [installedAgentsProvider] and:
+/// - loading: shows a small CircularProgressIndicator
+/// - error: shows red error text
+/// - empty: shows "No agents installed" (and the parent blocks save)
+/// - success: renders a `DropdownButtonFormField`. The default-pick
+///   decision lives in the parent state (see `_resolveDefaultAgentProvider`)
+///   so build stays pure — no post-frame callbacks here.
+class _AgentProviderField extends ConsumerWidget {
+  const _AgentProviderField({
+    required this.selected,
+    required this.onChanged,
+  });
+
+  final String? selected;
+  final ValueChanged<String?> onChanged;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final asyncAgents = ref.watch(installedAgentsProvider);
+    return asyncAgents.when(
+      loading: () => const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      ),
+      error: (err, _) => Text(
+        'Failed to load agents: $err',
+        style: const TextStyle(color: Color(0xFFF7768E)),
+      ),
+      data: (agents) {
+        if (agents.isEmpty) {
+          return const Text(
+            'No agents installed',
+            style: TextStyle(color: Color(0xFFF7768E)),
+          );
+        }
+        // Render with whatever `selected` we were handed. If it's null
+        // (parent's default-pick hasn't resolved yet, or the selection
+        // doesn't match any installed agent), DropdownButtonFormField will
+        // show no initial value until onChanged fires.
+        final effectiveSelected =
+            agents.any((a) => a.provider == selected) ? selected : null;
+        return DropdownButtonFormField<String>(
+          initialValue: effectiveSelected,
+          dropdownColor: const Color(0xFF24283B),
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            labelText: 'Agent',
+            labelStyle: TextStyle(color: Colors.white70),
+          ),
+          items: [
+            for (final agent in agents)
+              DropdownMenuItem(
+                value: agent.provider,
+                child: Text(agent.label),
+              ),
+          ],
+          onChanged: onChanged,
+        );
+      },
     );
   }
 }
