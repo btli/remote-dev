@@ -6,9 +6,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:remote_dev/application/ports/server_config_store.dart';
+import 'package:remote_dev/domain/active_node.dart';
 import 'package:remote_dev/domain/channel.dart';
 import 'package:remote_dev/domain/server_config.dart';
 import 'package:remote_dev/infrastructure/api/channels_api.dart';
+import 'package:remote_dev/infrastructure/api/preferences_api.dart';
 import 'package:remote_dev/infrastructure/auth/mobile_credentials.dart';
 import 'package:remote_dev/infrastructure/webview/bridge_controller.dart';
 import 'package:remote_dev/infrastructure/webview/navigation_policy.dart';
@@ -35,10 +37,29 @@ class _FakeChannelsApi extends Fake implements ChannelsApi {
   final List<Channel> _channels;
 
   @override
-  Future<List<Channel>> list() async => _channels;
+  Future<List<Channel>> list({ActiveNode? activeNode}) async => _channels;
 
   @override
   Future<void> archive(String id) async {}
+}
+
+/// Stub preferences API that always reports a fixed active node. The
+/// `_ChannelTitle` widget under test watches the channels-list provider
+/// keyed by the active node, so tests need *some* node present or the
+/// list short-circuits to `const []` and the title can't resolve.
+class _StaticPreferencesApi extends Fake implements PreferencesApi {
+  @override
+  Future<ActiveNode?> getActiveNode() async => const ActiveNode(
+        id: 'proj-test',
+        type: ActiveNodeType.project,
+      );
+
+  @override
+  Future<void> setActiveNode({
+    required String? nodeId,
+    required ActiveNodeType? nodeType,
+    bool pinned = false,
+  }) async {}
 }
 
 /// Returns a future the test controls so we can assert behavior while the
@@ -48,7 +69,7 @@ class _DelayedChannelsApi extends Fake implements ChannelsApi {
   final Future<List<Channel>> future;
 
   @override
-  Future<List<Channel>> list() => future;
+  Future<List<Channel>> list({ActiveNode? activeNode}) => future;
 
   @override
   Future<void> archive(String id) async {}
@@ -144,6 +165,7 @@ void main() {
         ProviderScope(
           overrides: [
             channelsApiProvider.overrideWithValue(api),
+            preferencesApiProvider.overrideWithValue(_StaticPreferencesApi()),
           ],
           child: const MaterialApp(
             home: ChannelScreen(channelId: 'c2'),
@@ -173,6 +195,7 @@ void main() {
         ProviderScope(
           overrides: [
             channelsApiProvider.overrideWithValue(api),
+            preferencesApiProvider.overrideWithValue(_StaticPreferencesApi()),
           ],
           child: const MaterialApp(
             home: ChannelScreen(channelId: 'missing-id'),
@@ -393,6 +416,7 @@ void main() {
         ProviderScope(
           overrides: [
             channelsApiProvider.overrideWithValue(api),
+            preferencesApiProvider.overrideWithValue(_StaticPreferencesApi()),
           ],
           child: const MaterialApp(
             home: ChannelScreen(channelId: 'random'),

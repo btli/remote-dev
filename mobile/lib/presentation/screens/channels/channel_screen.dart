@@ -12,7 +12,8 @@ import '../webview_host/session_route_host.dart'
         activeServerProvider,
         mobileCredentialsStoreProvider,
         webViewCookieSeederProvider;
-import 'channels_tab_screen.dart' show channelsListProvider;
+import 'channels_tab_screen.dart'
+    show activeNodeProvider, channelsListProvider;
 
 /// Native chrome around the embedded WebView at `/m/channel/<id>`.
 ///
@@ -238,19 +239,17 @@ class _ChannelTitle extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final asyncChannels = ref.watch(channelsListProvider);
-    // `value` is null while loading and on error; we tolerate both.
-    final channels = asyncChannels.valueOrNull;
-    String? name;
-    if (channels != null) {
-      for (final c in channels) {
-        if (c.id == channelId) {
-          final trimmed = c.name.trim();
-          if (trimmed.isNotEmpty) name = trimmed;
-          break;
-        }
-      }
-    }
+    // Resolve the channel name from the project-scoped list. While
+    // [activeNodeProvider] is loading or unset we just render the
+    // generic fallback — the WebView is the source of truth for
+    // content; this title is a best-effort hint.
+    final node = ref.watch(activeNodeProvider).valueOrNull;
+    final channels = ref.watch(channelsListProvider(node)).valueOrNull;
+    final trimmed = channels
+        ?.where((c) => c.id == channelId)
+        .map((c) => c.name.trim())
+        .firstOrNull;
+    final name = (trimmed != null && trimmed.isNotEmpty) ? trimmed : null;
     return Text(
       name == null ? 'Channel' : '#$name',
       style: const TextStyle(color: Colors.white),

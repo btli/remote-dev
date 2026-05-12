@@ -17,6 +17,7 @@ _$AppNotificationImpl _$$AppNotificationImplFromJson(
       sessionId: json['sessionId'] as String?,
       channelId: json['channelId'] as String?,
       kind: json['kind'] as String? ?? 'default',
+      type: json['type'] as String?,
     );
 
 Map<String, dynamic> _$$AppNotificationImplToJson(
@@ -30,4 +31,5 @@ Map<String, dynamic> _$$AppNotificationImplToJson(
       'sessionId': instance.sessionId,
       'channelId': instance.channelId,
       'kind': instance.kind,
+      'type': instance.type,
     };

@@ -1,5 +1,6 @@
 import '../../application/ports/api_client_port.dart';
 import '../../application/ports/channels_port.dart';
+import '../../domain/active_node.dart';
 import '../../domain/channel.dart';
 
 class ChannelsApi implements ChannelsPort {
@@ -8,8 +9,20 @@ class ChannelsApi implements ChannelsPort {
   final ApiClientPort _client;
 
   @override
-  Future<List<Channel>> list() async {
-    final raw = await _client.get('/api/channels');
+  Future<List<Channel>> list({ActiveNode? activeNode}) async {
+    // Skip the request entirely when no project/group is selected. The
+    // server's `/api/channels` route requires `?nodeId=&nodeType=` (or
+    // the legacy `?projectId=`) and 400s without them, so an early
+    // return is the cheap-and-correct path. Mirrors the PWA mobile-web
+    // tab, which renders a "Pick a project" empty state in this case.
+    if (activeNode == null) {
+      return const [];
+    }
+
+    final path =
+        '/api/channels?nodeId=${Uri.encodeQueryComponent(activeNode.id)}'
+        '&nodeType=${activeNode.type.wireValue}';
+    final raw = await _client.get(path);
 
     // Shape A: { channels: [...] } — flat list (anticipated future shape /
     // tests).
