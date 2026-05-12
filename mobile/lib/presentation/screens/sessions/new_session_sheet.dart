@@ -90,10 +90,10 @@ class _NewSessionSheetState extends ConsumerState<NewSessionSheet> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_projectId == null) {
-      setState(() => _error = 'Pick a project');
-      return;
-    }
+    // No `_projectId == null` guard: the Create button is disabled when
+    // _projectId is null, so this branch is unreachable. Keep the agent
+    // guard — it CAN trip when type=agent and the default-pick hasn't
+    // resolved yet (user taps Create before agents finish loading).
     if (_terminalType == 'agent' && _agentProvider == null) {
       setState(() => _error = 'Pick an agent');
       return;
