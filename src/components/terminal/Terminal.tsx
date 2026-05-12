@@ -458,14 +458,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         const { WebglAddon } = await import("@xterm/addon-webgl");
         let contextLossRecoveryAttempted = false;
 
-        // Merge-recovery: webglAddon.onRemoveTextureAtlasCanvas only fires inside
-        // TextureAtlas._mergePages (when 4+ atlas pages accumulate in long-running
-        // sessions and get quad-merged into one). The merge rewrites glyph indices,
-        // and the per-cell skip in WebglRenderer._updateModel can leave the vertex
-        // buffer pointing at stale page indices — visible as wrong/duplicated
-        // glyphs during scrolling. Force a full atlas+model clear on the next
-        // animation frame to rebind every cell with current indices.
-        // See: xterm.js issues #5847, #4480, #4534, #4351.
+        // onRemoveTextureAtlasCanvas only fires inside TextureAtlas._mergePages
+        // (when 4+ pages accumulate and get quad-merged). The merge rewrites
+        // glyph indices, but WebglRenderer._updateModel's per-cell skip can
+        // leave the vertex buffer pointing at stale page indices — visible as
+        // wrong/duplicated glyphs during scrolling. Clear the atlas on the
+        // next frame to rebind every cell. See xterm.js #5847, #4480, #4534, #4351.
         let atlasRecoveryRaf: number | null = null;
         const scheduleAtlasRecovery = () => {
           if (atlasRecoveryRaf !== null) return;
@@ -474,14 +472,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
             webglAddonRef.current?.clearTextureAtlas();
           });
         };
-        terminalDisposablesRef.current.push({
-          dispose: () => {
-            if (atlasRecoveryRaf !== null) {
-              cancelAnimationFrame(atlasRecoveryRaf);
-              atlasRecoveryRaf = null;
-            }
-          },
-        });
 
         const loadWebgl = () => {
           const webglAddon = new WebglAddon();
@@ -505,6 +495,16 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           webglAddonRef.current = webglAddon;
         };
         loadWebgl();
+        // Push the rAF-cancel after loadWebgl so teardown drains in the right
+        // order: listener removed first → no new rAF can be scheduled →
+        // cancel any pending one. Without this ordering a context-loss
+        // recovery would re-register the listener after the cancel disposable,
+        // leaving a window where new rAFs could leak past unmount.
+        terminalDisposablesRef.current.push({
+          dispose: () => {
+            if (atlasRecoveryRaf !== null) cancelAnimationFrame(atlasRecoveryRaf);
+          },
+        });
 
         // Stale glyphs from the WebGL texture atlas appear after the tab is
         // backgrounded or the window moves between displays with different DPR.
