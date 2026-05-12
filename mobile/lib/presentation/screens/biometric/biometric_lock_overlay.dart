@@ -52,6 +52,9 @@ class _BiometricLockOverlayState extends ConsumerState<BiometricLockOverlay>
   bool _locked = false;
   // Sentinel "long ago" so the first foreground always exceeds any grace.
   DateTime _lastUnlock = DateTime.fromMillisecondsSinceEpoch(0);
+  // Inline error shown on the lock screen when auth fails. A SnackBar would
+  // be hidden behind the opaque lock screen, so we render this inline.
+  String? _lastError;
 
   @override
   void initState() {
@@ -92,6 +95,10 @@ class _BiometricLockOverlayState extends ConsumerState<BiometricLockOverlay>
   }
 
   Future<void> _authenticate() async {
+    // Clear any previous error before a retry so the user gets fresh feedback.
+    if (_lastError != null) {
+      setState(() => _lastError = null);
+    }
     final port = ref.read(biometricPortProvider);
     final ok = await port.authenticate();
     if (!mounted) return;
@@ -99,14 +106,13 @@ class _BiometricLockOverlayState extends ConsumerState<BiometricLockOverlay>
       setState(() {
         _locked = false;
         _lastUnlock = DateTime.now();
+        _lastError = null;
       });
     } else {
-      // Surface silent failures (canceled prompt, not-enrolled, etc.) so
-      // the user knows the lock is intentional. The overlay may not have
-      // a Scaffold ancestor on all routes, so we guard the null.
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(content: Text('Authentication failed')),
-      );
+      // Surface silent failures (canceled prompt, not-enrolled, etc.) so the
+      // user knows the lock is intentional. We render inline rather than via
+      // SnackBar because the lock screen is opaque and would hide it.
+      setState(() => _lastError = 'Authentication failed');
     }
   }
 
@@ -115,7 +121,11 @@ class _BiometricLockOverlayState extends ConsumerState<BiometricLockOverlay>
     return Stack(
       children: [
         widget.child,
-        if (_locked) BiometricLockScreen(onAuthenticate: _authenticate),
+        if (_locked)
+          BiometricLockScreen(
+            onAuthenticate: _authenticate,
+            errorMessage: _lastError,
+          ),
       ],
     );
   }
