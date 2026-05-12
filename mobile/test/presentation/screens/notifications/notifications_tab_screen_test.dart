@@ -133,4 +133,70 @@ void main() {
     verify(() => api.markAllRead()).called(1);
     expect(calls, greaterThanOrEqualTo(2));
   });
+
+  testWidgets('Clear all action is hidden when the list is empty',
+      (tester) async {
+    when(() => api.list(filter: any(named: 'filter')))
+        .thenAnswer((_) async => const <AppNotification>[]);
+
+    await tester.pumpWidget(_wrap(api));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Clear all'), findsNothing);
+    // "Mark all read" stays visible regardless of list size.
+    expect(find.text('Mark all read'), findsOneWidget);
+  });
+
+  testWidgets('Clear all confirms via dialog then calls dismissAll + refetch',
+      (tester) async {
+    var calls = 0;
+    when(() => api.list(filter: any(named: 'filter'))).thenAnswer((_) async {
+      calls += 1;
+      return [_notif(id: 'n1', title: 'First', body: 'Hello')];
+    });
+    when(() => api.dismissAll()).thenAnswer((_) async {});
+
+    await tester.pumpWidget(_wrap(api));
+    await tester.pumpAndSettle();
+    expect(calls, 1);
+
+    // The destructive action is now visible because the list is non-empty.
+    await tester.tap(find.text('Clear all'));
+    await tester.pumpAndSettle();
+
+    // Confirmation dialog content.
+    expect(find.text('Clear all notifications?'), findsOneWidget);
+
+    // Confirm by tapping the destructive button inside the dialog.
+    // The dialog action shares its label with the AppBar trigger, so
+    // disambiguate by widget type (TextButton inside the AlertDialog).
+    final confirmButton = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.widgetWithText(TextButton, 'Clear all'),
+    );
+    expect(confirmButton, findsOneWidget);
+    await tester.tap(confirmButton);
+    await tester.pumpAndSettle();
+
+    verify(() => api.dismissAll()).called(1);
+    expect(calls, greaterThanOrEqualTo(2));
+  });
+
+  testWidgets('Clear all cancel dismisses dialog without calling API',
+      (tester) async {
+    when(() => api.list(filter: any(named: 'filter'))).thenAnswer(
+      (_) async => [_notif(id: 'n1', title: 'First', body: 'Hello')],
+    );
+
+    await tester.pumpWidget(_wrap(api));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Clear all'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    verifyNever(() => api.dismissAll());
+  });
 }

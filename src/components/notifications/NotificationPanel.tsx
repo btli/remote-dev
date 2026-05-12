@@ -3,7 +3,18 @@
 import { toast } from "sonner";
 
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { ExternalLink, CheckCheck, Trash2, X } from "lucide-react";
 import { useNotificationContext } from "@/contexts/NotificationContext";
 import { cn, formatRelativeTime } from "@/lib/utils";
@@ -56,25 +67,48 @@ export function NotificationPanel({ open, onOpenChange, onJumpToSession }: Notif
               </Button>
             )}
             {notifications.length > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  // deleteAllNotifications() rejects on server failure; without
-                  // a catch this becomes an unhandled rejection from a React
-                  // click handler. The context already re-fetches on failure
-                  // so the rows reappear; we just need to surface a toast.
-                  void deleteAllNotifications().catch(() => {
-                    toast.error("Failed to clear notifications", {
-                      id: "notif-clear-all-error",
-                    });
-                  });
-                }}
-                className="h-7 text-xs text-destructive/70 hover:text-destructive hover:bg-destructive/10"
-              >
-                <Trash2 className="w-3 h-3 mr-1" />
-                Clear all
-              </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs text-destructive/70 hover:text-destructive hover:bg-destructive/10"
+                  >
+                    <Trash2 className="w-3 h-3 mr-1" />
+                    Clear all
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Clear all notifications?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {`This will permanently dismiss all ${notifications.length} notification${
+                        notifications.length === 1 ? "" : "s"
+                      }. This action cannot be undone.`}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      className={cn(buttonVariants({ variant: "destructive" }))}
+                      onClick={() => {
+                        // deleteAllNotifications() rejects on server failure;
+                        // without a catch this becomes an unhandled rejection
+                        // from a React click handler. The context already
+                        // re-fetches on failure so the rows reappear; we just
+                        // need to surface a toast.
+                        void deleteAllNotifications().catch(() => {
+                          toast.error("Failed to clear notifications", {
+                            id: "notif-clear-all-error",
+                          });
+                        });
+                      }}
+                    >
+                      Clear all
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             )}
           </div>
         </SheetHeader>

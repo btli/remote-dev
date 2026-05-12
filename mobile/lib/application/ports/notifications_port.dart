@@ -11,6 +11,9 @@ abstract class NotificationsPort {
   /// Dismiss (delete) a single notification.
   Future<void> dismiss(String id);
 
+  /// Dismiss (delete) every notification for the current user.
+  Future<void> dismissAll();
+
   /// Mark all notifications read.
   Future<void> markAllRead();
 }

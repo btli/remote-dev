@@ -92,6 +92,53 @@ class _NotificationsTabScreenState
     }
   }
 
+  Future<bool> _confirmDismissAll() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF24283B),
+        title: const Text(
+          'Clear all notifications?',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          'This will permanently dismiss all notifications. '
+          'This action cannot be undone.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style:
+                TextButton.styleFrom(foregroundColor: const Color(0xFFF7768E)),
+            child: const Text('Clear all'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  Future<void> _dismissAll() async {
+    final confirmed = await _confirmDismissAll();
+    if (!confirmed) return;
+    if (!mounted) return;
+    final api = ref.read(notificationsApiProvider);
+    try {
+      await api.dismissAll();
+      await _refresh();
+      if (!mounted) return;
+      _showSnack('All notifications dismissed');
+    } catch (e) {
+      if (!mounted) return;
+      _showSnack('Failed to dismiss all: $e');
+    }
+  }
+
   void _showSnack(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg), duration: const Duration(seconds: 2)),
@@ -117,6 +164,7 @@ class _NotificationsTabScreenState
   @override
   Widget build(BuildContext context) {
     final asyncList = ref.watch(notificationsListProvider(_filter));
+    final hasItems = asyncList.valueOrNull?.isNotEmpty ?? false;
 
     return Scaffold(
       backgroundColor: const Color(0xFF1A1B26),
@@ -134,6 +182,14 @@ class _NotificationsTabScreenState
               style: TextStyle(color: Color(0xFF7AA2F7)),
             ),
           ),
+          if (hasItems)
+            TextButton(
+              onPressed: _dismissAll,
+              child: const Text(
+                'Clear all',
+                style: TextStyle(color: Color(0xFFF7768E)),
+              ),
+            ),
         ],
       ),
       body: Column(

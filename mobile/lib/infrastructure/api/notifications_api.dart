@@ -46,6 +46,13 @@ class NotificationsApi implements NotificationsPort {
   }
 
   @override
+  Future<void> dismissAll() async {
+    // Mirror markAllRead() — the bulk-DELETE endpoint accepts
+    // {all: true} to wipe every notification for the current user.
+    await _client.delete('/api/notifications', body: {'all': true});
+  }
+
+  @override
   Future<void> markAllRead() async {
     await _client.patch('/api/notifications', body: {'all': true});
   }

@@ -96,15 +96,23 @@ void main() {
       expect(list[0].read, isFalse);
     });
 
-    test('appends ?filter= for non-default filters', () async {
+    test('translates filter=unread to ?unreadOnly=true', () async {
       when(() => client.get(any())).thenAnswer((_) async => const []);
 
       await api.list(filter: 'unread');
-      verify(() => client.get('/api/notifications?filter=unread')).called(1);
-
-      await api.list(filter: 'mentions');
-      verify(() => client.get('/api/notifications?filter=mentions')).called(1);
+      verify(() => client.get('/api/notifications?unreadOnly=true'))
+          .called(1);
     });
+
+    test(
+      'falls back to bare path for filter=mentions (no server-side concept)',
+      () async {
+        when(() => client.get(any())).thenAnswer((_) async => const []);
+
+        await api.list(filter: 'mentions');
+        verify(() => client.get('/api/notifications')).called(1);
+      },
+    );
 
     test('omits query string for filter=all and null', () async {
       when(() => client.get(any())).thenAnswer((_) async => const []);
@@ -123,12 +131,36 @@ void main() {
   });
 
   group('dismiss()', () {
-    test('DELETEs /api/notifications/:id', () async {
-      when(() => client.delete(any())).thenAnswer((_) async {});
+    test('DELETEs /api/notifications with {ids: [id]}', () async {
+      when(() => client.delete(any(), body: any(named: 'body')))
+          .thenAnswer((_) async {});
 
       await api.dismiss('n1');
 
-      verify(() => client.delete('/api/notifications/n1')).called(1);
+      verify(
+        () => client.delete(
+          '/api/notifications',
+          body: {
+            'ids': ['n1'],
+          },
+        ),
+      ).called(1);
+    });
+  });
+
+  group('dismissAll()', () {
+    test('DELETEs /api/notifications with {all: true}', () async {
+      when(() => client.delete(any(), body: any(named: 'body')))
+          .thenAnswer((_) async {});
+
+      await api.dismissAll();
+
+      verify(
+        () => client.delete(
+          '/api/notifications',
+          body: {'all': true},
+        ),
+      ).called(1);
     });
   });
 

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Mobile**: Clear all notifications action with confirmation dialog.
+
+### Changed
+
+- **Web**: Clear all notifications now requires confirmation via dialog.
+- **Scripts**: Removed dead `startServers()` from `scripts/deploy.ts`
+  (and its only-orphaned helper `getServerEnv()`) — the live deploy
+  path goes through `restartViaRdvAsync()`, which re-execs `rdv.ts`
+  under a login shell to recover the full locale/PATH environment.
+  Also dropped unused locals from `scripts/standalone-server.js`
+  (module-level `internalPort = 0` shadowed by the block-scoped one
+  inside `main()`; unused `const nextServer =` binding around
+  `startServer()`; unused `head` positional arg on the proxy upgrade
+  handler).
+
 ### Fixed
 
 - **Scripts**: `rdv` and the blue/green deploy webhook no longer leak
@@ -21,18 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   down the whole group. Also added explicit `SIGHUP` handlers to the
   terminal server (`src/server/index.ts`) and standalone Next.js wrapper
   (`scripts/standalone-server.js`) so they exit cleanly on tty hangup.
-
-### Changed
-
-- **Scripts**: Removed dead `startServers()` from `scripts/deploy.ts`
-  (and its only-orphaned helper `getServerEnv()`) — the live deploy
-  path goes through `restartViaRdvAsync()`, which re-execs `rdv.ts`
-  under a login shell to recover the full locale/PATH environment.
-  Also dropped unused locals from `scripts/standalone-server.js`
-  (module-level `internalPort = 0` shadowed by the block-scoped one
-  inside `main()`; unused `const nextServer =` binding around
-  `startServer()`; unused `head` positional arg on the proxy upgrade
-  handler).
 
 ## [0.3.14] - 2026-05-12
 
