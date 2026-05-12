@@ -92,8 +92,8 @@ class _NotificationsTabScreenState
     }
   }
 
-  Future<bool> _confirmDismissAll() async {
-    final result = await showDialog<bool>(
+  Future<void> _dismissAll() async {
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF24283B),
@@ -120,16 +120,12 @@ class _NotificationsTabScreenState
         ],
       ),
     );
-    return result ?? false;
-  }
-
-  Future<void> _dismissAll() async {
-    final confirmed = await _confirmDismissAll();
-    if (!confirmed) return;
+    if (confirmed != true) return;
     if (!mounted) return;
     final api = ref.read(notificationsApiProvider);
     try {
       await api.dismissAll();
+      if (!mounted) return;
       await _refresh();
       if (!mounted) return;
       _showSnack('All notifications dismissed');

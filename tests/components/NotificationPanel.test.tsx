@@ -79,6 +79,9 @@ describe("NotificationPanel unread dot", () => {
     // 'Clear all' button still called it bare. A failed clear-all produced
     // an unhandled rejected promise from a click handler. The fix wraps the
     // call with `.catch()` and surfaces a sonner toast.
+    //
+    // The clear-all action now opens an AlertDialog first; the destructive
+    // call only fires when the confirm button inside the dialog is clicked.
     const deleteAll = vi.fn().mockRejectedValue(new Error("boom"));
     vi.mocked(useNotificationContext).mockReturnValue({
       notifications: [makeNotification()],
@@ -100,16 +103,54 @@ describe("NotificationPanel unread dot", () => {
       />
     );
 
-    const clearAll = screen.getByRole("button", { name: /Clear all/ });
-    fireEvent.click(clearAll);
-    expect(deleteAll).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: /Clear all/ }));
 
+    // The dialog renders an AlertDialogAction labeled "Clear all" as well;
+    // confirm via that one. waitFor accommodates the Radix open transition.
+    const confirm = await screen.findByRole("alertdialog");
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /Clear all/ }).at(-1)!
+    );
+
+    await waitFor(() => {
+      expect(deleteAll).toHaveBeenCalledTimes(1);
+    });
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
         "Failed to clear notifications",
         expect.objectContaining({ id: "notif-clear-all-error" })
       );
     });
+    expect(confirm).toBeTruthy();
+  });
+
+  it("does not call deleteAllNotifications when 'Clear all' is cancelled", async () => {
+    const deleteAll = vi.fn();
+    vi.mocked(useNotificationContext).mockReturnValue({
+      notifications: [makeNotification()],
+      markRead: vi.fn(),
+      markAllRead: vi.fn(),
+      deleteNotification: vi.fn(),
+      deleteAllNotifications: deleteAll,
+      unreadCount: 0,
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+    } as unknown as ReturnType<typeof useNotificationContext>);
+
+    render(
+      <NotificationPanel
+        open
+        onOpenChange={() => {}}
+        onJumpToSession={() => {}}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Clear all/ }));
+    await screen.findByRole("alertdialog");
+    fireEvent.click(screen.getByRole("button", { name: /Cancel/ }));
+
+    expect(deleteAll).not.toHaveBeenCalled();
   });
 
   it("renders a transparent placeholder dot when the notification is read", () => {

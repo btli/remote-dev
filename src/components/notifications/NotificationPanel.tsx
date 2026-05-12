@@ -82,15 +82,15 @@ export function NotificationPanel({ open, onOpenChange, onJumpToSession }: Notif
                   <AlertDialogHeader>
                     <AlertDialogTitle>Clear all notifications?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      {`This will permanently dismiss all ${notifications.length} notification${
-                        notifications.length === 1 ? "" : "s"
-                      }. This action cannot be undone.`}
+                      This will permanently dismiss all {notifications.length}{" "}
+                      {notifications.length === 1 ? "notification" : "notifications"}.
+                      This action cannot be undone.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Cancel</AlertDialogCancel>
                     <AlertDialogAction
-                      className={cn(buttonVariants({ variant: "destructive" }))}
+                      className={buttonVariants({ variant: "destructive" })}
                       onClick={() => {
                         // deleteAllNotifications() rejects on server failure;
                         // without a catch this becomes an unhandled rejection

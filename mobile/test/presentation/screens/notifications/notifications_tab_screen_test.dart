@@ -199,4 +199,28 @@ void main() {
 
     verifyNever(() => api.dismissAll());
   });
+
+  testWidgets('Clear all surfaces a snackbar when dismissAll fails',
+      (tester) async {
+    when(() => api.list(filter: any(named: 'filter'))).thenAnswer(
+      (_) async => [_notif(id: 'n1', title: 'First', body: 'Hello')],
+    );
+    when(() => api.dismissAll()).thenThrow(Exception('boom'));
+
+    await tester.pumpWidget(_wrap(api));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Clear all'));
+    await tester.pumpAndSettle();
+
+    final confirmButton = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.widgetWithText(TextButton, 'Clear all'),
+    );
+    await tester.tap(confirmButton);
+    await tester.pumpAndSettle();
+
+    verify(() => api.dismissAll()).called(1);
+    expect(find.textContaining('Failed to dismiss all'), findsOneWidget);
+  });
 }
