@@ -10,7 +10,7 @@ _$ProjectImpl _$$ProjectImplFromJson(Map<String, dynamic> json) =>
     _$ProjectImpl(
       id: json['id'] as String,
       name: json['name'] as String,
-      groupId: json['groupId'] as String,
+      groupId: json['groupId'] as String?,
       sortOrder: (json['sortOrder'] as num?)?.toInt() ?? 0,
     );
 

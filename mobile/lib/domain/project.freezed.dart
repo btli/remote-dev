@@ -21,8 +21,11 @@ Project _$ProjectFromJson(Map<String, dynamic> json) {
 /// @nodoc
 mixin _$Project {
   String get id => throw _privateConstructorUsedError;
-  String get name => throw _privateConstructorUsedError;
-  String get groupId => throw _privateConstructorUsedError;
+  String get name =>
+      throw _privateConstructorUsedError; // Nullable: the server returns `null` for root-level projects that are
+// not nested under a group. The project picker renders these as a flat
+// section above grouped projects.
+  String? get groupId => throw _privateConstructorUsedError;
   int get sortOrder => throw _privateConstructorUsedError;
 
   /// Serializes this Project to a JSON map.
@@ -39,7 +42,7 @@ abstract class $ProjectCopyWith<$Res> {
   factory $ProjectCopyWith(Project value, $Res Function(Project) then) =
       _$ProjectCopyWithImpl<$Res, Project>;
   @useResult
-  $Res call({String id, String name, String groupId, int sortOrder});
+  $Res call({String id, String name, String? groupId, int sortOrder});
 }
 
 /// @nodoc
@@ -59,7 +62,7 @@ class _$ProjectCopyWithImpl<$Res, $Val extends Project>
   $Res call({
     Object? id = null,
     Object? name = null,
-    Object? groupId = null,
+    Object? groupId = freezed,
     Object? sortOrder = null,
   }) {
     return _then(_value.copyWith(
@@ -71,10 +74,10 @@ class _$ProjectCopyWithImpl<$Res, $Val extends Project>
           ? _value.name
           : name // ignore: cast_nullable_to_non_nullable
               as String,
-      groupId: null == groupId
+      groupId: freezed == groupId
           ? _value.groupId
           : groupId // ignore: cast_nullable_to_non_nullable
-              as String,
+              as String?,
       sortOrder: null == sortOrder
           ? _value.sortOrder
           : sortOrder // ignore: cast_nullable_to_non_nullable
@@ -90,7 +93,7 @@ abstract class _$$ProjectImplCopyWith<$Res> implements $ProjectCopyWith<$Res> {
       __$$ProjectImplCopyWithImpl<$Res>;
   @override
   @useResult
-  $Res call({String id, String name, String groupId, int sortOrder});
+  $Res call({String id, String name, String? groupId, int sortOrder});
 }
 
 /// @nodoc
@@ -108,7 +111,7 @@ class __$$ProjectImplCopyWithImpl<$Res>
   $Res call({
     Object? id = null,
     Object? name = null,
-    Object? groupId = null,
+    Object? groupId = freezed,
     Object? sortOrder = null,
   }) {
     return _then(_$ProjectImpl(
@@ -120,10 +123,10 @@ class __$$ProjectImplCopyWithImpl<$Res>
           ? _value.name
           : name // ignore: cast_nullable_to_non_nullable
               as String,
-      groupId: null == groupId
+      groupId: freezed == groupId
           ? _value.groupId
           : groupId // ignore: cast_nullable_to_non_nullable
-              as String,
+              as String?,
       sortOrder: null == sortOrder
           ? _value.sortOrder
           : sortOrder // ignore: cast_nullable_to_non_nullable
@@ -136,10 +139,7 @@ class __$$ProjectImplCopyWithImpl<$Res>
 @JsonSerializable()
 class _$ProjectImpl implements _Project {
   const _$ProjectImpl(
-      {required this.id,
-      required this.name,
-      required this.groupId,
-      this.sortOrder = 0});
+      {required this.id, required this.name, this.groupId, this.sortOrder = 0});
 
   factory _$ProjectImpl.fromJson(Map<String, dynamic> json) =>
       _$$ProjectImplFromJson(json);
@@ -148,8 +148,11 @@ class _$ProjectImpl implements _Project {
   final String id;
   @override
   final String name;
+// Nullable: the server returns `null` for root-level projects that are
+// not nested under a group. The project picker renders these as a flat
+// section above grouped projects.
   @override
-  final String groupId;
+  final String? groupId;
   @override
   @JsonKey()
   final int sortOrder;
@@ -195,7 +198,7 @@ abstract class _Project implements Project {
   const factory _Project(
       {required final String id,
       required final String name,
-      required final String groupId,
+      final String? groupId,
       final int sortOrder}) = _$ProjectImpl;
 
   factory _Project.fromJson(Map<String, dynamic> json) = _$ProjectImpl.fromJson;
@@ -203,9 +206,12 @@ abstract class _Project implements Project {
   @override
   String get id;
   @override
-  String get name;
+  String
+      get name; // Nullable: the server returns `null` for root-level projects that are
+// not nested under a group. The project picker renders these as a flat
+// section above grouped projects.
   @override
-  String get groupId;
+  String? get groupId;
   @override
   int get sortOrder;
 
