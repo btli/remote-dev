@@ -270,11 +270,10 @@ export function BeadsSidebar({
     }
   }, []);
 
-  // Sync DB settings → local state for changes that happen AFTER the initial
-  // userSettings load (e.g. the user editing the value on the Settings page).
-  // The initial load transition itself is skipped: at that moment dbCollapsed
-  // flips from the hardcoded default to the real DB value, and propagating
-  // that would clobber any localStorage value the hydration effect applied.
+  // Propagate DB → local state for edits that arrive AFTER the initial
+  // userSettings load (e.g. Settings-page edits). The load transition itself
+  // is skipped — that first dbCollapsed change is just the default → real-DB
+  // flip and would clobber the localStorage value the hydration effect applied.
   const collapsedSyncReady = useRef(false);
   useEffect(() => {
     if (!userSettingsLoaded) return;
