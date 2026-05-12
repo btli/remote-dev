@@ -138,6 +138,10 @@ void main() async {
   );
   // Read for side effect — kicks off AppLinkListener.start().
   container.read(appLinkListenerProvider);
+  // Read for side effect — wires FirebaseMessaging.onMessageOpenedApp and
+  // getInitialMessage so notification taps navigate to the correct surface
+  // and sync read-state with the server.
+  container.read(notificationTapHandlerProvider);
 
   runApp(
     UncontrolledProviderScope(

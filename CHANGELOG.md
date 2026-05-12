@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mobile**: FCM notification taps now navigate to the right session
+  (or channel) and sync read-state with the server. `NotificationTapHandler`
+  was defined after the refactor from `archive/mobile-flutter/` but never
+  wired up — `FirebaseMessaging.onMessageOpenedApp` and `getInitialMessage`
+  had no subscribers, so taps were silently dropped. Wired the handler
+  eagerly from `main.dart` via a new `notificationTapHandlerProvider`, and
+  restored the legacy mark-read-on-tap behavior so the web client sees the
+  tap as a read event.
 - **Scripts**: `rdv` and the blue/green deploy webhook no longer leak
   server processes on stop/restart. `Bun.spawn("bun", "run", "tsx",
   "src/server/index.ts", ...)` produces a 3-deep process tree (bun

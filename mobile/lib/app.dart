@@ -7,8 +7,11 @@ import 'application/state/appearance_provider.dart';
 import 'application/state/reauth_signal_provider.dart';
 import 'infrastructure/deep_link/app_link_listener.dart';
 import 'infrastructure/deep_link/deep_link_stream_provider.dart';
+import 'infrastructure/push/notification_tap_handler.dart';
 import 'presentation/router/app_router.dart';
 import 'presentation/screens/biometric/biometric_lock_overlay.dart';
+import 'presentation/screens/notifications/notifications_tab_screen.dart'
+    show notificationsApiProvider;
 
 final appRouterProvider = Provider<AppRouter>((ref) => AppRouter());
 
@@ -22,6 +25,33 @@ final appLinkListenerProvider = Provider<AppLinkListener>((ref) {
   final listener =
       AppLinkListener(router: router, linkStream: stream, links: links);
   unawaited(listener.start());
+  ref.onDispose(() {
+    unawaited(listener.stop());
+  });
+  return listener;
+});
+
+/// Boots the [NotificationTapHandler] eagerly on first read. Subscribes to
+/// `FirebaseMessaging.onMessageOpenedApp` and drains `getInitialMessage()`
+/// so cold-start taps route to the correct surface. Read once at startup
+/// from `main()` via a `ProviderContainer`.
+final notificationTapHandlerProvider =
+    Provider<NotificationTapHandler>((ref) {
+  final router = ref.read(appRouterProvider);
+  final listener = NotificationTapHandler(
+    router: router,
+    onMarkRead: (id) async {
+      // Swallow every failure mode: no server bound (NoActiveServerError),
+      // cold-start race, or network error — tap navigation must still
+      // succeed even when the read-state sync can't happen.
+      try {
+        await ref.read(notificationsApiProvider).markRead([id]);
+      } catch (e) {
+        debugPrint('[Push] mark-read on tap failed: $e');
+      }
+    },
+  );
+  unawaited(listener.initialize());
   ref.onDispose(() {
     unawaited(listener.stop());
   });
