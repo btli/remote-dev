@@ -19,12 +19,9 @@ class ChannelsApi implements ChannelsPort {
       return const [];
     }
 
-    final typeParam = activeNode.type == ActiveNodeType.group
-        ? 'group'
-        : 'project';
     final path =
         '/api/channels?nodeId=${Uri.encodeQueryComponent(activeNode.id)}'
-        '&nodeType=$typeParam';
+        '&nodeType=${activeNode.type.wireValue}';
     final raw = await _client.get(path);
 
     // Shape A: { channels: [...] } — flat list (anticipated future shape /

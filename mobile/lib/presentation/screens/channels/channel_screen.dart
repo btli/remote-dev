@@ -244,18 +244,12 @@ class _ChannelTitle extends ConsumerWidget {
     // generic fallback — the WebView is the source of truth for
     // content; this title is a best-effort hint.
     final node = ref.watch(activeNodeProvider).valueOrNull;
-    final asyncChannels = ref.watch(channelsListProvider(node));
-    final channels = asyncChannels.valueOrNull;
-    String? name;
-    if (channels != null) {
-      for (final c in channels) {
-        if (c.id == channelId) {
-          final trimmed = c.name.trim();
-          if (trimmed.isNotEmpty) name = trimmed;
-          break;
-        }
-      }
-    }
+    final channels = ref.watch(channelsListProvider(node)).valueOrNull;
+    final trimmed = channels
+        ?.where((c) => c.id == channelId)
+        .map((c) => c.name.trim())
+        .firstOrNull;
+    final name = (trimmed != null && trimmed.isNotEmpty) ? trimmed : null;
     return Text(
       name == null ? 'Channel' : '#$name',
       style: const TextStyle(color: Colors.white),

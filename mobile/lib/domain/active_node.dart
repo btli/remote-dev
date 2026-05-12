@@ -12,7 +12,15 @@ enum ActiveNodeType {
   @JsonValue('group')
   group,
   @JsonValue('project')
-  project,
+  project;
+
+  /// Server wire format matching the `@JsonValue` annotations above.
+  /// Used for query params and POST bodies hitting `/api/preferences` and
+  /// `/api/channels`.
+  String get wireValue => switch (this) {
+        ActiveNodeType.group => 'group',
+        ActiveNodeType.project => 'project',
+      };
 }
 
 /// Snapshot of the user's currently-active or pinned node, sourced from

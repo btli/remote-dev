@@ -39,7 +39,7 @@ final preferencesApiProvider = Provider<PreferencesApi>((ref) {
 /// needs project scoping (Channels today, Tasks/Peers later) should
 /// watch this notifier so they react to changes initiated anywhere in
 /// the UI (sessions tab, project picker, etc.).
-class ActiveNodeNotifier extends AsyncNotifier<ActiveNode?> {
+class ActiveNodeNotifier extends AutoDisposeAsyncNotifier<ActiveNode?> {
   @override
   Future<ActiveNode?> build() async {
     return ref.watch(preferencesApiProvider).getActiveNode();
@@ -65,8 +65,12 @@ class ActiveNodeNotifier extends AsyncNotifier<ActiveNode?> {
   }
 }
 
+/// `.autoDispose` is critical: when the active server changes, this
+/// provider is disposed and rebuilt against the new server's
+/// `preferencesApiProvider`. Without it, the notifier would retain a
+/// reference to the prior server's API client and operate on stale data.
 final activeNodeProvider =
-    AsyncNotifierProvider<ActiveNodeNotifier, ActiveNode?>(
+    AsyncNotifierProvider.autoDispose<ActiveNodeNotifier, ActiveNode?>(
   ActiveNodeNotifier.new,
 );
 
@@ -136,12 +140,16 @@ class _ChannelsTabScreenState extends ConsumerState<ChannelsTabScreen>
     _pollTimer = null;
   }
 
-  Future<void> _refresh(ActiveNode? node) async {
-    ref.invalidate(channelsListProvider(node));
-    await ref.read(channelsListProvider(node).future);
+  Future<void> _refresh(ActiveNode? node) {
+    return ref.refresh(channelsListProvider(node).future);
   }
 
   Future<void> _pickProject() async {
+    // Invariant: `showProjectTreeSheet` only returns project IDs. Groups
+    // render as non-tappable `ExpansionTile` headers in the sheet; only
+    // project rows pop with an id. If the sheet ever starts returning
+    // group IDs, this call site MUST be updated to pass the correct
+    // `ActiveNodeType` (group vs project).
     final projectId = await showProjectTreeSheet(context);
     if (projectId == null || !mounted) return;
     await ref.read(activeNodeProvider.notifier).select(
@@ -206,6 +214,7 @@ class _ChannelsTabScreenState extends ConsumerState<ChannelsTabScreen>
   @override
   Widget build(BuildContext context) {
     final asyncNode = ref.watch(activeNodeProvider);
+    final nodeName = asyncNode.valueOrNull?.name;
 
     return Scaffold(
       backgroundColor: const Color(0xFF1A1B26),
@@ -221,9 +230,9 @@ class _ChannelsTabScreenState extends ConsumerState<ChannelsTabScreen>
             ),
             // Active project subtitle, matching the PWA's "Channels · name"
             // header. Only render when we actually have a name to show.
-            if (asyncNode.valueOrNull?.name != null)
+            if (nodeName != null)
               Text(
-                asyncNode.value!.name!,
+                nodeName,
                 style: const TextStyle(
                   color: Colors.white54,
                   fontSize: 12,

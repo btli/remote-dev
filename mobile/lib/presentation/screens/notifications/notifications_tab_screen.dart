@@ -37,25 +37,26 @@ final notificationsListProvider =
   return ref.watch(notificationsApiProvider).list();
 });
 
+/// Agent lifecycle notification types that should NEVER count as mentions,
+/// even when their text happens to contain an `@`-token.
+const _kAgentLifecycleTypes = <String>{
+  'agent_waiting',
+  'agent_error',
+  'agent_complete',
+  'agent_exited',
+};
+
+/// Matches either the peer-message `@<sid:UUID>` token or a human-readable
+/// `@name` at a word boundary.
+final _kMentionPattern = RegExp(r'@<sid:[^>]+>|(^|\s)@\w');
+
 /// Heuristic that mirrors the PWA's `isMention` (see
 /// `src/components/mobile/notifications/NotificationsTab.tsx`):
-///
-/// 1. Agent lifecycle events (`agent_waiting`, `agent_error`,
-///    `agent_complete`, `agent_exited`) are never mentions, even if
-///    their text happens to contain an `@`-token.
-/// 2. Everything else qualifies if the title or body contains either
-///    the peer-message `@<sid:UUID>` token or a human-readable `@name`
-///    word boundary.
+/// agent lifecycle events never qualify; everything else qualifies if its
+/// title or body contains a mention-shaped token.
 bool _isMention(AppNotification n) {
-  switch (n.type) {
-    case 'agent_waiting':
-    case 'agent_error':
-    case 'agent_complete':
-    case 'agent_exited':
-      return false;
-  }
-  final haystack = '${n.title} ${n.body}';
-  return RegExp(r'@<sid:[^>]+>|(^|\s)@\w').hasMatch(haystack);
+  if (_kAgentLifecycleTypes.contains(n.type)) return false;
+  return _kMentionPattern.hasMatch('${n.title} ${n.body}');
 }
 
 class NotificationsTabScreen extends ConsumerStatefulWidget {
@@ -70,9 +71,8 @@ class _NotificationsTabScreenState
     extends ConsumerState<NotificationsTabScreen> {
   NotificationFilter _filter = NotificationFilter.all;
 
-  Future<void> _refresh() async {
-    ref.invalidate(notificationsListProvider);
-    await ref.read(notificationsListProvider.future);
+  Future<void> _refresh() {
+    return ref.refresh(notificationsListProvider.future);
   }
 
   void _selectFilter(NotificationFilter filter) {

@@ -29,22 +29,10 @@ class PreferencesApi implements PreferencesPort {
     // the PWA's behavior and the server's own GET handler (see
     // `src/app/api/preferences/route.ts`), which resolves the
     // active-folder lookup with `pinnedNodeId || activeNodeId`.
-    final pinnedId = settings['pinnedNodeId'];
-    final pinnedType = settings['pinnedNodeType'];
-    final activeId = settings['activeNodeId'];
-    final activeType = settings['activeNodeType'];
-
-    final String? id =
-        (pinnedId is String && pinnedId.isNotEmpty) ? pinnedId : null;
-    final String? typeStr =
-        (pinnedType is String && pinnedType.isNotEmpty) ? pinnedType : null;
-    final String? fallbackId =
-        (activeId is String && activeId.isNotEmpty) ? activeId : null;
-    final String? fallbackTypeStr =
-        (activeType is String && activeType.isNotEmpty) ? activeType : null;
-
-    final resolvedId = id ?? fallbackId;
-    final resolvedTypeStr = typeStr ?? fallbackTypeStr;
+    final resolvedId = _nonEmptyString(settings['pinnedNodeId']) ??
+        _nonEmptyString(settings['activeNodeId']);
+    final resolvedTypeStr = _nonEmptyString(settings['pinnedNodeType']) ??
+        _nonEmptyString(settings['activeNodeType']);
     if (resolvedId == null || resolvedTypeStr == null) {
       return null;
     }
@@ -54,15 +42,11 @@ class PreferencesApi implements PreferencesPort {
       return null;
     }
 
-    String? name;
     final activeFolder = raw['activeFolder'];
-    if (activeFolder is Map<String, dynamic> &&
-        activeFolder['id'] == resolvedId) {
-      final n = activeFolder['name'];
-      if (n is String && n.isNotEmpty) {
-        name = n;
-      }
-    }
+    final name = (activeFolder is Map<String, dynamic> &&
+            activeFolder['id'] == resolvedId)
+        ? _nonEmptyString(activeFolder['name'])
+        : null;
 
     return ActiveNode(id: resolvedId, type: resolvedType, name: name);
   }
@@ -80,28 +64,18 @@ class PreferencesApi implements PreferencesPort {
       '/api/preferences/active-node',
       body: {
         'nodeId': nodeId,
-        'nodeType': nodeType == null ? null : _serializeType(nodeType),
+        'nodeType': nodeType?.wireValue,
         'pinned': pinned,
       },
     );
   }
 
-  static ActiveNodeType? _parseType(String s) {
-    switch (s) {
-      case 'group':
-        return ActiveNodeType.group;
-      case 'project':
-        return ActiveNodeType.project;
-    }
-    return null;
-  }
+  static ActiveNodeType? _parseType(String s) => switch (s) {
+        'group' => ActiveNodeType.group,
+        'project' => ActiveNodeType.project,
+        _ => null,
+      };
 
-  static String _serializeType(ActiveNodeType t) {
-    switch (t) {
-      case ActiveNodeType.group:
-        return 'group';
-      case ActiveNodeType.project:
-        return 'project';
-    }
-  }
+  static String? _nonEmptyString(Object? v) =>
+      (v is String && v.isNotEmpty) ? v : null;
 }
