@@ -41,14 +41,11 @@ final notificationTapHandlerProvider =
   final listener = NotificationTapHandler(
     router: router,
     onMarkRead: (id) async {
-      // Swallow every failure mode: no server bound (NoActiveServerError),
-      // cold-start race, or network error — tap navigation must still
-      // succeed even when the read-state sync can't happen.
-      try {
-        await ref.read(notificationsApiProvider).markRead([id]);
-      } catch (e) {
-        debugPrint('[Push] mark-read on tap failed: $e');
-      }
+      // `notificationsApiProvider` throws `NoActiveServerError`
+      // synchronously when no server is bound; inside this async body that
+      // becomes a rejected Future, which the handler's own `.catchError`
+      // logs and swallows. Don't double-handle here.
+      await ref.read(notificationsApiProvider).markRead([id]);
     },
   );
   unawaited(listener.initialize());
