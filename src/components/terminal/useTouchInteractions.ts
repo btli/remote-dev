@@ -223,9 +223,12 @@ export interface UseTouchInteractionsDeps {
   copyToClipboard?: (text: string) => Promise<void>;
   /**
    * Test seam — receives the synthesized MouseEvents. In production we
-   * dispatch them directly on the xterm element.
+   * dispatch them on the xterm element (mousedown) and the owning document
+   * (mouseup). The target type is `EventTarget` so callers can dispatch to a
+   * `Document` for the mouseup half — xterm's `bindMouse` registers its
+   * mouseup listener on `_document` after the first mousedown lands.
    */
-  dispatchMouse?: (target: HTMLElement, event: MouseEvent) => void;
+  dispatchMouse?: (target: EventTarget, event: MouseEvent) => void;
 }
 
 export interface TouchInteractionsHandlers {
@@ -258,7 +261,7 @@ export function createTouchInteractions(
         : Promise.resolve());
   const dispatchMouse =
     deps.dispatchMouse ??
-    ((target: HTMLElement, event: MouseEvent) => {
+    ((target: EventTarget, event: MouseEvent) => {
       target.dispatchEvent(event);
     });
   // The host shares one `modeRef` across this hook + touch-scroll. When
@@ -407,26 +410,42 @@ export function createTouchInteractions(
       return;
     }
 
-    // xterm v6 attaches its mouse listeners on the .xterm-screen element via
-    // `addDisposableListener`. We dispatch there — it is the stable target
-    // regardless of which renderer (WebGL canvas, DOM, multiple canvases)
-    // happens to be active. We previously aimed at the inner canvas, but
-    // that's brittle: WebGL builds paint into multiple canvases (text,
-    // selection, link, link-tooltip layers) and the listener isn't on any of
-    // them. Falling back to the host div is also fine; xterm wires a few
-    // listeners there as well.
+    // xterm v6 binds its mousedown listener on `terminal.element`
+    // (`.terminal.xterm`), NOT on `.xterm-screen`, and registers a mouseup
+    // listener on `_document` from inside that mousedown handler so it can
+    // capture lifts outside the terminal. See CoreBrowserTerminal.ts:779/797.
+    // We mirror that path: mousedown on the host (which triggers the
+    // document-level mouseup registration), then mouseup on the owning
+    // document so the just-installed listener catches the UP edge — many TUI
+    // button handlers (Claude Code, etc.) only fire on UP.
+    //
+    // Previously we dispatched on `.xterm-screen` and relied on bubbling. On
+    // iOS Safari in installed-PWA (standalone) mode the bubble was not
+    // reliably reaching the parent listener — mouse-mode TUI buttons saw
+    // nothing. Dispatching on the actual listener hosts removes that
+    // dependency and matches what a real browser does.
     const host = terminal.element;
-    const screen = host.querySelector(".xterm-screen") as HTMLElement | null;
-    const target: HTMLElement = screen ?? host;
-    // Real browser-synthesized mouse-from-touch events include screenX /
-    // screenY. xterm itself doesn't read those for cell math (it uses
-    // clientX/Y plus its own bounding-rect origin), but other consumers in
-    // the dispatch chain might assert on them. We mirror clientX/Y here;
-    // the values aren't load-bearing for terminal coords; we just want the
-    // event shape to match what a real mouse would carry.
+    // host.ownerDocument is non-null for any mounted element, and xterm only
+    // sets `element` after `open()` on a mounted node — so this is effectively
+    // always set. The `typeof document` fallback is for headless tests that
+    // construct an element without a document. If both miss, bail rather than
+    // route mouseup through `host` (xterm's listener is on `_document`, so a
+    // host-targeted mouseup that doesn't bubble all the way to the registered
+    // document would silently drop the UP report).
+    const ownerDocument =
+      host.ownerDocument ?? (typeof document !== "undefined" ? document : null);
+    if (!ownerDocument) return;
+    // screenX/Y mirror clientX/Y so synthetic events match the shape of a
+    // real mouse-from-touch event (xterm itself uses clientX/Y, but other
+    // consumers downstream may assert on screen coords).
+    // detail: 1 makes SelectionService's click-count logic work; composed:
+    // true lets the event cross shadow-DOM boundaries if the terminal is
+    // embedded in a host page that uses them.
     const baseInit: MouseEventInit = {
       bubbles: true,
       cancelable: true,
+      composed: true,
+      detail: 1,
       view: typeof window !== "undefined" ? window : undefined,
       clientX,
       clientY,
@@ -435,8 +454,8 @@ export function createTouchInteractions(
       button: 0,
       buttons: 1,
     };
-    dispatchMouse(target, new MouseEvent("mousedown", baseInit));
-    dispatchMouse(target, new MouseEvent("mouseup", { ...baseInit, buttons: 0 }));
+    dispatchMouse(host, new MouseEvent("mousedown", baseInit));
+    dispatchMouse(ownerDocument, new MouseEvent("mouseup", { ...baseInit, buttons: 0 }));
 
     // Always scroll to bottom on tap, regardless of mouse mode. Most users
     // expect tapping the terminal to "jump back to the latest output" — a

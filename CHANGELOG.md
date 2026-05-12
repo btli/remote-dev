@@ -43,6 +43,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   defaults so SSR and first client render agree, and `localStorage` is
   read in a mount-only `useEffect` with plain setters (not `setStoredX`,
   which dispatch a `CustomEvent` the component subscribes to).
+- **Mobile/Terminal**: PWA tap-to-click now reliably reaches xterm.js
+  mouse-mode TUIs (Claude Code clickable buttons, vim, less, lazygit,
+  tmux mouse). The previous implementation dispatched synthesized
+  mousedown/mouseup on `.xterm-screen` and relied on bubbling up to
+  `terminal.element` (where xterm binds its mousedown listener). On
+  installed PWAs (iOS Safari standalone) that bubble did not reliably
+  reach the parent listener, so mouse-mode TUI buttons silently dropped
+  clicks (pinch-zoom and scroll still worked since they bypass xterm's
+  mouse pipeline). Synthesized events now dispatch on `terminal.element`
+  directly, with mouseup routed through `document` so xterm's
+  document-level mouseup listener catches the UP report. Added
+  `detail: 1` and `composed: true` for SelectionService click-count and
+  shadow-DOM crossing. Added an integration test mounting a real
+  `@xterm/xterm` Terminal that verifies the full tap → SGR mouse report
+  pipeline (`useTouchInteractions.realXterm.test.ts`).
+  (remote-dev-e07i)
 - **Mobile**: FCM notification taps now navigate to the right session
   (or channel) and sync read-state with the server. `NotificationTapHandler`
   was defined after the refactor from `archive/mobile-flutter/` but never
