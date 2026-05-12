@@ -7,11 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.15] - 2026-05-12
-
-### Added
-
-- **Mobile**: Clear all notifications action with confirmation dialog.
+## [0.3.16] - 2026-05-12
 
 ### Changed
 
@@ -20,16 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now forwards `onConsoleMessage`, and the session view wires `onLoadStop`,
   `onProgressChanged`, and a JS console logger plus an `onTerminalReady` trace
   to `flutter logs` (closes remote-dev-l4q6 Bug 4).
-- **Web**: Clear all notifications now requires confirmation via dialog.
-- **Scripts**: Removed dead `startServers()` from `scripts/deploy.ts`
-  (and its only-orphaned helper `getServerEnv()`) — the live deploy
-  path goes through `restartViaRdvAsync()`, which re-execs `rdv.ts`
-  under a login shell to recover the full locale/PATH environment.
-  Also dropped unused locals from `scripts/standalone-server.js`
-  (module-level `internalPort = 0` shadowed by the block-scoped one
-  inside `main()`; unused `const nextServer =` binding around
-  `startServer()`; unused `head` positional arg on the proxy upgrade
-  handler).
+- **Mobile (Flutter)**: Agent default-pick hoisted out of `build` — picking
+  `agent` in the new-session sheet now resolves the default provider via a
+  one-shot side effect from the Type-dropdown `onChanged` instead of
+  `addPostFrameCallback` inside `_AgentProviderField.build` (codex review).
 
 ### Fixed
 
@@ -53,9 +43,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   BiometricPrompt). The settings switch now gates enable on
   `isAvailable()` plus a successful auth challenge, surfacing
   user-visible SnackBar messages for both failure modes; disabling is
-  free. The lock overlay also surfaces a SnackBar when authentication
-  fails so the failure is no longer silent
-  (remote-dev-l4q6 Bug 5).
+  free (remote-dev-l4q6 Bug 5).
+- **Mobile (Flutter)**: Biometric auth failures on the lock screen now
+  render inline as red text on the lock overlay itself. Previously a
+  `ScaffoldMessenger.maybeOf(...).showSnackBar(...)` rendered behind
+  the opaque lock `Material`, so the failure was invisible (codex
+  review follow-up to Bug 5).
+- **Mobile (Flutter)**: Root-level projects (server `groupId: null`)
+  now appear in the new-session picker as a flat section above the
+  group ExpansionTiles. Before, `Project.groupId` was non-nullable and
+  the picker only rendered grouped projects — combined with the new
+  "project required" gate, users whose only projects were root-level
+  could be hard-blocked from creating sessions (codex review).
+
+## [0.3.15] - 2026-05-12
+
+### Added
+
+- **Mobile**: Clear all notifications action with confirmation dialog.
+
+### Changed
+
+- **Web**: Clear all notifications now requires confirmation via dialog.
+- **Scripts**: Removed dead `startServers()` from `scripts/deploy.ts`
+  (and its only-orphaned helper `getServerEnv()`) — the live deploy
+  path goes through `restartViaRdvAsync()`, which re-execs `rdv.ts`
+  under a login shell to recover the full locale/PATH environment.
+  Also dropped unused locals from `scripts/standalone-server.js`
+  (module-level `internalPort = 0` shadowed by the block-scoped one
+  inside `main()`; unused `const nextServer =` binding around
+  `startServer()`; unused `head` positional arg on the proxy upgrade
+  handler).
+
+### Fixed
+
 - **Dev**: Resolved three pre-existing ship-it blockers — `packages/mobile`
   tsconfig load failure (inlined `expo/tsconfig.base`), 10 ESLint errors
   → 0 (`react-hooks/use-memo` + `react-hooks/refs`), and `handleTouchEnd`
