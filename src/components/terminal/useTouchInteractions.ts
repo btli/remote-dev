@@ -410,38 +410,37 @@ export function createTouchInteractions(
       return;
     }
 
-    // xterm v6 attaches its mousedown listener on `terminal.element`
-    // (`.terminal.xterm`) — NOT on `.xterm-screen`. See
-    // node_modules/@xterm/xterm/src/browser/CoreBrowserTerminal.ts:779. The
-    // SelectionService also binds mousedown on the same element (:544).
+    // xterm v6 binds its mousedown listener on `terminal.element`
+    // (`.terminal.xterm`), NOT on `.xterm-screen`, and registers a mouseup
+    // listener on `_document` from inside that mousedown handler so it can
+    // capture lifts outside the terminal. See CoreBrowserTerminal.ts:779/797.
+    // We mirror that path: mousedown on the host (which triggers the
+    // document-level mouseup registration), then mouseup on the owning
+    // document so the just-installed listener catches the UP edge — many TUI
+    // button handlers (Claude Code, etc.) only fire on UP.
     //
     // Previously we dispatched on `.xterm-screen` and relied on bubbling. On
-    // iOS Safari in installed-PWA (standalone) mode that bubble was not
-    // reliably reaching the parent listener — Claude Code / vim / tmux mouse-
-    // mode buttons saw nothing despite the unit tests passing. Dispatching
-    // directly on the actual listener host removes the bubbling dependency
-    // and works on every browser we've tried.
+    // iOS Safari in installed-PWA (standalone) mode the bubble was not
+    // reliably reaching the parent listener — mouse-mode TUI buttons saw
+    // nothing. Dispatching on the actual listener hosts removes that
+    // dependency and matches what a real browser does.
     const host = terminal.element;
-    // After mousedown fires, xterm registers its mouseup listener on
-    // `_document` (CoreBrowserTerminal.ts:797) so it can capture lifts that
-    // happen outside the terminal element. We mirror that here: dispatch
-    // mousedown on the host to trigger the registration, then dispatch
-    // mouseup on the owning document so xterm's just-installed listener sees
-    // it. (Dispatching mouseup on the host would still bubble in most
-    // browsers, but document-direct is the path the real browser takes.)
-    const ownerDocument = host.ownerDocument ?? (typeof document !== "undefined" ? document : null);
-    // Real browser-synthesized mouse-from-touch events include screenX /
-    // screenY. xterm itself doesn't read those for cell math (it uses
-    // clientX/Y plus its own bounding-rect origin), but other consumers in
-    // the dispatch chain might assert on them. We mirror clientX/Y here;
-    // the values aren't load-bearing for terminal coords; we just want the
-    // event shape to match what a real mouse would carry.
-    //
-    // `detail: 1` marks this as a single click so SelectionService's
-    // click-count logic works even when app mouse mode is off. `composed:
-    // true` lets the event cross shadow-DOM boundaries (defensive — xterm
-    // itself doesn't use shadow DOM, but the terminal might be embedded in
-    // a host page that does).
+    // host.ownerDocument is non-null for any mounted element, and xterm only
+    // sets `element` after `open()` on a mounted node — so this is effectively
+    // always set. The `typeof document` fallback is for headless tests that
+    // construct an element without a document. If both miss, bail rather than
+    // route mouseup through `host` (xterm's listener is on `_document`, so a
+    // host-targeted mouseup that doesn't bubble all the way to the registered
+    // document would silently drop the UP report).
+    const ownerDocument =
+      host.ownerDocument ?? (typeof document !== "undefined" ? document : null);
+    if (!ownerDocument) return;
+    // screenX/Y mirror clientX/Y so synthetic events match the shape of a
+    // real mouse-from-touch event (xterm itself uses clientX/Y, but other
+    // consumers downstream may assert on screen coords).
+    // detail: 1 makes SelectionService's click-count logic work; composed:
+    // true lets the event cross shadow-DOM boundaries if the terminal is
+    // embedded in a host page that uses them.
     const baseInit: MouseEventInit = {
       bubbles: true,
       cancelable: true,
@@ -456,12 +455,7 @@ export function createTouchInteractions(
       buttons: 1,
     };
     dispatchMouse(host, new MouseEvent("mousedown", baseInit));
-    // Route mouseup through the document so xterm's document-level listener
-    // (registered inside its mousedown handler) catches the UP report. Many
-    // TUI button handlers — including Claude Code's — only fire on the UP
-    // edge.
-    const mouseupTarget: EventTarget = ownerDocument ?? host;
-    dispatchMouse(mouseupTarget, new MouseEvent("mouseup", { ...baseInit, buttons: 0 }));
+    dispatchMouse(ownerDocument, new MouseEvent("mouseup", { ...baseInit, buttons: 0 }));
 
     // Always scroll to bottom on tap, regardless of mouse mode. Most users
     // expect tapping the terminal to "jump back to the latest output" — a

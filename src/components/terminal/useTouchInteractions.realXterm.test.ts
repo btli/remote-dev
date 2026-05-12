@@ -137,21 +137,17 @@ function makeRealTerminal(): Harness {
     });
   }
 
-  // Enable VT200 mouse tracking + SGR encoding. The DECSET sequence is
-  // parsed asynchronously, so callers MUST await writeReady() (defined
-  // below) before driving the tap.
-
   // SGR press: \x1b[<{button};{col};{row}M  (uppercase M for press)
   // SGR release: \x1b[<{button};{col};{row}m (lowercase m for release)
-  const matchSgr = (joined: string, col: number, row: number, finalByte: "M" | "m") => {
-    // Button 0 = left, no modifiers → just "0".
-    const needle = `\x1b[<0;${col};${row}${finalByte}`;
-    return joined.includes(needle);
-  };
+  // Button 0 = left, no modifiers → just "0".
+  const matchSgr = (joined: string, col: number, row: number, finalByte: "M" | "m") =>
+    joined.includes(`\x1b[<0;${col};${row}${finalByte}`);
 
+  // DECSET 1000 (VT200 button events) + 1006 (SGR encoding). The sequence
+  // is parsed asynchronously by xterm, so callers must await this before
+  // driving the tap.
   const enableSgrMouseMode = () =>
     new Promise<void>((resolve) => {
-      // VT200 button events (1000) + SGR encoding (1006).
       term.write("\x1b[?1000h\x1b[?1006h", () => resolve());
     });
 
@@ -249,6 +245,12 @@ describe("synthesizeTap against real xterm.js (integration)", () => {
     // report. With mousedown dispatched directly on `terminal.element`,
     // .xterm-screen never sees the event (it's a *child*, not on the
     // bubble path), so the SGR report still fires.
+    //
+    // Scope: this only guards the *mousedown* dispatch target. The mouseup
+    // path (dispatched on `document`) is covered by the press+release
+    // assertions in the preceding tests — if mouseup ever regressed back to
+    // `.xterm-screen` or the host element, those tests would lose
+    // `hasSgrRelease`.
     await harness.enableSgrMouseMode();
     harness.screen.addEventListener(
       "mousedown",

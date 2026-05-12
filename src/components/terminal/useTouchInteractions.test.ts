@@ -479,14 +479,9 @@ describe("synthesizeTap dispatch target", () => {
   });
 
   it("dispatches mousedown on terminal.element (xterm's bindMouse listener host) and mouseup on the owning document", () => {
-    // xterm v6 registers its mousedown listener on `terminal.element`
-    // (`.terminal.xterm`), not `.xterm-screen`. It then registers a mouseup
-    // listener on `_document` from inside that mousedown handler so it can
-    // capture lifts outside the terminal element. We mirror that here:
-    // mousedown on the element, mouseup on the document. iOS Safari in
-    // standalone PWA mode was not reliably bubbling events from
-    // `.xterm-screen` up to the parent listener — dispatching on the actual
-    // listener host removes that dependency.
+    // See synthesizeTap() for the full rationale. The contract under test:
+    // mousedown → terminal.element, mouseup → ownerDocument. iOS PWA
+    // standalone mode broke the previous `.xterm-screen` + bubble path.
     const h = makeHarness();
     h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
     h.advanceTime(50);
