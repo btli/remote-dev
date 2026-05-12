@@ -42,7 +42,8 @@ process.env.__NEXT_PRIVATE_STANDALONE_CONFIG = JSON.stringify(nextConfig);
 
 // Get connection options
 const socketPath = process.env.SOCKET_PATH;
-const internalPort = 0; // Use ephemeral port for internal Next.js server
+// Note: the internal Next.js port for socket mode is allocated dynamically
+// inside main() via getAvailablePort(); there's no module-level constant for it.
 const externalPort = parseInt(process.env.PORT, 10) || 6001;
 const hostname = process.env.HOSTNAME || "0.0.0.0";
 
@@ -70,8 +71,9 @@ async function main() {
 
     const internalPort = await getAvailablePort();
 
-    // Start Next.js on the internal port
-    const nextServer = await startServer({
+    // Start Next.js on the internal port (we don't keep the returned handle —
+    // shutdown is driven by the outer proxy server below).
+    await startServer({
       dir: standaloneDir,
       isDev: false,
       config: nextConfig,
@@ -104,8 +106,11 @@ async function main() {
       req.pipe(proxyReq, { end: true });
     });
 
-    // Handle WebSocket upgrades
-    proxyServer.on("upgrade", (req, socket, head) => {
+    // Handle WebSocket upgrades. The third positional arg (initial request
+    // head bytes) is intentionally omitted — Next.js doesn't send any data
+    // before the 101 handshake completes, so there's nothing for us to
+    // forward through to the upstream upgrade.
+    proxyServer.on("upgrade", (req, socket) => {
       const options = {
         hostname: "127.0.0.1",
         port: internalPort,
@@ -151,6 +156,9 @@ async function main() {
 
     process.on("SIGTERM", () => shutdown("SIGTERM"));
     process.on("SIGINT", () => shutdown("SIGINT"));
+    // Exit cleanly on tty hangup so the server doesn't survive a closed
+    // controlling shell when started outside a detached session.
+    process.on("SIGHUP", () => shutdown("SIGHUP"));
 
     proxyServer.listen(socketPath, () => {
       // Set socket permissions

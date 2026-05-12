@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Scripts**: `rdv` and the blue/green deploy webhook no longer leak
+  server processes on stop/restart. `Bun.spawn("bun", "run", "tsx",
+  "src/server/index.ts", ...)` produces a 3-deep process tree (bun
+  wrapper → node tsx → node loader), and the previous `process.kill(pid,
+  SIGTERM)` only signalled the outer wrapper — leaving the actual
+  terminal/Next.js server re-parented to init on every stop. ~29
+  orphaned `bun run tsx` processes accumulated over 11 days (~2–3 per
+  deploy). Servers are now spawned `detached: true` so each is its own
+  session/pgid leader, and shutdown uses `kill(-pid, signal)` to take
+  down the whole group. Also added explicit `SIGHUP` handlers to the
+  terminal server (`src/server/index.ts`) and standalone Next.js wrapper
+  (`scripts/standalone-server.js`) so they exit cleanly on tty hangup.
+
+### Changed
+
+- **Scripts**: Removed dead `startServers()` from `scripts/deploy.ts`
+  (and its only-orphaned helper `getServerEnv()`) — the live deploy
+  path goes through `restartViaRdvAsync()`, which re-execs `rdv.ts`
+  under a login shell to recover the full locale/PATH environment.
+  Also dropped unused locals from `scripts/standalone-server.js`
+  (module-level `internalPort = 0` shadowed by the block-scoped one
+  inside `main()`; unused `const nextServer =` binding around
+  `startServer()`; unused `head` positional arg on the proxy upgrade
+  handler).
+
 ## [0.3.11] - 2026-05-11
 
 ### Added

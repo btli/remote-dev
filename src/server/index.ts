@@ -126,6 +126,10 @@ async function startServer(): Promise<void> {
 
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
+  // Exit cleanly on tty hangup (e.g. controlling shell closes). Without
+  // this, the server's default behaviour for SIGHUP depends on whether
+  // anyone else has installed a listener; explicit shutdown is safer.
+  process.on("SIGHUP", () => shutdown("SIGHUP"));
 }
 
 startServer();
