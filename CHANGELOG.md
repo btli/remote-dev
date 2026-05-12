@@ -34,6 +34,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `startServer()`; unused `head` positional arg on the proxy upgrade
   handler).
 
+## [0.3.12] - 2026-05-12
+
+### Fixed
+
+- **Mobile**: System-browser CF Access login (introduced in v0.3.11 /
+  PR #289) crashed with
+  `GoException: no routes for location: remotedev://auth/callback?…`
+  after the OS browser deep-linked back to the app. The Flutter engine
+  routes the callback URI through `MaterialApp.router`'s route
+  information provider before `MobileCallbackLoginLauncher`'s parallel
+  `deepLinkStreamProvider` subscription consumes it, so the URI hit
+  GoRouter as an unmatched location. Added a `redirect:` callback on
+  `AppRouter` that absorbs the callback (and a stray bare `/` URI the
+  Android engine re-fires when returning from a Chrome Custom Tab) by
+  bouncing to `/servers` — the launcher's `onSaved` / `onSuccess`
+  continuation then drives the real navigation. Single-file fix in
+  `mobile/lib/presentation/router/app_router.dart` (45 lines added).
+  `flutter analyze` clean; `flutter test` not gated on this iteration
+  due to an unrelated macOS Gatekeeper hang on `flutter_tester`.
+
 ## [0.3.11] - 2026-05-11
 
 ### Added

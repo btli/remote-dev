@@ -36,18 +36,57 @@ final pushTokenRegistrarProvider = Provider<PushTokenRegistrar>((ref) {
 });
 
 class AppRouter {
-  AppRouter() : _config = _buildRouter();
+  AppRouter() {
+    _config = _buildRouter();
+  }
 
-  final GoRouter _config;
+  late final GoRouter _config;
   GoRouter get config => _config;
 
   void navigateTo(AppRoute route) {
     _config.go(route.toPath());
   }
 
-  static GoRouter _buildRouter() {
+  GoRouter _buildRouter() {
     return GoRouter(
       initialLocation: const ServerPickerRoute().toPath(),
+      // The system-browser CF Access login (see MobileCallbackLoginLauncher)
+      // returns to the app via `remotedev://auth/callback?...`. The OS
+      // Flutter engine forwards that URI to MaterialApp.router's route
+      // information provider, which would otherwise hand it to GoRouter
+      // and throw `GoException: no routes for location: remotedev://...`
+      // — replacing the in-flight login screen with the error builder.
+      //
+      // The launcher's own broadcast-stream subscription (via
+      // `deepLinkStreamProvider`) consumes the URI for credentials in
+      // parallel; here we just need to absorb the location so GoRouter
+      // doesn't try to route to it. We bounce to `/servers`: it's
+      // guaranteed to be registered (it's the initialLocation), and the
+      // launcher's `widget.onSaved` / `widget.onSuccess` continuation
+      // immediately replaces it with `/servers` (no-op) or `/home` —
+      // so this is a transient absorption target, not the user's
+      // final landing screen.
+      //
+      // We deliberately do NOT return `currentConfiguration.uri`:
+      // during cold-start / pre-initialLocation parsing GoRouter
+      // can hand us a `/` URI that has no registered route, triggering
+      // a follow-up `GoException: no routes for location: /`.
+      redirect: (context, state) {
+        final uri = state.uri;
+        if (uri.scheme == 'remotedev' &&
+            uri.host == 'auth' &&
+            uri.path == '/callback') {
+          return const ServerPickerRoute().toPath();
+        }
+        // The Android engine also re-fires the default route (`/`) when
+        // returning from a Chrome Custom Tab, even though `/` isn't a
+        // registered route. Map it to the initialLocation so it never
+        // surfaces as `GoException: no routes for location: /`.
+        if (uri.path == '/' && uri.scheme.isEmpty && uri.host.isEmpty) {
+          return const ServerPickerRoute().toPath();
+        }
+        return null;
+      },
       routes: [
         GoRoute(
           path: '/servers',
