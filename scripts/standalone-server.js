@@ -151,6 +151,9 @@ async function main() {
 
     process.on("SIGTERM", () => shutdown("SIGTERM"));
     process.on("SIGINT", () => shutdown("SIGINT"));
+    // Exit cleanly on tty hangup so the server doesn't survive a closed
+    // controlling shell when started outside a detached session.
+    process.on("SIGHUP", () => shutdown("SIGHUP"));
 
     proxyServer.listen(socketPath, () => {
       // Set socket permissions

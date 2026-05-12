@@ -273,6 +273,26 @@ function isProcessRunning(pid: number): boolean {
   }
 }
 
+// Kill an entire process group by negative PID. Servers are spawned
+// `detached: true` so each is its own session/pgid leader — signalling
+// `-pid` reaches every descendant (tsx wrapper + actual node server)
+// instead of only the outer `bun run tsx` process.
+//
+// Swallow ESRCH (group already empty) and EPERM (kernel returns EPERM on
+// some platforms once the leader has been reaped and the pgrp slot is
+// stale) — both indicate the group is no longer signalable, which is the
+// success condition we want.
+function killProcessGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== "ESRCH" && code !== "EPERM") {
+      throw err;
+    }
+  }
+}
+
 function stopCurrentServers(): void {
   logDeploy("Stopping current servers...");
 
@@ -287,17 +307,13 @@ function stopCurrentServers(): void {
     pidsToStop.push({ pid: terminalPid, name: "Terminal Server" });
   }
 
-  // Send SIGTERM to all
+  // Send SIGTERM to the whole group of each server
   for (const { pid, name } of pidsToStop) {
-    logDeploy(`Sending SIGTERM to ${name} (PID: ${pid})`);
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      logDeploy(`${name} already stopped`);
-    }
+    logDeploy(`Sending SIGTERM to ${name} process group (PID: ${pid})`);
+    killProcessGroup(pid, "SIGTERM");
   }
 
-  // Wait for all to exit
+  // Wait for all leaders to exit (descendants die with — or before — the leader)
   const deadline = Date.now() + PROCESS_STOP_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const stillRunning = pidsToStop.filter((p) => isProcessRunning(p.pid));
@@ -305,15 +321,11 @@ function stopCurrentServers(): void {
     spawnSync(["sleep", "0.2"]);
   }
 
-  // SIGKILL any stragglers
+  // SIGKILL the group for any leader still alive
   for (const { pid, name } of pidsToStop) {
     if (isProcessRunning(pid)) {
-      logDeploy(`Force killing ${name} (PID: ${pid})`);
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // Already dead
-      }
+      logDeploy(`Force killing ${name} process group (PID: ${pid})`);
+      killProcessGroup(pid, "SIGKILL");
     }
   }
 
@@ -404,6 +416,8 @@ async function startServers(slot: Slot): Promise<boolean> {
     env: serverEnv,
     stdout: "inherit",
     stderr: "inherit",
+    // Own session/pgid so stopCurrentServers() can group-kill on next deploy.
+    detached: true,
   });
 
   if (terminalProc.pid) {
@@ -431,6 +445,8 @@ async function startServers(slot: Slot): Promise<boolean> {
     }),
     stdout: "inherit",
     stderr: "inherit",
+    // Own session/pgid so stopCurrentServers() can group-kill on next deploy.
+    detached: true,
   });
 
   if (nextProc.pid) {

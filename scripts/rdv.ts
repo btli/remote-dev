@@ -227,12 +227,32 @@ function clearMode(): void {
   removePid(MODE_FILE);
 }
 
+// Kill an entire process group by negative PID. The servers are spawned
+// `detached: true` (own session/process group, pgid == leader pid), so
+// signalling `-pid` reaches every descendant — including the inner tsx +
+// node processes that would otherwise be re-parented to init and leak.
+//
+// Swallow ESRCH (group already empty) and EPERM (kernel returns EPERM on
+// some platforms once the leader has been reaped and the pgrp slot is
+// stale) — both indicate the group is no longer signalable, which is the
+// success condition we want.
+function killProcessGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== "ESRCH" && code !== "EPERM") {
+      throw err;
+    }
+  }
+}
+
 function stopProcess(pidFile: string, name: string): boolean {
   const pid = readPid(pidFile);
   if (pid && isProcessRunning(pid)) {
     console.log(`Stopping ${name} (PID: ${pid})...`);
     try {
-      process.kill(pid, "SIGTERM");
+      killProcessGroup(pid, "SIGTERM");
 
       let attempts = 0;
       while (isProcessRunning(pid) && attempts < 50) {
@@ -242,7 +262,7 @@ function stopProcess(pidFile: string, name: string): boolean {
 
       if (isProcessRunning(pid)) {
         console.log(`Force killing ${name}...`);
-        process.kill(pid, "SIGKILL");
+        killProcessGroup(pid, "SIGKILL");
       }
 
       removePid(pidFile);
@@ -267,12 +287,18 @@ async function startServer(
 ): Promise<SpawnedProcess | null> {
   console.log(`Starting ${name}...`);
 
+  // detached: true makes the child the leader of a new session/process
+  // group (POSIX setsid). This lets stop() target the whole tree via
+  // `kill -pgid` — without it, SIGTERM only hits the outer `bun run tsx`
+  // wrapper and the actual server (the grandchild) survives, leaking on
+  // every deploy. See stopProcess() for the matching group-kill.
   const proc = spawn({
     cmd,
     cwd: PROJECT_ROOT,
     env: { ...process.env, ...env },
     stdout: "inherit",
     stderr: "inherit",
+    detached: true,
   });
 
   if (proc.pid) {
