@@ -238,6 +238,7 @@ export function BeadsSidebar({
     beadsSidebarCollapsed: dbCollapsed,
     beadsSidebarWidth: dbWidth,
     beadsSectionExpanded: dbSectionExpanded,
+    userSettingsLoaded,
   } = useBeadsContext();
   const { updateUserSettings } = usePreferencesContext();
   const { schedules } = useScheduleContext();
@@ -269,22 +270,32 @@ export function BeadsSidebar({
     }
   }, []);
 
-  // Sync DB settings → local state when changed via Settings page.
-  // Skip the initial mount to avoid overwriting localStorage values that the
-  // hydration effect above applied (the user may have toggled before prefs loaded).
-  const collapsedSyncMounted = useRef(false);
+  // Sync DB settings → local state for changes that happen AFTER the initial
+  // userSettings load (e.g. the user editing the value on the Settings page).
+  // The initial load transition itself is skipped: at that moment dbCollapsed
+  // flips from the hardcoded default to the real DB value, and propagating
+  // that would clobber any localStorage value the hydration effect applied.
+  const collapsedSyncReady = useRef(false);
   useEffect(() => {
-    if (!collapsedSyncMounted.current) { collapsedSyncMounted.current = true; return; }
+    if (!userSettingsLoaded) return;
+    if (!collapsedSyncReady.current) {
+      collapsedSyncReady.current = true;
+      return;
+    }
     setCollapsed(dbCollapsed);
     setStoredCollapsed(dbCollapsed);
-  }, [dbCollapsed]);
+  }, [userSettingsLoaded, dbCollapsed]);
 
-  const widthSyncMounted = useRef(false);
+  const widthSyncReady = useRef(false);
   useEffect(() => {
-    if (!widthSyncMounted.current) { widthSyncMounted.current = true; return; }
+    if (!userSettingsLoaded) return;
+    if (!widthSyncReady.current) {
+      widthSyncReady.current = true;
+      return;
+    }
     setWidth(dbWidth);
     setStoredWidth(dbWidth);
-  }, [dbWidth]);
+  }, [userSettingsLoaded, dbWidth]);
 
   const switchTab = useCallback((tab: SidebarTab) => {
     setActiveTab(tab);
