@@ -242,23 +242,36 @@ export function BeadsSidebar({
   const { updateUserSettings } = usePreferencesContext();
   const { schedules } = useScheduleContext();
 
-  // Sidebar state — localStorage for instant rendering, DB defaults for first use
-  const [collapsed, setCollapsed] = useState(() => {
-    if (typeof window !== "undefined" && localStorage.getItem("beads-sidebar-collapsed") !== null) {
-      return getStoredCollapsed();
+  // Sidebar state — seed from DB defaults so SSR and first client render match,
+  // then hydrate from localStorage in a mount-only effect below. Reading
+  // localStorage in the initializer causes a hydration mismatch when the
+  // stored value diverges from the DB default.
+  const [collapsed, setCollapsed] = useState(dbCollapsed);
+  const [width, setWidth] = useState(dbWidth);
+
+  // Selected issue for detail view (declared early so switchTab can reference it)
+  const [selectedIssue, setSelectedIssue] = useState<BeadsIssue | null>(null);
+
+  // Active tab state — seeded with SSR-safe default, hydrated from localStorage on mount.
+  const [activeTab, setActiveTab] = useState<SidebarTab>("beads");
+
+  // Hydrate sidebar state from localStorage after mount. Uses plain setters so
+  // we don't echo a cross-tab event for our own hydration.
+  useEffect(() => {
+    if (localStorage.getItem("beads-sidebar-collapsed") !== null) {
+      setCollapsed(getStoredCollapsed());
     }
-    return dbCollapsed;
-  });
-  const [width, setWidth] = useState(() => {
-    if (typeof window !== "undefined" && localStorage.getItem("beads-sidebar-width") !== null) {
-      return getStoredWidth();
+    if (localStorage.getItem("beads-sidebar-width") !== null) {
+      setWidth(getStoredWidth());
     }
-    return dbWidth;
-  });
+    if (localStorage.getItem("beads-sidebar-tab") !== null) {
+      setActiveTab(getStoredTab());
+    }
+  }, []);
 
   // Sync DB settings → local state when changed via Settings page.
   // Skip the initial mount to avoid overwriting localStorage values that the
-  // initializer already applied (the user may have toggled before prefs loaded).
+  // hydration effect above applied (the user may have toggled before prefs loaded).
   const collapsedSyncMounted = useRef(false);
   useEffect(() => {
     if (!collapsedSyncMounted.current) { collapsedSyncMounted.current = true; return; }
@@ -272,12 +285,6 @@ export function BeadsSidebar({
     setWidth(dbWidth);
     setStoredWidth(dbWidth);
   }, [dbWidth]);
-
-  // Selected issue for detail view (declared early so switchTab can reference it)
-  const [selectedIssue, setSelectedIssue] = useState<BeadsIssue | null>(null);
-
-  // Active tab state — persisted to localStorage
-  const [activeTab, setActiveTab] = useState<SidebarTab>(getStoredTab);
 
   const switchTab = useCallback((tab: SidebarTab) => {
     setActiveTab(tab);

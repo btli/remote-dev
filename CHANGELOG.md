@@ -32,6 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   less-precise 2s-throttled scroll-up clear and 5000-line-feed
   threshold clear (closes remote-dev-xjje, follow-up to
   remote-dev-ofqf).
+- **Web**: BeadsSidebar no longer triggers a React hydration mismatch.
+  Three `useState` initializers (`collapsed`, `width`, `activeTab`) read
+  `localStorage` via `typeof window !== "undefined"` — the exact
+  anti-pattern the hydration error message warns about. Server rendered
+  the collapsed `w-12` strip while the client first render returned the
+  expanded sidebar with `style={{width:294}}`, producing "Hydration
+  failed because the server rendered HTML didn't match the client" and
+  a full tree regeneration on every load. State is now seeded from DB
+  defaults so SSR and first client render agree, and `localStorage` is
+  read in a mount-only `useEffect` with plain setters (not `setStoredX`,
+  which dispatch a `CustomEvent` the component subscribes to).
 - **Mobile**: FCM notification taps now navigate to the right session
   (or channel) and sync read-state with the server. `NotificationTapHandler`
   was defined after the refactor from `archive/mobile-flutter/` but never
