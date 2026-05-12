@@ -68,6 +68,26 @@ class _NewSessionSheetState extends ConsumerState<NewSessionSheet> {
     }
   }
 
+  /// One-shot resolution of the preferred agent provider when the user
+  /// switches Type to `agent`. We do this here (not inside the dropdown's
+  /// build) so the side effect is tied to a deterministic event and has
+  /// a single mounted-guard at the end.
+  Future<void> _resolveDefaultAgentProvider() async {
+    try {
+      final agents = await ref.read(installedAgentsProvider.future);
+      if (!mounted) return;
+      if (_agentProvider != null || _terminalType != 'agent') return;
+      if (agents.isEmpty) return;
+      final preferred = agents.firstWhere(
+        (a) => a.provider == 'claude',
+        orElse: () => agents.first,
+      );
+      setState(() => _agentProvider = preferred.provider);
+    } catch (_) {
+      // Error UI is handled by `_AgentProviderField` watching the provider.
+    }
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     if (_projectId == null) {
@@ -162,6 +182,7 @@ class _NewSessionSheetState extends ConsumerState<NewSessionSheet> {
                       _terminalType = v;
                       if (v != 'agent') _agentProvider = null;
                     });
+                    if (v == 'agent') _resolveDefaultAgentProvider();
                   }
                 },
               ),
@@ -225,8 +246,9 @@ class _NewSessionSheetState extends ConsumerState<NewSessionSheet> {
 /// - loading: shows a small CircularProgressIndicator
 /// - error: shows red error text
 /// - empty: shows "No agents installed" (and the parent blocks save)
-/// - success: renders a `DropdownButtonFormField` and defaults to the first
-///   installed provider (preferring `claude`) via a post-frame callback.
+/// - success: renders a `DropdownButtonFormField`. The default-pick
+///   decision lives in the parent state (see `_resolveDefaultAgentProvider`)
+///   so build stays pure — no post-frame callbacks here.
 class _AgentProviderField extends ConsumerWidget {
   const _AgentProviderField({
     required this.selected,
@@ -261,20 +283,12 @@ class _AgentProviderField extends ConsumerWidget {
             style: TextStyle(color: Color(0xFFF7768E)),
           );
         }
-        // Default-pick the first installed agent, preferring `claude`.
-        String? effectiveSelected = selected;
-        if (effectiveSelected == null ||
-            !agents.any((a) => a.provider == effectiveSelected)) {
-          final preferred = agents.firstWhere(
-            (a) => a.provider == 'claude',
-            orElse: () => agents.first,
-          );
-          effectiveSelected = preferred.provider;
-          // Defer the parent setState until the current frame finishes.
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            onChanged(preferred.provider);
-          });
-        }
+        // Render with whatever `selected` we were handed. If it's null
+        // (parent's default-pick hasn't resolved yet, or the selection
+        // doesn't match any installed agent), DropdownButtonFormField will
+        // show no initial value until onChanged fires.
+        final effectiveSelected =
+            agents.any((a) => a.provider == selected) ? selected : null;
         return DropdownButtonFormField<String>(
           initialValue: effectiveSelected,
           dropdownColor: const Color(0xFF24283B),
