@@ -124,6 +124,16 @@ vi.mock("@xterm/addon-webgl", async () => {
       onContextLoss() {
         return { dispose: () => {} };
       }
+      onAddTextureAtlasCanvas() {
+        return { dispose: () => {} };
+      }
+      onRemoveTextureAtlasCanvas() {
+        return { dispose: () => {} };
+      }
+      onChangeTextureAtlas() {
+        return { dispose: () => {} };
+      }
+      clearTextureAtlas() {}
     },
   };
 });

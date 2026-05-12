@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Terminal**: stale glyphs during scrolling in long-running sessions
+  caused by xterm.js WebGL atlas page-merge — clear atlas via
+  `onRemoveTextureAtlasCanvas` on next animation frame; replaces
+  less-precise 2s-throttled scroll-up clear and 5000-line-feed
+  threshold clear (closes remote-dev-xjje, follow-up to
+  remote-dev-ofqf).
 - **Mobile**: FCM notification taps now navigate to the right session
   (or channel) and sync read-state with the server. `NotificationTapHandler`
   was defined after the refactor from `archive/mobile-flutter/` but never

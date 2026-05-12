@@ -457,6 +457,32 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       try {
         const { WebglAddon } = await import("@xterm/addon-webgl");
         let contextLossRecoveryAttempted = false;
+
+        // Merge-recovery: webglAddon.onRemoveTextureAtlasCanvas only fires inside
+        // TextureAtlas._mergePages (when 4+ atlas pages accumulate in long-running
+        // sessions and get quad-merged into one). The merge rewrites glyph indices,
+        // and the per-cell skip in WebglRenderer._updateModel can leave the vertex
+        // buffer pointing at stale page indices — visible as wrong/duplicated
+        // glyphs during scrolling. Force a full atlas+model clear on the next
+        // animation frame to rebind every cell with current indices.
+        // See: xterm.js issues #5847, #4480, #4534, #4351.
+        let atlasRecoveryRaf: number | null = null;
+        const scheduleAtlasRecovery = () => {
+          if (atlasRecoveryRaf !== null) return;
+          atlasRecoveryRaf = requestAnimationFrame(() => {
+            atlasRecoveryRaf = null;
+            webglAddonRef.current?.clearTextureAtlas();
+          });
+        };
+        terminalDisposablesRef.current.push({
+          dispose: () => {
+            if (atlasRecoveryRaf !== null) {
+              cancelAnimationFrame(atlasRecoveryRaf);
+              atlasRecoveryRaf = null;
+            }
+          },
+        });
+
         const loadWebgl = () => {
           const webglAddon = new WebglAddon();
           webglAddon.onContextLoss(() => {
@@ -473,6 +499,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
               }
             }
           });
+          const atlasMergeDisposable = webglAddon.onRemoveTextureAtlasCanvas(scheduleAtlasRecovery);
+          terminalDisposablesRef.current.push(atlasMergeDisposable);
           terminal.loadAddon(webglAddon);
           webglAddonRef.current = webglAddon;
         };
@@ -545,14 +573,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       // Alt-screen apps (vim/htop) have no scrollback; the buffer-change listener
       // clears any stale "scrolled up" state when the user enters/exits an alt-screen
       // app, since onScroll won't fire for the buffer switch itself.
-      //
-      // Scrolling back through history is when stale WebGL atlas glyphs become
-      // visible (the atlas evicts old entries; older scrollback re-rasterizes
-      // against a partially-stale texture). Force-clear the atlas while the
-      // user is browsing scrollback, throttled so a continuous wheel doesn't
-      // thrash the GPU.
-      let lastAtlasClearAt = 0;
-      const ATLAS_CLEAR_MIN_INTERVAL_MS = 2000;
       const updateScrollState = () => {
         const buf = terminal.buffer.active;
         const scrolledUp = buf.type === "normal" && buf.viewportY < buf.baseY;
@@ -560,31 +580,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           isScrolledUpRef.current = scrolledUp;
           onScrollStateChangeRef.current?.(scrolledUp);
         }
-        if (scrolledUp) {
-          const now = Date.now();
-          if (now - lastAtlasClearAt > ATLAS_CLEAR_MIN_INTERVAL_MS) {
-            lastAtlasClearAt = now;
-            webglAddonRef.current?.clearTextureAtlas();
-          }
-        }
       };
       const scrollDisposable = terminal.onScroll(updateScrollState);
       const bufferChangeDisposable = terminal.buffer.onBufferChange(updateScrollState);
       terminalDisposablesRef.current.push(scrollDisposable, bufferChangeDisposable);
-
-      // Also clear the atlas after substantial new output, since long-running
-      // sessions accumulate enough distinct glyphs/colors to overflow the
-      // texture even when the viewport is at the bottom.
-      let lineFeedCount = 0;
-      const LINE_FEED_CLEAR_THRESHOLD = 5000;
-      const lineFeedDisposable = terminal.onLineFeed(() => {
-        lineFeedCount++;
-        if (lineFeedCount >= LINE_FEED_CLEAR_THRESHOLD) {
-          lineFeedCount = 0;
-          webglAddonRef.current?.clearTextureAtlas();
-        }
-      });
-      terminalDisposablesRef.current.push(lineFeedDisposable);
 
       // Custom keyboard handler for macOS shortcuts, clipboard, and special key sequences
       // xterm.js doesn't translate Cmd/Option key combinations by default
