@@ -34,6 +34,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `startServer()`; unused `head` positional arg on the proxy upgrade
   handler).
 
+## [0.3.13] - 2026-05-12
+
+### Fixed
+
+- **Mobile**: v0.3.12 hotfix actually broke server-add. The
+  `redirect: → /servers` callback absorbed the GoException but
+  *navigated GoRouter to `/servers`*, which unmounted the in-flight
+  `AddServerScreen`. The launcher's `await _runCallbackLogin()` still
+  resolved (broadcast stream survived), but the post-await
+  `if (!mounted) return;` guard in `_save()` aborted before the server
+  record was upserted — so CF Access succeeded yet no server appeared
+  in the picker. Replaced with a `_lastGoodLocation` tracker: the
+  redirect now returns the most recently matched location, which
+  go_router treats as a no-op (Page stays mounted). AddServer's State
+  survives the deep-link round-trip, the credentials persist + server
+  upsert complete, and `widget.onSaved` drives the post-save nav as
+  designed. Same single-file change in
+  `mobile/lib/presentation/router/app_router.dart`. `flutter analyze`
+  clean.
+
 ## [0.3.12] - 2026-05-12
 
 ### Fixed

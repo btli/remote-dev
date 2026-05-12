@@ -43,6 +43,13 @@ class AppRouter {
   late final GoRouter _config;
   GoRouter get config => _config;
 
+  /// Tracks the most recent successfully-matched location so that the
+  /// `redirect` callback below can absorb stray `remotedev://auth/callback`
+  /// and bare `/` URIs without disturbing the navigation stack. Initialized
+  /// to the same path as `initialLocation` so the first redirect call sees
+  /// a valid value.
+  String _lastGoodLocation = const ServerPickerRoute().toPath();
+
   void navigateTo(AppRoute route) {
     _config.go(route.toPath());
   }
@@ -54,37 +61,39 @@ class AppRouter {
       // returns to the app via `remotedev://auth/callback?...`. The OS
       // Flutter engine forwards that URI to MaterialApp.router's route
       // information provider, which would otherwise hand it to GoRouter
-      // and throw `GoException: no routes for location: remotedev://...`
-      // — replacing the in-flight login screen with the error builder.
+      // and throw `GoException: no routes for location: remotedev://...`.
       //
       // The launcher's own broadcast-stream subscription (via
       // `deepLinkStreamProvider`) consumes the URI for credentials in
-      // parallel; here we just need to absorb the location so GoRouter
-      // doesn't try to route to it. We bounce to `/servers`: it's
-      // guaranteed to be registered (it's the initialLocation), and the
-      // launcher's `widget.onSaved` / `widget.onSuccess` continuation
-      // immediately replaces it with `/servers` (no-op) or `/home` —
-      // so this is a transient absorption target, not the user's
-      // final landing screen.
+      // parallel. We must NOT navigate away from the current screen here:
+      // `AddServerScreen._save()` is `await`-ing `_runCallbackLogin()`,
+      // and if GoRouter swaps in a different page the State is disposed,
+      // the post-await `if (!mounted) return;` aborts, and the new server
+      // is never persisted (v0.3.12 regression: CF Access succeeds, but
+      // no server appears).
       //
-      // We deliberately do NOT return `currentConfiguration.uri`:
-      // during cold-start / pre-initialLocation parsing GoRouter
-      // can hand us a `/` URI that has no registered route, triggering
-      // a follow-up `GoException: no routes for location: /`.
+      // The trick is to return the LAST-KNOWN-GOOD location from the
+      // redirect. go_router treats "redirect to the current location" as
+      // a no-op (no Page swap, no State.dispose). So the AddServer page
+      // stays mounted, its mounted check passes, the credentials are
+      // persisted, and `widget.onSaved` drives the post-save nav.
+      //
+      // Same trick covers the bare-`/` URI the Android engine re-fires
+      // when returning from a Chrome Custom Tab — no registered `/`
+      // route exists.
       redirect: (context, state) {
         final uri = state.uri;
-        if (uri.scheme == 'remotedev' &&
+        final isAuthCallback = uri.scheme == 'remotedev' &&
             uri.host == 'auth' &&
-            uri.path == '/callback') {
-          return const ServerPickerRoute().toPath();
+            uri.path == '/callback';
+        final isBareRoot =
+            uri.path == '/' && uri.scheme.isEmpty && uri.host.isEmpty;
+        if (isAuthCallback || isBareRoot) {
+          return _lastGoodLocation;
         }
-        // The Android engine also re-fires the default route (`/`) when
-        // returning from a Chrome Custom Tab, even though `/` isn't a
-        // registered route. Map it to the initialLocation so it never
-        // surfaces as `GoException: no routes for location: /`.
-        if (uri.path == '/' && uri.scheme.isEmpty && uri.host.isEmpty) {
-          return const ServerPickerRoute().toPath();
-        }
+        // Normal navigation — remember this location so the next stray
+        // callback URI can be absorbed back to it.
+        _lastGoodLocation = uri.toString();
         return null;
       },
       routes: [
