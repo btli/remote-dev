@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.11] - 2026-05-11
+
+### Added
+
+- **Mobile**: System-browser CF Access login flow. The Add Server flow now
+  hands the CF challenge off to the OS browser via `url_launcher` and uses
+  an `app://` deep link to return the harvested `CF_Authorization` cookie.
+  Fixes prior CF login failures in the embedded WebView on devices where
+  CF redirected to provider SSO (Google/Microsoft/Okta) (PR #289,
+  remote-dev-jch1).
+- **Mobile**: Restored the legacy terminal-window launcher icon + splash
+  logo on Android + iOS (PR #288).
+
+### Fixed
+
+- **Mobile**: Shrank the Android 12+ splash logo to fit the 768px safe
+  zone — prevents the launcher logo from being clipped on devices with
+  Android 12 SplashScreen API (PR #290, follow-up on #288).
+
 ## [0.3.10] - 2026-05-11
 
 ### Fixed
