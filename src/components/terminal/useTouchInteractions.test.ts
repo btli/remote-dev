@@ -841,6 +841,24 @@ describe("axis-aligned cancel threshold matches touch-scroll activation", () => 
     expect(h.getMode()).toBe("scroll");
     expect(h.xterm.select).not.toHaveBeenCalled();
   });
+
+  // Symmetric to handleTouchMove's axis-aligned cancel: handleTouchEnd's
+  // tap-qualify must use the same axis-aligned bounds. Under the old
+  // Math.hypot(dx, dy) check, a diagonal micro-swipe with dx=4, dy=4
+  // (hypot ≈ 5.66 > TAP_MAX_PX=5) was rejected as "not a tap" even though
+  // neither axis crossed the move-cancel threshold.
+  it("synthesizes a tap on touchend at dx=4, dy=4 (axis-aligned, not Euclidean)", () => {
+    const h = makeHarness();
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    // Move diagonally to dx=4, dy=4. Hypot ~= 5.66, but neither axis crosses 5.
+    h.fireTouch("touchmove", [{ x: 204, y: 104 }]);
+    h.advanceTime(50);
+    h.fireTouch("touchend", []);
+    expect(h.mouseEvents.map(({ type, clientX, clientY }) => ({ type, clientX, clientY }))).toEqual([
+      { type: "mousedown", clientX: 200, clientY: 100 },
+      { type: "mouseup", clientX: 200, clientY: 100 },
+    ]);
+  });
 });
 
 describe("synthesized MouseEvent carries screenX/screenY", () => {
