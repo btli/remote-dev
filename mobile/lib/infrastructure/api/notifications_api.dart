@@ -15,12 +15,14 @@ class NotificationsApi implements NotificationsPort {
 
   @override
   Future<List<AppNotification>> list({String? filter}) async {
-    // Server accepts `?limit=N&unreadOnly=true|false`. Translate the
-    // mobile filter enum (`all` / `unread` / `mentions`) to that shape.
-    // `mentions` has no server-side concept yet — fall back to listing
-    // all notifications so the tab isn't empty.
-    final query = (filter == 'unread') ? '?unreadOnly=true' : '';
-    final raw = await _client.get('/api/notifications$query');
+    // Match the PWA mobile-web approach (see
+    // `src/components/mobile/notifications/NotificationsTab.tsx`): always
+    // fetch the full list and let the caller apply `unread` / `mentions`
+    // filtering in memory. The `filter` parameter is accepted for
+    // interface compatibility but intentionally ignored — server-side
+    // filtering would break the Mentions tab (no server concept) and
+    // make the chip counts inconsistent.
+    final raw = await _client.get('/api/notifications');
     // Tolerate {notifications: [...]} or [...].
     if (raw is Map<String, dynamic> && raw['notifications'] is List) {
       return (raw['notifications'] as List)

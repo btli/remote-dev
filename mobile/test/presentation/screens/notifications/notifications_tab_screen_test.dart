@@ -25,6 +25,7 @@ AppNotification _notif({
   String? sessionId,
   String? channelId,
   String kind = 'default',
+  String? type,
 }) {
   return AppNotification(
     id: id,
@@ -35,6 +36,7 @@ AppNotification _notif({
     sessionId: sessionId,
     channelId: channelId,
     kind: kind,
+    type: type,
   );
 }
 
@@ -79,29 +81,58 @@ void main() {
     expect(find.text('World'), findsOneWidget);
   });
 
-  testWidgets('tapping a chip refetches with the right filter',
+  testWidgets('tapping a chip filters the same fetched list in-memory',
       (tester) async {
-    final filterCalls = <String?>[];
-    when(() => api.list(filter: any(named: 'filter'))).thenAnswer(
-      (invocation) async {
-        filterCalls.add(invocation.namedArguments[#filter] as String?);
-        return const <AppNotification>[];
-      },
-    );
+    // The PWA mobile-web tab fetches all notifications once and
+    // filters client-side. The chip changes which rows are visible
+    // without firing another `list()` call. Build a payload with a
+    // mix of read/unread, agent-typed, and `@name`-bodied rows so we
+    // can verify all three chips select the right subset.
+    var listCalls = 0;
+    when(() => api.list(filter: any(named: 'filter'))).thenAnswer((_) async {
+      listCalls += 1;
+      return [
+        _notif(id: 'n-unread-plain', title: 'Plain', body: 'no mention'),
+        _notif(
+          id: 'n-read-mention',
+          title: 'Mention',
+          body: '@alice please look',
+          read: true,
+        ),
+        _notif(
+          id: 'n-agent-waiting',
+          title: '@you are pinged',
+          body: 'idle for 5m',
+          type: 'agent_waiting',
+        ),
+      ];
+    });
 
     await tester.pumpWidget(_wrap(api));
     await tester.pumpAndSettle();
-    expect(filterCalls.last, 'all');
 
-    // Tap the Unread chip.
+    // All chip: every row visible.
+    expect(find.text('Plain'), findsOneWidget);
+    expect(find.text('Mention'), findsOneWidget);
+    expect(find.text('@you are pinged'), findsOneWidget);
+
+    // Unread chip: drop the read row.
     await tester.tap(find.text('Unread'));
     await tester.pumpAndSettle();
-    expect(filterCalls.last, 'unread');
+    expect(find.text('Plain'), findsOneWidget);
+    expect(find.text('Mention'), findsNothing);
+    expect(find.text('@you are pinged'), findsOneWidget);
 
-    // Tap the Mentions chip.
+    // Mentions chip: keep only `@`-tokened rows, and exclude agent_* types
+    // even when their title contains `@`.
     await tester.tap(find.text('Mentions'));
     await tester.pumpAndSettle();
-    expect(filterCalls.last, 'mentions');
+    expect(find.text('Plain'), findsNothing);
+    expect(find.text('Mention'), findsOneWidget);
+    expect(find.text('@you are pinged'), findsNothing);
+
+    // Filtering happens in-memory — no extra fetches were issued.
+    expect(listCalls, 1);
   });
 
   testWidgets('shows error view + retry on failure', (tester) async {

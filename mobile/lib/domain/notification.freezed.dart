@@ -27,7 +27,12 @@ mixin _$AppNotification {
   bool get read => throw _privateConstructorUsedError;
   String? get sessionId => throw _privateConstructorUsedError;
   String? get channelId => throw _privateConstructorUsedError;
-  String get kind => throw _privateConstructorUsedError;
+  String get kind =>
+      throw _privateConstructorUsedError; // Server-side notification type (e.g. `agent_waiting`, `agent_error`,
+// `agent_complete`, `agent_exited`, `info`, …). Sourced from the
+// `type` field on `notification_event` records. Nullable for
+// forward-compat with payloads that omit it.
+  String? get type => throw _privateConstructorUsedError;
 
   /// Serializes this AppNotification to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -53,7 +58,8 @@ abstract class $AppNotificationCopyWith<$Res> {
       bool read,
       String? sessionId,
       String? channelId,
-      String kind});
+      String kind,
+      String? type});
 }
 
 /// @nodoc
@@ -79,6 +85,7 @@ class _$AppNotificationCopyWithImpl<$Res, $Val extends AppNotification>
     Object? sessionId = freezed,
     Object? channelId = freezed,
     Object? kind = null,
+    Object? type = freezed,
   }) {
     return _then(_value.copyWith(
       id: null == id
@@ -113,6 +120,10 @@ class _$AppNotificationCopyWithImpl<$Res, $Val extends AppNotification>
           ? _value.kind
           : kind // ignore: cast_nullable_to_non_nullable
               as String,
+      type: freezed == type
+          ? _value.type
+          : type // ignore: cast_nullable_to_non_nullable
+              as String?,
     ) as $Val);
   }
 }
@@ -133,7 +144,8 @@ abstract class _$$AppNotificationImplCopyWith<$Res>
       bool read,
       String? sessionId,
       String? channelId,
-      String kind});
+      String kind,
+      String? type});
 }
 
 /// @nodoc
@@ -157,6 +169,7 @@ class __$$AppNotificationImplCopyWithImpl<$Res>
     Object? sessionId = freezed,
     Object? channelId = freezed,
     Object? kind = null,
+    Object? type = freezed,
   }) {
     return _then(_$AppNotificationImpl(
       id: null == id
@@ -191,6 +204,10 @@ class __$$AppNotificationImplCopyWithImpl<$Res>
           ? _value.kind
           : kind // ignore: cast_nullable_to_non_nullable
               as String,
+      type: freezed == type
+          ? _value.type
+          : type // ignore: cast_nullable_to_non_nullable
+              as String?,
     ));
   }
 }
@@ -206,7 +223,8 @@ class _$AppNotificationImpl implements _AppNotification {
       this.read = false,
       this.sessionId,
       this.channelId,
-      this.kind = 'default'});
+      this.kind = 'default',
+      this.type});
 
   factory _$AppNotificationImpl.fromJson(Map<String, dynamic> json) =>
       _$$AppNotificationImplFromJson(json);
@@ -229,10 +247,16 @@ class _$AppNotificationImpl implements _AppNotification {
   @override
   @JsonKey()
   final String kind;
+// Server-side notification type (e.g. `agent_waiting`, `agent_error`,
+// `agent_complete`, `agent_exited`, `info`, …). Sourced from the
+// `type` field on `notification_event` records. Nullable for
+// forward-compat with payloads that omit it.
+  @override
+  final String? type;
 
   @override
   String toString() {
-    return 'AppNotification(id: $id, title: $title, body: $body, createdAt: $createdAt, read: $read, sessionId: $sessionId, channelId: $channelId, kind: $kind)';
+    return 'AppNotification(id: $id, title: $title, body: $body, createdAt: $createdAt, read: $read, sessionId: $sessionId, channelId: $channelId, kind: $kind, type: $type)';
   }
 
   @override
@@ -250,13 +274,14 @@ class _$AppNotificationImpl implements _AppNotification {
                 other.sessionId == sessionId) &&
             (identical(other.channelId, channelId) ||
                 other.channelId == channelId) &&
-            (identical(other.kind, kind) || other.kind == kind));
+            (identical(other.kind, kind) || other.kind == kind) &&
+            (identical(other.type, type) || other.type == type));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
   int get hashCode => Object.hash(runtimeType, id, title, body, createdAt, read,
-      sessionId, channelId, kind);
+      sessionId, channelId, kind, type);
 
   /// Create a copy of AppNotification
   /// with the given fields replaced by the non-null parameter values.
@@ -284,7 +309,8 @@ abstract class _AppNotification implements AppNotification {
       final bool read,
       final String? sessionId,
       final String? channelId,
-      final String kind}) = _$AppNotificationImpl;
+      final String kind,
+      final String? type}) = _$AppNotificationImpl;
 
   factory _AppNotification.fromJson(Map<String, dynamic> json) =
       _$AppNotificationImpl.fromJson;
@@ -304,7 +330,13 @@ abstract class _AppNotification implements AppNotification {
   @override
   String? get channelId;
   @override
-  String get kind;
+  String
+      get kind; // Server-side notification type (e.g. `agent_waiting`, `agent_error`,
+// `agent_complete`, `agent_exited`, `info`, …). Sourced from the
+// `type` field on `notification_event` records. Nullable for
+// forward-compat with payloads that omit it.
+  @override
+  String? get type;
 
   /// Create a copy of AppNotification
   /// with the given fields replaced by the non-null parameter values.

@@ -12,11 +12,18 @@ class SessionsApi implements SessionsPort {
     final list = _extractSessions(raw);
     return list
         .map((m) => SessionSummary.fromJson(m))
-        // Server returns sessions in the `trashed` soft-delete state too;
-        // the web client filters them out at the rendering layer and the
-        // mobile UI has no trash-management surface. Drop them here so
-        // they never reach the picker / tabs.
-        .where((s) => s.status != SessionStatus.trashed)
+        // Mirror the PWA's mobile-web Sessions tab (see
+        // `src/components/mobile/sessions/SessionsTab.tsx`), which only
+        // shows sessions in the `active` or `suspended` states. The
+        // server also hands back `closed` sessions (terminal-but-not-
+        // trashed) and `trashed` soft-deletes; both belong to surfaces
+        // the mobile app doesn't expose, so we drop them here before
+        // they ever reach the picker / tabs.
+        .where(
+          (s) =>
+              s.status == SessionStatus.active ||
+              s.status == SessionStatus.suspended,
+        )
         .toList(growable: false);
   }
 

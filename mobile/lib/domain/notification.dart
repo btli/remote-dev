@@ -14,6 +14,11 @@ class AppNotification with _$AppNotification {
     String? sessionId,
     String? channelId,
     @Default('default') String kind,
+    // Server-side notification type (e.g. `agent_waiting`, `agent_error`,
+    // `agent_complete`, `agent_exited`, `info`, …). Sourced from the
+    // `type` field on `notification_event` records. Nullable for
+    // forward-compat with payloads that omit it.
+    String? type,
   }) = _AppNotification;
 
   factory AppNotification.fromJson(Map<String, dynamic> json) =>

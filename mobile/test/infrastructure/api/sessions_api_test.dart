@@ -60,7 +60,7 @@ void main() {
             'id': 'sess-3',
             'name': 'Test',
             'tmuxSessionName': 'rdv-3',
-            'status': 'closed',
+            'status': 'active',
             'projectId': null,
           },
         ],
@@ -68,7 +68,57 @@ void main() {
 
       final sessions = await api.list();
       expect(sessions, hasLength(1));
-      expect(sessions[0].status, SessionStatus.closed);
+      expect(sessions[0].status, SessionStatus.active);
+    });
+
+    test('drops closed and trashed sessions, keeps active + suspended',
+        () async {
+      // Mirror the PWA mobile-web Sessions tab, which only displays
+      // sessions in `active` or `suspended` status. The server can hand
+      // back `closed` (terminal) and `trashed` (soft-deleted) entries
+      // too — neither belongs in the mobile picker.
+      when(() => client.get('/api/sessions')).thenAnswer(
+        (_) async => {
+          'sessions': [
+            {
+              'id': 'sess-active',
+              'name': 'A',
+              'tmuxSessionName': 'rdv-a',
+              'status': 'active',
+            },
+            {
+              'id': 'sess-suspended',
+              'name': 'S',
+              'tmuxSessionName': 'rdv-s',
+              'status': 'suspended',
+            },
+            {
+              'id': 'sess-closed',
+              'name': 'C',
+              'tmuxSessionName': 'rdv-c',
+              'status': 'closed',
+            },
+            {
+              'id': 'sess-trashed',
+              'name': 'T',
+              'tmuxSessionName': 'rdv-t',
+              'status': 'trashed',
+            },
+          ],
+        },
+      );
+
+      final sessions = await api.list();
+      final ids = sessions.map((s) => s.id).toList();
+      expect(ids, equals(['sess-active', 'sess-suspended']));
+      expect(
+        sessions.every(
+          (s) =>
+              s.status == SessionStatus.active ||
+              s.status == SessionStatus.suspended,
+        ),
+        isTrue,
+      );
     });
 
     test('throws on unexpected shape', () async {

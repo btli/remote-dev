@@ -34,6 +34,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   eagerly from `main.dart` via a new `notificationTapHandlerProvider`, and
   restored the legacy mark-read-on-tap behavior so the web client sees the
   tap as a read event.
+- **Mobile (Flutter) – Sessions tab**: list now matches the PWA
+  mobile-web reference and shows only `active` and `suspended` sessions.
+  `SessionsApi.list()` previously only filtered `trashed`, leaking
+  `closed` (terminal-state) sessions into the picker — these belong to
+  surfaces the mobile app doesn't expose.
+- **Mobile (Flutter) – Notifications Mentions filter**: the "Mentions"
+  chip now actually filters. The Flutter app used to pass
+  `?filter=mentions` to the API, which the server ignored — so
+  "Mentions" returned the full list, identical to "All". Aligned with
+  the PWA mobile-web tab: fetch all notifications once, then filter
+  client-side using an `isMention` heuristic that respects
+  `agent_waiting` / `agent_error` / `agent_complete` / `agent_exited`
+  types and the `@<sid:UUID>` / `@name` token patterns. The
+  `AppNotification` domain model gained an optional `type` field
+  sourced from the server's `notification_event.type` column.
 - **Scripts**: `rdv` and the blue/green deploy webhook no longer leak
   server processes on stop/restart. `Bun.spawn("bun", "run", "tsx",
   "src/server/index.ts", ...)` produces a 3-deep process tree (bun

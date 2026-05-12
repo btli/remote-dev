@@ -96,31 +96,55 @@ void main() {
       expect(list[0].read, isFalse);
     });
 
-    test('translates filter=unread to ?unreadOnly=true', () async {
+    test('ignores the filter param and always fetches the full list',
+        () async {
+      // Match the PWA mobile-web Notifications tab: fetch every
+      // notification once and filter in memory. The `filter` arg is
+      // kept for port compatibility but must not change the request.
       when(() => client.get(any())).thenAnswer((_) async => const []);
 
       await api.list(filter: 'unread');
-      verify(() => client.get('/api/notifications?unreadOnly=true'))
-          .called(1);
-    });
-
-    test(
-      'falls back to bare path for filter=mentions (no server-side concept)',
-      () async {
-        when(() => client.get(any())).thenAnswer((_) async => const []);
-
-        await api.list(filter: 'mentions');
-        verify(() => client.get('/api/notifications')).called(1);
-      },
-    );
-
-    test('omits query string for filter=all and null', () async {
-      when(() => client.get(any())).thenAnswer((_) async => const []);
-
+      await api.list(filter: 'mentions');
       await api.list(filter: 'all');
       await api.list();
 
-      verify(() => client.get('/api/notifications')).called(2);
+      verify(() => client.get('/api/notifications')).called(4);
+      verifyNever(() => client.get('/api/notifications?filter=unread'));
+      verifyNever(() => client.get('/api/notifications?unreadOnly=true'));
+    });
+
+    test('parses the server-side notification type field', () async {
+      when(() => client.get('/api/notifications')).thenAnswer(
+        (_) async => {
+          'notifications': [
+            {
+              'id': 'n-agent',
+              'title': 'Agent waiting',
+              'body': 'Idle for 5m',
+              'createdAt': '2026-05-08T10:00:00.000Z',
+              'type': 'agent_waiting',
+            },
+            {
+              'id': 'n-info',
+              'title': '@you mentioned',
+              'body': 'see this',
+              'createdAt': '2026-05-08T10:00:00.000Z',
+              'type': 'info',
+            },
+            {
+              'id': 'n-no-type',
+              'title': 'Untyped',
+              'body': 'legacy',
+              'createdAt': '2026-05-08T10:00:00.000Z',
+            },
+          ],
+        },
+      );
+
+      final list = await api.list();
+      expect(list[0].type, 'agent_waiting');
+      expect(list[1].type, 'info');
+      expect(list[2].type, isNull);
     });
 
     test('returns empty list on unexpected response shape', () async {
@@ -131,7 +155,10 @@ void main() {
   });
 
   group('dismiss()', () {
-    test('DELETEs /api/notifications with {ids: [id]}', () async {
+    test('DELETEs /api/notifications with {ids: [id]} body', () async {
+      // The server has no `/api/notifications/:id` route — only the
+      // bulk DELETE that takes `{ids: [...]}`. Wrap the single id in an
+      // array so the dismiss button stops 404-ing on production.
       when(() => client.delete(any(), body: any(named: 'body')))
           .thenAnswer((_) async {});
 

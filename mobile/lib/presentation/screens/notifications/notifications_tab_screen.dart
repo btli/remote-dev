@@ -26,11 +26,37 @@ enum NotificationFilter {
   final String label;
 }
 
-/// Family-keyed list provider — re-fetches when the filter changes.
-final notificationsListProvider = FutureProvider.autoDispose
-    .family<List<AppNotification>, NotificationFilter>((ref, filter) async {
-  return ref.watch(notificationsApiProvider).list(filter: filter.queryValue);
+/// Single list provider — always fetches every notification. Filtering
+/// is done client-side in the widget, mirroring the PWA mobile-web tab
+/// (`src/components/mobile/notifications/NotificationsTab.tsx`). This
+/// avoids a per-filter refetch and keeps the Mentions chip working —
+/// the server has no concept of a "mention" notification type, so we
+/// detect mentions locally with [_isMention].
+final notificationsListProvider =
+    FutureProvider.autoDispose<List<AppNotification>>((ref) async {
+  return ref.watch(notificationsApiProvider).list();
 });
+
+/// Heuristic that mirrors the PWA's `isMention` (see
+/// `src/components/mobile/notifications/NotificationsTab.tsx`):
+///
+/// 1. Agent lifecycle events (`agent_waiting`, `agent_error`,
+///    `agent_complete`, `agent_exited`) are never mentions, even if
+///    their text happens to contain an `@`-token.
+/// 2. Everything else qualifies if the title or body contains either
+///    the peer-message `@<sid:UUID>` token or a human-readable `@name`
+///    word boundary.
+bool _isMention(AppNotification n) {
+  switch (n.type) {
+    case 'agent_waiting':
+    case 'agent_error':
+    case 'agent_complete':
+    case 'agent_exited':
+      return false;
+  }
+  final haystack = '${n.title} ${n.body}';
+  return RegExp(r'@<sid:[^>]+>|(^|\s)@\w').hasMatch(haystack);
+}
 
 class NotificationsTabScreen extends ConsumerStatefulWidget {
   const NotificationsTabScreen({super.key});
@@ -45,8 +71,8 @@ class _NotificationsTabScreenState
   NotificationFilter _filter = NotificationFilter.all;
 
   Future<void> _refresh() async {
-    ref.invalidate(notificationsListProvider(_filter));
-    await ref.read(notificationsListProvider(_filter).future);
+    ref.invalidate(notificationsListProvider);
+    await ref.read(notificationsListProvider.future);
   }
 
   void _selectFilter(NotificationFilter filter) {
@@ -159,7 +185,7 @@ class _NotificationsTabScreenState
 
   @override
   Widget build(BuildContext context) {
-    final asyncList = ref.watch(notificationsListProvider(_filter));
+    final asyncList = ref.watch(notificationsListProvider);
     final hasItems = asyncList.valueOrNull?.isNotEmpty ?? false;
 
     return Scaffold(
@@ -201,7 +227,20 @@ class _NotificationsTabScreenState
                 detail: '$err',
                 onRetry: _refresh,
               ),
-              data: (items) {
+              data: (allItems) {
+                // Apply the active chip filter client-side, matching the
+                // PWA mobile-web tab. `all` passes through; `unread`
+                // drops read rows; `mentions` keeps only rows that
+                // satisfy [_isMention]. The empty-state copy below
+                // reflects the active filter so it stays accurate when
+                // the unfiltered list is non-empty.
+                final items = switch (_filter) {
+                  NotificationFilter.all => allItems,
+                  NotificationFilter.unread =>
+                    allItems.where((n) => !n.read).toList(growable: false),
+                  NotificationFilter.mentions =>
+                    allItems.where(_isMention).toList(growable: false),
+                };
                 if (items.isEmpty) {
                   return _EmptyState(filter: _filter, onRefresh: _refresh);
                 }
