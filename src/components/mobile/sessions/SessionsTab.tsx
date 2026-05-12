@@ -170,7 +170,7 @@ export function SessionsTab({ isGitHubConnected }: SessionsTabProps) {
     }
   }, [sessionCtx]);
 
-  const { pullDistance, isRefreshing: pullIsRefreshing, ref: pullRef } = usePullToRefresh({
+  const { pullDistance, isRefreshing, ref: pullRef } = usePullToRefresh({
     onRefresh: handleRefresh,
   });
 
@@ -392,7 +392,7 @@ export function SessionsTab({ isGitHubConnected }: SessionsTabProps) {
         {/* Subtle pull/refresh indicator: a single line of muted text, no
             big spinner overlay. pointer-events-none so it never blocks taps
             on rows behind; z-10 so it's drawn over the list when active. */}
-        {(pullDistance > 0 || pullIsRefreshing) ? (
+        {(pullDistance > 0 || isRefreshing) ? (
           <div
             data-testid="mobile-sessions-refresh-indicator"
             role="status"
@@ -402,10 +402,10 @@ export function SessionsTab({ isGitHubConnected }: SessionsTabProps) {
               transform: `translateY(${Math.max(0, pullDistance - 16)}px)`,
               transitionProperty: pullDistance === 0 ? "transform, opacity" : "none",
               transitionDuration: pullDistance === 0 ? "180ms" : "0ms",
-              opacity: pullIsRefreshing ? 1 : Math.min(1, pullDistance / 60),
+              opacity: isRefreshing ? 1 : Math.min(1, pullDistance / 60),
             }}
           >
-            {pullIsRefreshing ? "Refreshing…" : "Pull to refresh"}
+            {isRefreshing ? "Refreshing…" : "Pull to refresh"}
           </div>
         ) : null}
 

@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Dev**: Resolved three pre-existing ship-it blockers — `packages/mobile`
+  tsconfig load failure (inlined `expo/tsconfig.base`), 10 ESLint errors
+  → 0 (`react-hooks/use-memo` + `react-hooks/refs`), and `handleTouchEnd`
+  tap-qualify axis asymmetry vs `handleTouchMove` (closes remote-dev-8v3i).
 - **Terminal**: stale glyphs during scrolling in long-running sessions
   caused by xterm.js WebGL atlas page-merge — clear atlas via
   `onRemoveTextureAtlasCanvas` on next animation frame; replaces

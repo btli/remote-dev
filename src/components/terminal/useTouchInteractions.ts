@@ -579,11 +579,10 @@ export function createTouchInteractions(
       const elapsed = now() - startT;
       const dx = lastX - startX;
       const dy = lastY - startY;
-      // Axis-aligned tap-qualify mirrors handleTouchMove's axis-aligned cancel:
-      // tap requires BOTH axes within bounds; cancel triggers if EITHER axis
-      // exceeds. A diagonal micro-swipe (dx=4, dy=4, hypot≈5.66) would have
-      // been rejected as "not a tap" under the old hypot check even though
-      // neither axis crossed the move-cancel threshold.
+      // Mirror handleTouchMove's axis-aligned cancel: tap requires BOTH axes
+      // within bounds (cancel triggers if EITHER exceeds). Hypot would reject
+      // a diagonal micro-swipe (dx=4, dy=4, hypot≈5.66) even though neither
+      // axis crossed the move-cancel threshold.
       if (elapsed <= TAP_MAX_MS && Math.abs(dx) <= TAP_MAX_PX && Math.abs(dy) <= TAP_MAX_PX) {
         synthesizeTap(startX, startY);
       }
