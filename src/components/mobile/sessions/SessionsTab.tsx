@@ -170,7 +170,9 @@ export function SessionsTab({ isGitHubConnected }: SessionsTabProps) {
     }
   }, [sessionCtx]);
 
-  const pull = usePullToRefresh({ onRefresh: handleRefresh });
+  const { pullDistance, isRefreshing: pullIsRefreshing, ref: pullRef } = usePullToRefresh({
+    onRefresh: handleRefresh,
+  });
 
   // Action sheet items for the long-pressed session.
   const actionSession = useMemo(
@@ -390,25 +392,25 @@ export function SessionsTab({ isGitHubConnected }: SessionsTabProps) {
         {/* Subtle pull/refresh indicator: a single line of muted text, no
             big spinner overlay. pointer-events-none so it never blocks taps
             on rows behind; z-10 so it's drawn over the list when active. */}
-        {(pull.pullDistance > 0 || pull.isRefreshing) ? (
+        {(pullDistance > 0 || pullIsRefreshing) ? (
           <div
             data-testid="mobile-sessions-refresh-indicator"
             role="status"
             aria-live="polite"
             className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-center py-2 text-xs text-muted-foreground"
             style={{
-              transform: `translateY(${Math.max(0, pull.pullDistance - 16)}px)`,
-              transitionProperty: pull.pullDistance === 0 ? "transform, opacity" : "none",
-              transitionDuration: pull.pullDistance === 0 ? "180ms" : "0ms",
-              opacity: pull.isRefreshing ? 1 : Math.min(1, pull.pullDistance / 60),
+              transform: `translateY(${Math.max(0, pullDistance - 16)}px)`,
+              transitionProperty: pullDistance === 0 ? "transform, opacity" : "none",
+              transitionDuration: pullDistance === 0 ? "180ms" : "0ms",
+              opacity: pullIsRefreshing ? 1 : Math.min(1, pullDistance / 60),
             }}
           >
-            {pull.isRefreshing ? "Refreshing…" : "Pull to refresh"}
+            {pullIsRefreshing ? "Refreshing…" : "Pull to refresh"}
           </div>
         ) : null}
 
         <div
-          ref={pull.ref}
+          ref={pullRef}
           data-testid="mobile-sessions-scroll"
           className="flex-1 overflow-y-auto overscroll-contain"
         >

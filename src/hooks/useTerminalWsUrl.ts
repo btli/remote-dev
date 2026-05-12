@@ -29,5 +29,5 @@ export function resolveTerminalWsUrl(): string {
 }
 
 export function useTerminalWsUrl(): string {
-  return useMemo(resolveTerminalWsUrl, []);
+  return useMemo(() => resolveTerminalWsUrl(), []);
 }
