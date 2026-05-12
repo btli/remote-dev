@@ -5,8 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../domain/active_node.dart';
 import '../../../domain/channel.dart';
 import '../../../infrastructure/api/channels_api.dart';
+import '../../../infrastructure/api/preferences_api.dart';
+import '../sessions/project_tree_sheet.dart' show showProjectTreeSheet;
 import '../shell/home_shell.dart';
 
 /// Polling cadence for live unread refresh while the Channels tab is mounted
@@ -23,9 +26,57 @@ final channelsApiProvider = Provider<ChannelsApi>((ref) {
   );
 });
 
-final channelsListProvider =
-    FutureProvider.autoDispose<List<Channel>>((ref) async {
-  return ref.watch(channelsApiProvider).list();
+/// Provider for the preferences API. Overridden in main.dart alongside the
+/// other server-scoped APIs so it rebinds when the active server changes.
+final preferencesApiProvider = Provider<PreferencesApi>((ref) {
+  throw UnimplementedError(
+    'preferencesApiProvider must be overridden with PreferencesApi(client) in main.dart',
+  );
+});
+
+/// Holds the user's active project/group selection. Mirrors the PWA
+/// mobile-web's `usePreferencesContext().activeProject`: every tab that
+/// needs project scoping (Channels today, Tasks/Peers later) should
+/// watch this notifier so they react to changes initiated anywhere in
+/// the UI (sessions tab, project picker, etc.).
+class ActiveNodeNotifier extends AsyncNotifier<ActiveNode?> {
+  @override
+  Future<ActiveNode?> build() async {
+    return ref.watch(preferencesApiProvider).getActiveNode();
+  }
+
+  /// Select a node (project or group). Persists to the server first so
+  /// subsequent reads from any client see the same value, then refreshes
+  /// the local state so dependent providers (`channelsListProvider`)
+  /// rebuild.
+  Future<void> select({
+    required String? nodeId,
+    required ActiveNodeType? nodeType,
+  }) async {
+    final api = ref.read(preferencesApiProvider);
+    state = const AsyncValue.loading();
+    try {
+      await api.setActiveNode(nodeId: nodeId, nodeType: nodeType);
+      final fresh = await api.getActiveNode();
+      state = AsyncValue.data(fresh);
+    } catch (err, stack) {
+      state = AsyncValue.error(err, stack);
+    }
+  }
+}
+
+final activeNodeProvider =
+    AsyncNotifierProvider<ActiveNodeNotifier, ActiveNode?>(
+  ActiveNodeNotifier.new,
+);
+
+/// Family-keyed channels list. Re-fetches when the active node changes;
+/// returns an empty list when [node] is `null` (matches the API
+/// short-circuit in [ChannelsApi.list]).
+final channelsListProvider = FutureProvider.autoDispose
+    .family<List<Channel>, ActiveNode?>((ref, node) async {
+  if (node == null) return const <Channel>[];
+  return ref.watch(channelsApiProvider).list(activeNode: node);
 });
 
 class ChannelsTabScreen extends ConsumerStatefulWidget {
@@ -55,16 +106,13 @@ class _ChannelsTabScreenState extends ConsumerState<ChannelsTabScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Pause polling while the app is backgrounded; resume when it comes back.
-    // Note: this does NOT pause polling when the user switches to another tab
-    // inside HomeShell — IndexedStack keeps this screen mounted. That's an
-    // acceptable trade-off (one cheap GET every 30s while foregrounded) and
-    // is tracked as a follow-up to wire tab-visibility-aware polling.
     if (state == AppLifecycleState.resumed) {
       if (_pollTimer == null) {
         // Refresh immediately on return-to-foreground so unread counts are
-        // current without waiting a full interval.
-        ref.invalidate(channelsListProvider);
+        // current without waiting a full interval. Use the current active
+        // node so we don't fan out a request for a stale family key.
+        final node = ref.read(activeNodeProvider).valueOrNull;
+        ref.invalidate(channelsListProvider(node));
         _startPolling();
       }
     } else if (state == AppLifecycleState.paused ||
@@ -78,7 +126,8 @@ class _ChannelsTabScreenState extends ConsumerState<ChannelsTabScreen>
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(_kChannelPollInterval, (_) {
       if (!mounted) return;
-      ref.invalidate(channelsListProvider);
+      final node = ref.read(activeNodeProvider).valueOrNull;
+      ref.invalidate(channelsListProvider(node));
     });
   }
 
@@ -87,16 +136,25 @@ class _ChannelsTabScreenState extends ConsumerState<ChannelsTabScreen>
     _pollTimer = null;
   }
 
-  Future<void> _refresh() async {
-    ref.invalidate(channelsListProvider);
-    await ref.read(channelsListProvider.future);
+  Future<void> _refresh(ActiveNode? node) async {
+    ref.invalidate(channelsListProvider(node));
+    await ref.read(channelsListProvider(node).future);
   }
 
-  Future<void> _archive(Channel channel) async {
+  Future<void> _pickProject() async {
+    final projectId = await showProjectTreeSheet(context);
+    if (projectId == null || !mounted) return;
+    await ref.read(activeNodeProvider.notifier).select(
+          nodeId: projectId,
+          nodeType: ActiveNodeType.project,
+        );
+  }
+
+  Future<void> _archive(Channel channel, ActiveNode? node) async {
     final api = ref.read(channelsApiProvider);
     try {
       await api.archive(channel.id);
-      await _refresh();
+      await _refresh(node);
       if (!mounted) return;
       _showSnack('Channel archived');
     } catch (e) {
@@ -142,63 +200,130 @@ class _ChannelsTabScreenState extends ConsumerState<ChannelsTabScreen>
   }
 
   void _onTapChannel(Channel channel) {
-    // push so the channel view has an implicit back arrow that pops
-    // to the Channels tab inside HomeShell.
     context.push('/home/channel/${channel.id}');
   }
 
   @override
   Widget build(BuildContext context) {
-    final asyncChannels = ref.watch(channelsListProvider);
+    final asyncNode = ref.watch(activeNodeProvider);
 
     return Scaffold(
       backgroundColor: const Color(0xFF1A1B26),
       appBar: AppBar(
         backgroundColor: const Color(0xFF1A1B26),
-        title: const Text('Channels', style: TextStyle(color: Colors.white)),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text(
+              'Channels',
+              style: TextStyle(color: Colors.white),
+            ),
+            // Active project subtitle, matching the PWA's "Channels · name"
+            // header. Only render when we actually have a name to show.
+            if (asyncNode.valueOrNull?.name != null)
+              Text(
+                asyncNode.value!.name!,
+                style: const TextStyle(
+                  color: Colors.white54,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w400,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            tooltip: 'Pick project',
+            onPressed: _pickProject,
+            icon: const Icon(Icons.folder_open, color: Colors.white70),
+          ),
+        ],
       ),
-      body: asyncChannels.when(
+      body: asyncNode.when(
         loading: () => const Center(
           child: CupertinoActivityIndicator(color: Colors.white70),
         ),
         error: (err, _) => _ErrorView(
-          message: 'Failed to load channels',
+          message: 'Failed to load preferences',
           detail: '$err',
-          onRetry: _refresh,
+          onRetry: () async => ref.refresh(activeNodeProvider.future),
         ),
-        data: (channels) {
-          if (channels.isEmpty) {
-            return _EmptyState(onRefresh: _refresh);
+        data: (node) {
+          if (node == null) {
+            return _NoActiveProjectState(onPickProject: _pickProject);
           }
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            color: const Color(0xFF7AA2F7),
-            backgroundColor: const Color(0xFF24283B),
-            child: ListView.separated(
-              physics: const AlwaysScrollableScrollPhysics(),
-              // Reserve space below the last row so it never tucks under the
-              // host shell's bottom nav bar (or the Android gesture inset).
-              padding: EdgeInsets.only(
-                bottom: tabContentBottomPadding(context),
-              ),
-              itemCount: channels.length,
-              separatorBuilder: (_, __) => const Divider(
-                color: Color(0xFF2F334D),
-                height: 1,
-              ),
-              itemBuilder: (context, i) {
-                final c = channels[i];
-                return _ChannelRow(
-                  channel: c,
-                  onTap: () => _onTapChannel(c),
-                  onArchive: () => _archive(c),
-                  confirmArchive: () => _confirmArchive(c),
-                );
-              },
-            ),
+          return _ChannelsListBody(
+            node: node,
+            onRefresh: () => _refresh(node),
+            onArchive: (c) => _archive(c, node),
+            confirmArchive: _confirmArchive,
+            onTapChannel: _onTapChannel,
           );
         },
       ),
+    );
+  }
+}
+
+class _ChannelsListBody extends ConsumerWidget {
+  const _ChannelsListBody({
+    required this.node,
+    required this.onRefresh,
+    required this.onArchive,
+    required this.confirmArchive,
+    required this.onTapChannel,
+  });
+
+  final ActiveNode node;
+  final Future<void> Function() onRefresh;
+  final void Function(Channel) onArchive;
+  final Future<bool> Function(Channel) confirmArchive;
+  final void Function(Channel) onTapChannel;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final asyncChannels = ref.watch(channelsListProvider(node));
+    return asyncChannels.when(
+      loading: () => const Center(
+        child: CupertinoActivityIndicator(color: Colors.white70),
+      ),
+      error: (err, _) => _ErrorView(
+        message: 'Failed to load channels',
+        detail: '$err',
+        onRetry: onRefresh,
+      ),
+      data: (channels) {
+        if (channels.isEmpty) {
+          return _EmptyState(onRefresh: onRefresh);
+        }
+        return RefreshIndicator(
+          onRefresh: onRefresh,
+          color: const Color(0xFF7AA2F7),
+          backgroundColor: const Color(0xFF24283B),
+          child: ListView.separated(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.only(
+              bottom: tabContentBottomPadding(context),
+            ),
+            itemCount: channels.length,
+            separatorBuilder: (_, __) => const Divider(
+              color: Color(0xFF2F334D),
+              height: 1,
+            ),
+            itemBuilder: (context, i) {
+              final c = channels[i];
+              return _ChannelRow(
+                channel: c,
+                onTap: () => onTapChannel(c),
+                onArchive: () => onArchive(c),
+                confirmArchive: () => confirmArchive(c),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 }
@@ -227,7 +352,6 @@ class _ChannelRow extends StatelessWidget {
         if (ok) {
           onArchive();
         }
-        // Always return false: the row is removed when the list refetches.
         return false;
       },
       background: const SizedBox.shrink(),
@@ -332,12 +456,68 @@ class _EmptyState extends StatelessWidget {
           SizedBox(height: 8),
           Center(
             child: Text(
-              'Channels will appear here once a project is selected.',
+              'Channels for this project will appear here.',
               style: TextStyle(color: Colors.white38, fontSize: 13),
               textAlign: TextAlign.center,
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Shown when no project (or group) is selected. Mirrors the PWA's
+/// "Pick a project from the Sessions tab to load channels" copy and
+/// gives the user a direct path to fix it without leaving the tab.
+class _NoActiveProjectState extends StatelessWidget {
+  const _NoActiveProjectState({required this.onPickProject});
+  final Future<void> Function() onPickProject;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.folder_off_outlined,
+              size: 48,
+              color: Colors.white24,
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'No project selected',
+              style: TextStyle(color: Colors.white70, fontSize: 16),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Pick a project to load channels.',
+              style: TextStyle(color: Colors.white38, fontSize: 13),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: onPickProject,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF7AA2F7),
+                foregroundColor: const Color(0xFF1A1B26),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+              ),
+              icon: const Icon(Icons.folder_open),
+              label: const Text(
+                'Pick a project',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

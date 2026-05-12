@@ -12,7 +12,8 @@ import '../webview_host/session_route_host.dart'
         activeServerProvider,
         mobileCredentialsStoreProvider,
         webViewCookieSeederProvider;
-import 'channels_tab_screen.dart' show channelsListProvider;
+import 'channels_tab_screen.dart'
+    show activeNodeProvider, channelsListProvider;
 
 /// Native chrome around the embedded WebView at `/m/channel/<id>`.
 ///
@@ -238,8 +239,12 @@ class _ChannelTitle extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final asyncChannels = ref.watch(channelsListProvider);
-    // `value` is null while loading and on error; we tolerate both.
+    // Resolve the channel name from the project-scoped list. While
+    // [activeNodeProvider] is loading or unset we just render the
+    // generic fallback — the WebView is the source of truth for
+    // content; this title is a best-effort hint.
+    final node = ref.watch(activeNodeProvider).valueOrNull;
+    final asyncChannels = ref.watch(channelsListProvider(node));
     final channels = asyncChannels.valueOrNull;
     String? name;
     if (channels != null) {

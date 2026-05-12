@@ -8,6 +8,7 @@ import 'infrastructure/api/account_api.dart';
 import 'infrastructure/api/channels_api.dart';
 import 'infrastructure/api/github_accounts_api.dart';
 import 'infrastructure/api/notifications_api.dart';
+import 'infrastructure/api/preferences_api.dart';
 import 'infrastructure/api/project_tree_api.dart';
 import 'infrastructure/api/remote_dev_client.dart';
 import 'infrastructure/api/sessions_api.dart';
@@ -21,7 +22,7 @@ import 'presentation/router/app_router.dart' show pushTokenRegistrarProvider;
 import 'presentation/screens/biometric/biometric_lock_overlay.dart'
     show biometricPortProvider, biometricSettingsStoreProvider;
 import 'presentation/screens/channels/channels_tab_screen.dart'
-    show channelsApiProvider;
+    show channelsApiProvider, preferencesApiProvider;
 import 'presentation/screens/notifications/notifications_tab_screen.dart'
     show notificationsApiProvider;
 import 'presentation/screens/profile/account_screen.dart'
@@ -86,6 +87,9 @@ List<Override> buildServerScopedOverrides({required String deviceId}) {
     ),
     channelsApiProvider.overrideWith(
       (ref) => ChannelsApi(ref.watch(_apiClientProvider)),
+    ),
+    preferencesApiProvider.overrideWith(
+      (ref) => PreferencesApi(ref.watch(_apiClientProvider)),
     ),
     notificationsApiProvider.overrideWith(
       (ref) => NotificationsApi(ref.watch(_apiClientProvider)),

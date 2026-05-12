@@ -39,6 +39,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SessionsApi.list()` previously only filtered `trashed`, leaking
   `closed` (terminal-state) sessions into the picker — these belong to
   surfaces the mobile app doesn't expose.
+- **Mobile (Flutter) – Channels tab**: the tab is now project-scoped
+  to match the PWA mobile-web reference. Previously it fetched
+  `/api/channels` with no scope (the server rejects this with a 400)
+  and rendered an unrelated "No channels yet" state. The tab now
+  reads the user's pinned-or-active node via `GET /api/preferences`,
+  passes it as `?nodeId=&nodeType=` when listing channels, and shows
+  a "Pick a project to load channels" empty state with a project
+  picker button when nothing is selected. A folder-icon app-bar
+  action lets users switch projects without leaving the tab.
+  Selections persist server-side via `POST /api/preferences/active-node`.
 - **Mobile (Flutter) – Notifications Mentions filter**: the "Mentions"
   chip now actually filters. The Flutter app used to pass
   `?filter=mentions` to the API, which the server ignored — so

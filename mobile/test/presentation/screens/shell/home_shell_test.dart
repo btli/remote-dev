@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:remote_dev/domain/active_node.dart';
 import 'package:remote_dev/domain/channel.dart';
 import 'package:remote_dev/domain/notification.dart';
 import 'package:remote_dev/domain/session_summary.dart';
 import 'package:remote_dev/infrastructure/api/channels_api.dart';
 import 'package:remote_dev/infrastructure/api/notifications_api.dart';
+import 'package:remote_dev/infrastructure/api/preferences_api.dart';
 import 'package:remote_dev/infrastructure/api/sessions_api.dart';
 import 'package:remote_dev/presentation/screens/channels/channels_tab_screen.dart';
 import 'package:remote_dev/presentation/screens/notifications/notifications_tab_screen.dart';
@@ -51,10 +53,29 @@ class _FakeChannelsApi extends Fake implements ChannelsApi {
   final List<Channel> _channels;
 
   @override
-  Future<List<Channel>> list() async => _channels;
+  Future<List<Channel>> list({ActiveNode? activeNode}) async => _channels;
 
   @override
   Future<void> archive(String id) async {}
+}
+
+/// Returns a fixed [ActiveNode] so the Channels tab skips the
+/// "No project selected" empty state and exercises its channel-list
+/// branch. Required after the Channels tab gained project-scoping
+/// (matching the PWA mobile-web reference).
+class _FakePreferencesApi extends Fake implements PreferencesApi {
+  _FakePreferencesApi(this._node);
+  final ActiveNode? _node;
+
+  @override
+  Future<ActiveNode?> getActiveNode() async => _node;
+
+  @override
+  Future<void> setActiveNode({
+    required String? nodeId,
+    required ActiveNodeType? nodeType,
+    bool pinned = false,
+  }) async {}
 }
 
 void main() {
@@ -71,6 +92,14 @@ void main() {
           notificationsApiProvider.overrideWithValue(_FakeNotificationsApi()),
           channelsApiProvider.overrideWithValue(
             _FakeChannelsApi(channels ?? const []),
+          ),
+          preferencesApiProvider.overrideWithValue(
+            _FakePreferencesApi(
+              const ActiveNode(
+                id: 'test-project',
+                type: ActiveNodeType.project,
+              ),
+            ),
           ),
         ],
         child: MaterialApp(home: child),
@@ -338,6 +367,17 @@ void main() {
             sessionsApiProvider.overrideWithValue(_FakeSessionsApi(const [])),
             notificationsApiProvider.overrideWithValue(_FakeNotificationsApi()),
             channelsApiProvider.overrideWithValue(_FakeChannelsApi(channels)),
+            // Channels tab is project-scoped — without an active node the
+            // tab renders the "No project selected" empty state and the
+            // ListView under test doesn't exist.
+            preferencesApiProvider.overrideWithValue(
+              _FakePreferencesApi(
+                const ActiveNode(
+                  id: 'test-project',
+                  type: ActiveNodeType.project,
+                ),
+              ),
+            ),
           ],
           child: MaterialApp(
             home: pinViewport(const HomeShell(initialTab: HomeTab.channels)),
