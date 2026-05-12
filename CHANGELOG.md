@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.15] - 2026-05-12
+
 ### Added
 
 - **Mobile**: Clear all notifications action with confirmation dialog.
