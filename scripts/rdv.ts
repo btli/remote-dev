@@ -166,7 +166,12 @@ function killProcessOnPort(port: number): boolean {
   if (pid) {
     console.log(`Killing process on port ${port} (PID: ${pid})...`);
     try {
-      process.kill(pid, "SIGTERM");
+      // Group-kill: if the listener is one of our (now-detached) servers,
+      // its pgid equals its pid and signalling `-pid` cleans up the whole
+      // tsx/node tree. For non-detached third-party processes, the pgid
+      // is typically the listener's own pid too (daemons run setsid), so
+      // this is still correct.
+      killProcessGroup(pid, "SIGTERM");
 
       let attempts = 0;
       while (getProcessOnPort(port) && attempts < 50) {
@@ -177,7 +182,7 @@ function killProcessOnPort(port: number): boolean {
       const remainingPid = getProcessOnPort(port);
       if (remainingPid) {
         console.log(`Force killing process on port ${port}...`);
-        process.kill(remainingPid, "SIGKILL");
+        killProcessGroup(remainingPid, "SIGKILL");
         attempts = 0;
         while (getProcessOnPort(port) && attempts < 20) {
           spawnSync(["sleep", "0.1"]);
