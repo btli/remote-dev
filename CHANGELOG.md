@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.17] - 2026-05-13
+## [0.3.18] - 2026-05-13
 
 ### Fixed
 
@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   launch, a retry sentinel guards against infinite loops, and the full
   `/reauth` screen only kicks in when refresh genuinely fails
   (closes remote-dev-arua).
+
+## [0.3.17] - 2026-05-13
+
+### Fixed
 
 - **Mobile (Flutter)**: Push notifications were silently broken end-to-end
   in the new app at `mobile/` (worked in the archived `archive/mobile-flutter/`).
