@@ -134,10 +134,8 @@ List<Override> buildServerScopedOverrides({required String deviceId}) {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize Firebase before registering the background message handler.
-  // FirebaseMessaging.onBackgroundMessage requires Firebase to be initialized,
-  // and FcmPushService.initialize() tolerates a duplicate initializeApp call
-  // (it returns the existing default app rather than throwing fatally).
+  // Firebase must be initialized before registering the background handler.
+  // FcmPushService.initialize() tolerates the duplicate initializeApp call.
   try {
     await Firebase.initializeApp();
   } catch (e) {
@@ -167,9 +165,8 @@ void main() async {
   // getInitialMessage so notification taps navigate to the correct surface
   // and sync read-state with the server.
   container.read(notificationTapHandlerProvider);
-  // Eagerly start the push-token registrar. start() internally calls
-  // FcmPushService.initialize(), fetches the current FCM token, and POSTs
-  // it to every saved server. Subscribes to onTokenRefresh for rotations.
+  // Fire-and-forget: registers the FCM token with every saved server and
+  // subscribes to refresh. See PushTokenRegistrar.start().
   unawaited(container.read(pushTokenRegistrarProvider).start());
 
   runApp(
@@ -180,10 +177,9 @@ void main() async {
   );
 }
 
-/// Top-level background message handler.
-/// Must be a top-level function (not a class method) per FCM requirements.
+/// Top-level FCM background message handler (must be top-level + entry-point).
+///
+/// Messages with a `notification` payload are displayed by the OS automatically,
+/// so this handler is intentionally a no-op.
 @pragma('vm:entry-point')
-Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  // Background/terminated messages with a `notification` key are
-  // automatically displayed by the OS. No additional handling needed.
-}
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {}
