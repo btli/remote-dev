@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Required by local_auth / BiometricPrompt on Android 9+. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+    <!-- Required for FCM push notification token registration / API calls. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="RemoteDev"
         android:name="${applicationName}"
@@ -43,6 +45,19 @@
                 <data android:scheme="remotedev" />
             </intent-filter>
         </activity>
+        <!-- FCM: default notification icon (monochrome silhouette for status bar) -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
+        <!-- FCM: notification accent color (Tokyo Night blue) -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/notification_accent" />
+        <!-- FCM: default notification channel id — MUST match server's
+             FcmPushGateway channel id (`rdv_notifications`). -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="rdv_notifications" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

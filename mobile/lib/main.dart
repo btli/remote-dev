@@ -1,3 +1,7 @@
+import 'dart:async';
+
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -130,15 +134,26 @@ List<Override> buildServerScopedOverrides({required String deviceId}) {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Initialize Firebase before registering the background message handler.
+  // FirebaseMessaging.onBackgroundMessage requires Firebase to be initialized,
+  // and FcmPushService.initialize() tolerates a duplicate initializeApp call
+  // (it returns the existing default app rather than throwing fatally).
+  try {
+    await Firebase.initializeApp();
+  } catch (e) {
+    debugPrint('[Push] Firebase.initializeApp failed in main: $e');
+  }
+  try {
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  } catch (e) {
+    debugPrint('[Push] onBackgroundMessage registration failed: $e');
+  }
+
   // Resolve the stable per-device UUID before runApp so the synchronous
   // pushTokenRegistrarProvider override can read it without going async.
   // First-call generates + persists; subsequent runs return the cached value.
   final storage = FlutterSecureStoragePort();
   final deviceId = await DeviceIdProvider(storage).get();
-
-  // Non-blocking push init — runs in the background; failures are logged
-  // and don't prevent the UI from launching.
-  Future<void>.microtask(() => FcmPushService().initialize());
 
   // Build a ProviderContainer up-front so we can eagerly start the deep-link
   // listener before runApp. This ensures custom-scheme links delivered during
@@ -152,6 +167,10 @@ void main() async {
   // getInitialMessage so notification taps navigate to the correct surface
   // and sync read-state with the server.
   container.read(notificationTapHandlerProvider);
+  // Eagerly start the push-token registrar. start() internally calls
+  // FcmPushService.initialize(), fetches the current FCM token, and POSTs
+  // it to every saved server. Subscribes to onTokenRefresh for rotations.
+  unawaited(container.read(pushTokenRegistrarProvider).start());
 
   runApp(
     UncontrolledProviderScope(
@@ -159,4 +178,12 @@ void main() async {
       child: const RemoteDevApp(),
     ),
   );
+}
+
+/// Top-level background message handler.
+/// Must be a top-level function (not a class method) per FCM requirements.
+@pragma('vm:entry-point')
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  // Background/terminated messages with a `notification` key are
+  // automatically displayed by the OS. No additional handling needed.
 }

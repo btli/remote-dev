@@ -61,13 +61,13 @@ void main() {
     await registrar.registerWithAll('tok-1');
 
     final capturedA = verify(
-      () => clientA.post('/api/push-tokens', body: captureAny(named: 'body')),
+      () => clientA.post('/api/notifications/push-token', body: captureAny(named: 'body')),
     ).captured.single as Map<String, dynamic>;
     expect(capturedA['token'], 'tok-1');
     expect(capturedA['deviceId'], 'dev-1');
     expect(capturedA['platform'], anyOf('ios', 'android'));
 
-    verify(() => clientB.post('/api/push-tokens', body: any(named: 'body')))
+    verify(() => clientB.post('/api/notifications/push-token', body: any(named: 'body')))
         .called(1);
   });
 
@@ -89,7 +89,7 @@ void main() {
 
     await registrar.registerWithAll('tok-1');
 
-    verify(() => clientB.post('/api/push-tokens', body: any(named: 'body')))
+    verify(() => clientB.post('/api/notifications/push-token', body: any(named: 'body')))
         .called(1);
   });
 
@@ -110,13 +110,13 @@ void main() {
 
     await registrar.start();
 
-    verify(() => clientA.post('/api/push-tokens', body: any(named: 'body')))
+    verify(() => clientA.post('/api/notifications/push-token', body: any(named: 'body')))
         .called(1);
 
     refresh.add('refreshed-tok');
     await Future<void>.delayed(Duration.zero);
 
-    verify(() => clientA.post('/api/push-tokens', body: any(named: 'body')))
+    verify(() => clientA.post('/api/notifications/push-token', body: any(named: 'body')))
         .called(1);
 
     await registrar.stop();
@@ -125,8 +125,10 @@ void main() {
   test('unregisterFromServer DELETEs from the specified server only', () async {
     final clientA = _MockClient();
     final clientB = _MockClient();
-    when(() => clientA.delete(any())).thenAnswer((_) async {});
-    when(() => clientB.delete(any())).thenAnswer((_) async {});
+    when(() => clientA.delete(any(), body: any(named: 'body')))
+        .thenAnswer((_) async {});
+    when(() => clientB.delete(any(), body: any(named: 'body')))
+        .thenAnswer((_) async {});
     when(() => push.getToken()).thenAnswer((_) async => 'tok-1');
     when(store.loadAll).thenAnswer((_) async => [server('a'), server('b')]);
 
@@ -139,8 +141,14 @@ void main() {
 
     await registrar.unregisterFromServer('a');
 
-    verify(() => clientA.delete('/api/push-tokens/tok-1')).called(1);
-    verifyNever(() => clientB.delete(any()));
+    final captured = verify(
+      () => clientA.delete(
+        '/api/notifications/push-token',
+        body: captureAny(named: 'body'),
+      ),
+    ).captured.single as Map<String, dynamic>;
+    expect(captured['token'], 'tok-1');
+    verifyNever(() => clientB.delete(any(), body: any(named: 'body')));
   });
 
   test('start returns false when push.initialize fails', () async {

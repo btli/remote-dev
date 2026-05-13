@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_launcher_background">#1A1B26</color>
+    <!-- FCM notification accent color (Tokyo Night blue). Referenced from
+         AndroidManifest.xml via the default_notification_color meta-data. -->
+    <color name="notification_accent">#7aa2f7</color>
 </resources>
