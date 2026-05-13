@@ -31,6 +31,7 @@ import { terminalSessions } from "@/db/schema";
 import { getAuthSession } from "@/lib/auth-utils";
 import { AppearanceProvider } from "@/contexts/AppearanceContext";
 import { EmbeddedSessionView } from "@/components/mobile/embed/EmbeddedSessionView";
+import { resolveTerminalWsUrlFromHostHeader } from "@/hooks/useTerminalWsUrl";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -49,14 +50,14 @@ export default async function MobileSessionPage({ params }: PageProps) {
   if (!row) notFound();
 
   // Resolve WS URL from the request host so the WebView talks back to
-  // the same Remote Dev origin it loaded the page from.
+  // the same Remote Dev origin it loaded the page from. Uses the shared
+  // resolver so the mobile WebView and the desktop client agree on the
+  // URL shape (notably `wss://host/ws` for Cloudflare-tunneled prod, not
+  // a direct hit on the terminal-server port).
   const h = await headers();
   const host = h.get("host") ?? "localhost";
-  const proto = h.get("x-forwarded-proto") ?? "http";
-  const wsProto = proto === "https" ? "wss" : "ws";
-  const terminalPort = process.env.NEXT_PUBLIC_TERMINAL_PORT ?? "6002";
-  const hostNoPort = host.split(":")[0];
-  const wsUrl = `${wsProto}://${hostNoPort}:${terminalPort}`;
+  const protocol = h.get("x-forwarded-proto") ?? "http";
+  const wsUrl = resolveTerminalWsUrlFromHostHeader({ host, protocol });
 
   return (
     <AppearanceProvider>
