@@ -97,7 +97,8 @@ Future<AuthMaterial?> Function(String serverId) _buildRefreshAuth(Ref ref) {
           break;
         }
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[CfAuth] refresh aborted: serverConfigStore.loadAll failed: $e');
       return null;
     }
     if (server == null) return null;
