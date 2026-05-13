@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Mobile app**: two-finger pinch-to-zoom resizes the terminal font in
+  the Flutter app's `/m/session` view; the final size persists via user
+  preferences (closes remote-dev-kpxd).
+
 ### Fixed
 
 - **Mobile app**: terminal font size now respects user preferences in

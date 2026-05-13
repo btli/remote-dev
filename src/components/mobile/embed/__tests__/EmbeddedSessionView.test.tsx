@@ -6,10 +6,11 @@
  *   2. Mounting installs window.rdvBridge.
  *   3. Unmounting uninstalls window.rdvBridge.
  *   4. window.rdvBridge.input forwards into the terminal's sendInput.
+ *   5. Two-finger pinch updates fontSize live and persists on commit.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, cleanup } from "@testing-library/react";
+import { render, cleanup, act, screen } from "@testing-library/react";
 
 import { EmbeddedSessionView } from "../EmbeddedSessionView";
 
@@ -17,6 +18,14 @@ import { EmbeddedSessionView } from "../EmbeddedSessionView";
 // against the actual instance the component held in its ref.
 let sendInputSpy: ReturnType<typeof vi.fn>;
 let scrollToBottomSpy: ReturnType<typeof vi.fn>;
+
+// Mocked TerminalWithKeyboard exposes the fontSize/fontFamily props via
+// `data-*` attributes so pinch tests can assert the live prop pass-through
+// without needing to capture the props object directly.
+type StubTerminalProps = {
+  fontSize?: number;
+  fontFamily?: string;
+};
 
 vi.mock("@/components/terminal/TerminalWithKeyboard", async () => {
   const React = await import("react");
@@ -28,33 +37,57 @@ vi.mock("@/components/terminal/TerminalWithKeyboard", async () => {
       restartAgent: () => void;
     },
     Record<string, unknown>
-  >(function MockTerminal(_props, ref) {
+  >(function MockTerminal(props, ref) {
     React.useImperativeHandle(ref, () => ({
       sendInput: sendInputSpy as unknown as (s: string) => void,
       scrollToBottom: scrollToBottomSpy as unknown as () => void,
       focus: vi.fn() as unknown as () => void,
       restartAgent: vi.fn() as unknown as () => void,
     }));
-    return React.createElement(
-      "div",
-      { "data-testid": "terminal-mock" },
-      "terminal"
-    );
+    return React.createElement("div", {
+      "data-testid": "terminal-mock",
+      "data-font-size": (props as StubTerminalProps).fontSize,
+      "data-font-family": (props as StubTerminalProps).fontFamily,
+    });
   });
   return { TerminalWithKeyboard };
 });
 
+// usePinchZoom: expose the handlers passed in so tests can simulate a
+// gesture without a real touch surface. Mirrors MobileSessionView.test.tsx.
+let capturedPinchOpts: {
+  onScale?: (factor: number) => void;
+  onScaleCommit?: (factor: number) => void;
+} | null = null;
+vi.mock("@/components/mobile/session/usePinchZoom", () => ({
+  usePinchZoom: (opts: {
+    onScale?: (factor: number) => void;
+    onScaleCommit?: (factor: number) => void;
+  }) => {
+    capturedPinchOpts = opts;
+    return { ref: () => {} };
+  },
+}));
+
 // EmbeddedSessionView reads font + family from PreferencesContext (so
 // the embedded terminal honors the user's font-size pref) and uses
-// `updateUserSettings` to persist pinch-zoom from the native bridge.
-// Stub the context to avoid the real fetch in /api/preferences.
+// `updateUserSettings` to persist pinch-zoom commits + bridge calls.
+// Stub the context to avoid the real fetch in /api/preferences. Tests
+// mutate `mockPrefs` to simulate async preference settle / remount with
+// a persisted size.
+type MockPrefs = {
+  currentPreferences: { fontFamily: string; fontSize: number };
+};
+let mockPrefs: MockPrefs = {
+  currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+};
+function setMockPrefs(next: MockPrefs) {
+  mockPrefs = next;
+}
 const updateUserSettingsSpy = vi.fn().mockResolvedValue(undefined);
 vi.mock("@/contexts/PreferencesContext", () => ({
   usePreferencesContext: () => ({
-    currentPreferences: {
-      fontFamily: "MockMono, monospace",
-      fontSize: 14,
-    },
+    currentPreferences: mockPrefs.currentPreferences,
     updateUserSettings: updateUserSettingsSpy,
   }),
 }));
@@ -70,6 +103,10 @@ beforeEach(() => {
   sendInputSpy = vi.fn();
   scrollToBottomSpy = vi.fn();
   updateUserSettingsSpy.mockClear();
+  capturedPinchOpts = null;
+  setMockPrefs({
+    currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+  });
 });
 
 afterEach(() => {
@@ -137,5 +174,142 @@ describe("EmbeddedSessionView", () => {
     window.rdvBridge?.setFontSize(Number.POSITIVE_INFINITY);
 
     expect(updateUserSettingsSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("EmbeddedSessionView, pinch-to-zoom", () => {
+  it("forwards the seed fontSize from preferences to TerminalWithKeyboard", () => {
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 16 },
+    });
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    const terminal = screen.getByTestId("terminal-mock");
+    expect(terminal.getAttribute("data-font-size")).toBe("16");
+  });
+
+  it("updates the displayed fontSize live during a pinch (before commit)", () => {
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+    });
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    const terminalBefore = screen.getByTestId("terminal-mock");
+    expect(terminalBefore.getAttribute("data-font-size")).toBe("14");
+
+    // Mid-gesture: pinch out by factor 1.5 → 14 * 1.5 = 21 (under MAX 22).
+    act(() => {
+      capturedPinchOpts?.onScale?.(1.5);
+    });
+
+    const terminalAfter = screen.getByTestId("terminal-mock");
+    expect(terminalAfter.getAttribute("data-font-size")).toBe("21");
+    // No persistence during the gesture — only on commit.
+    expect(updateUserSettingsSpy).not.toHaveBeenCalled();
+  });
+
+  it("fires updateUserSettings exactly once on gesture commit with the clamped final size", () => {
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+    });
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    act(() => {
+      capturedPinchOpts?.onScale?.(1.2);
+      capturedPinchOpts?.onScale?.(1.3);
+      capturedPinchOpts?.onScaleCommit?.(1.3);
+    });
+
+    // 14 * 1.3 = 18.2 → rounded to 18 (under MAX 22).
+    expect(updateUserSettingsSpy).toHaveBeenCalledTimes(1);
+    expect(updateUserSettingsSpy).toHaveBeenLastCalledWith({ fontSize: 18 });
+    const terminal = screen.getByTestId("terminal-mock");
+    expect(terminal.getAttribute("data-font-size")).toBe("18");
+  });
+
+  it("clamps the commit value to [FONT_SIZE_MIN, FONT_SIZE_MAX]", () => {
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+    });
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    // Pinch huge: 14 * 1.8 = 25.2, clamped to MAX 22.
+    act(() => {
+      capturedPinchOpts?.onScaleCommit?.(1.8);
+    });
+    expect(updateUserSettingsSpy).toHaveBeenLastCalledWith({ fontSize: 22 });
+    expect(
+      screen.getByTestId("terminal-mock").getAttribute("data-font-size")
+    ).toBe("22");
+
+    // Now the baseline is 22. Pinch tiny: 22 * 0.3 = 6.6, but
+    // usePinchZoom internally clamps factor at MIN_FACTOR (0.6), so the
+    // caller never sees a sub-0.6 factor. Simulate the smallest factor
+    // the hook will ever forward (0.6 → 22 * 0.6 = 13.2 → 13).
+    act(() => {
+      capturedPinchOpts?.onScaleCommit?.(0.6);
+    });
+    expect(updateUserSettingsSpy).toHaveBeenLastCalledWith({ fontSize: 13 });
+  });
+
+  it("does not overwrite the live local size when prefs change mid-gesture (latch behavior)", () => {
+    // Cold start with prefs at 14.
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+    });
+    const { rerender } = render(
+      <EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />
+    );
+    expect(
+      screen.getByTestId("terminal-mock").getAttribute("data-font-size")
+    ).toBe("14");
+
+    // User pinches and commits to 18.
+    act(() => {
+      capturedPinchOpts?.onScale?.(18 / 14);
+      capturedPinchOpts?.onScaleCommit?.(18 / 14);
+    });
+    expect(
+      screen.getByTestId("terminal-mock").getAttribute("data-font-size")
+    ).toBe("18");
+
+    // A later prefs change (e.g. desktop edit, or the response to our
+    // own POST landing back through the context) arrives. The latch
+    // means we do NOT re-seed; pinch wins.
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 20 },
+    });
+    rerender(
+      <EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />
+    );
+    expect(
+      screen.getByTestId("terminal-mock").getAttribute("data-font-size")
+    ).toBe("18");
+  });
+
+  it("persists across remount via the prefs round-trip", () => {
+    // First mount with prefs at 14, user pinches to 17 and commits.
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+    });
+    const { unmount } = render(
+      <EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />
+    );
+    act(() => {
+      capturedPinchOpts?.onScaleCommit?.(17 / 14);
+    });
+    expect(updateUserSettingsSpy).toHaveBeenLastCalledWith({ fontSize: 17 });
+    unmount();
+
+    // Simulate the prefs API having persisted the new size: next mount
+    // sees 17 as the seed from PreferencesContext.
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 17 },
+    });
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    expect(
+      screen.getByTestId("terminal-mock").getAttribute("data-font-size")
+    ).toBe("17");
   });
 });

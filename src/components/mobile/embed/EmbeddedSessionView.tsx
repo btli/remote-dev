@@ -20,13 +20,14 @@
  * @see docs/superpowers/specs/2026-05-08-flutter-app-redesign-design.md §4
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   TerminalWithKeyboard,
   type TerminalWithKeyboardRef,
 } from "@/components/terminal/TerminalWithKeyboard";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
+import { usePinchZoom } from "@/components/mobile/session/usePinchZoom";
 import {
   installRdvBridge,
   notifyToNative,
@@ -34,11 +35,16 @@ import {
   type RdvBridgeKeyMods,
 } from "@/lib/rdv-bridge";
 
-// Mirror the constants used by MobileSessionView so a future JS-side
-// pinch handler clamps to the same range as the existing PWA pinch.
+// Mirror the constants used by MobileSessionView so the JS-side pinch
+// handler clamps to the same range as the existing PWA pinch.
 const FONT_SIZE_MIN = 9;
 const FONT_SIZE_MAX = 22;
+const DEFAULT_FONT_SIZE = 12;
 const DEFAULT_FONT_FAMILY = "'JetBrainsMono Nerd Font Mono', monospace";
+
+function clampFontSize(size: number): number {
+  return Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, Math.round(size)));
+}
 
 export interface EmbeddedSessionViewProps {
   session: {
@@ -98,20 +104,83 @@ export function EmbeddedSessionView({
   const terminalRef = useRef<TerminalWithKeyboardRef | null>(null);
   const { currentPreferences, updateUserSettings } = usePreferencesContext();
 
-  // Source the terminal font from user prefs. Mirror the
-  // `Number.isFinite` guard MobileSessionView uses so a missing/NaN
-  // payload from a still-loading provider falls through to the xterm
-  // default instead of rendering at NaN px.
-  //
-  // NOTE: There is no JS-side pinch handler yet — pinch persistence
-  // arrives via `bridge.setFontSize` (wired below) which writes through
-  // to /api/preferences; the resulting prefs re-render lands the new
-  // size on the terminal. A follow-up PR will add a touch-event pinch
-  // detector that calls bridge.setFontSize directly from the web side.
-  const fontSize = Number.isFinite(currentPreferences.fontSize)
-    ? currentPreferences.fontSize
-    : undefined;
   const fontFamily = currentPreferences.fontFamily || DEFAULT_FONT_FAMILY;
+
+  // Font-size (pinch zoom). Mirror MobileSessionView's pattern: seed
+  // from prefs once they're available, then let pinch own it.
+  //
+  // The lazy `useState` initializer prefers a finite `currentPreferences.fontSize`
+  // and falls through to DEFAULT_FONT_SIZE otherwise. Using `Number.isFinite`
+  // (not `typeof === "number"`) rejects NaN/±Infinity which would poison
+  // downstream Math.max/min.
+  const [fontSize, setFontSize] = useState<number>(() => {
+    const seed = Number.isFinite(currentPreferences.fontSize)
+      ? currentPreferences.fontSize
+      : DEFAULT_FONT_SIZE;
+    return clampFontSize(seed);
+  });
+  const fontSizeBaselineRef = useRef<number>(fontSize);
+  // Latches once we've reconciled to a real upstream prefs value. After
+  // this flips to true, the reconciliation effect is a no-op forever, so
+  // a user pinching to N px won't be reverted by a later prefs change
+  // (e.g. a desktop preference update mid-session). Pre-latch in the
+  // lazy initializer if prefs were already settled at first render.
+  const seededFromUpstreamRef = useRef<boolean>(
+    Number.isFinite(currentPreferences.fontSize)
+  );
+
+  // ── Pinch-to-zoom on the embedded terminal viewport ──────────────────
+  // Live updates fire on every drag frame via onScale, while onScaleCommit
+  // fires exactly once at gesture-end and is where we persist through
+  // /api/preferences. Identical clamping to MobileSessionView keeps PWA
+  // and Flutter embed behavior in sync.
+  const { ref: pinchRef } = usePinchZoom({
+    onScale: (factor) => {
+      const next = clampFontSize(fontSizeBaselineRef.current * factor);
+      if (next !== fontSize) setFontSize(next);
+    },
+    onScaleCommit: (factor) => {
+      const next = clampFontSize(fontSizeBaselineRef.current * factor);
+      setFontSize(next);
+      fontSizeBaselineRef.current = next;
+      // The user's first deliberate size choice IS a real upstream value
+      // — latch so a later async prefs settle cannot overwrite the pinch.
+      seededFromUpstreamRef.current = true;
+      updateUserSettings({ fontSize: next }).catch((err) => {
+        // Persistence failures shouldn't crash the WebView; surface in
+        // console for observability while keeping the UI alive.
+        console.error("pinch commit persist failed", err);
+      });
+    },
+  });
+
+  // One-shot post-hydration reconciliation of `fontSize`.
+  //
+  // The lazy `useState` initializer above runs once with whatever prefs
+  // value is available at first render. On a cold start that may be a
+  // default that doesn't reflect the user's real saved fontSize. This
+  // effect waits until prefs settle and reconciles exactly once. After
+  // it latches, pinch owns `fontSize` exclusively — a later prefs change
+  // (e.g. desktop edit) will NOT surprise the user mid-session.
+  useEffect(() => {
+    if (seededFromUpstreamRef.current) return;
+    if (!Number.isFinite(currentPreferences.fontSize)) return;
+    const clamped = clampFontSize(currentPreferences.fontSize);
+    seededFromUpstreamRef.current = true;
+    fontSizeBaselineRef.current = clamped;
+    if (clamped !== fontSize) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot hydration from async preferences fetch
+      setFontSize(clamped);
+    }
+  }, [currentPreferences.fontSize, fontSize]);
+
+  // Keep the baseline in sync with `fontSize`. After commit/reconcile
+  // this is just defensive mirroring: bridge.setFontSize-driven changes
+  // (native shell path) flow back into prefs → here as a normal render.
+  useEffect(() => {
+    if (!seededFromUpstreamRef.current) return;
+    fontSizeBaselineRef.current = fontSize;
+  }, [fontSize]);
 
   useEffect(() => {
     const adapter: RdvBridgeAdapter = {
@@ -122,15 +191,20 @@ export function EmbeddedSessionView({
       },
       paste: (text) => terminalRef.current?.sendInput(text),
       setFontSize: (px) => {
-        // Bridge handler: the native shell (or a future JS pinch
-        // detector) calls this with a target px size. We clamp into the
-        // PWA's accepted range and persist via PATCH /api/preferences;
-        // PreferencesContext re-renders, the new `fontSize` flows down
-        // through this component, and the terminal picks it up. This
-        // keeps a single canonical source of truth (user prefs) rather
-        // than maintaining a parallel native-side font scale.
+        // Bridge handler: the native shell calls this with a target px
+        // size. We clamp into the PWA's accepted range and persist via
+        // PATCH /api/preferences; PreferencesContext re-renders, and the
+        // updated `fontSize` flows back to this component on the next
+        // render (subject to the seeded-from-upstream latch — once a
+        // user has pinched, bridge.setFontSize still persists but does
+        // not override the pinched local state mid-session).
+        //
+        // The JS-side pinch detector (usePinchZoom, bound below) drives
+        // its own state + persistence path; this bridge handler remains
+        // wired so the native shell or external callers can still set
+        // the font directly.
         if (!Number.isFinite(px)) return;
-        const clamped = Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, Math.round(px)));
+        const clamped = clampFontSize(px);
         updateUserSettings({ fontSize: clamped }).catch((err) => {
           // Persistence failures shouldn't crash the WebView; surface in
           // console for observability while keeping the UI alive.
@@ -187,7 +261,12 @@ export function EmbeddedSessionView({
   }, [updateUserSettings]);
 
   return (
-    <div className="relative h-full w-full bg-[#1a1b26]">
+    <div
+      ref={pinchRef}
+      data-testid="embedded-session-view"
+      data-font-size={fontSize}
+      className="relative h-full w-full bg-[#1a1b26]"
+    >
       <TerminalWithKeyboard
         ref={terminalRef}
         sessionId={session.id}
