@@ -121,13 +121,10 @@ class CfAuthInterceptor extends Interceptor {
     RequestOptions options,
     RequestInterceptorHandler handler,
   ) async {
-    // Disable automatic redirect following so CF Access's 302 to its
-    // login page surfaces as a DioException we can classify, rather
-    // than being silently fetched as HTML and decoded as JSON.
+    // Disable redirect-following and treat only 2xx as success so CF
+    // Access's 302 → login page lands in onError (where we can classify
+    // it) instead of being silently fetched as HTML and decoded as JSON.
     options.followRedirects = false;
-    // Without overriding validateStatus, Dio treats any 3xx as a
-    // badResponse error (because followRedirects is now false). That's
-    // what we want: 3xx falls into onError where we can detect CF.
     options.validateStatus = (status) =>
         status != null && status >= 200 && status < 300;
 

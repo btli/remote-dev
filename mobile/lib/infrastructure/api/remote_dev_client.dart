@@ -28,10 +28,9 @@ class RemoteDevClient implements ApiClientPort {
           final cfToken = await _credentials.readCfToken(id);
           return AuthMaterial(apiKey: apiKey, cfCookie: cfToken);
         },
-        // Default no-op refresh: returns null so the interceptor falls
-        // through to onReauthNeeded. Production callers (see main.dart
-        // -> buildServerScopedOverrides) inject a real refresh that
-        // drives the system-browser /auth/mobile-callback flow.
+        // Default no-op refresh (returns null → interceptor falls through
+        // to onReauthNeeded). Production callers in main.dart inject a
+        // real refresh that drives the system-browser callback flow.
         refreshAuth: refreshAuth ?? ((_) async => null),
         onReauthNeeded: onReauthNeeded ?? () {},
       ),
