@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
@@ -166,8 +164,13 @@ void main() async {
   // and sync read-state with the server.
   container.read(notificationTapHandlerProvider);
   // Fire-and-forget: registers the FCM token with every saved server and
-  // subscribes to refresh. See PushTokenRegistrar.start().
-  unawaited(container.read(pushTokenRegistrarProvider).start());
+  // subscribes to refresh. See PushTokenRegistrar.start(). Surface failures
+  // in logs rather than swallowing them with `unawaited`.
+  container.read(pushTokenRegistrarProvider).start().then((ok) {
+    if (!ok) debugPrint('[Push] registrar.start returned false; push disabled');
+  }).catchError((Object e) {
+    debugPrint('[Push] registrar.start threw: $e');
+  });
 
   runApp(
     UncontrolledProviderScope(

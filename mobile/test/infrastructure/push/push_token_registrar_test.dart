@@ -151,6 +151,23 @@ void main() {
     verifyNever(() => clientB.delete(any(), body: any(named: 'body')));
   });
 
+  test('unregisterFromServer is a no-op when getToken returns null', () async {
+    final clientA = _MockClient();
+    when(() => push.getToken()).thenAnswer((_) async => null);
+    when(store.loadAll).thenAnswer((_) async => [server('a')]);
+
+    final registrar = PushTokenRegistrar(
+      push: push,
+      serverStore: store,
+      clientFactory: (_) => clientA,
+      deviceId: 'dev-1',
+    );
+
+    await registrar.unregisterFromServer('a');
+
+    verifyNever(() => clientA.delete(any(), body: any(named: 'body')));
+  });
+
   test('start returns false when push.initialize fails', () async {
     when(() => push.initialize()).thenAnswer((_) async => false);
     final registrar = PushTokenRegistrar(

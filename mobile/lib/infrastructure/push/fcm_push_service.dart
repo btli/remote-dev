@@ -14,9 +14,13 @@ class FcmPushService implements PushPort {
     if (_initFailed) return false;
 
     try {
-      // Firebase.initializeApp picks up google-services.json on Android
-      // and GoogleService-Info.plist on iOS. If absent, throws.
-      await Firebase.initializeApp();
+      // Idempotent: main() may have already initialized Firebase to register
+      // the background message handler. Skip the duplicate call to avoid the
+      // [core/duplicate-app] exception. If config files are absent both here
+      // and in main() the first attempt throws and Firebase.apps stays empty.
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp();
+      }
     } catch (e) {
       debugPrint('[Push] Firebase.initializeApp failed (config missing?): $e');
       _initFailed = true;
