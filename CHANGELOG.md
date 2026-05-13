@@ -7,7 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.16] - 2026-05-12
+### Fixed
+
+- **Mobile (Flutter)**: Push notifications were silently broken end-to-end
+  in the new app at `mobile/` (worked in the archived `archive/mobile-flutter/`).
+  Six independent bugs all combined to break the flow: (1) `PushTokenRegistrar`
+  POSTed to `/api/push-tokens` instead of `/api/notifications/push-token` and
+  the DELETE shape didn't match the server route; (2) `PushTokenRegistrar.start()`
+  was never called, so the FCM token never reached any server; (3)
+  `mobile/android/settings.gradle.kts` + `mobile/android/app/build.gradle.kts`
+  were missing the `com.google.gms.google-services` plugin, so
+  `Firebase.initializeApp()` failed on Android; (4) AndroidManifest.xml was
+  missing the FCM meta-data block (default notification icon/color and the
+  `rdv_notifications` channel id the server's `FcmPushGateway` targets) plus
+  the `INTERNET` permission; (5) the `ic_notification` drawables and
+  `notification_accent` color resource were absent; (6) `main.dart` never
+  registered `firebaseMessagingBackgroundHandler` and `FcmPushService.initialize()`
+  called `Firebase.initializeApp()` a second time, hitting `[core/duplicate-app]`
+  and permanently latching `_initFailed = true`. `_initFailed` no longer latches
+  on transient permission denial — only missing-config failures are permanent
+  (closes remote-dev-ohfl).
 
 ### Changed
 
