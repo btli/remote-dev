@@ -31,7 +31,7 @@ import { terminalSessions } from "@/db/schema";
 import { getAuthSession } from "@/lib/auth-utils";
 import { AppearanceProvider } from "@/contexts/AppearanceContext";
 import { EmbeddedSessionView } from "@/components/mobile/embed/EmbeddedSessionView";
-import { resolveTerminalWsUrlFromHostHeader } from "@/hooks/useTerminalWsUrl";
+import { resolveTerminalWsUrlFromHost } from "@/lib/terminal-ws-url";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -57,7 +57,7 @@ export default async function MobileSessionPage({ params }: PageProps) {
   const h = await headers();
   const host = h.get("host") ?? "localhost";
   const protocol = h.get("x-forwarded-proto") ?? "http";
-  const wsUrl = resolveTerminalWsUrlFromHostHeader({ host, protocol });
+  const wsUrl = resolveTerminalWsUrlFromHost({ host, protocol });
 
   return (
     <AppearanceProvider>
