@@ -26,12 +26,19 @@ import {
   TerminalWithKeyboard,
   type TerminalWithKeyboardRef,
 } from "@/components/terminal/TerminalWithKeyboard";
+import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import {
   installRdvBridge,
   notifyToNative,
   type RdvBridgeAdapter,
   type RdvBridgeKeyMods,
 } from "@/lib/rdv-bridge";
+
+// Mirror the constants used by MobileSessionView so a future JS-side
+// pinch handler clamps to the same range as the existing PWA pinch.
+const FONT_SIZE_MIN = 9;
+const FONT_SIZE_MAX = 22;
+const DEFAULT_FONT_FAMILY = "'JetBrainsMono Nerd Font Mono', monospace";
 
 export interface EmbeddedSessionViewProps {
   session: {
@@ -41,7 +48,6 @@ export interface EmbeddedSessionViewProps {
     status: "active" | "suspended" | "closed";
   };
   wsUrl: string;
-  initialFontSize?: number;
 }
 
 /** Map a smart-key name + mods into the byte sequence the PTY expects. */
@@ -88,9 +94,24 @@ function keyToBytes(name: string, mods: RdvBridgeKeyMods): string {
 export function EmbeddedSessionView({
   session,
   wsUrl,
-  initialFontSize,
 }: EmbeddedSessionViewProps) {
   const terminalRef = useRef<TerminalWithKeyboardRef | null>(null);
+  const { currentPreferences, updateUserSettings } = usePreferencesContext();
+
+  // Source the terminal font from user prefs. Mirror the
+  // `Number.isFinite` guard MobileSessionView uses so a missing/NaN
+  // payload from a still-loading provider falls through to the xterm
+  // default instead of rendering at NaN px.
+  //
+  // NOTE: There is no JS-side pinch handler yet — pinch persistence
+  // arrives via `bridge.setFontSize` (wired below) which writes through
+  // to /api/preferences; the resulting prefs re-render lands the new
+  // size on the terminal. A follow-up PR will add a touch-event pinch
+  // detector that calls bridge.setFontSize directly from the web side.
+  const fontSize = Number.isFinite(currentPreferences.fontSize)
+    ? currentPreferences.fontSize
+    : undefined;
+  const fontFamily = currentPreferences.fontFamily || DEFAULT_FONT_FAMILY;
 
   useEffect(() => {
     const adapter: RdvBridgeAdapter = {
@@ -100,10 +121,21 @@ export function EmbeddedSessionView({
         if (bytes) terminalRef.current?.sendInput(bytes);
       },
       paste: (text) => terminalRef.current?.sendInput(text),
-      setFontSize: (_px) => {
-        // Phase 0 stub — pinch-zoom font size lands in Phase 2 alongside
-        // the native pinch gesture; for now we ignore so the bridge
-        // method is callable without effect.
+      setFontSize: (px) => {
+        // Bridge handler: the native shell (or a future JS pinch
+        // detector) calls this with a target px size. We clamp into the
+        // PWA's accepted range and persist via PATCH /api/preferences;
+        // PreferencesContext re-renders, the new `fontSize` flows down
+        // through this component, and the terminal picks it up. This
+        // keeps a single canonical source of truth (user prefs) rather
+        // than maintaining a parallel native-side font scale.
+        if (!Number.isFinite(px)) return;
+        const clamped = Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, Math.round(px)));
+        updateUserSettings({ fontSize: clamped }).catch((err) => {
+          // Persistence failures shouldn't crash the WebView; surface in
+          // console for observability while keeping the UI alive.
+          console.error("bridge.setFontSize persist failed", err);
+        });
       },
       setFontScale: (scale) => {
         // Apply scale as a CSS variable on <html>; the terminal embed
@@ -147,7 +179,12 @@ export function EmbeddedSessionView({
     });
 
     return uninstall;
-  }, []);
+    // `updateUserSettings` is stable across renders (memoized by
+    // PreferencesContext via useCallback), so reinstalling the bridge
+    // on its identity is acceptable. Listing it satisfies
+    // react-hooks/exhaustive-deps without churning the install/uninstall
+    // cycle in practice.
+  }, [updateUserSettings]);
 
   return (
     <div className="relative h-full w-full bg-[#1a1b26]">
@@ -157,7 +194,8 @@ export function EmbeddedSessionView({
         tmuxSessionName={session.tmuxSessionName}
         sessionName={session.name}
         wsUrl={wsUrl}
-        fontSize={initialFontSize}
+        fontSize={fontSize}
+        fontFamily={fontFamily}
         mobileChrome="external"
       />
     </div>

@@ -15,7 +15,6 @@ import '../webview_host/session_route_host.dart'
         webViewCookieSeederProvider;
 import 'activity_pip.dart';
 import 'mobile_input_bar.dart';
-import 'pinch_zoom_wrapper.dart';
 import 'session_status_bar.dart';
 import 'smart_key_strip.dart';
 
@@ -23,7 +22,7 @@ import 'smart_key_strip.dart';
 ///
 /// Composes:
 /// - `SessionStatusBar` (top, fixed 44px, sits in the column)
-/// - `PinchZoomWrapper` wrapping the WebView (middle, fixed via LayoutBuilder)
+/// - WebView (middle, height tracks the keyboard inset via LayoutBuilder)
 /// - Chrome stack (bottom, 100px reserve): `SmartKeyStrip` (44px) +
 ///   `MobileInputBar` (56px), rendered inside a single floating Positioned so
 ///   they ride the keyboard together — smart keys ALWAYS stay visible above
@@ -31,8 +30,9 @@ import 'smart_key_strip.dart';
 ///
 /// All five outbound bridge handlers are registered in `onWebViewCreated`
 /// (Spec §2.2 rule 1). All native→WebView calls go through `BridgeController`
-/// (Spec §2.2 rule 2). The WebView's height is fixed regardless of keyboard
-/// inset (Spec §4) — the chrome floats above it via `Stack + Positioned`.
+/// (Spec §2.2 rule 2). The WebView shrinks to track the keyboard inset so
+/// xterm.js sees a viewport resize and tmux reflows its grid; the chrome
+/// floats above the keyboard via `Stack + Positioned`.
 class SessionViewScreen extends ConsumerStatefulWidget {
   const SessionViewScreen({
     required this.sessionId,
@@ -168,10 +168,6 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
     _bridge?.key(name, mods);
   }
 
-  void _handleFontSizeChanged(int newPx) {
-    _bridge?.setFontSize(newPx);
-  }
-
   @override
   Widget build(BuildContext context) {
     final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
@@ -199,13 +195,17 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
             const smartKeysHeight = 44.0;
             const inputBarHeight = 56.0;
             const chromeHeight = smartKeysHeight + inputBarHeight; // 100
-            // Spec §4: WebView height is FIXED — keyboard inset does NOT
-            // shrink it. The chrome (smart keys + input bar) floats above
-            // the keyboard as a single block via Stack + Positioned, so
-            // xterm.js never sees a resize event, never fires SIGWINCH,
-            // never reflows the terminal grid.
-            final webViewHeight =
-                constraints.maxHeight - statusBarHeight - chromeHeight;
+            // WebView shrinks to track the keyboard inset so xterm.js
+            // refits its grid (via visualViewport + ResizeObserver in
+            // Terminal.tsx) and the terminal server reflows tmux. The
+            // chrome (smart keys + input bar) still floats above the
+            // keyboard as a single block via Stack + Positioned, so the
+            // bottom 100px reserve stays present whether the keyboard is
+            // up or not.
+            final webViewHeight = constraints.maxHeight -
+                statusBarHeight -
+                chromeHeight -
+                keyboardInset;
             return Stack(
               children: [
                 Column(
@@ -223,14 +223,16 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
                     ),
                     SizedBox(
                       key: const Key('webview-frame'),
-                      height: webViewHeight,
-                      child: PinchZoomWrapper(
+                      // Defend against the WebView shrinking to a
+                      // negative height on small screens where status +
+                      // chrome + keyboardInset can exceed
+                      // constraints.maxHeight. A non-negative height
+                      // keeps the layout sane until the keyboard
+                      // collapses.
+                      height: webViewHeight < 0 ? 0 : webViewHeight,
+                      child: _Webview(
                         sessionId: widget.sessionId,
-                        onFontSizeChanged: _handleFontSizeChanged,
-                        child: _Webview(
-                          sessionId: widget.sessionId,
-                          onWebViewCreated: _registerBridgeHandlers,
-                        ),
+                        onWebViewCreated: _registerBridgeHandlers,
                       ),
                     ),
                     // Reserve space for the floating chrome so the column

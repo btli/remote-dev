@@ -11,15 +11,22 @@ export const dynamic = "force-dynamic";
  * Session: loaded from DB by id; 404 if not found or not owned by the
  * current user.
  *
- * Providers: AppearanceProvider is mounted here because Terminal.tsx
- * (rendered inside EmbeddedSessionView via TerminalWithKeyboard) calls
- * useTerminalTheme()/useAppearance(). The desktop AppShell normally
- * mounts AppearanceProvider, but the /m/* layout deliberately excludes
- * AppShell to keep the embed bundle minimal — so the provider lives
- * here, scoped to this route.
+ * Providers:
+ *   - AppearanceProvider is mounted here because Terminal.tsx (rendered
+ *     inside EmbeddedSessionView via TerminalWithKeyboard) calls
+ *     useTerminalTheme()/useAppearance(). The desktop AppShell normally
+ *     mounts AppearanceProvider, but the /m/* layout deliberately
+ *     excludes AppShell to keep the embed bundle minimal — so the
+ *     provider lives here, scoped to this route.
+ *   - PreferencesProvider is mounted here so the embedded terminal
+ *     respects the user's font size + font family. Without it, the /m
+ *     bundle never fetches `/api/preferences` and the terminal renders
+ *     at the xterm.js default (~15px) which is "too large" on a phone.
+ *     Scoped to /m/session (NOT mounted in the /m layout) because
+ *     /m/channel and /m/recording have their own provider stacks.
  *
- * No SessionContext / ProjectTree / Preferences are mounted — the
- * embed surface only needs the session row + WS URL.
+ * No SessionContext / ProjectTree are mounted — the embed surface only
+ * needs the session row + WS URL + user prefs.
  */
 
 import { headers } from "next/headers";
@@ -30,6 +37,7 @@ import { db } from "@/db";
 import { terminalSessions } from "@/db/schema";
 import { getAuthSession } from "@/lib/auth-utils";
 import { AppearanceProvider } from "@/contexts/AppearanceContext";
+import { PreferencesProvider } from "@/contexts/PreferencesContext";
 import { EmbeddedSessionView } from "@/components/mobile/embed/EmbeddedSessionView";
 import { resolveTerminalWsUrlFromHost } from "@/lib/terminal-ws-url";
 
@@ -59,17 +67,24 @@ export default async function MobileSessionPage({ params }: PageProps) {
   const protocol = h.get("x-forwarded-proto") ?? "http";
   const wsUrl = resolveTerminalWsUrlFromHost({ host, protocol });
 
+  // Provider order mirrors `src/app/page.tsx` and `/m/channel/[id]`:
+  // PreferencesProvider is the outermost context-bearing wrapper; the
+  // theme provider sits inside it. Both providers are no-op on the
+  // server (they fetch on mount), so this order is a presentation
+  // detail rather than a correctness constraint.
   return (
-    <AppearanceProvider>
-      <EmbeddedSessionView
-        session={{
-          id: row.id,
-          name: row.name,
-          tmuxSessionName: row.tmuxSessionName,
-          status: row.status as "active" | "suspended" | "closed",
-        }}
-        wsUrl={wsUrl}
-      />
-    </AppearanceProvider>
+    <PreferencesProvider>
+      <AppearanceProvider>
+        <EmbeddedSessionView
+          session={{
+            id: row.id,
+            name: row.name,
+            tmuxSessionName: row.tmuxSessionName,
+            status: row.status as "active" | "suspended" | "closed",
+          }}
+          wsUrl={wsUrl}
+        />
+      </AppearanceProvider>
+    </PreferencesProvider>
   );
 }
