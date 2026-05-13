@@ -121,16 +121,12 @@ class CfAuthInterceptor extends Interceptor {
     RequestOptions options,
     RequestInterceptorHandler handler,
   ) async {
-    // All outbound API requests have follow-redirects disabled so
-    // Cloudflare Access's 302→cloudflareaccess.com login redirect lands in
-    // `onError` (where _isAuthFailure classifies it) instead of being
-    // silently fetched as HTML and decoded as JSON. The Remote Dev API
-    // itself never legitimately responds with a 3xx that the client should
-    // follow — if that ever changes, this guard will need an opt-out per
-    // request (e.g., a RequestOptions.extra flag). validateStatus is
-    // narrowed to 2xx for the same reason: anything else flows through
-    // onError where CF interventions can be detected and silently
-    // refreshed.
+    // Force every non-2xx response (including 3xx) through `onError` so
+    // `_isAuthFailure` can detect CF Access's 302→cloudflareaccess.com
+    // login redirect instead of it being silently followed and decoded
+    // as JSON. The Remote Dev API never legitimately returns a 3xx the
+    // client should follow — if that changes, callers will need an
+    // opt-out per request (e.g., a RequestOptions.extra flag).
     options.followRedirects = false;
     options.validateStatus = (status) =>
         status != null && status >= 200 && status < 300;
@@ -279,13 +275,10 @@ class CfAuthInterceptor extends Interceptor {
       } catch (e, st) {
         completer.completeError(e, st);
       } finally {
-        // Defer clearing until after all current awaiters have resumed from
-        // pending.future. Dart schedules completer listeners as microtasks,
-        // so if we clear `_refreshInFlight` synchronously in `finally`, a
-        // request that hits a CF failure in the same tick (before the
-        // listeners run) would miss the mutex and launch a redundant
-        // browser refresh. scheduleMicrotask runs at the end of the current
-        // microtask queue, after the listeners.
+        // Clear AFTER waiting awaiters have resumed (their listeners are
+        // microtasks queued by complete/completeError). Clearing
+        // synchronously here would let a CF failure in the same tick miss
+        // the mutex and launch a redundant browser refresh.
         scheduleMicrotask(() => _refreshInFlight = null);
       }
     });
