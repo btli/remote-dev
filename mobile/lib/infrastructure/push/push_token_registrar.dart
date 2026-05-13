@@ -55,7 +55,7 @@ class PushTokenRegistrar {
       try {
         final client = clientFactory(server);
         await client.post(
-          '/api/push-tokens',
+          '/api/notifications/push-token',
           body: {
             'token': token,
             'platform': platform,
@@ -84,7 +84,10 @@ class PushTokenRegistrar {
     if (target == null) return;
     try {
       final client = clientFactory(target);
-      await client.delete('/api/push-tokens/$token');
+      await client.delete(
+        '/api/notifications/push-token',
+        body: {'token': token},
+      );
     } catch (e) {
       debugPrint('[Push] unregister on ${target.label} failed: $e');
     }

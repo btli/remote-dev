@@ -6,6 +6,10 @@ import '../../application/ports/push_port.dart';
 
 class FcmPushService implements PushPort {
   bool _initialized = false;
+  // Permanent within the session: missing Firebase config files won't appear
+  // at runtime, so we short-circuit subsequent initialize() attempts.
+  // Transient failures (denied permission, FCM setup error) do NOT latch this
+  // — those callers can retry initialize() after the user changes OS settings.
   bool _initFailed = false;
 
   @override
@@ -14,9 +18,13 @@ class FcmPushService implements PushPort {
     if (_initFailed) return false;
 
     try {
-      // Firebase.initializeApp picks up google-services.json on Android
-      // and GoogleService-Info.plist on iOS. If absent, throws.
-      await Firebase.initializeApp();
+      // Idempotent: main() may have already initialized Firebase to register
+      // the background message handler. Skip the duplicate call to avoid the
+      // [core/duplicate-app] exception. If config files are absent both here
+      // and in main() the first attempt throws and Firebase.apps stays empty.
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp();
+      }
     } catch (e) {
       debugPrint('[Push] Firebase.initializeApp failed (config missing?): $e');
       _initFailed = true;
@@ -50,7 +58,6 @@ class FcmPushService implements PushPort {
       return true;
     } catch (e) {
       debugPrint('[Push] FCM permission/options setup failed: $e');
-      _initFailed = true;
       return false;
     }
   }
