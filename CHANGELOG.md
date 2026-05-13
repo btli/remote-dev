@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mobile (Flutter)**: CF Access JWT expiry no longer surfaces as a
+  `FormatException: Unexpected /api/sessions response shape` with the
+  user stuck behind a "Failed to load sessions" error until force-quit.
+  `CfAuthInterceptor` now disables Dio's redirect-following, detects CF
+  Access intervention (401/403, 3xx → `cloudflareaccess.com`, or 200
+  `text/html`), and silently refreshes credentials via the system-browser
+  `/auth/mobile-callback` flow before transparently replaying the
+  original request. Concurrent failures dedupe to a single browser
+  launch, a retry sentinel guards against infinite loops, and the full
+  `/reauth` screen only kicks in when refresh genuinely fails
+  (closes remote-dev-arua).
+
 - **Mobile (Flutter)**: Push notifications were silently broken end-to-end
   in the new app at `mobile/` (worked in the archived `archive/mobile-flutter/`).
   Six independent bugs all combined to break the flow: (1) `PushTokenRegistrar`

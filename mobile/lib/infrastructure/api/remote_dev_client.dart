@@ -11,6 +11,7 @@ class RemoteDevClient implements ApiClientPort {
     required this.serverId,
     required SecureStoragePort storage,
     void Function()? onReauthNeeded,
+    Future<AuthMaterial?> Function(String serverId)? refreshAuth,
     Dio? dio,
   })  : _dio = dio ?? Dio(),
         _credentials = MobileCredentialsStore(storage) {
@@ -20,12 +21,18 @@ class RemoteDevClient implements ApiClientPort {
       ..receiveTimeout = const Duration(seconds: 30);
     _dio.interceptors.add(
       CfAuthInterceptor(
+        dio: _dio,
         serverId: serverId,
         authReader: (id) async {
           final apiKey = await _credentials.readApiKey(id);
           final cfToken = await _credentials.readCfToken(id);
           return AuthMaterial(apiKey: apiKey, cfCookie: cfToken);
         },
+        // Default no-op refresh: returns null so the interceptor falls
+        // through to onReauthNeeded. Production callers (see main.dart
+        // -> buildServerScopedOverrides) inject a real refresh that
+        // drives the system-browser /auth/mobile-callback flow.
+        refreshAuth: refreshAuth ?? ((_) async => null),
         onReauthNeeded: onReauthNeeded ?? () {},
       ),
     );
