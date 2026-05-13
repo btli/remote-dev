@@ -6,8 +6,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app.dart';
 import 'application/ports/api_client_port.dart';
 import 'application/state/reauth_signal_provider.dart';
+import 'domain/server_config.dart';
 import 'infrastructure/api/account_api.dart';
 import 'infrastructure/api/agent_cli_api.dart';
+import 'infrastructure/api/cf_auth_interceptor.dart' show AuthMaterial;
 import 'infrastructure/api/channels_api.dart';
 import 'infrastructure/api/github_accounts_api.dart';
 import 'infrastructure/api/notifications_api.dart';
@@ -15,8 +17,10 @@ import 'infrastructure/api/preferences_api.dart';
 import 'infrastructure/api/project_tree_api.dart';
 import 'infrastructure/api/remote_dev_client.dart';
 import 'infrastructure/api/sessions_api.dart';
+import 'infrastructure/auth/mobile_callback_login_launcher.dart';
 import 'infrastructure/biometric/biometric_settings_store.dart';
 import 'infrastructure/biometric/local_auth_service.dart';
+import 'infrastructure/deep_link/deep_link_stream_provider.dart';
 import 'infrastructure/device/device_id_provider.dart';
 import 'infrastructure/push/fcm_push_service.dart';
 import 'infrastructure/push/push_token_registrar.dart';
@@ -39,7 +43,11 @@ import 'presentation/screens/sessions/project_tree_sheet.dart'
 import 'presentation/screens/sessions/sessions_tab_screen.dart'
     show sessionsApiProvider;
 import 'presentation/screens/webview_host/session_route_host.dart'
-    show activeServerProvider, secureStorageProvider, serverConfigStoreProvider;
+    show
+        activeServerProvider,
+        mobileCredentialsStoreProvider,
+        secureStorageProvider,
+        serverConfigStoreProvider;
 
 /// Thrown by [_apiClientProvider] when no active server has been chosen.
 ///
@@ -57,6 +65,55 @@ class NoActiveServerError extends Error {
       'No active server. Sign in via the server picker first.';
 }
 
+/// Build a silent-refresh callback that the [CfAuthInterceptor] will
+/// invoke when it detects CF Access intervention (401/403, redirect to
+/// `cloudflareaccess.com`, or 200 text/html). The callback drives the
+/// same system-browser `/auth/mobile-callback` flow we use at initial
+/// sign-in via [MobileCallbackLoginLauncher], persists the refreshed
+/// credentials, and returns the new [AuthMaterial] so Dio can replay
+/// the original request transparently.
+///
+/// When the browser's CF SSO session is still valid (the common case
+/// — browser sessions typically outlive our stored JWT), the Custom Tab
+/// flashes briefly and completes in <1s with no user interaction. Only
+/// when the browser session is ALSO dead does the user need to type
+/// credentials again.
+///
+/// Returning `null` signals genuine failure (user cancelled, timeout,
+/// no active server, etc.) — the interceptor then falls through to
+/// `onReauthNeeded` so the UI routes to `/reauth`.
+Future<AuthMaterial?> Function(String serverId) _buildRefreshAuth(Ref ref) {
+  return (String serverId) async {
+    // The interceptor passes its captured serverId; we honour it rather
+    // than reading the (potentially stale) active server, so a refresh
+    // can't accidentally cross-bind credentials to a different server
+    // after the user switches.
+    ServerConfig? server;
+    try {
+      final all = await ref.read(serverConfigStoreProvider).loadAll();
+      for (final cfg in all) {
+        if (cfg.id == serverId) {
+          server = cfg;
+          break;
+        }
+      }
+    } catch (e) {
+      debugPrint('[CfAuth] refresh aborted: serverConfigStore.loadAll failed: $e');
+      return null;
+    }
+    if (server == null) return null;
+
+    final launcher = MobileCallbackLoginLauncher(
+      deepLinkStream: ref.read(deepLinkStreamProvider),
+    );
+    final result = await launcher.login(serverUrl: Uri.parse(server.url));
+    if (result == null) return null;
+
+    await ref.read(mobileCredentialsStoreProvider).save(server.id, result);
+    return AuthMaterial(apiKey: result.apiKey, cfCookie: result.cfToken);
+  };
+}
+
 /// Internal: synchronous [ApiClientPort] bound to the current active server.
 ///
 /// Re-evaluates whenever [activeServerProvider] resolves to a different
@@ -71,6 +128,7 @@ final _apiClientProvider = Provider<ApiClientPort>((ref) {
     serverOrigin: Uri.parse(server.url),
     serverId: server.id,
     storage: storage,
+    refreshAuth: _buildRefreshAuth(ref),
     onReauthNeeded: () => ref.read(reauthSignalProvider.notifier).request(),
   );
 });
@@ -116,6 +174,7 @@ List<Override> buildServerScopedOverrides({required String deviceId}) {
           serverOrigin: Uri.parse(server.url),
           serverId: server.id,
           storage: ref.read(secureStorageProvider),
+          refreshAuth: _buildRefreshAuth(ref),
           onReauthNeeded: () =>
               ref.read(reauthSignalProvider.notifier).request(),
         ),

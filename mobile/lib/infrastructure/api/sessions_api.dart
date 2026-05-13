@@ -83,6 +83,10 @@ class SessionsApi implements SessionsPort {
         return inner.cast<Map<String, dynamic>>();
       }
     }
+    // CF Access redirects (302 → cloudflareaccess.com / 200 text/html
+    // login page) are caught upstream by CfAuthInterceptor's silent
+    // refresh path, so this throw should only surface for genuinely
+    // malformed API responses — kept as defense in depth.
     throw const FormatException('Unexpected /api/sessions response shape');
   }
 }
