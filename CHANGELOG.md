@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.17] - 2026-05-13
+
 ### Fixed
 
 - **Mobile (Flutter)**: Push notifications were silently broken end-to-end
@@ -27,6 +29,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and permanently latching `_initFailed = true`. `_initFailed` no longer latches
   on transient permission denial — only missing-config failures are permanent
   (closes remote-dev-ohfl).
+- **Mobile (Flutter)**: Firebase configs swapped to the real per-platform
+  values. The previous `mobile/android/app/google-services.json` only had a
+  client entry for the legacy `com.remotedev.remote_dev` package, which no
+  longer matches the actual Android `applicationId` (`com.remotedev.app`), so
+  FCM token registration silently failed on the shipping APK. The new file
+  has both clients (`com.remotedev.app` primary, `com.remotedev.remote_dev`
+  legacy). A proper `mobile/ios/Runner/GoogleService-Info.plist` was added
+  for the first time. `mobile/lib/firebase_options.dart` was corrected: the
+  iOS section had been initialized with the Android `appId`/`apiKey` and a
+  non-existent bundle ID `com.remotedev.remoteDev`; it now uses the iOS app
+  values (`AIzaSyC…UYY` / `1:324706718241:ios:5a91afb31297b027d88960`,
+  `com.remotedev.app`). The Android `appId` was also pointed at the new
+  `com.remotedev.app` client.
+
+### Versioning
+
+- **Mobile (Flutter)**: Bumped `mobile/pubspec.yaml` from `0.1.1+1` to
+  `0.3.17+1` so the Flutter app version tracks the repo release version
+  instead of its own independent line.
+
+## [0.3.16] - 2026-05-12
 
 ### Changed
 
