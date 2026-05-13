@@ -5,10 +5,11 @@
 // We assert what we can:
 //   1. The screen mounts in a Scaffold without throwing during the
 //      first frame.
-//   2. The keyed `webview-frame` SizedBox keeps a constant height when
-//      the soft keyboard rises (Spec §4 — the input bar floats above
-//      the keyboard via Stack + Positioned, the WebView area does NOT
-//      reflow).
+//   2. The keyed `webview-frame` SizedBox SHRINKS by the keyboard inset
+//      when the soft keyboard rises — this is what triggers a
+//      visualViewport resize inside xterm.js, which in turn refits the
+//      grid and reflows tmux. (See `EmbeddedSessionView` + Terminal.tsx
+//      `visualViewport` listener.)
 //
 // We suppress the expected `InAppWebViewPlatform.instance != null`
 // assertion the same way `bridge_spike/keyboard_layout_test` does.
@@ -47,7 +48,7 @@ void main() {
   });
 
   testWidgets(
-    'webview-frame height is constant before/after keyboard rise',
+    'webview-frame shrinks by keyboard inset when keyboard rises',
     (tester) async {
       final originalOnError = FlutterError.onError;
       FlutterError.onError = (details) {
@@ -85,18 +86,21 @@ void main() {
       }
       final size0 = tester.getSize(keyFinder);
 
-      await tester.pumpWidget(framed(300));
+      const inset = 300.0;
+      await tester.pumpWidget(framed(inset));
       for (var i = 0; i < 5; i++) {
         await tester.pump(const Duration(milliseconds: 16));
       }
-      final size300 = tester.getSize(keyFinder);
+      final sizeKeyboard = tester.getSize(keyFinder);
 
       expect(
-        size300.height,
-        equals(size0.height),
+        sizeKeyboard.height,
+        closeTo(size0.height - inset, 0.5),
         reason:
-            'Spec §4: WebView height MUST NOT change when the keyboard '
-            'rises. Found ${size0.height} → ${size300.height}.',
+            'WebView MUST shrink by the keyboard inset so xterm.js fires '
+            'a visualViewport resize and tmux reflows. Found '
+            '${size0.height} → ${sizeKeyboard.height} (expected ~'
+            '${size0.height - inset}).',
       );
     },
   );

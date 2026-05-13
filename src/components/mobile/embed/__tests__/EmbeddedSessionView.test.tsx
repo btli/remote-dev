@@ -44,6 +44,21 @@ vi.mock("@/components/terminal/TerminalWithKeyboard", async () => {
   return { TerminalWithKeyboard };
 });
 
+// EmbeddedSessionView reads font + family from PreferencesContext (so
+// the embedded terminal honors the user's font-size pref) and uses
+// `updateUserSettings` to persist pinch-zoom from the native bridge.
+// Stub the context to avoid the real fetch in /api/preferences.
+const updateUserSettingsSpy = vi.fn().mockResolvedValue(undefined);
+vi.mock("@/contexts/PreferencesContext", () => ({
+  usePreferencesContext: () => ({
+    currentPreferences: {
+      fontFamily: "MockMono, monospace",
+      fontSize: 14,
+    },
+    updateUserSettings: updateUserSettingsSpy,
+  }),
+}));
+
 const session = {
   id: "session-1",
   name: "test session",
@@ -54,6 +69,7 @@ const session = {
 beforeEach(() => {
   sendInputSpy = vi.fn();
   scrollToBottomSpy = vi.fn();
+  updateUserSettingsSpy.mockClear();
 });
 
 afterEach(() => {
@@ -96,5 +112,30 @@ describe("EmbeddedSessionView", () => {
     window.rdvBridge?.input("ls -la\n");
 
     expect(sendInputSpy).toHaveBeenCalledWith("ls -la\n");
+  });
+
+  it("rdvBridge.setFontSize persists clamped value through preferences", () => {
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    // In-range: persisted as-is.
+    window.rdvBridge?.setFontSize(15);
+    expect(updateUserSettingsSpy).toHaveBeenLastCalledWith({ fontSize: 15 });
+
+    // Above max → clamped to 22.
+    window.rdvBridge?.setFontSize(99);
+    expect(updateUserSettingsSpy).toHaveBeenLastCalledWith({ fontSize: 22 });
+
+    // Below min → clamped to 9.
+    window.rdvBridge?.setFontSize(2);
+    expect(updateUserSettingsSpy).toHaveBeenLastCalledWith({ fontSize: 9 });
+  });
+
+  it("rdvBridge.setFontSize ignores non-finite values", () => {
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    window.rdvBridge?.setFontSize(Number.NaN);
+    window.rdvBridge?.setFontSize(Number.POSITIVE_INFINITY);
+
+    expect(updateUserSettingsSpy).not.toHaveBeenCalled();
   });
 });

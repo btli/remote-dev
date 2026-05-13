@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mobile app**: terminal font size now respects user preferences in
+  the Flutter-hosted `/m/session/[id]` view. The embed bundle was
+  rendering at the xterm.js default (~15px, "too large" on a phone)
+  because `PreferencesProvider` wasn't mounted on the /m/session route
+  — it now reads `currentPreferences.fontSize` and `.fontFamily` and
+  feeds them into `TerminalWithKeyboard`, the same way `MobileSessionView`
+  already did for the PWA path (closes remote-dev-doqi).
+- **Mobile app**: Android keyboard now triggers a tmux window resize.
+  The Dart `SessionViewScreen` layout previously held the WebView at a
+  fixed height regardless of `MediaQuery.viewInsets.bottom`, so opening
+  the keyboard never produced a visualViewport resize and `tmux` never
+  reflowed. The WebView height now subtracts `keyboardInset` so xterm.js's
+  existing `visualViewport` + `ResizeObserver` handlers refit the grid
+  and the terminal server reflows tmux (closes remote-dev-zjsc /
+  remote-dev-btph).
+- **Mobile app**: single-finger scrolling and tap-to-focus on the
+  terminal. The Dart `PinchZoomWrapper`'s `ScaleGestureRecognizer` won
+  the gesture arena ahead of the WebView and ate every touch — scroll,
+  tap, AND pinch all dropped. Removed the wrapper so the WebView
+  receives gestures directly; xterm.js's existing touch handlers now
+  drive scrolling and focus (closes remote-dev-6tos).
+
+### Changed
+
+- **Mobile app**: pinch-to-zoom is now routed through the embed bridge
+  (`window.rdvBridge.setFontSize`) instead of native Flutter. The bridge
+  handler clamps to `[9, 22]` px and persists via `PATCH /api/preferences`
+  so the new size flows back through `PreferencesContext` and lands on
+  the terminal — a single canonical source of truth instead of a
+  parallel Dart-side font scale. A JS-side touch-event pinch detector
+  will land in a follow-up (closes remote-dev-d76d).
+
 ## [0.3.18] - 2026-05-13
 
 ### Fixed
