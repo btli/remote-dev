@@ -18,6 +18,16 @@ import { EmbeddedSessionView } from "../EmbeddedSessionView";
 // against the actual instance the component held in its ref.
 let sendInputSpy: ReturnType<typeof vi.fn>;
 let scrollToBottomSpy: ReturnType<typeof vi.fn>;
+let restartAgentSpy: ReturnType<typeof vi.fn>;
+
+// Captured props handed to the mocked TerminalWithKeyboard. Refs to the
+// latest invocation so tests can drive the parent-supplied callbacks
+// (`onNotification`, `onSessionRestart`, `onSessionDelete`) directly.
+let capturedTerminalProps: {
+  onNotification?: (n: Record<string, unknown>) => void;
+  onSessionRestart?: () => Promise<void>;
+  onSessionDelete?: (deleteWorktree?: boolean) => Promise<void>;
+} = {};
 
 // Mocked TerminalWithKeyboard exposes the fontSize/fontFamily props via
 // `data-*` attributes so pinch tests can assert the live prop pass-through
@@ -25,6 +35,9 @@ let scrollToBottomSpy: ReturnType<typeof vi.fn>;
 type StubTerminalProps = {
   fontSize?: number;
   fontFamily?: string;
+  onNotification?: (n: Record<string, unknown>) => void;
+  onSessionRestart?: () => Promise<void>;
+  onSessionDelete?: (deleteWorktree?: boolean) => Promise<void>;
 };
 
 vi.mock("@/components/terminal/TerminalWithKeyboard", async () => {
@@ -42,12 +55,18 @@ vi.mock("@/components/terminal/TerminalWithKeyboard", async () => {
       sendInput: sendInputSpy as unknown as (s: string) => void,
       scrollToBottom: scrollToBottomSpy as unknown as () => void,
       focus: vi.fn() as unknown as () => void,
-      restartAgent: vi.fn() as unknown as () => void,
+      restartAgent: restartAgentSpy as unknown as () => void,
     }));
+    const p = props as StubTerminalProps;
+    capturedTerminalProps = {
+      onNotification: p.onNotification,
+      onSessionRestart: p.onSessionRestart,
+      onSessionDelete: p.onSessionDelete,
+    };
     return React.createElement("div", {
       "data-testid": "terminal-mock",
-      "data-font-size": (props as StubTerminalProps).fontSize,
-      "data-font-family": (props as StubTerminalProps).fontFamily,
+      "data-font-size": p.fontSize,
+      "data-font-family": p.fontFamily,
     });
   });
   return { TerminalWithKeyboard };
@@ -92,6 +111,19 @@ vi.mock("@/contexts/PreferencesContext", () => ({
   }),
 }));
 
+// EmbeddedSessionView forwards `onNotification` from TerminalWithKeyboard
+// into the NotificationContext via `addNotification`. Stub the context
+// so the component mounts without a real provider tree, and expose a
+// spy + a passthrough `hydrateNotification` for tests that exercise the
+// notification pipeline. The hydrate helper just returns its input as-is
+// here — the real one converts ISO strings to Date objects, but tests
+// drive synthetic payloads, so a passthrough is enough.
+const addNotificationSpy = vi.fn();
+vi.mock("@/contexts/NotificationContext", () => ({
+  useNotificationContext: () => ({ addNotification: addNotificationSpy }),
+  hydrateNotification: (n: Record<string, unknown>) => n,
+}));
+
 const session = {
   id: "session-1",
   name: "test session",
@@ -102,8 +134,11 @@ const session = {
 beforeEach(() => {
   sendInputSpy = vi.fn();
   scrollToBottomSpy = vi.fn();
+  restartAgentSpy = vi.fn();
   updateUserSettingsSpy.mockClear();
+  addNotificationSpy.mockClear();
   capturedPinchOpts = null;
+  capturedTerminalProps = {};
   setMockPrefs({
     currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
   });
@@ -311,5 +346,139 @@ describe("EmbeddedSessionView, pinch-to-zoom", () => {
     expect(
       screen.getByTestId("terminal-mock").getAttribute("data-font-size")
     ).toBe("17");
+  });
+});
+
+describe("EmbeddedSessionView, notification forwarding", () => {
+  it("forwards onNotification payloads into the notification context", () => {
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    const payload = {
+      id: "n-1",
+      type: "agent_waiting",
+      sessionId: "session-1",
+      title: "Agent needs input",
+      createdAt: "2026-05-13T00:00:00.000Z",
+      readAt: null,
+    };
+
+    capturedTerminalProps.onNotification?.(payload);
+
+    expect(addNotificationSpy).toHaveBeenCalledTimes(1);
+    expect(addNotificationSpy).toHaveBeenCalledWith(payload);
+  });
+});
+
+describe("EmbeddedSessionView, agent session lifecycle", () => {
+  it("onSessionRestart calls restartAgent on the underlying terminal ref", async () => {
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    await capturedTerminalProps.onSessionRestart?.();
+
+    expect(restartAgentSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("onSessionDelete posts DELETE /api/sessions/:id without worktree flag by default", async () => {
+    const fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValue(
+        new Response("{}", { status: 200, headers: { "content-type": "application/json" } })
+      );
+
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    await capturedTerminalProps.onSessionDelete?.(false);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/sessions/session-1",
+      expect.objectContaining({ method: "DELETE" })
+    );
+    fetchSpy.mockRestore();
+  });
+
+  it("onSessionDelete forwards the deleteWorktree flag", async () => {
+    const fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValue(
+        new Response("{}", { status: 200, headers: { "content-type": "application/json" } })
+      );
+
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    await capturedTerminalProps.onSessionDelete?.(true);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/sessions/session-1?deleteWorktree=true",
+      expect.objectContaining({ method: "DELETE" })
+    );
+    fetchSpy.mockRestore();
+  });
+
+  it("onSessionDelete throws when the API responds non-OK", async () => {
+    const fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValue(new Response("nope", { status: 500 }));
+    // Suppress the console.error log this test deliberately triggers.
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    await expect(
+      capturedTerminalProps.onSessionDelete?.(false)
+    ).rejects.toThrow(/Failed to delete session/);
+
+    fetchSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+});
+
+describe("EmbeddedSessionView, setFontScale", () => {
+  it("rdvBridge.setFontScale persists scale * base via preferences", () => {
+    // Cold start: prefs settle at 14 px. setFontScale(1.5) → 14 * 1.5 = 21
+    // (clamped under MAX 22), persisted as { fontSize: 21 }.
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+    });
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    window.rdvBridge?.setFontScale(1.5);
+
+    expect(updateUserSettingsSpy).toHaveBeenLastCalledWith({ fontSize: 21 });
+  });
+
+  it("rdvBridge.setFontScale clamps the resulting px into the accepted range", () => {
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+    });
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    // 14 * 3 = 42 → clamped to MAX 22.
+    window.rdvBridge?.setFontScale(3);
+    expect(updateUserSettingsSpy).toHaveBeenLastCalledWith({ fontSize: 22 });
+
+    // 14 * 0.4 = 5.6 → clamped to MIN 9.
+    window.rdvBridge?.setFontScale(0.4);
+    expect(updateUserSettingsSpy).toHaveBeenLastCalledWith({ fontSize: 9 });
+  });
+
+  it("rdvBridge.setFontScale ignores non-finite and non-positive values", () => {
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    window.rdvBridge?.setFontScale(Number.NaN);
+    window.rdvBridge?.setFontScale(Number.POSITIVE_INFINITY);
+    window.rdvBridge?.setFontScale(0);
+    window.rdvBridge?.setFontScale(-1);
+
+    expect(updateUserSettingsSpy).not.toHaveBeenCalled();
+  });
+
+  it("rdvBridge.setFontScale also writes --rdv-font-scale on <html> for sibling embeds", () => {
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    window.rdvBridge?.setFontScale(1.25);
+
+    expect(
+      document.documentElement.style.getPropertyValue("--rdv-font-scale")
+    ).toBe("1.25");
   });
 });

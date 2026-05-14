@@ -20,13 +20,17 @@
  * @see docs/superpowers/specs/2026-05-08-flutter-app-redesign-design.md §4
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   TerminalWithKeyboard,
   type TerminalWithKeyboardRef,
 } from "@/components/terminal/TerminalWithKeyboard";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
+import {
+  hydrateNotification,
+  useNotificationContext,
+} from "@/contexts/NotificationContext";
 import { usePinchZoom } from "@/components/mobile/session/usePinchZoom";
 import {
   installRdvBridge,
@@ -34,6 +38,8 @@ import {
   type RdvBridgeAdapter,
   type RdvBridgeKeyMods,
 } from "@/lib/rdv-bridge";
+import type { TerminalSession } from "@/types/session";
+import type { TerminalType } from "@/types/terminal-type";
 
 // Mirror the constants used by MobileSessionView so the JS-side pinch
 // handler clamps to the same range as the existing PWA pinch.
@@ -52,6 +58,16 @@ export interface EmbeddedSessionViewProps {
     name: string;
     tmuxSessionName: string;
     status: "active" | "suspended" | "closed";
+    /**
+     * Optional richer session shape used by the agent SessionEndedOverlay
+     * (Restart / Delete flow). When absent the overlay falls back to a
+     * minimal shell behavior — Restart is wired through `restartAgent`
+     * and Delete still works via the DELETE /api/sessions/:id call.
+     */
+    terminalType?: TerminalType;
+    projectPath?: string | null;
+    worktreeBranch?: string | null;
+    githubRepoId?: string | null;
   };
   wsUrl: string;
 }
@@ -103,6 +119,7 @@ export function EmbeddedSessionView({
 }: EmbeddedSessionViewProps) {
   const terminalRef = useRef<TerminalWithKeyboardRef | null>(null);
   const { currentPreferences, updateUserSettings } = usePreferencesContext();
+  const { addNotification } = useNotificationContext();
 
   const fontFamily = currentPreferences.fontFamily || DEFAULT_FONT_FAMILY;
 
@@ -182,6 +199,59 @@ export function EmbeddedSessionView({
     fontSizeBaselineRef.current = fontSize;
   }, [fontSize]);
 
+  // ── Notification forwarding ────────────────────────────────────────────
+  // The terminal server broadcasts in-app notifications (job done, agent
+  // waiting on input, peer message, etc.) over the session WebSocket as
+  // `{type: "notification", notification: {...}}` frames. Terminal.tsx
+  // surfaces them through the `onNotification` callback; we hydrate the
+  // payload (string dates → Date objects) and hand off to the context's
+  // `addNotification`, which both inserts the row and fires
+  // `fireNotificationToast`. Without this bridge, the embed silently
+  // drops every foreground notification even though FCM background push
+  // works.
+  const handleNotification = useCallback(
+    (notification: Record<string, unknown>) => {
+      addNotification(hydrateNotification(notification));
+    },
+    [addNotification],
+  );
+
+  // ── Agent session lifecycle (Restart / Delete from SessionEndedOverlay) ─
+  // The overlay only renders when TerminalWithKeyboard receives a full
+  // `session` prop (TerminalSession-shaped). The embed page hands us a
+  // narrower shape, so we expand it locally to satisfy the overlay's
+  // dependencies (worktreeBranch + githubRepoId drive the "delete worktree"
+  // confirmation flow). Restart goes through the imperative ref, which
+  // sends a `restart_agent` WebSocket frame to the terminal server — the
+  // canonical path used by MobileSessionView. Delete uses the standard
+  // DELETE /api/sessions/:id endpoint and forwards the `deleteWorktree`
+  // flag from the worktree confirmation dialog.
+  const handleSessionRestart = useCallback(async () => {
+    terminalRef.current?.restartAgent();
+  }, []);
+
+  const handleSessionDelete = useCallback(
+    async (deleteWorktree?: boolean) => {
+      const url = deleteWorktree
+        ? `/api/sessions/${session.id}?deleteWorktree=true`
+        : `/api/sessions/${session.id}`;
+      try {
+        const response = await fetch(url, { method: "DELETE" });
+        if (!response.ok) {
+          throw new Error(`Failed to delete session: ${response.status}`);
+        }
+      } catch (err) {
+        // Surface for debugging; the overlay already resets its
+        // local `isDeleting` state via its finally block, so the user
+        // can retry. The native shell typically also pops the route
+        // when the session goes away, so there's no extra UI to drive.
+        console.error("session delete failed", err);
+        throw err;
+      }
+    },
+    [session.id],
+  );
+
   useEffect(() => {
     const adapter: RdvBridgeAdapter = {
       input: (text) => terminalRef.current?.sendInput(text),
@@ -212,15 +282,42 @@ export function EmbeddedSessionView({
         });
       },
       setFontScale: (scale) => {
-        // Apply scale as a CSS variable on <html>; the terminal embed
-        // doesn't visually consume the variable today but accepts the
-        // call so the native shell can fire it on every screen.
+        // Apply the scale to <html> as a CSS variable so sibling embeds
+        // (channel / recording) that consume `--rdv-font-scale` stay in
+        // visual lockstep when the user switches between routes.
+        //
+        // The terminal embed itself does NOT visually consume the CSS
+        // variable: xterm.js sizes its glyph grid from the JS
+        // `terminal.options.fontSize` option, which is wired to the
+        // `fontSize` React prop on TerminalWithKeyboard. Wrapping the
+        // viewport in a `font-size: calc(... * var(--rdv-font-scale))`
+        // div has no effect on the rendered grid — xterm.js measures
+        // glyphs against its own option, not the cascaded CSS.
+        //
+        // To get an actual visual change in the terminal, we translate
+        // the scale into a px target against a stable base (the latest
+        // upstream-settled prefs value, or DEFAULT_FONT_SIZE if prefs
+        // haven't settled yet) and route it through the same
+        // updateUserSettings path as setFontSize. PreferencesContext
+        // re-renders, the `fontSize` prop flows back through, and
+        // xterm.js resizes the grid. Subject to the same
+        // seeded-from-upstream latch as bridge.setFontSize: once a user
+        // has pinched, persistence still lands but the local pinch
+        // state is not stomped mid-session.
         if (typeof document !== "undefined") {
           document.documentElement.style.setProperty(
             "--rdv-font-scale",
             String(scale),
           );
         }
+        if (!Number.isFinite(scale) || scale <= 0) return;
+        const base = Number.isFinite(currentPreferences.fontSize)
+          ? currentPreferences.fontSize
+          : DEFAULT_FONT_SIZE;
+        const clamped = clampFontSize(base * scale);
+        updateUserSettings({ fontSize: clamped }).catch((err) => {
+          console.error("bridge.setFontScale persist failed", err);
+        });
       },
       setCursorBlink: (blink) => {
         terminalRef.current?.setCursorBlink(blink);
@@ -255,10 +352,60 @@ export function EmbeddedSessionView({
     return uninstall;
     // `updateUserSettings` is stable across renders (memoized by
     // PreferencesContext via useCallback), so reinstalling the bridge
-    // on its identity is acceptable. Listing it satisfies
-    // react-hooks/exhaustive-deps without churning the install/uninstall
-    // cycle in practice.
-  }, [updateUserSettings]);
+    // on its identity is acceptable. `currentPreferences.fontSize` is
+    // captured by `setFontScale` for the scale → px conversion: when
+    // prefs settle (or change after a pinch / setFontSize), the bridge
+    // gets rebound so the next setFontScale call uses the fresh base.
+  }, [updateUserSettings, currentPreferences.fontSize]);
+
+  // Inflate the narrow embed-session shape into a full TerminalSession
+  // so TerminalWithKeyboard can render the agent SessionEndedOverlay
+  // when the agent process exits. Only `terminalType`, `worktreeBranch`,
+  // `githubRepoId`, and `projectPath` are actually read by the overlay;
+  // the rest are filled with defensible defaults so the type is happy.
+  // The fields are stable across renders (driven by the server-rendered
+  // page), so a useMemo keeps the object identity steady for downstream
+  // ref equality checks.
+  const terminalSession = useMemo<TerminalSession>(() => {
+    const now = new Date(0);
+    return {
+      id: session.id,
+      userId: "",
+      name: session.name,
+      tmuxSessionName: session.tmuxSessionName,
+      projectPath: session.projectPath ?? null,
+      githubRepoId: session.githubRepoId ?? null,
+      worktreeBranch: session.worktreeBranch ?? null,
+      worktreeType: null,
+      projectId: null,
+      profileId: null,
+      terminalType: session.terminalType ?? "shell",
+      agentProvider: null,
+      agentExitState: null,
+      agentExitCode: null,
+      agentExitedAt: null,
+      agentRestartCount: 0,
+      agentActivityStatus: null,
+      typeMetadata: null,
+      scopeKey: null,
+      parentSessionId: null,
+      status: session.status,
+      pinned: false,
+      tabOrder: 0,
+      lastActivityAt: now,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }, [
+    session.id,
+    session.name,
+    session.tmuxSessionName,
+    session.projectPath,
+    session.githubRepoId,
+    session.worktreeBranch,
+    session.terminalType,
+    session.status,
+  ]);
 
   return (
     <div
@@ -272,10 +419,14 @@ export function EmbeddedSessionView({
         sessionId={session.id}
         tmuxSessionName={session.tmuxSessionName}
         sessionName={session.name}
+        session={terminalSession}
         wsUrl={wsUrl}
         fontSize={fontSize}
         fontFamily={fontFamily}
         mobileChrome="external"
+        onNotification={handleNotification}
+        onSessionRestart={handleSessionRestart}
+        onSessionDelete={handleSessionDelete}
       />
     </div>
   );
