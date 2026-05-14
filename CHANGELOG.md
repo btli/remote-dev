@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mobile release CI**: Android `:app:signReleaseBundle` no longer crashes
+  with `Tag number over 30 is not supported`. The Gradle signing config
+  now sets `storeType = "PKCS12"` by default (matching `keytool`'s modern
+  default since JDK 9), with optional override via
+  `RDV_ANDROID_KEYSTORE_TYPE` for legacy JKS keystores. The release
+  workflow decodes the keystore to `/tmp/remote-dev-release.p12` and
+  passes the type override through (closes remote-dev-vvnw).
 - **Mobile app**: terminal font size now respects user preferences in
   the Flutter-hosted `/m/session/[id]` view. The embed bundle was
   rendering at the xterm.js default (~15px, "too large" on a phone)

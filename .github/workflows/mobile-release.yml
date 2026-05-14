@@ -6,10 +6,12 @@
 # Required GitHub repository secrets:
 #
 #   Android:
-#     RDV_ANDROID_KEYSTORE_BASE64   - base64-encoded JKS keystore
+#     RDV_ANDROID_KEYSTORE_BASE64   - base64-encoded keystore (PKCS12 by default;
+#                                     JKS supported via RDV_ANDROID_KEYSTORE_TYPE)
 #     RDV_ANDROID_KEYSTORE_PASSWORD - keystore password
 #     RDV_ANDROID_KEY_ALIAS         - signing key alias
 #     RDV_ANDROID_KEY_PASSWORD      - signing key password
+#     RDV_ANDROID_KEYSTORE_TYPE     - optional: "PKCS12" (default) or "JKS"
 #
 #   iOS:
 #     APPLE_CERT_BASE64                  - base64-encoded .p12 distribution cert
@@ -58,8 +60,12 @@ jobs:
         env:
           RDV_ANDROID_KEYSTORE_BASE64: ${{ secrets.RDV_ANDROID_KEYSTORE_BASE64 }}
         run: |
-          echo "$RDV_ANDROID_KEYSTORE_BASE64" | base64 --decode > /tmp/remote-dev-release.jks
-          echo "RDV_ANDROID_KEYSTORE_PATH=/tmp/remote-dev-release.jks" >> $GITHUB_ENV
+          # Extension is informational only — Gradle reads the file based on
+          # storeType, which defaults to PKCS12 in build.gradle.kts. Use .p12 to
+          # match the modern keytool default; override RDV_ANDROID_KEYSTORE_TYPE
+          # to "JKS" if you ship a legacy keystore.
+          echo "$RDV_ANDROID_KEYSTORE_BASE64" | base64 --decode > /tmp/remote-dev-release.p12
+          echo "RDV_ANDROID_KEYSTORE_PATH=/tmp/remote-dev-release.p12" >> $GITHUB_ENV
 
       - name: Pub get
         working-directory: mobile
@@ -68,10 +74,11 @@ jobs:
       - name: Build App Bundle
         working-directory: mobile
         env:
-          RDV_ANDROID_KEYSTORE_PATH: /tmp/remote-dev-release.jks
+          RDV_ANDROID_KEYSTORE_PATH: /tmp/remote-dev-release.p12
           RDV_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.RDV_ANDROID_KEYSTORE_PASSWORD }}
           RDV_ANDROID_KEY_ALIAS: ${{ secrets.RDV_ANDROID_KEY_ALIAS }}
           RDV_ANDROID_KEY_PASSWORD: ${{ secrets.RDV_ANDROID_KEY_PASSWORD }}
+          RDV_ANDROID_KEYSTORE_TYPE: ${{ secrets.RDV_ANDROID_KEYSTORE_TYPE }}
         run: flutter build appbundle --release
 
       - name: Upload App Bundle artifact
