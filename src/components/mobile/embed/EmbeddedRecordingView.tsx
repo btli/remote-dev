@@ -57,6 +57,10 @@ export function EmbeddedRecordingView({
       // Recording playback has no in-WebView "back" action — return
       // false so the native shell pops the route itself.
       back: () => false,
+      // Recording embed has no terminal to paste an image path into —
+      // accept the call as a no-op so the native shell can dispatch
+      // uniformly without checking which embed is mounted.
+      uploadImage: noop,
     };
     return installRdvBridge(adapter);
   }, []);

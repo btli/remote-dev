@@ -28,6 +28,7 @@ function makeAdapter(overrides: Partial<RdvBridgeAdapter> = {}): RdvBridgeAdapte
     // false ("not consumed") so native callers fall through to
     // Navigator.maybePop().
     back: vi.fn(() => false),
+    uploadImage: vi.fn(),
     ...overrides,
   };
 }
@@ -133,6 +134,18 @@ describe("rdv-bridge", () => {
       installRdvBridge(makeAdapter());
       // The native shell gates its "Search" menu on this version.
       expect(window.rdvBridge?.version).toBeGreaterThanOrEqual(2);
+    });
+
+    it("forwards uploadImage() calls to the adapter", () => {
+      const adapter = makeAdapter();
+      installRdvBridge(adapter);
+
+      const bytes = new Uint8Array([1, 2, 3]);
+      window.rdvBridge?.uploadImage(bytes, "image/png");
+      window.rdvBridge?.uploadImage("AAAA", "image/jpeg");
+
+      expect(adapter.uploadImage).toHaveBeenNthCalledWith(1, bytes, "image/png");
+      expect(adapter.uploadImage).toHaveBeenNthCalledWith(2, "AAAA", "image/jpeg");
     });
 
     it("re-installing replaces the previous adapter", () => {

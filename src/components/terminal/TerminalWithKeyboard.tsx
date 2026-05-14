@@ -40,6 +40,13 @@ export interface TerminalWithKeyboardRef {
   closeSearch: () => void;
   /** Toggle the search overlay (convenience for menu/native bridge). */
   toggleSearch: () => void;
+  /**
+   * Upload an image file and paste its server-saved path into the
+   * terminal. Used by external mobile chrome (Flutter shell) so the
+   * embed can reuse the same `sendImageToTerminal` path the built-in
+   * MobileKeyboard's camera button uses.
+   */
+  uploadImage: (file: File) => Promise<void>;
 }
 
 /**
@@ -187,6 +194,9 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
     },
     toggleSearch: () => {
       terminalRef.current?.toggleSearch();
+    },
+    uploadImage: async (file: File) => {
+      await sendImageToTerminal(file, wsRef.current);
     },
   }), [useBuiltinMobileChrome]);
 

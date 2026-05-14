@@ -176,7 +176,7 @@ describe("EmbeddedSessionView", () => {
     render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
 
     expect(window.rdvBridge).toBeDefined();
-    // v2 added openSearch / closeSearch for the in-terminal search overlay.
+    // v2 added uploadImage + openSearch / closeSearch.
     expect(window.rdvBridge?.version).toBe(2);
   });
 

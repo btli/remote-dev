@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -164,8 +166,23 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
     if (text != null && text.isNotEmpty) setText(text);
   }
 
-  void _handleKeyPress(String name, Map<String, bool> mods) {
+  void _handleKeyPress(String name, Map<String, bool> mods, {String? bytes}) {
+    // For composed control bytes (^C, ^D, shell punctuation, ⇧↵, …) the
+    // strip pre-resolves the sequence and asks us to inject it directly
+    // through `bridge.input`. Named keys (Tab, ArrowUp, …) still go
+    // through the JS-side keyToBytes mapper.
+    if (bytes != null && bytes.isNotEmpty) {
+      _bridge?.input(bytes);
+      return;
+    }
     _bridge?.key(name, mods);
+  }
+
+  Future<void> _handleUploadImage(Uint8List bytes, String mimeType) async {
+    final bridge = _bridge;
+    if (bridge == null) return;
+    final b64 = base64Encode(bytes);
+    bridge.uploadImage(b64, mimeType);
   }
 
   @override
@@ -254,8 +271,10 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
                       children: [
                         SizedBox(
                           height: smartKeysHeight,
-                          child:
-                              SmartKeyStrip(onKeyPress: _handleKeyPress),
+                          child: SmartKeyStrip(
+                            onKeyPress: _handleKeyPress,
+                            onUploadImage: _handleUploadImage,
+                          ),
                         ),
                         SizedBox(
                           height: inputBarHeight,
