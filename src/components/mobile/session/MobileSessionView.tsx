@@ -309,6 +309,15 @@ export function MobileSessionView({
     terminalRef.current?.restartAgent();
   }, []);
 
+  // ── Search overlay (xterm.js SearchAddon) ───────────────────────────────
+  // Mobile has no Cmd+F, so we surface the search overlay through the
+  // SessionMetadataSheet's "Search terminal" action. The sheet auto-closes
+  // when an item is selected; once it closes the focus effect inside
+  // Terminal.tsx pulls focus into the search input.
+  const handleOpenSearch = useCallback(() => {
+    terminalRef.current?.openSearch();
+  }, []);
+
   const handleAgentCloseFromExitScreen = useCallback(async () => {
     if (onClose) {
       await onClose();
@@ -447,6 +456,7 @@ export function MobileSessionView({
           session.terminalType === "agent" ? handleAgentRestart : undefined
         }
         onOpenPeerMessages={onOpenPeerMessages}
+        onOpenSearch={handleOpenSearch}
         onSuspend={onSuspend}
         onClose={onClose}
       />

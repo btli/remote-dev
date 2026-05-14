@@ -323,6 +323,13 @@ export function EmbeddedSessionView({
         terminalRef.current?.setCursorBlink(blink);
       },
       scrollToBottom: () => terminalRef.current?.scrollToBottom(),
+      // Search overlay (xterm.js SearchAddon). The Flutter shell wires
+      // these to its native "Search" menu action — mobile has no Cmd+F,
+      // and the embed renders no in-WebView chrome of its own. The
+      // overlay is rendered inside Terminal.tsx with thumb-sized Up/
+      // Down/Close buttons; Esc inside the overlay also closes it.
+      openSearch: () => terminalRef.current?.openSearch(),
+      closeSearch: () => terminalRef.current?.closeSearch(),
       back: () => {
         // Session embed has no in-WebView "back" action — let the
         // native shell pop the route. Returning false signals
