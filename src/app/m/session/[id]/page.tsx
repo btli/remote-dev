@@ -24,6 +24,13 @@ export const dynamic = "force-dynamic";
  *     at the xterm.js default (~15px) which is "too large" on a phone.
  *     Scoped to /m/session (NOT mounted in the /m layout) because
  *     /m/channel and /m/recording have their own provider stacks.
+ *   - NotificationProvider is mounted here so foreground notification
+ *     toasts surface in the embedded session view. EmbeddedSessionView's
+ *     `onNotification` callback forwards terminal-server broadcasts
+ *     (job done, agent waiting, peer message) into this context via
+ *     `addNotification`, which fires the toast pipeline. Without this
+ *     provider, the embed silently drops in-app notifications even
+ *     though the desktop/PWA path surfaces them.
  *
  * No SessionContext / ProjectTree are mounted — the embed surface only
  * needs the session row + WS URL + user prefs.
@@ -37,6 +44,7 @@ import { db } from "@/db";
 import { terminalSessions } from "@/db/schema";
 import { getAuthSession } from "@/lib/auth-utils";
 import { AppearanceProvider } from "@/contexts/AppearanceContext";
+import { NotificationProvider } from "@/contexts/NotificationContext";
 import { PreferencesProvider } from "@/contexts/PreferencesContext";
 import { EmbeddedSessionView } from "@/components/mobile/embed/EmbeddedSessionView";
 import { resolveTerminalWsUrlFromHost } from "@/lib/terminal-ws-url";
@@ -69,21 +77,29 @@ export default async function MobileSessionPage({ params }: PageProps) {
 
   // Provider order mirrors `src/app/page.tsx` and `/m/channel/[id]`:
   // PreferencesProvider is the outermost context-bearing wrapper; the
-  // theme provider sits inside it. Both providers are no-op on the
-  // server (they fetch on mount), so this order is a presentation
-  // detail rather than a correctness constraint.
+  // theme provider sits inside it. NotificationProvider lives inside
+  // both so the toast pipeline can read the active preferences and
+  // theme. All three are no-op on the server (they fetch on mount), so
+  // this order is a presentation detail rather than a correctness
+  // constraint.
   return (
     <PreferencesProvider>
       <AppearanceProvider>
-        <EmbeddedSessionView
-          session={{
-            id: row.id,
-            name: row.name,
-            tmuxSessionName: row.tmuxSessionName,
-            status: row.status as "active" | "suspended" | "closed",
-          }}
-          wsUrl={wsUrl}
-        />
+        <NotificationProvider>
+          <EmbeddedSessionView
+            session={{
+              id: row.id,
+              name: row.name,
+              tmuxSessionName: row.tmuxSessionName,
+              status: row.status as "active" | "suspended" | "closed",
+              terminalType: row.terminalType ?? "shell",
+              projectPath: row.projectPath ?? null,
+              worktreeBranch: row.worktreeBranch ?? null,
+              githubRepoId: row.githubRepoId ?? null,
+            }}
+            wsUrl={wsUrl}
+          />
+        </NotificationProvider>
       </AppearanceProvider>
     </PreferencesProvider>
   );
