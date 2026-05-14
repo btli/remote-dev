@@ -68,6 +68,10 @@ export function EmbeddedChannelView() {
         // its own back-stack state.
         return false;
       },
+      // Channel embed has no terminal to paste an image path into —
+      // accept the call as a no-op so the native shell can dispatch
+      // uniformly without checking which embed is mounted.
+      uploadImage: noop,
     };
     return installRdvBridge(adapter);
   }, [openThreadId, closeThread]);

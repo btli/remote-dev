@@ -16,8 +16,17 @@
  * @see docs/superpowers/specs/2026-05-08-flutter-app-redesign-design.md §4
  */
 
-/** Bumped on any breaking change to the bridge surface. */
-export const RDV_BRIDGE_VERSION = 1;
+/**
+ * Bumped on any breaking change to the bridge surface.
+ *
+ * Versions:
+ *   1 — initial surface (input/key/paste/setFontSize/setFontScale/
+ *       setCursorBlink/scrollToBottom/back).
+ *   2 — add `uploadImage(b64OrBytes, mimeType)` so the native shell can
+ *       hand a gallery/camera-picked image to the embedded session view
+ *       (remote-dev-1y9t).
+ */
+export const RDV_BRIDGE_VERSION = 2;
 
 export interface RdvBridgeKeyMods {
   ctrl?: boolean;
@@ -70,6 +79,23 @@ export interface RdvBridgeAdapter {
    * eval source to await the result inside an async IIFE.
    */
   back: () => boolean;
+  /**
+   * Upload an image picked by the native shell (gallery or camera) into
+   * the embedded session view. The data argument may be either a
+   * base64-encoded string (preferred over the WebView boundary, since
+   * `evaluateJavascript` only marshals JSON-safe primitives) or a raw
+   * `Uint8Array` for in-process callers. `mimeType` should be one of
+   * the JPEG/PNG/GIF/WEBP types accepted by `/api/images`.
+   *
+   * Implementations re-use the existing `sendImageToTerminal` helper so
+   * the upload + path-paste behaves identically to the PWA's camera
+   * button. Non-session embeds may treat the call as a no-op.
+   *
+   * Fire-and-forget by design — the bridge protocol marshals JSON-safe
+   * primitives only, so success/failure is surfaced via the existing
+   * onActivity / console paths rather than a return value.
+   */
+  uploadImage: (data: Uint8Array | string, mimeType: string) => void;
 }
 
 /**
@@ -96,6 +122,7 @@ export function installRdvBridge(adapter: RdvBridgeAdapter): () => void {
     setCursorBlink: (blink) => adapter.setCursorBlink(blink),
     scrollToBottom: () => adapter.scrollToBottom(),
     back: () => adapter.back(),
+    uploadImage: (data, mimeType) => adapter.uploadImage(data, mimeType),
   };
 
   window.rdvBridge = bridge;

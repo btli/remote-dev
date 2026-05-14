@@ -30,6 +30,13 @@ export interface TerminalWithKeyboardRef {
   scrollToBottom: () => void;
   /** Toggle xterm.js cursor blink at runtime. */
   setCursorBlink: (blink: boolean) => void;
+  /**
+   * Upload an image file and paste its server-saved path into the
+   * terminal. Used by external mobile chrome (Flutter shell) so the
+   * embed can reuse the same `sendImageToTerminal` path the built-in
+   * MobileKeyboard's camera button uses.
+   */
+  uploadImage: (file: File) => Promise<void>;
 }
 
 /**
@@ -168,6 +175,9 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
     },
     setCursorBlink: (blink: boolean) => {
       terminalRef.current?.setCursorBlink(blink);
+    },
+    uploadImage: async (file: File) => {
+      await sendImageToTerminal(file, wsRef.current);
     },
   }), [useBuiltinMobileChrome]);
 

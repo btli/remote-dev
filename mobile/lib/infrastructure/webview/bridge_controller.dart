@@ -57,6 +57,23 @@ class BridgeController {
   void setCursorBlink(bool blink) =>
       _exec('window.rdvBridge.setCursorBlink(${blink ? 'true' : 'false'})');
 
+  /// Equivalent to `window.rdvBridge.uploadImage(b64, mimeType)`.
+  ///
+  /// [base64Bytes] is the base64-encoded image payload (the only
+  /// JSON-safe transport across the WebView boundary). [mimeType] must
+  /// be one of `image/jpeg`, `image/png`, `image/gif`, `image/webp` —
+  /// the server-side allowlist in `/api/images`.
+  ///
+  /// Bridge version 2+ exposes this surface. On older PWA builds the
+  /// call resolves to `undefined` JS-side and the eval silently no-ops,
+  /// which is the documented fallback behavior.
+  void uploadImage(String base64Bytes, String mimeType) {
+    _exec(
+      'window.rdvBridge && window.rdvBridge.uploadImage'
+      ' && window.rdvBridge.uploadImage(${_q(base64Bytes)},${_q(mimeType)})',
+    );
+  }
+
   /// Asks the embedded PWA to handle a back gesture. Returns `true` when
   /// the PWA reports it consumed the gesture (e.g. closed an open thread,
   /// dismissed a modal, popped an in-WebView route) and `false` otherwise

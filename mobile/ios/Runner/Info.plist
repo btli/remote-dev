@@ -39,6 +39,10 @@
 		<true/>
 		<key>NSFaceIDUsageDescription</key>
 		<string>Remote Dev uses Face ID to securely unlock the app.</string>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>Remote Dev needs access to your photo library so you can paste screenshots into a terminal session.</string>
+		<key>NSCameraUsageDescription</key>
+		<string>Remote Dev uses the camera so you can capture and paste a screenshot directly into a terminal session.</string>
 		<key>UIBackgroundModes</key>
 		<array>
 			<string>remote-notification</string>

@@ -57,6 +57,9 @@ dependencies:
   # Package metadata (About screen)
   package_info_plus: ^8.1.0
 
+  # Image picker (smart-key-strip camera/gallery button -> bridge.uploadImage)
+  image_picker: ^1.1.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

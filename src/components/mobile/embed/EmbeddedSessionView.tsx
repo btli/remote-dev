@@ -46,6 +46,16 @@ function clampFontSize(size: number): number {
   return Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, Math.round(size)));
 }
 
+/** Decode a base64 string into a Uint8Array (no atob streaming surprises). */
+function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) {
+    bytes[i] = bin.charCodeAt(i);
+  }
+  return bytes;
+}
+
 export interface EmbeddedSessionViewProps {
   session: {
     id: string;
@@ -231,6 +241,38 @@ export function EmbeddedSessionView({
         // native shell pop the route. Returning false signals
         // "not consumed" so the Dart side runs Navigator.maybePop().
         return false;
+      },
+      uploadImage: (data, mimeType) => {
+        // Bridge handler for the Flutter shell's gallery/camera picker.
+        // The native side sends base64 over `evaluateJavascript` (the
+        // only JSON-safe transport across the WebView boundary); accept
+        // raw Uint8Array too for any in-process JS caller.
+        //
+        // Reuses TerminalWithKeyboard.uploadImage → sendImageToTerminal
+        // so the upload + path-paste behavior is identical to the PWA's
+        // MobileKeyboard camera button (remote-dev-1y9t).
+        try {
+          const bytes =
+            typeof data === "string" ? base64ToBytes(data) : data;
+          // Coerce to an ArrayBuffer to keep TS DOM lib's BlobPart
+          // happy across Uint8Array<ArrayBufferLike> vs ArrayBuffer
+          // variance. Slicing the underlying buffer copies just the
+          // bytes the view covers (no oversized backing buffer).
+          const ab = bytes.buffer.slice(
+            bytes.byteOffset,
+            bytes.byteOffset + bytes.byteLength,
+          ) as ArrayBuffer;
+          const file = new File([ab], `image-${Date.now()}`, {
+            type: mimeType,
+          });
+          terminalRef.current?.uploadImage(file).catch((err) => {
+            // Persistence failures shouldn't crash the WebView; surface
+            // in console for observability while keeping the UI alive.
+            console.error("bridge.uploadImage failed", err);
+          });
+        } catch (err) {
+          console.error("bridge.uploadImage decode failed", err);
+        }
       },
     };
 

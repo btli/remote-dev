@@ -3,6 +3,19 @@
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
     <!-- Required for FCM push notification token registration / API calls. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- image_picker (gallery) on API 33+ uses scoped media permissions. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <!-- Legacy gallery access for API <= 32. maxSdkVersion mirrors
+         image_picker's docs so newer devices skip this permission. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32"/>
+    <!-- Camera capture via image_picker (long-press shortcut on the
+         smart-key strip's image button). image_picker uses an Intent
+         to launch the system camera, so a CAMERA permission is not
+         strictly required, but we declare CAMERA feature usage as
+         optional so Play store filtering doesn't hide the app from
+         camera-less devices. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <application
         android:label="RemoteDev"
         android:name="${applicationName}"

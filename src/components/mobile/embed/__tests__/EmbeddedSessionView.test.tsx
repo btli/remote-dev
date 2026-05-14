@@ -129,7 +129,8 @@ describe("EmbeddedSessionView", () => {
     render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
 
     expect(window.rdvBridge).toBeDefined();
-    expect(window.rdvBridge?.version).toBe(1);
+    // Bridge surface bumped to v2 when uploadImage was added.
+    expect(window.rdvBridge?.version).toBe(2);
   });
 
   it("uninstalls window.rdvBridge on unmount", () => {
