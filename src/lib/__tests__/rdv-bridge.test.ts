@@ -22,6 +22,8 @@ function makeAdapter(overrides: Partial<RdvBridgeAdapter> = {}): RdvBridgeAdapte
     setFontScale: vi.fn(),
     setCursorBlink: vi.fn(),
     scrollToBottom: vi.fn(),
+    openSearch: vi.fn(),
+    closeSearch: vi.fn(),
     // back must return boolean per the bridge contract — default
     // false ("not consumed") so native callers fall through to
     // Navigator.maybePop().
@@ -110,6 +112,27 @@ describe("rdv-bridge", () => {
 
       expect(adapter.setFontScale).toHaveBeenCalledWith(1.15);
       expect(adapter.setCursorBlink).toHaveBeenCalledWith(false);
+    });
+
+    it("exposes openSearch + closeSearch (bridge v2) and forwards them", () => {
+      const adapter = makeAdapter();
+      installRdvBridge(adapter);
+
+      expect(typeof window.rdvBridge?.openSearch).toBe("function");
+      expect(typeof window.rdvBridge?.closeSearch).toBe("function");
+
+      window.rdvBridge?.openSearch();
+      window.rdvBridge?.closeSearch();
+      window.rdvBridge?.openSearch();
+
+      expect(adapter.openSearch).toHaveBeenCalledTimes(2);
+      expect(adapter.closeSearch).toHaveBeenCalledTimes(1);
+    });
+
+    it("reports bridge version >= 2 (openSearch/closeSearch surface)", () => {
+      installRdvBridge(makeAdapter());
+      // The native shell gates its "Search" menu on this version.
+      expect(window.rdvBridge?.version).toBeGreaterThanOrEqual(2);
     });
 
     it("re-installing replaces the previous adapter", () => {

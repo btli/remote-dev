@@ -27,6 +27,10 @@ type StubTerminalProps = {
   fontFamily?: string;
 };
 
+// Search overlay spies — see openSearch / closeSearch bridge tests.
+let openSearchSpy: ReturnType<typeof vi.fn>;
+let closeSearchSpy: ReturnType<typeof vi.fn>;
+
 vi.mock("@/components/terminal/TerminalWithKeyboard", async () => {
   const React = await import("react");
   const TerminalWithKeyboard = React.forwardRef<
@@ -35,6 +39,9 @@ vi.mock("@/components/terminal/TerminalWithKeyboard", async () => {
       scrollToBottom: () => void;
       focus: () => void;
       restartAgent: () => void;
+      openSearch: () => void;
+      closeSearch: () => void;
+      toggleSearch: () => void;
     },
     Record<string, unknown>
   >(function MockTerminal(props, ref) {
@@ -43,6 +50,9 @@ vi.mock("@/components/terminal/TerminalWithKeyboard", async () => {
       scrollToBottom: scrollToBottomSpy as unknown as () => void,
       focus: vi.fn() as unknown as () => void,
       restartAgent: vi.fn() as unknown as () => void,
+      openSearch: openSearchSpy as unknown as () => void,
+      closeSearch: closeSearchSpy as unknown as () => void,
+      toggleSearch: vi.fn() as unknown as () => void,
     }));
     return React.createElement("div", {
       "data-testid": "terminal-mock",
@@ -102,6 +112,8 @@ const session = {
 beforeEach(() => {
   sendInputSpy = vi.fn();
   scrollToBottomSpy = vi.fn();
+  openSearchSpy = vi.fn();
+  closeSearchSpy = vi.fn();
   updateUserSettingsSpy.mockClear();
   capturedPinchOpts = null;
   setMockPrefs({
@@ -129,7 +141,21 @@ describe("EmbeddedSessionView", () => {
     render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
 
     expect(window.rdvBridge).toBeDefined();
-    expect(window.rdvBridge?.version).toBe(1);
+    // v2 added openSearch / closeSearch for the in-terminal search overlay.
+    expect(window.rdvBridge?.version).toBe(2);
+  });
+
+  it("bridge.openSearch / closeSearch forward to the terminal ref", () => {
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    expect(typeof window.rdvBridge?.openSearch).toBe("function");
+    expect(typeof window.rdvBridge?.closeSearch).toBe("function");
+
+    window.rdvBridge?.openSearch();
+    window.rdvBridge?.closeSearch();
+
+    expect(openSearchSpy).toHaveBeenCalledTimes(1);
+    expect(closeSearchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("uninstalls window.rdvBridge on unmount", () => {

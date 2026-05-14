@@ -33,6 +33,11 @@ export interface SessionMetadataSheetProps {
   onViewRecordings?: () => void | Promise<unknown>;
   onRestartAgent?: () => void | Promise<unknown>;
   onOpenPeerMessages?: () => void | Promise<unknown>;
+  /**
+   * Open the in-terminal search overlay (xterm.js SearchAddon). Mobile
+   * lacks Cmd+F, so this is the only entry point for that feature here.
+   */
+  onOpenSearch?: () => void | Promise<unknown>;
   onSuspend?: () => void | Promise<unknown>;
   onClose?: () => void | Promise<unknown>;
   /** Optional extra rows appended at the bottom (Phase 4+ slot-in points). */
@@ -49,11 +54,20 @@ export function SessionMetadataSheet({
   onViewRecordings,
   onRestartAgent,
   onOpenPeerMessages,
+  onOpenSearch,
   onSuspend,
   onClose,
   extraItems,
 }: SessionMetadataSheetProps) {
   const items: ActionSheetItem[] = [];
+
+  if (onOpenSearch) {
+    items.push({
+      id: "search-terminal",
+      label: "Search terminal",
+      onSelect: () => onOpenSearch(),
+    });
+  }
 
   if (showRestart) {
     items.push({

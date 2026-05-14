@@ -30,6 +30,16 @@ export interface TerminalWithKeyboardRef {
   scrollToBottom: () => void;
   /** Toggle xterm.js cursor blink at runtime. */
   setCursorBlink: (blink: boolean) => void;
+  /**
+   * Open the in-terminal SearchAddon overlay. Used by mobile chrome
+   * (PWA metadata sheet, Flutter native menu via rdv-bridge) since
+   * mobile has no Cmd+F.
+   */
+  openSearch: () => void;
+  /** Close the in-terminal search overlay and clear decorations. */
+  closeSearch: () => void;
+  /** Toggle the search overlay (convenience for menu/native bridge). */
+  toggleSearch: () => void;
 }
 
 /**
@@ -168,6 +178,15 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
     },
     setCursorBlink: (blink: boolean) => {
       terminalRef.current?.setCursorBlink(blink);
+    },
+    openSearch: () => {
+      terminalRef.current?.openSearch();
+    },
+    closeSearch: () => {
+      terminalRef.current?.closeSearch();
+    },
+    toggleSearch: () => {
+      terminalRef.current?.toggleSearch();
     },
   }), [useBuiltinMobileChrome]);
 

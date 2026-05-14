@@ -51,6 +51,9 @@ export function EmbeddedRecordingView({
       // Recording embed has no terminal to toggle — no-op.
       setCursorBlink: noop,
       scrollToBottom: noop,
+      // Recording playback has no live SearchAddon — absorb as no-op.
+      openSearch: noop,
+      closeSearch: noop,
       // Recording playback has no in-WebView "back" action — return
       // false so the native shell pops the route itself.
       back: () => false,

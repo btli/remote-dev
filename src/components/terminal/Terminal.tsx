@@ -93,6 +93,16 @@ export interface TerminalRef {
   scrollToBottom: () => void;
   /** Toggle xterm.js cursor blink at runtime (no remount). */
   setCursorBlink: (blink: boolean) => void;
+  /**
+   * Open the in-terminal search overlay (xterm.js SearchAddon).
+   * Used by mobile chrome (PWA session metadata sheet, Flutter native
+   * menu via rdv-bridge) to expose search since mobile has no Cmd+F.
+   */
+  openSearch: () => void;
+  /** Close the in-terminal search overlay and clear decorations. */
+  closeSearch: () => void;
+  /** Toggle the search overlay (convenience for menu buttons). */
+  toggleSearch: () => void;
 }
 
 interface TerminalProps {
@@ -343,6 +353,27 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       if (term) {
         term.options.cursorBlink = blink;
       }
+    },
+    openSearch: () => {
+      setIsSearchOpen(true);
+      // The dedicated focus effect (isSearchOpen → focus + select) takes
+      // it from here once React commits the state change.
+    },
+    closeSearch: () => {
+      setIsSearchOpen(false);
+      setSearchQuery("");
+      searchAddonRef.current?.clearDecorations();
+    },
+    toggleSearch: () => {
+      setIsSearchOpen((prev) => {
+        const next = !prev;
+        if (!next) {
+          // Closing — clear query + decorations alongside the toggle.
+          setSearchQuery("");
+          searchAddonRef.current?.clearDecorations();
+        }
+        return next;
+      });
     },
   }), []);
 
@@ -1686,9 +1717,15 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       )}
 
 
-      {/* Search overlay - Activity preserves search state when hidden */}
+      {/* Search overlay - Activity preserves search state when hidden.
+          Button sizing uses min-w-11/min-h-11 (44px iOS HIG tap target)
+          on viewports without hover (mobile), and the original compact
+          desktop sizing where hover is supported. */}
       <Activity mode={isSearchOpen ? "visible" : "hidden"}>
-        <div className="absolute top-2 right-2 z-20 flex items-center gap-1 bg-popover/95 backdrop-blur-sm border border-border rounded-lg px-2 py-1.5 shadow-lg">
+        <div
+          data-testid="terminal-search-overlay"
+          className="absolute top-2 right-2 z-20 flex items-center gap-1 bg-popover/95 backdrop-blur-sm border border-border rounded-lg px-2 py-1.5 shadow-lg"
+        >
           <Search className="w-3.5 h-3.5 text-muted-foreground" />
           <input
             ref={searchInputRef}
@@ -1697,31 +1734,38 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
             onChange={handleSearchChange}
             onKeyDown={handleSearchKeyDown}
             placeholder="Search..."
-            className="w-48 bg-transparent border-none outline-none text-sm text-foreground placeholder:text-muted-foreground"
+            aria-label="Search terminal output"
+            className="w-40 sm:w-48 bg-transparent border-none outline-none text-sm text-foreground placeholder:text-muted-foreground"
           />
           <div className="flex items-center gap-0.5">
             <button
               onClick={findPrevious}
               disabled={!searchQuery}
-              className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+              aria-label="Previous match"
+              data-testid="terminal-search-prev"
+              className="inline-flex items-center justify-center rounded min-w-11 min-h-11 sm:min-w-0 sm:min-h-0 sm:p-1 hover:bg-accent text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
               title="Previous (Shift+Enter)"
             >
-              <ChevronUp className="w-3.5 h-3.5" />
+              <ChevronUp className="w-5 h-5 sm:w-3.5 sm:h-3.5" />
             </button>
             <button
               onClick={findNext}
               disabled={!searchQuery}
-              className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+              aria-label="Next match"
+              data-testid="terminal-search-next"
+              className="inline-flex items-center justify-center rounded min-w-11 min-h-11 sm:min-w-0 sm:min-h-0 sm:p-1 hover:bg-accent text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
               title="Next (Enter)"
             >
-              <ChevronDown className="w-3.5 h-3.5" />
+              <ChevronDown className="w-5 h-5 sm:w-3.5 sm:h-3.5" />
             </button>
             <button
               onClick={closeSearch}
-              className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
+              aria-label="Close search"
+              data-testid="terminal-search-close"
+              className="inline-flex items-center justify-center rounded min-w-11 min-h-11 sm:min-w-0 sm:min-h-0 sm:p-1 hover:bg-accent text-muted-foreground hover:text-foreground"
               title="Close (Esc)"
             >
-              <X className="w-3.5 h-3.5" />
+              <X className="w-5 h-5 sm:w-3.5 sm:h-3.5" />
             </button>
           </div>
         </div>

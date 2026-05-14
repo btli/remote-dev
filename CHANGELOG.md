@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mobile**: terminal search overlay reachable on both the PWA and the
+  Flutter embed. PWA users get a "Search terminal" item in the session
+  more-menu (`SessionMetadataSheet`). The Flutter shell drives the same
+  overlay via two new bridge methods, `window.rdvBridge.openSearch()` /
+  `closeSearch()` (bridge version bumped to 2). The xterm.js SearchAddon
+  overlay's Up/Down/Close buttons now meet the 44 px iOS HIG tap target
+  on mobile while keeping the original compact desktop sizing (closes
+  remote-dev-mezp).
 - **Mobile app**: two-finger pinch-to-zoom resizes the terminal font in
   the Flutter app's `/m/session` view; the final size persists via user
   preferences (closes remote-dev-kpxd).

@@ -16,8 +16,16 @@
  * @see docs/superpowers/specs/2026-05-08-flutter-app-redesign-design.md §4
  */
 
-/** Bumped on any breaking change to the bridge surface. */
-export const RDV_BRIDGE_VERSION = 1;
+/**
+ * Bumped on any breaking change to the bridge surface.
+ *
+ * v2: added `openSearch` / `closeSearch` for the in-terminal xterm.js
+ * SearchAddon overlay. Mobile has no Cmd+F, so the native shell's
+ * menu drives search through this bridge. The methods are present on
+ * non-session embeds too as no-op stubs (channel + recording embeds
+ * shouldn't crash if native fires search by mistake).
+ */
+export const RDV_BRIDGE_VERSION = 2;
 
 export interface RdvBridgeKeyMods {
   ctrl?: boolean;
@@ -55,6 +63,18 @@ export interface RdvBridgeAdapter {
   setCursorBlink: (blink: boolean) => void;
   /** Scroll terminal viewport to the bottom (session view only). */
   scrollToBottom: () => void;
+  /**
+   * Open the in-terminal SearchAddon overlay (session view only).
+   * Non-session embeds may treat the call as a no-op. Added in v2 of
+   * the bridge so the native Flutter shell can wire a "Search" menu
+   * action — mobile has no Cmd+F.
+   */
+  openSearch: () => void;
+  /**
+   * Close the in-terminal SearchAddon overlay (session view only).
+   * Non-session embeds may treat the call as a no-op. Added in v2.
+   */
+  closeSearch: () => void;
   /**
    * Native back button pressed. Return `true` when the embed view
    * consumed the gesture (e.g. closed an open thread, dismissed a
@@ -95,6 +115,8 @@ export function installRdvBridge(adapter: RdvBridgeAdapter): () => void {
     setFontScale: (scale) => adapter.setFontScale(scale),
     setCursorBlink: (blink) => adapter.setCursorBlink(blink),
     scrollToBottom: () => adapter.scrollToBottom(),
+    openSearch: () => adapter.openSearch(),
+    closeSearch: () => adapter.closeSearch(),
     back: () => adapter.back(),
   };
 

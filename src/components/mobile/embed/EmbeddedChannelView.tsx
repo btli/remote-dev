@@ -55,6 +55,10 @@ export function EmbeddedChannelView() {
       // No terminal hosted here — accept the call as a no-op.
       setCursorBlink: noop,
       scrollToBottom: noop,
+      // Channel view has no in-WebView search overlay; native may still
+      // fire the search action by mistake — absorb it as a no-op.
+      openSearch: noop,
+      closeSearch: noop,
       back: () => {
         // Closing an open thread takes priority over leaving the route.
         // Return true so the native shell knows we consumed the gesture

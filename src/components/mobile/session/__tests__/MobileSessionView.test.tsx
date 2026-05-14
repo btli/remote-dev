@@ -39,6 +39,9 @@ type StubHandle = {
   restartAgent: ReturnType<typeof vi.fn>;
   focus: ReturnType<typeof vi.fn>;
   scrollToBottom: ReturnType<typeof vi.fn>;
+  openSearch: ReturnType<typeof vi.fn>;
+  closeSearch: ReturnType<typeof vi.fn>;
+  toggleSearch: ReturnType<typeof vi.fn>;
 };
 
 let capturedProps: StubProps | null = null;
@@ -68,6 +71,9 @@ vi.mock("@/components/terminal/TerminalWithKeyboard", async () => {
         restartAgent: vi.fn(),
         focus: vi.fn(),
         scrollToBottom: vi.fn(),
+        openSearch: vi.fn(),
+        closeSearch: vi.fn(),
+        toggleSearch: vi.fn(),
       }),
       []
     );
