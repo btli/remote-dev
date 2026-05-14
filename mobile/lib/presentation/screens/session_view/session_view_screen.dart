@@ -1,15 +1,19 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../application/state/appearance_provider.dart';
 import '../../../domain/appearance_settings.dart';
 import '../../../infrastructure/webview/bridge_controller.dart';
 import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
+import '../sessions/sessions_tab_screen.dart' show sessionsApiProvider;
 import '../webview_host/session_route_host.dart'
     show
         mobileCredentialsStoreProvider,
@@ -94,18 +98,15 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
     controller.addJavaScriptHandler(
       handlerName: 'onSelectionChange',
       callback: (args) {
+        // PWA parity (bd remote-dev-e1b9): the desktop/PWA shell auto-copies
+        // selections to the system clipboard via xterm's native
+        // copy-on-selection. Mirror that here — write the selection
+        // directly to the clipboard with no SnackBar prompt. A SnackBar
+        // would conflict with the keyboard chrome and adds a UX step that
+        // the rest of the app deliberately avoids.
         final selection = args.isNotEmpty ? args.first?.toString() : null;
-        if (selection != null && selection.isNotEmpty && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('Selection ready to copy'),
-              action: SnackBarAction(
-                label: 'Copy',
-                onPressed: () =>
-                    Clipboard.setData(ClipboardData(text: selection)),
-              ),
-            ),
-          );
+        if (selection != null && selection.isNotEmpty) {
+          Clipboard.setData(ClipboardData(text: selection));
         }
         return null;
       },
@@ -142,11 +143,12 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
     controller.addJavaScriptHandler(
       handlerName: 'onLinkOpen',
       callback: (args) {
-        // Phase 2 stub: log; Phase 4 wires url_launcher / Custom Tabs.
-        debugPrint(
-          'External link suppressed (Phase 4 wires): '
-          '${args.isNotEmpty ? args.first : ''}',
-        );
+        final raw = args.isNotEmpty ? args.first?.toString() : null;
+        if (raw == null || raw.isEmpty) return null;
+        final uri = Uri.tryParse(raw);
+        if (uri != null) {
+          unawaited(_openExternal(uri));
+        }
         return null;
       },
     );
@@ -183,6 +185,86 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
     if (bridge == null) return;
     final b64 = base64Encode(bytes);
     bridge.uploadImage(b64, mimeType);
+  }
+
+  /// Dispatches an overflow-menu pick from [SessionStatusBar] (bd
+  /// remote-dev-eygp).
+  Future<void> _handleMenuAction(SessionMenuAction action) async {
+    switch (action) {
+      case SessionMenuAction.suspend:
+        await _suspendSession();
+      case SessionMenuAction.viewRecordings:
+        _viewRecordings();
+      case SessionMenuAction.delete:
+        await _deleteSession();
+    }
+  }
+
+  Future<void> _suspendSession() async {
+    final api = ref.read(sessionsApiProvider);
+    try {
+      await api.suspend(widget.sessionId);
+      if (!mounted) return;
+      Navigator.of(context).maybePop();
+    } catch (err) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to suspend: $err')),
+      );
+    }
+  }
+
+  /// Routes to the embedded `/m/recording` listing for this session.
+  ///
+  /// The Flutter app's [RecordingScreen] is keyed by a recording id, but
+  /// the host PWA's `/m/recording` path also serves a list view when no id
+  /// is supplied. We push the session-scoped variant so the user lands on
+  /// the recordings for the currently active session — matching the PWA's
+  /// `onViewRecordings` callback semantics.
+  void _viewRecordings() {
+    context.push('/home/recording/${widget.sessionId}');
+  }
+
+  Future<void> _deleteSession() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF24283B),
+        title: const Text(
+          'Delete session?',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          'This will kill the tmux session and remove it from the list.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFFF7768E),
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final api = ref.read(sessionsApiProvider);
+    try {
+      await api.close(widget.sessionId);
+      if (!mounted) return;
+      Navigator.of(context).maybePop();
+    } catch (err) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to delete: $err')),
+      );
+    }
   }
 
   @override
@@ -236,6 +318,7 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
                             ? widget.sessionId
                             : _sessionName,
                         activity: _activity,
+                        onMenuAction: _handleMenuAction,
                       ),
                     ),
                     SizedBox(
@@ -330,7 +413,14 @@ class _Webview extends ConsumerWidget {
             allowedPathPrefixes: const ['/m/session/'],
           ),
           onLinkOpen: (uri) {
-            debugPrint('External link suppressed: $uri');
+            // NavigationPolicy classifies cross-origin / non-/m navigations
+            // as `interceptAndOpenExternally`; fire the same launchUrl
+            // pipeline the JS bridge uses so URL-tap (xterm.js -> onLink
+            // bridge) AND click-through (anchor inside the PWA without
+            // `target=_blank`) both reach the OS browser sheet.
+            //
+            // See bd remote-dev-pmhg.
+            unawaited(_openExternal(uri));
           },
           onWebViewCreated: onWebViewCreated,
           // Diagnostic logging (bd remote-dev-l4q6 Bug 4). Without an on-
@@ -370,5 +460,28 @@ class _Webview extends ConsumerWidget {
       // intentional: see seeder rationale in ChannelScreen._seedCookie.
     }
     return origin;
+  }
+}
+
+/// Hands tapped links off to the OS browser sheet (Custom Tabs on
+/// Android, SFSafariViewController on iOS via `inAppBrowserView`) so the
+/// user stays in the app's context. Falls back to
+/// `LaunchMode.externalApplication` for non-http schemes (mailto:, tel:,
+/// etc.). Failures are swallowed — nothing in the terminal should crash
+/// on a bad URL paste.
+///
+/// See bd remote-dev-pmhg.
+Future<void> _openExternal(Uri uri) async {
+  try {
+    final isHttp = uri.scheme == 'http' || uri.scheme == 'https';
+    final mode = isHttp
+        ? LaunchMode.inAppBrowserView
+        : LaunchMode.externalApplication;
+    final ok = await launchUrl(uri, mode: mode);
+    if (!ok) {
+      debugPrint('[SessionView] launchUrl returned false for $uri');
+    }
+  } catch (err) {
+    debugPrint('[SessionView] launchUrl threw for $uri: $err');
   }
 }
