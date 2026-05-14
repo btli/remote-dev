@@ -35,6 +35,8 @@ const eslintConfig = defineConfig([
     "packages/**",
     // Git worktrees (separate checkouts with their own lint)
     ".worktrees/**",
+    // Agent worktrees (stale isolated checkouts inside .claude/)
+    ".claude/worktrees/**",
     // Claude Code plugin skills (external JS scripts)
     ".claude/skills/**",
   ]),
