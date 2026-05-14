@@ -54,6 +54,12 @@ android {
                 ?: keystoreProperties.getProperty("keyAlias")
             keyPassword = System.getenv("RDV_ANDROID_KEY_PASSWORD")
                 ?: keystoreProperties.getProperty("keyPassword")
+            // Default to PKCS12 since that's `keytool`'s modern default (JDK 9+).
+            // Override via RDV_ANDROID_KEYSTORE_TYPE or key.properties#storeType
+            // if you ship a legacy JKS keystore.
+            storeType = System.getenv("RDV_ANDROID_KEYSTORE_TYPE")
+                ?: keystoreProperties.getProperty("storeType")
+                ?: "PKCS12"
         }
     }
 
