@@ -3,6 +3,11 @@
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
     <!-- Required for FCM push notification token registration / API calls. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Voice mic in agent sessions (bd remote-dev-cp47) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+    <!-- Camera for future in-terminal image capture (bd remote-dev-cp47) -->
+    <uses-permission android:name="android.permission.CAMERA"/>
     <application
         android:label="RemoteDev"
         android:name="${applicationName}"

@@ -2,6 +2,12 @@ import 'package:flutter/material.dart';
 
 import 'activity_pip.dart';
 
+/// Identifiers for the overflow-menu entries surfaced from the status
+/// bar (bd remote-dev-eygp). The status bar widget stays UI-only — the
+/// host screen receives the picked id via [SessionStatusBar.onMenuAction]
+/// and runs the API call / navigation.
+enum SessionMenuAction { suspend, viewRecordings, delete }
+
 /// Custom 44px chrome rendered above the session WebView.
 ///
 /// This screen does not use a Material [AppBar] — the WebView height is
@@ -11,6 +17,12 @@ import 'activity_pip.dart';
 /// the leading icon falls back to [Navigator.maybePop] so the route's
 /// previous entry handles the back gesture exactly like an AppBar's
 /// implicit back button would.
+///
+/// Trailing overflow menu (bd remote-dev-eygp) is rendered whenever
+/// [onMenuAction] is non-null. Surfaces Suspend / View Recordings /
+/// Delete to bring Flutter parity with the PWA's `MobileSessionView`
+/// header. The widget itself stays declarative — the host screen owns
+/// the API calls and navigation.
 class SessionStatusBar extends StatelessWidget {
   const SessionStatusBar({
     required this.projectName,
@@ -18,6 +30,7 @@ class SessionStatusBar extends StatelessWidget {
     required this.activity,
     this.onTap,
     this.onBack,
+    this.onMenuAction,
     super.key,
   });
 
@@ -29,6 +42,11 @@ class SessionStatusBar extends StatelessWidget {
   /// Override for the leading back button. When null, the button calls
   /// `Navigator.of(context).maybePop()`.
   final VoidCallback? onBack;
+
+  /// Invoked with the picked overflow-menu entry. When null, no overflow
+  /// menu is rendered (keeps tests / surfaces that don't need actions
+  /// pixel-identical to the legacy bar).
+  final ValueChanged<SessionMenuAction>? onMenuAction;
 
   @override
   Widget build(BuildContext context) {
@@ -96,6 +114,72 @@ class SessionStatusBar extends StatelessWidget {
                 ),
               ),
             ),
+            if (onMenuAction != null)
+              PopupMenuButton<SessionMenuAction>(
+                tooltip: 'More actions',
+                icon: const Icon(
+                  Icons.more_vert,
+                  color: Colors.white,
+                  size: 20,
+                ),
+                color: const Color(0xFF24283B),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                onSelected: onMenuAction,
+                itemBuilder: (_) => const [
+                  PopupMenuItem(
+                    value: SessionMenuAction.suspend,
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      visualDensity: VisualDensity.compact,
+                      leading: Icon(
+                        Icons.pause_circle_outline,
+                        color: Colors.white70,
+                        size: 20,
+                      ),
+                      title: Text(
+                        'Suspend',
+                        style: TextStyle(color: Colors.white, fontSize: 14),
+                      ),
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: SessionMenuAction.viewRecordings,
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      visualDensity: VisualDensity.compact,
+                      leading: Icon(
+                        Icons.movie_outlined,
+                        color: Colors.white70,
+                        size: 20,
+                      ),
+                      title: Text(
+                        'View Recordings',
+                        style: TextStyle(color: Colors.white, fontSize: 14),
+                      ),
+                    ),
+                  ),
+                  PopupMenuDivider(),
+                  PopupMenuItem(
+                    value: SessionMenuAction.delete,
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      visualDensity: VisualDensity.compact,
+                      leading: Icon(
+                        Icons.delete_outline,
+                        color: Color(0xFFF7768E),
+                        size: 20,
+                      ),
+                      title: Text(
+                        'Delete',
+                        style: TextStyle(
+                          color: Color(0xFFF7768E),
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
           ],
         ),
       ),

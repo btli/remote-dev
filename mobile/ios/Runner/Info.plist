@@ -39,6 +39,10 @@
 		<true/>
 		<key>NSFaceIDUsageDescription</key>
 		<string>Remote Dev uses Face ID to securely unlock the app.</string>
+		<key>NSMicrophoneUsageDescription</key>
+		<string>Remote Dev uses the microphone for voice dictation of terminal input.</string>
+		<key>NSCameraUsageDescription</key>
+		<string>Remote Dev uses the camera to capture images you paste into terminal sessions.</string>
 		<key>UIBackgroundModes</key>
 		<array>
 			<string>remote-notification</string>
