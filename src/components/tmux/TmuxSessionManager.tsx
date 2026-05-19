@@ -68,7 +68,7 @@ export function TmuxSessionManager() {
     async (sessionName: string) => {
       setTerminating(sessionName);
       try {
-        const res = await fetch(`/api/tmux/sessions?name=${encodeURIComponent(sessionName)}`, {
+        const res = await apiFetch(`/api/tmux/sessions?name=${encodeURIComponent(sessionName)}`, {
           method: "DELETE",
         });
 

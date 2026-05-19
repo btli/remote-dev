@@ -89,7 +89,7 @@ export function MobileSetupPanel() {
   const handleDelete = async (id: string) => {
     setDeleting(true);
     try {
-      await fetch(`/api/keys/${id}`, { method: "DELETE" });
+      await apiFetch(`/api/keys/${id}`, { method: "DELETE" });
       await fetchKeys();
       setDeleteKeyId(null);
     } finally {

@@ -22,7 +22,7 @@ import React, {
 
 /** Issue type matching the API response */
 
-import { apiFetch } from "@/lib/api-fetch";
+import { apiFetch, prefixApiPath } from "@/lib/api-fetch";
 export interface GitHubIssueDTO {
   id: string;
   repositoryId: string;
@@ -197,7 +197,7 @@ export function GitHubIssuesProvider({ children }: GitHubIssuesProviderProps) {
 
       try {
         const url = new URL(
-          `/api/github/repositories/${repositoryId}/issues`,
+          prefixApiPath(`/api/github/repositories/${repositoryId}/issues`),
           window.location.origin
         );
         if (forceRefresh) {

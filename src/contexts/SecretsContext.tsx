@@ -139,7 +139,7 @@ export function SecretsProvider({ children }: SecretsProviderProps) {
       folderId: string,
       input: UpdateFolderSecretsConfigInput
     ): Promise<FolderSecretsConfig> => {
-      const response = await fetch(`/api/secrets/folders/${folderId}`, {
+      const response = await apiFetch(`/api/secrets/folders/${folderId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
@@ -168,7 +168,7 @@ export function SecretsProvider({ children }: SecretsProviderProps) {
   );
 
   const deleteConfig = useCallback(async (folderId: string): Promise<void> => {
-    const response = await fetch(`/api/secrets/folders/${folderId}`, {
+    const response = await apiFetch(`/api/secrets/folders/${folderId}`, {
       method: "DELETE",
     });
 
@@ -195,7 +195,7 @@ export function SecretsProvider({ children }: SecretsProviderProps) {
         throw new Error("No config found for folder");
       }
 
-      const response = await fetch(`/api/secrets/folders/${folderId}`, {
+      const response = await apiFetch(`/api/secrets/folders/${folderId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled }),
@@ -258,7 +258,7 @@ export function SecretsProvider({ children }: SecretsProviderProps) {
       }
 
       try {
-        const response = await fetch(`/api/secrets/folders/${folderId}/secrets`);
+        const response = await apiFetch(`/api/secrets/folders/${folderId}/secrets`);
         if (!response.ok) {
           console.error(`Failed to fetch secrets for folder ${folderId}:`, response.statusText);
           return null;

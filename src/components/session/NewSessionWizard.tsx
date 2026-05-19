@@ -170,7 +170,7 @@ export function NewSessionWizard({
     if (featureCreateWorktree && featureProjectPath) {
       const validateGitRepo = async () => {
         try {
-          const response = await fetch(
+          const response = await apiFetch(
             `/api/git/validate?path=${encodeURIComponent(featureProjectPath)}`
           );
           const data = await response.json();
@@ -372,7 +372,7 @@ export function NewSessionWizard({
     try {
       // Step 1: Clone or check if repo exists
       setCloningStatus("Checking repository...");
-      const cloneResponse = await fetch(`/api/github/repositories/${selectedRepo.id}`, {
+      const cloneResponse = await apiFetch(`/api/github/repositories/${selectedRepo.id}`, {
         method: "POST",
       });
 

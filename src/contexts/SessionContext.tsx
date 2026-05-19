@@ -449,7 +449,7 @@ export function SessionProvider({
 
       const runFetch = async (): Promise<void> => {
         try {
-          const response = await fetch(`/api/sessions/${sessionId}`, {
+          const response = await apiFetch(`/api/sessions/${sessionId}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(updates),
@@ -538,7 +538,7 @@ export function SessionProvider({
         const url = options?.deleteWorktree
           ? `/api/sessions/${sessionId}?deleteWorktree=true`
           : `/api/sessions/${sessionId}`;
-        const response = await fetch(url, {
+        const response = await apiFetch(url, {
           method: "DELETE",
         });
 
@@ -570,7 +570,7 @@ export function SessionProvider({
       });
 
       try {
-        const response = await fetch(`/api/sessions/${sessionId}/suspend`, {
+        const response = await apiFetch(`/api/sessions/${sessionId}/suspend`, {
           method: "POST",
         });
 
@@ -597,7 +597,7 @@ export function SessionProvider({
       });
 
       try {
-        const response = await fetch(`/api/sessions/${sessionId}/resume`, {
+        const response = await apiFetch(`/api/sessions/${sessionId}/resume`, {
           method: "POST",
         });
 
@@ -620,7 +620,7 @@ export function SessionProvider({
             if (tmuxBacked) {
               console.warn(`Tmux session gone for ${sessionId}, auto-closing...`);
               dispatch({ type: "DELETE", sessionId });
-              const deleteResponse = await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
+              const deleteResponse = await apiFetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
               if (checkAuthResponse(deleteResponse)) return;
               return; // Don't throw - session has been cleaned up
             }

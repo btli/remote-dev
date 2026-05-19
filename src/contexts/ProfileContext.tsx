@@ -170,7 +170,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
   const updateProfile = useCallback(
     async (id: string, input: UpdateAgentProfileInput): Promise<AgentProfile> => {
-      const response = await fetch(`/api/profiles/${id}`, {
+      const response = await apiFetch(`/api/profiles/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
@@ -201,7 +201,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
   );
 
   const deleteProfile = useCallback(async (id: string): Promise<void> => {
-    const response = await fetch(`/api/profiles/${id}`, {
+    const response = await apiFetch(`/api/profiles/${id}`, {
       method: "DELETE",
     });
 
@@ -234,7 +234,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
   const linkFolderToProfile = useCallback(
     async (folderId: string, profileId: string): Promise<void> => {
-      const response = await fetch(`/api/profiles/folders/${folderId}`, {
+      const response = await apiFetch(`/api/profiles/folders/${folderId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ profileId }),
@@ -257,7 +257,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
   const unlinkFolderFromProfile = useCallback(
     async (folderId: string): Promise<void> => {
-      const response = await fetch(`/api/profiles/folders/${folderId}`, {
+      const response = await apiFetch(`/api/profiles/folders/${folderId}`, {
         method: "DELETE",
       });
 
@@ -278,7 +278,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
   const getGitIdentity = useCallback(
     async (profileId: string): Promise<GitIdentity | null> => {
-      const response = await fetch(`/api/profiles/${profileId}/git-identity`);
+      const response = await apiFetch(`/api/profiles/${profileId}/git-identity`);
 
       if (!response.ok) {
         if (response.status === 404) return null;
@@ -294,7 +294,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
   const setGitIdentity = useCallback(
     async (profileId: string, identity: GitIdentity): Promise<void> => {
-      const response = await fetch(`/api/profiles/${profileId}/git-identity`, {
+      const response = await apiFetch(`/api/profiles/${profileId}/git-identity`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(identity),
@@ -310,7 +310,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
   const getSecretsConfig = useCallback(
     async (profileId: string): Promise<ProfileSecretsConfig | null> => {
-      const response = await fetch(`/api/profiles/${profileId}/secrets`);
+      const response = await apiFetch(`/api/profiles/${profileId}/secrets`);
 
       if (!response.ok) {
         if (response.status === 404) return null;
@@ -329,7 +329,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       profileId: string,
       input: UpdateProfileSecretsConfigInput
     ): Promise<ProfileSecretsConfig> => {
-      const response = await fetch(`/api/profiles/${profileId}/secrets`, {
+      const response = await apiFetch(`/api/profiles/${profileId}/secrets`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
@@ -347,7 +347,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
   const deleteSecretsConfig = useCallback(
     async (profileId: string): Promise<void> => {
-      const response = await fetch(`/api/profiles/${profileId}/secrets`, {
+      const response = await apiFetch(`/api/profiles/${profileId}/secrets`, {
         method: "DELETE",
       });
 
@@ -361,7 +361,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
   const toggleSecretsEnabled = useCallback(
     async (profileId: string, enabled: boolean): Promise<void> => {
-      const response = await fetch(`/api/profiles/${profileId}/secrets`, {
+      const response = await apiFetch(`/api/profiles/${profileId}/secrets`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled }),

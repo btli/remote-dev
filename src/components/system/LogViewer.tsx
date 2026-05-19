@@ -118,7 +118,7 @@ export function LogViewer() {
         if (searchQuery.trim()) params.set("search", searchQuery.trim());
         if (opts.before) params.set("before", String(opts.before));
 
-        const res = await fetch(`/api/system/logs?${params}`);
+        const res = await apiFetch(`/api/system/logs?${params}`);
         if (!res.ok) throw new Error("Failed to fetch logs");
         const data: { entries: LogEntry[]; hasMore: boolean } = await res.json();
 

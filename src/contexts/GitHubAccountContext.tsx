@@ -103,7 +103,7 @@ export function GitHubAccountProvider({
   const setDefault = useCallback(async (providerAccountId: string) => {
     setError(null);
     try {
-      const res = await fetch(`/api/github/accounts/${providerAccountId}`, {
+      const res = await apiFetch(`/api/github/accounts/${providerAccountId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "set-default" }),
@@ -124,7 +124,7 @@ export function GitHubAccountProvider({
   const unlinkAccount = useCallback(async (providerAccountId: string) => {
     setError(null);
     try {
-      const res = await fetch(`/api/github/accounts/${providerAccountId}`, {
+      const res = await apiFetch(`/api/github/accounts/${providerAccountId}`, {
         method: "DELETE",
       });
       if (!res.ok) throw new Error("Failed to unlink account");
@@ -138,7 +138,7 @@ export function GitHubAccountProvider({
   const bindProject = useCallback(async (projectId: string, providerAccountId: string) => {
     setError(null);
     try {
-      const res = await fetch(`/api/github/accounts/${providerAccountId}`, {
+      const res = await apiFetch(`/api/github/accounts/${providerAccountId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "bind-project", projectId }),
@@ -156,7 +156,7 @@ export function GitHubAccountProvider({
     const providerAccountId = folderBindings[projectId];
     if (!providerAccountId) return;
     try {
-      const res = await fetch(`/api/github/accounts/${providerAccountId}`, {
+      const res = await apiFetch(`/api/github/accounts/${providerAccountId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "unbind-project", projectId }),

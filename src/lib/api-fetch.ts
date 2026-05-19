@@ -52,6 +52,12 @@ export function prefixApiPath(input: string): string {
   if (input.startsWith("//")) return input; // protocol-relative
   const base = runtimeBasePath();
   if (base === "") return input;
+  // Idempotent: if the input is already prefixed (exact match or starts
+  // with `${base}/`), pass it through. This guards against accidental
+  // double-prefixing when callers compose `prefixApiPath` with other
+  // helpers that may have already applied the basePath.
+  if (input === base) return input;
+  if (input.startsWith(base + "/")) return input;
   // Use the same semantics as `prefixPath` from `@/lib/base-path`, but with
   // the runtime basePath. Reusing the helper directly is wrong here because
   // it captures `BASE_PATH` at import time on the server.

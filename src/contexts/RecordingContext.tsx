@@ -86,7 +86,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   );
 
   const deleteRecording = useCallback(async (recordingId: string) => {
-    const response = await fetch(`/api/recordings/${recordingId}`, {
+    const response = await apiFetch(`/api/recordings/${recordingId}`, {
       method: "DELETE",
     });
 
@@ -99,7 +99,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
 
   const getRecording = useCallback(
     async (recordingId: string): Promise<ParsedRecording | null> => {
-      const response = await fetch(`/api/recordings/${recordingId}?parsed=true`);
+      const response = await apiFetch(`/api/recordings/${recordingId}?parsed=true`);
       if (!response.ok) {
         return null;
       }

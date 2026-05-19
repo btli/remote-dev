@@ -36,6 +36,7 @@ import {
 } from "@/types/preferences";
 import type { PinnedFile } from "@/types/pinned-files";
 
+import { apiFetch } from "@/lib/api-fetch";
 const INHERIT_VALUE = "__inherit__";
 type ConfigurableProvider = Exclude<AgentProviderType, "none">;
 
@@ -103,7 +104,7 @@ export function ProjectPreferencesView({
     setError(null);
     void (async () => {
       try {
-        const res = await fetch(`/api/node-preferences/project/${projectId}`);
+        const res = await apiFetch(`/api/node-preferences/project/${projectId}`);
         const body = await res.json();
         if (cancelled) return;
         setPrefs(body.preferences ?? EMPTY);
@@ -122,7 +123,7 @@ export function ProjectPreferencesView({
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`/api/node-preferences/project/${projectId}`, {
+      const res = await apiFetch(`/api/node-preferences/project/${projectId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(prefs),
@@ -143,7 +144,7 @@ export function ProjectPreferencesView({
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`/api/node-preferences/project/${projectId}`, {
+      const res = await apiFetch(`/api/node-preferences/project/${projectId}`, {
         method: "DELETE",
       });
       if (!res.ok) {

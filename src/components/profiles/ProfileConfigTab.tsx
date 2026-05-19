@@ -11,6 +11,7 @@ import {
   CodexCLIConfigEditor,
 } from "@/components/agents";
 import type { AgentProvider } from "@/types/agent";
+import { apiFetch } from "@/lib/api-fetch";
 import type {
   ClaudeCodeConfig,
   GeminiCLIConfig,
@@ -75,7 +76,7 @@ function SingleAgentConfig({ profileId, agentType }: SingleAgentConfigProps) {
     setError(null);
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/agent-profiles/${profileId}/configs/${agentType}`
       );
 
@@ -114,7 +115,7 @@ function SingleAgentConfig({ profileId, agentType }: SingleAgentConfigProps) {
     setError(null);
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/agent-profiles/${profileId}/configs/${agentType}`,
         {
           method: "PUT",

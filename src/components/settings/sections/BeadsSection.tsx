@@ -10,6 +10,7 @@ import { Loader2 } from "lucide-react";
 import type { BeadsSectionExpandDefaults } from "@/types/preferences";
 import { BEADS_SECTION_EXPAND_DEFAULTS } from "@/types/preferences";
 
+import { apiFetch } from "@/lib/api-fetch";
 /** Fetch .beads/config.yaml for a project path, returning { content, loading }. */
 function useBeadsConfig(projectPath: string | null) {
   type State = { content: string | null; loading: boolean };
@@ -29,7 +30,7 @@ function useBeadsConfig(projectPath: string | null) {
     let cancelled = false;
     dispatch({ type: "start" });
 
-    fetch(`/api/beads/config?projectPath=${encodeURIComponent(projectPath)}`)
+    apiFetch(`/api/beads/config?projectPath=${encodeURIComponent(projectPath)}`)
       .then((res) => res.json())
       .then((data) => {
         if (!cancelled) dispatch({ type: "done", content: data.content ?? null });

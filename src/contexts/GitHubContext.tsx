@@ -248,7 +248,7 @@ export function GitHubProvider({
       setRepositories((prev) => prev.filter((r) => r.id !== repoId));
 
       try {
-        const response = await fetch(
+        const response = await apiFetch(
           `/api/github/repositories/${repoId}?removeFiles=${removeFiles}`,
           { method: "DELETE" }
         );
@@ -281,7 +281,7 @@ export function GitHubProvider({
     setError(null);
 
     try {
-      const response = await fetch(`/api/github/repositories/${repoId}`, {
+      const response = await apiFetch(`/api/github/repositories/${repoId}`, {
         method: "POST",
       });
 
@@ -320,7 +320,7 @@ export function GitHubProvider({
 
     try {
       // Clear via account API with clearCache flag
-      const response = await fetch(`/api/github/account?clearCache=true`, {
+      const response = await apiFetch(`/api/github/account?clearCache=true`, {
         method: "DELETE",
       });
 
@@ -353,7 +353,7 @@ export function GitHubProvider({
     setError(null);
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/github/account?clearCache=${clearCache}`,
         { method: "DELETE" }
       );

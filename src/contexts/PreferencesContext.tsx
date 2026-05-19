@@ -244,7 +244,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         // Route through the node-keyed preferences API. The legacy
         // /api/preferences/folders/:id route no longer exists; all state is
         // keyed on project id post-migration.
-        const response = await fetch(`/api/node-preferences/project/${folderId}`, {
+        const response = await apiFetch(`/api/node-preferences/project/${folderId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(updates),
@@ -279,7 +279,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
   const deleteFolderPreferencesHandler = useCallback(
     async (folderId: string) => {
       try {
-        const response = await fetch(`/api/node-preferences/project/${folderId}`, {
+        const response = await apiFetch(`/api/node-preferences/project/${folderId}`, {
           method: "DELETE",
         });
 

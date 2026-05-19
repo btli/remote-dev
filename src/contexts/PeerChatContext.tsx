@@ -90,7 +90,7 @@ export function PeerChatProvider({ children }: PeerChatProviderProps) {
 
     setLoading(true);
     try {
-      const resp = await fetch(`/api/peers/messages?folderId=${folderId}&limit=200`);
+      const resp = await apiFetch(`/api/peers/messages?folderId=${folderId}&limit=200`);
       if (resp.ok) {
         const data = await resp.json();
         setMessages(data.messages ?? []);
@@ -109,7 +109,7 @@ export function PeerChatProvider({ children }: PeerChatProviderProps) {
     }
 
     try {
-      const resp = await fetch(`/api/peers/peers?folderId=${folderId}`);
+      const resp = await apiFetch(`/api/peers/peers?folderId=${folderId}`);
       if (resp.ok) {
         const data = await resp.json();
         setPeers(data.peers ?? []);

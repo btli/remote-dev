@@ -21,6 +21,7 @@ import { RecordingPlayer } from "@/components/terminal/RecordingPlayer";
 import { installRdvBridge, type RdvBridgeAdapter } from "@/lib/rdv-bridge";
 import type { ParsedRecording } from "@/types/recording";
 
+import { apiFetch } from "@/lib/api-fetch";
 const noop = () => {};
 
 export interface EmbeddedRecordingViewProps {
@@ -73,7 +74,7 @@ export function EmbeddedRecordingView({
 
     void (async () => {
       try {
-        const response = await fetch(
+        const response = await apiFetch(
           `/api/recordings/${encodeURIComponent(recordingId)}?parsed=true`
         );
         if (cancelled) return;

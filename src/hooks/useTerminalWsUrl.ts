@@ -24,11 +24,7 @@ import { useMemo } from "react";
 
 import { resolveTerminalWsUrlFromHost } from "@/lib/terminal-ws-url";
 
-declare global {
-  interface Window {
-    __RDV_BASE_PATH__?: string;
-  }
-}
+// `Window.__RDV_BASE_PATH__` is declared globally in `src/types/window.d.ts`.
 
 /**
  * Browser-side resolver, exported for unit tests — `renderHook` requires

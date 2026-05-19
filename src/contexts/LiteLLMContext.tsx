@@ -129,7 +129,7 @@ export function LiteLLMProvider({ children }: LiteLLMProviderProps) {
   const refreshStats = useCallback(async () => {
     try {
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/litellm/analytics?type=summary&start=${encodeURIComponent(sevenDaysAgo)}`
       );
       if (!response.ok) return;
@@ -306,7 +306,7 @@ export function LiteLLMProvider({ children }: LiteLLMProviderProps) {
 
   const updateModel = useCallback(async (modelId: string, input: Partial<AddLiteLLMModelInput>) => {
     try {
-      const response = await fetch(`/api/litellm/models/${modelId}`, {
+      const response = await apiFetch(`/api/litellm/models/${modelId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
@@ -331,7 +331,7 @@ export function LiteLLMProvider({ children }: LiteLLMProviderProps) {
 
   const removeModel = useCallback(async (modelId: string) => {
     try {
-      const response = await fetch(`/api/litellm/models/${modelId}`, {
+      const response = await apiFetch(`/api/litellm/models/${modelId}`, {
         method: "DELETE",
       });
 
@@ -351,7 +351,7 @@ export function LiteLLMProvider({ children }: LiteLLMProviderProps) {
 
   const toggleModelPause = useCallback(async (modelId: string) => {
     try {
-      const response = await fetch(`/api/litellm/models/${modelId}`, {
+      const response = await apiFetch(`/api/litellm/models/${modelId}`, {
         method: "PATCH",
       });
 
@@ -373,7 +373,7 @@ export function LiteLLMProvider({ children }: LiteLLMProviderProps) {
 
   const setDefaultModel = useCallback(async (modelId: string) => {
     try {
-      const response = await fetch(`/api/litellm/models/${modelId}/default`, {
+      const response = await apiFetch(`/api/litellm/models/${modelId}/default`, {
         method: "POST",
       });
 

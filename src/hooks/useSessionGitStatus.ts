@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 
+import { apiFetch } from "@/lib/api-fetch";
 interface GitStatus {
   branch: string | null;
   ahead: number;
@@ -51,7 +52,7 @@ export function useSessionGitStatus(
 
       setLoading(true);
       try {
-        const response = await fetch(`/api/sessions/${id}/git-status`, {
+        const response = await apiFetch(`/api/sessions/${id}/git-status`, {
           credentials: "include",
           signal: controller.signal,
         });

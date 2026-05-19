@@ -12,11 +12,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 const ORIGINAL_BASE_PATH = process.env.RDV_BASE_PATH;
 
-declare global {
-  interface Window {
-    __RDV_BASE_PATH__?: string;
-  }
-}
+// `Window.__RDV_BASE_PATH__` is declared globally in `src/types/window.d.ts`.
 
 async function loadApiFetch(env: { RDV_BASE_PATH?: string }) {
   vi.resetModules();
@@ -107,5 +103,38 @@ describe("api-fetch", () => {
     expect(prefixApiPath("/api/foo")).toBe("/alpha/api/foo");
     expect(prefixApiPath("relative/path")).toBe("relative/path");
     expect(prefixApiPath("https://x/y")).toBe("https://x/y");
+  });
+
+  it("prefixApiPath is idempotent (no double-prefixing)", async () => {
+    const { prefixApiPath } = await loadApiFetch({ RDV_BASE_PATH: "/alpha" });
+    window.__RDV_BASE_PATH__ = "/alpha";
+    // Already-prefixed input passes through unchanged.
+    expect(prefixApiPath("/alpha/api/foo")).toBe("/alpha/api/foo");
+    // Exact match of the base passes through unchanged.
+    expect(prefixApiPath("/alpha")).toBe("/alpha");
+    // A path that merely shares a prefix-substring (no `/` boundary) is
+    // NOT considered prefixed and must still be prefixed.
+    expect(prefixApiPath("/alphabet")).toBe("/alpha/alphabet");
+  });
+
+  // Integration-shaped regression test for Phase 3: this is the test that
+  // would have caught the original sweep gap. A session lifecycle call goes
+  // through `apiFetch` and must hit `/{basePath}/api/...`, not the bare path.
+  it("session lifecycle calls prepend basePath under /alpha", async () => {
+    const { apiFetch } = await loadApiFetch({ RDV_BASE_PATH: "/alpha" });
+    window.__RDV_BASE_PATH__ = "/alpha";
+    await apiFetch("/api/sessions/123/suspend", { method: "POST" });
+    expect(fetchSpy).toHaveBeenCalledWith("/alpha/api/sessions/123/suspend", {
+      method: "POST",
+    });
+  });
+
+  it("session lifecycle calls are unchanged when basePath is empty", async () => {
+    const { apiFetch } = await loadApiFetch({ RDV_BASE_PATH: "" });
+    window.__RDV_BASE_PATH__ = "";
+    await apiFetch("/api/sessions/123/suspend", { method: "POST" });
+    expect(fetchSpy).toHaveBeenCalledWith("/api/sessions/123/suspend", {
+      method: "POST",
+    });
   });
 });

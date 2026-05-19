@@ -184,7 +184,7 @@ export function CodeMirrorEditor({
       setIsLoading(true);
       setLoadError(null);
       try {
-        const response = await fetch(
+        const response = await apiFetch(
           `/api/files/read?path=${encodeURIComponent(filePath)}`
         );
         if (!response.ok) {

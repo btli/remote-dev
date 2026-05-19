@@ -15,6 +15,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import type { GitHubRepository, GitHubBranch } from "@/types/github";
 
+import { apiFetch } from "@/lib/api-fetch";
 interface BranchPickerProps {
   repository: GitHubRepository;
   onSelect: (branch: GitHubBranch | null, createWorktree: boolean, newBranchName?: string) => void;
@@ -37,7 +38,7 @@ export function BranchPicker({ repository, onSelect, onBack }: BranchPickerProps
     setError(null);
 
     try {
-      const response = await fetch(`/api/github/repositories/${repository.id}/branches`);
+      const response = await apiFetch(`/api/github/repositories/${repository.id}/branches`);
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data.error || "Failed to fetch branches");

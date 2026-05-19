@@ -36,6 +36,7 @@ import {
 } from "./beads-constants";
 import { CheckSquare } from "lucide-react";
 
+import { apiFetch } from "@/lib/api-fetch";
 function formatDate(date: Date): string {
   return date.toLocaleDateString(undefined, {
     month: "short",
@@ -99,7 +100,7 @@ export function BeadsIssueDetail({
     async function fetchDetails() {
       setLoadingDetails(true);
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `/api/beads/${encodeURIComponent(issue.id)}/comments?includeEvents=true&projectPath=${encodeURIComponent(projectPath)}`
         );
 

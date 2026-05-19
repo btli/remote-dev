@@ -57,7 +57,7 @@ export function ProfileMcpServersTab({ profileId }: ProfileMcpServersTabProps) {
       setError(null);
 
       try {
-        const response = await fetch(`/api/mcp-servers?profileId=${profileId}`);
+        const response = await apiFetch(`/api/mcp-servers?profileId=${profileId}`);
         if (!response.ok) {
           throw new Error("Failed to load MCP servers");
         }
@@ -136,7 +136,7 @@ export function ProfileMcpServersTab({ profileId }: ProfileMcpServersTabProps) {
 
   const handleDeleteServer = useCallback(async (serverId: string) => {
     try {
-      const response = await fetch(`/api/mcp-servers/${serverId}`, {
+      const response = await apiFetch(`/api/mcp-servers/${serverId}`, {
         method: "DELETE",
       });
 
@@ -152,7 +152,7 @@ export function ProfileMcpServersTab({ profileId }: ProfileMcpServersTabProps) {
 
   const handleToggleEnabled = useCallback(async (serverId: string, newEnabled: boolean) => {
     try {
-      const response = await fetch(`/api/mcp-servers/${serverId}/toggle`, {
+      const response = await apiFetch(`/api/mcp-servers/${serverId}/toggle`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: newEnabled }),

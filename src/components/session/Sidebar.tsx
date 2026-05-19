@@ -338,7 +338,7 @@ export function Sidebar({
         return;
       }
       try {
-        const res = await fetch(`/api/projects/${projectId}/open`, { method: "POST" });
+        const res = await apiFetch(`/api/projects/${projectId}/open`, { method: "POST" });
         if (!res.ok) {
           const data = await res.json().catch(() => null);
           console.error("Failed to open folder:", data?.error || res.statusText);
