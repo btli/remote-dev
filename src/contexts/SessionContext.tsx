@@ -25,7 +25,7 @@ import { isTmuxBackedTerminalType } from "@/types/terminal-type";
 import { useProjectTree } from "./ProjectTreeContext";
 
 const ACTIVE_SESSION_STORAGE_KEY = "remote-dev:activeSessionId";
-const VALID_ACTIVITY_STATUSES = new Set<AgentActivityStatus>(["running", "waiting", "idle", "error", "compacting", "ended"]);
+const VALID_ACTIVITY_STATUSES = new Set<AgentActivityStatus>(["running", "waiting", "idle", "error", "compacting", "ended", "subagent"]);
 
 /**
  * Get the saved active session ID from localStorage.

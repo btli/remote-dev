@@ -40,6 +40,8 @@ enum HookCommand {
     },
     /// Handle SessionEnd hook: report session ended
     SessionEnd,
+    /// Handle SubagentStop hook: report parent still running, no notification
+    SubagentStop,
     /// Validate that all hooks can reach the server and are functional
     Validate,
     /// Unified handler for Claude Code lifecycle hooks (cmux-compatible)
@@ -477,6 +479,24 @@ async fn handle_stop(
         return Ok(());
     };
 
+    // Safety belt: if older Claude Code versions still route SubagentStop
+    // through the Stop hook, or if the payload carries an agent_id, treat it
+    // as a subagent stop and skip the notification path. The dedicated
+    // SubagentStop hook handler is the primary route — this is fallback.
+    let mut buf = Vec::new();
+    let _ = std::io::stdin().read_to_end(&mut buf);
+    let payload: serde_json::Value =
+        serde_json::from_slice(&buf).unwrap_or(serde_json::Value::Null);
+    let hook_event = payload
+        .get("hook_event_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Stop");
+    if hook_event == "SubagentStop" || payload.get("agent_id").is_some() {
+        // Parent is still active; do not flip to idle and do not notify.
+        report_status(client, "running").await;
+        return Ok(());
+    }
+
     // Check for unfinished beads work before allowing stop
     if let Some(msg) = check_beads_unfinished().await {
         // Print to stdout — Claude Code will see this and continue instead of stopping
@@ -534,16 +554,25 @@ pub async fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
         HookCommand::PreToolUse => {
-            report_status(client, "running").await;
-            print_peer_digest(client).await;
-            broadcast_session_start(client).await;
-            report_proxy_state(client).await;
-
-            // Read stdin once into a buffer, parse as JSON
+            // Read stdin first so we can discriminate parent vs. subagent tool calls.
+            // Claude Code includes `agent_id` in the payload when the hook fires
+            // from inside a Task-spawned subagent. Reporting "subagent" instead of
+            // "running" lets the sidebar paint a distinct color for delegated work.
             let mut buf = Vec::new();
             let _ = std::io::stdin().read_to_end(&mut buf);
             let payload: serde_json::Value =
                 serde_json::from_slice(&buf).unwrap_or(serde_json::Value::Null);
+
+            let is_subagent = payload.get("agent_id").is_some();
+            report_status(client, if is_subagent { "subagent" } else { "running" }).await;
+
+            // Peer digest, session start broadcast, and proxy state are parent-only
+            // concerns — skip them when the call originated from a subagent.
+            if !is_subagent {
+                print_peer_digest(client).await;
+                broadcast_session_start(client).await;
+                report_proxy_state(client).await;
+            }
 
             if check_git_identity_guard(client, &payload).await {
                 std::process::exit(2);
@@ -587,6 +616,13 @@ pub async fn run(
         }
         HookCommand::SessionEnd => {
             report_status(client, "ended").await;
+        }
+        HookCommand::SubagentStop => {
+            // A Task subagent finished — the parent agent is about to resume.
+            // Report "running" (parent will pick up) and create no notification.
+            // Drain stdin to avoid blocking the pipe.
+            drain_stdin();
+            report_status(client, "running").await;
         }
         HookCommand::Validate => {
             let mut results: Vec<serde_json::Value> = Vec::new();
