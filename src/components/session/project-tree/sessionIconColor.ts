@@ -25,6 +25,8 @@ export function getSessionIconColor(
   switch (status) {
     case "running":
       return "text-green-500 agent-breathing";
+    case "subagent":
+      return "text-violet-500 agent-breathing";
     case "waiting":
       return "text-yellow-500 agent-breathing";
     case "compacting":

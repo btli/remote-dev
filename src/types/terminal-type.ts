@@ -424,8 +424,16 @@ export type AgentExitState = "running" | "exited" | "restarting" | "closed";
 /**
  * Agent activity status for real-time sidebar indicator.
  * Reported by Claude Code hooks via /internal/agent-status endpoint.
+ *
+ * - "running": top-level agent is executing a tool
+ * - "subagent": a Task-spawned subagent is running (parent is suspended)
+ * - "waiting": agent is paused for user input (permission prompt / elicitation)
+ * - "compacting": context window compaction in progress
+ * - "idle": agent finished a turn, awaiting next prompt
+ * - "ended": session ended
+ * - "error": agent exited with non-zero status
  */
-export type AgentActivityStatus = "running" | "waiting" | "idle" | "error" | "compacting" | "ended";
+export type AgentActivityStatus = "running" | "waiting" | "idle" | "error" | "compacting" | "ended" | "subagent";
 
 /**
  * Agent session metadata stored with the session

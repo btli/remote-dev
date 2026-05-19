@@ -65,7 +65,18 @@
           {
             "type": "command",
             "command": "rdv hook claude stop",
-            "timeout": 10
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rdv hook subagent-stop",
+            "timeout": 5
           }
         ]
       }

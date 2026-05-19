@@ -722,6 +722,13 @@ export async function installAgentHooks(
     hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook claude stop", curlForStatus("idle")), timeout: 15 }],
   };
 
+  // SubagentStop hook: a Task subagent finished; parent will resume.
+  // Reports status only — must NOT create a notification (avoids fatigue
+  // from many subagent completions during a single user turn).
+  const subagentStopHook = {
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook subagent-stop", curlForStatus("running")), timeout: 5 }],
+  };
+
   // PostToolUse hook for Bash: git-push peer broadcast
   const postToolUseBashHook = {
     matcher: "Bash",
@@ -742,6 +749,7 @@ export async function installAgentHooks(
   const existingPreCompact = Array.isArray(existingHooks.PreCompact) ? existingHooks.PreCompact : [];
   const existingNotification = Array.isArray(existingHooks.Notification) ? existingHooks.Notification : [];
   const existingStop = Array.isArray(existingHooks.Stop) ? existingHooks.Stop : [];
+  const existingSubagentStop = Array.isArray(existingHooks.SubagentStop) ? existingHooks.SubagentStop : [];
   const existingPostToolUse = Array.isArray(existingHooks.PostToolUse) ? existingHooks.PostToolUse : [];
   const existingSessionEnd = Array.isArray(existingHooks.SessionEnd) ? existingHooks.SessionEnd : [];
 
@@ -757,6 +765,7 @@ export async function installAgentHooks(
     PostToolUse: [...withoutRdvHooks(existingPostToolUse, hookMarkers), postToolUseBashHook],
     Notification: [...withoutRdvHooks(existingNotification, hookMarkers), notificationHook],
     Stop: [...withoutRdvHooks(existingStop, hookMarkers), stopHook],
+    SubagentStop: [...withoutRdvHooks(existingSubagentStop, hookMarkers), subagentStopHook],
     SessionEnd: [...withoutRdvHooks(existingSessionEnd, hookMarkers), sessionEndHook],
     // Remove legacy SessionStart RDV hooks (replaced by PreToolUse)
     ...(cleanedSessionStart.length > 0 ? { SessionStart: cleanedSessionStart } : { SessionStart: undefined }),

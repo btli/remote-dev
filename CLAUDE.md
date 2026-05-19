@@ -220,6 +220,7 @@ Rust CLI for agent interaction with the terminal server. Agents use `rdv` comman
 | `rdv hook pre-compact` | Handle PreCompact hook (report compacting) |
 | `rdv hook notification` | Handle Notification hook (report waiting) |
 | `rdv hook stop` | Handle Stop hook: report idle, check tasks, notify |
+| `rdv hook subagent-stop` | Handle SubagentStop hook: parent still running, no notification (suppresses subagent noise) |
 | `rdv hook notify <event>` | Send notification for lifecycle event |
 | `rdv hook session-end` | Handle SessionEnd hook: report ended status |
 | `rdv hook validate` | Validate hooks: check connectivity + auto-repair |
