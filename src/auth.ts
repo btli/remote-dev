@@ -10,6 +10,7 @@ import { encrypt, decryptSafe } from "@/lib/encryption";
 import { createLogger } from "@/lib/logger";
 import { GITHUB_SCOPE_STRING } from "@/lib/github-scopes";
 import { buildScopedCookies } from "@/lib/auth-cookies";
+import { BASE_PATH } from "@/lib/base-path";
 import type { Adapter, AdapterAccount } from "next-auth/adapters";
 
 const log = createLogger("Auth");
@@ -88,9 +89,38 @@ async function isLocalhostRequest(): Promise<boolean> {
 // path-scopes every cookie to the instance basePath.
 const scopedCookies = buildScopedCookies();
 
+// AuthJS's internal `basePath` is overloaded — it's the prefix
+// `parseActionAndProviderId` strips off the inbound request pathname AND the
+// prefix `parseProviders` / `createActionURL` prepend when constructing the
+// signinUrl, the GitHub OAuth callback URL, etc.
+//
+// Under multi-instance hosting that asymmetry between inbound and outbound
+// breaks both endpoints in different ways:
+//
+//   * Outbound URLs need the *full* path AuthJS owns externally, including the
+//     Next.js basePath: `/alpha/api/auth`. Otherwise GitHub gets registered
+//     with `/api/auth/callback/github` and the OAuth round-trip 404s when
+//     it redirects back (breaks AC-7).
+//   * Inbound action parsing sees the pathname Next.js exposes to the route
+//     handler after stripping `/alpha`: `/api/auth/csrf`. Matching that
+//     against a `^/alpha/api/auth` prefix would fail.
+//
+// We resolve the tension by pinning AuthJS's `basePath` to the full external
+// path (`BASE_PATH + "/api/auth"`) AND rewriting inbound requests in
+// `src/app/api/auth/[...nextauth]/route.ts` to add `BASE_PATH` back to
+// `req.nextUrl.pathname` before AuthJS sees them. Both sides then see the
+// same `/alpha/api/auth/<action>` shape.
+//
+// next-auth's `setEnvDefaults` does `config.basePath ||= URL(AUTH_URL).pathname`
+// which would yield just `/alpha` (no `/api/auth` suffix), so we set
+// `basePath` explicitly here — `||=` preserves our value. The route-handler
+// wrapper is the corresponding inbound side. (Opus C-2 / AC-7.)
+const AUTH_BASE_PATH = `${BASE_PATH}/api/auth`;
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: createEncryptedAdapter(),
   session: { strategy: "jwt" },
+  basePath: AUTH_BASE_PATH,
   ...(scopedCookies ? { cookies: scopedCookies } : {}),
   providers: [
     GitHub({

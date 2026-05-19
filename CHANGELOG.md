@@ -23,6 +23,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   yet** — cookie path scoping lands in Phase 2 (see
   `docs/plans/multi-instance-basepath.md` §7.6). Without it, sessions can
   bleed between instances on the same host.
+- **Multi-instance hosting (Phase 2 — NextAuth cookie scoping)**: NextAuth's
+  session/state/pkce/nonce/callback/webauthn cookies are now path-scoped to
+  `RDV_BASE_PATH` and name-differentiated per instance slug
+  (`__Secure-rdv-<slug>-session-token` etc.) via the new
+  `src/lib/auth-cookies.ts` helper. The CSRF cookie keeps `Path=/` because
+  the `__Host-` prefix requires it; functional isolation between instances
+  on the same host is enforced by each pod owning its own `AUTH_SECRET`
+  (which must be unique per instance — see plan §6.1).
+  `src/auth.ts` pins AuthJS's internal `basePath` to the full external path
+  (`${RDV_BASE_PATH}/api/auth`) so the OAuth callback URL handed to GitHub
+  and the URLs in `/api/auth/providers` include the deployment prefix, and
+  `src/app/api/auth/[...nextauth]/route.ts` restores the prefix on inbound
+  requests (Next.js strips it before route handlers see them) so AuthJS's
+  action parsing matches. Together these keep GitHub OAuth working under
+  `RDV_BASE_PATH` (AC-7). `src/proxy.ts` reads the configured session cookie
+  name via the new `getSessionCookieName()` helper so the proxy and the auth
+  handler agree on which cookie carries the JWT.
+  **Caveat for upgrades**: when a live deployment flips `RDV_BASE_PATH` from
+  empty to a value (or vice versa), the NextAuth cookie names change too,
+  so every signed-in user must sign in again on the first request after the
+  rollout — no data loss, but a one-time logout is unavoidable.
 - **Mobile**: terminal search overlay reachable on both the PWA and the
   Flutter embed. PWA users get a "Search terminal" item in the session
   more-menu (`SessionMetadataSheet`). The Flutter shell drives the same

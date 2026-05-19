@@ -74,6 +74,20 @@ describe("auth-cookies module", () => {
     expect(mod.buildScopedCookies()).toBeUndefined();
   });
 
+  it("returns undefined when slug is set but basePath is empty (Codex S-2)", async () => {
+    // Operator misconfig: RDV_INSTANCE_SLUG set, RDV_BASE_PATH unset. Without
+    // a basePath we cannot path-scope cookies to anything narrower than `/`,
+    // so renaming them to `rdv-<slug>-…` would produce half-scoped state that
+    // bypasses AC-1's "no behavior change" guarantee. The gate must bail out
+    // and let NextAuth use its built-in defaults.
+    const mod = await loadCookies({
+      RDV_BASE_PATH: "",
+      RDV_INSTANCE_SLUG: "alpha",
+      AUTH_URL: "https://example.com",
+    });
+    expect(mod.buildScopedCookies()).toBeUndefined();
+  });
+
   it("returns a full block with all 7 cookies when slug is set", async () => {
     const mod = await loadCookies({
       RDV_BASE_PATH: "/alpha",
@@ -222,7 +236,13 @@ describe("auth-cookies module", () => {
     }
   });
 
-  it("session/csrf/pkce/state/nonce/webauthn are httpOnly; callbackUrl is not", async () => {
+  it("all NextAuth cookies are httpOnly (including callbackUrl)", async () => {
+    // Earlier revisions omitted `httpOnly` on `callbackUrl` claiming it
+    // matched NextAuth's default. AuthJS actually deep-merges user options
+    // into its defaults, and its default *is* `httpOnly: true`, so the cookie
+    // was httpOnly on the wire while the test asserted the opposite — passing
+    // for the wrong reason. We now set it explicitly so the helper output and
+    // the wire-level behavior agree. (Codex S-1 / Opus C-1.)
     const mod = await loadCookies({
       RDV_BASE_PATH: "/alpha",
       RDV_INSTANCE_SLUG: undefined,
@@ -230,13 +250,69 @@ describe("auth-cookies module", () => {
     });
     const cookies = mod.buildScopedCookies()!;
     expect(cookies.sessionToken.options?.httpOnly).toBe(true);
+    expect(cookies.callbackUrl.options?.httpOnly).toBe(true);
     expect(cookies.csrfToken.options?.httpOnly).toBe(true);
     expect(cookies.pkceCodeVerifier.options?.httpOnly).toBe(true);
     expect(cookies.state.options?.httpOnly).toBe(true);
     expect(cookies.nonce.options?.httpOnly).toBe(true);
     expect(cookies.webauthnChallenge.options?.httpOnly).toBe(true);
-    // callbackUrl is intentionally not httpOnly — client JS reads it during
-    // the OAuth handshake, matching NextAuth's default behavior.
-    expect(cookies.callbackUrl.options?.httpOnly).toBeFalsy();
+  });
+});
+
+describe("getSessionCookieName", () => {
+  afterEach(() => {
+    restoreEnv("RDV_BASE_PATH", ORIGINAL_BASE_PATH);
+    restoreEnv("RDV_INSTANCE_SLUG", ORIGINAL_INSTANCE_SLUG);
+    restoreEnv("AUTH_URL", ORIGINAL_AUTH_URL);
+    restoreEnv("NEXTAUTH_URL", ORIGINAL_NEXTAUTH_URL);
+    vi.resetModules();
+  });
+
+  it("returns AuthJS https default when no basePath is set", async () => {
+    const mod = await loadCookies({
+      RDV_BASE_PATH: "",
+      RDV_INSTANCE_SLUG: undefined,
+      AUTH_URL: "https://example.com",
+    });
+    expect(mod.getSessionCookieName()).toBe("__Secure-authjs.session-token");
+  });
+
+  it("returns AuthJS http default when no basePath is set under http", async () => {
+    const mod = await loadCookies({
+      RDV_BASE_PATH: "",
+      RDV_INSTANCE_SLUG: undefined,
+      AUTH_URL: "http://localhost:6001",
+    });
+    expect(mod.getSessionCookieName()).toBe("authjs.session-token");
+  });
+
+  it("returns the scoped name when basePath + slug resolve under https", async () => {
+    const mod = await loadCookies({
+      RDV_BASE_PATH: "/alpha",
+      RDV_INSTANCE_SLUG: undefined,
+      AUTH_URL: "https://example.com/alpha",
+    });
+    expect(mod.getSessionCookieName()).toBe("__Secure-rdv-alpha-session-token");
+  });
+
+  it("returns the unprefixed scoped name under http", async () => {
+    const mod = await loadCookies({
+      RDV_BASE_PATH: "/alpha",
+      RDV_INSTANCE_SLUG: undefined,
+      AUTH_URL: "http://localhost:6101/alpha",
+    });
+    expect(mod.getSessionCookieName()).toBe("rdv-alpha-session-token");
+  });
+
+  it("returns AuthJS default when slug is set without basePath (Codex S-2)", async () => {
+    // Mirrors the buildScopedCookies bail-out: getToken() must read the same
+    // cookie the auth handler writes, so when scoping is off the name must
+    // also be the AuthJS default.
+    const mod = await loadCookies({
+      RDV_BASE_PATH: "",
+      RDV_INSTANCE_SLUG: "alpha",
+      AUTH_URL: "https://example.com",
+    });
+    expect(mod.getSessionCookieName()).toBe("__Secure-authjs.session-token");
   });
 });

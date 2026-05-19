@@ -5,6 +5,7 @@ import {
   validateAccessJWT,
   getAccessToken,
 } from "@/lib/cloudflare-access";
+import { getSessionCookieName } from "@/lib/auth-cookies";
 
 /**
  * Proxy handler for authentication at the network boundary.
@@ -59,10 +60,18 @@ export async function proxy(request: NextRequest) {
     );
   }
 
-  // No CF Access token - fall back to NextAuth for local development
+  // No CF Access token - fall back to NextAuth for local development.
+  //
+  // `getToken()` reads its cookie by name; under `RDV_BASE_PATH` we rename the
+  // session cookie (see src/lib/auth-cookies.ts) so the default name
+  // `__Secure-authjs.session-token` is no longer present and `getToken()` would
+  // silently return null — every API call would 401. Always pass the configured
+  // name so this path keeps working in both single-server and multi-instance
+  // deployments. (Gemini review: critical.)
   const token = await getToken({
     req: request,
     secret: process.env.AUTH_SECRET,
+    cookieName: getSessionCookieName(),
   });
 
   const isLoggedIn = !!token;

@@ -34,7 +34,7 @@ The feature is done when **all** of the following are true:
 - [ ] AC-2: With `RDV_BASE_PATH=/alpha`, `GET https://host/alpha/login` returns the login page (200, valid HTML).
 - [ ] AC-3: With `RDV_BASE_PATH=/alpha`, `GET https://host/login` returns 404 (the bare prefix is the instance's *only* root).
 - [ ] AC-4: With `RDV_BASE_PATH=/alpha`, the browser successfully connects a terminal WebSocket to `wss://host/alpha/ws` (not `wss://host/ws`).
-- [ ] AC-5: Cookies issued at `/alpha` are sent with `Path=/alpha`. They are **not** sent when the browser requests `/beta/...`.
+- [ ] AC-5: Session/state/pkce/nonce/callback cookies issued at `/alpha` are sent with `Path=/alpha` and are **not** sent when the browser requests `/beta/...`. The CSRF cookie (`__Host-`) sits at `Path=/` per RFC 6265bis (the `__Host-` prefix mandates it) but is name-differentiated per instance; the functional isolation between `/alpha` and `/beta` instead comes from each pod having its own `AUTH_SECRET` (see §6.1), so a CSRF token minted under one secret cannot validate against the other.
 - [ ] AC-6: Two pods running on the same host with `RDV_BASE_PATH=/alpha` and `RDV_BASE_PATH=/beta`, each with their own `RDV_DATA_DIR`, do not interfere with each other (independent sign-in state, independent sessions, independent tmux namespaces).
 - [ ] AC-7: NextAuth GitHub OAuth callback URL respects the prefix: `https://host/alpha/api/auth/callback/github` works when registered with GitHub.
 - [ ] AC-8: Cloudflare Access JWT validation works under a prefix; `CF_ACCESS_TEAM` + `CF_ACCESS_AUD` remain the only auth env vars needed.
@@ -157,6 +157,31 @@ CF Access policy**.
 | `RDV_INSTANCE_SLUG` | no | last segment of basePath, or `""` | `^[a-z0-9][a-z0-9-]*$` |
 
 If validation fails at startup, the server must log a fatal error and exit non-zero.
+
+**`AUTH_SECRET` MUST be unique per instance.** Two pods that share an
+`AUTH_SECRET` on the same host can decrypt each other's JWTs: a session
+token captured from `/alpha` is replayable verbatim against `/beta`,
+defeating both the path-scoped cookies (still served by the browser to
+the right host but trivially copyable by a malicious script) and the
+per-slug name differentiation. Provision each pod's `AUTH_SECRET`
+independently (e.g. as separate Kubernetes Secrets) and rotate them
+independently. Same rule for `AUTH_SECRET_1` / `_2` / `_3` rotation
+keys — never share them across instances. This is the actual isolation
+boundary for the CSRF cookie, which is forced to `Path=/` by the
+`__Host-` prefix.
+
+The `AUTH_URL` for each instance must include the basePath
+(e.g. `https://host/alpha`). `src/auth.ts` pins AuthJS's internal
+`basePath` to the full external path (`${RDV_BASE_PATH}/api/auth`,
+e.g. `/alpha/api/auth`) so the OAuth callback URL handed to GitHub and
+the URLs surfaced in `/api/auth/providers` include the prefix. The
+route handler at `src/app/api/auth/[...nextauth]/route.ts` rewrites the
+inbound request to add `RDV_BASE_PATH` back to the pathname before
+AuthJS sees it — Next.js strips the deployment prefix before route
+handlers run, so without that rewrite AuthJS's
+`parseActionAndProviderId` would throw `UnknownAction` and every
+`/api/auth/*` request would 500. See the comments in those two files
+for the full trace.
 
 ### 6.2 Architecture diagram (logical)
 

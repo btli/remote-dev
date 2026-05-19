@@ -39,8 +39,16 @@
  *     single source of truth.
  */
 
-import type { CookiesOptions } from "@auth/core/types";
+import type { NextAuthConfig } from "next-auth";
 import { COOKIE_PATH, INSTANCE_SLUG } from "@/lib/base-path";
+
+// Derive CookiesOptions from NextAuthConfig so we stay independent of
+// @auth/core peer-dep version drift. NextAuthConfig["cookies"] is the
+// `Partial<CookiesOptions>` shape that NextAuth accepts; we re-tighten
+// keys to required for ergonomics in this module — buildScopedCookies()
+// always returns a fully-populated block when it returns at all, so
+// callers (and tests) shouldn't need optional-chaining on each cookie.
+type CookiesOptions = Required<NonNullable<NextAuthConfig["cookies"]>>;
 
 /**
  * True when `AUTH_URL` (or legacy `NEXTAUTH_URL`) advertises https. Drives both
@@ -67,12 +75,43 @@ function scopedName(
 }
 
 /**
+ * True when this instance should run with default (un-scoped) NextAuth cookies.
+ *
+ * The conservative gate is `COOKIE_PATH === "/"`: if there is no basePath then
+ * `Path=/` is what every cookie would carry anyway, and prefixing cookie names
+ * with a slug we never validate against a basePath produces incoherent half-
+ * scoped state (Codex S-2). The `INSTANCE_SLUG === ""` check is kept as a
+ * second belt: even with a basePath we cannot construct cookie names without
+ * a slug, so bail out of scoping in that case too.
+ */
+function isUnscopedMode(): boolean {
+  return COOKIE_PATH === "/" || INSTANCE_SLUG === "";
+}
+
+/**
+ * Cookie name NextAuth uses for the JWT session token under the current
+ * instance config. Mirrors NextAuth/AuthJS defaults when `buildScopedCookies()`
+ * returns `undefined` so `getToken({ cookieName })` calls — notably in
+ * `src/proxy.ts` — read the same cookie the auth handler writes.
+ *
+ * AuthJS's default name is `__Secure-authjs.session-token` under https and
+ * `authjs.session-token` under http; next-auth v5 inherits those names verbatim.
+ */
+export function getSessionCookieName(): string {
+  const secure = isSecureScheme();
+  if (isUnscopedMode()) {
+    return secure ? "__Secure-authjs.session-token" : "authjs.session-token";
+  }
+  return scopedName(INSTANCE_SLUG, "session-token", "__Secure-", secure);
+}
+
+/**
  * Returns a NextAuth `cookies` config block that path-scopes every cookie to
  * the current instance's basePath. Returns `undefined` when there is no
  * basePath, so NextAuth uses its built-in defaults (single-server mode).
  */
 export function buildScopedCookies(): CookiesOptions | undefined {
-  if (INSTANCE_SLUG === "") return undefined;
+  if (isUnscopedMode()) return undefined;
 
   const secure = isSecureScheme();
   const sessionTokenName = scopedName(INSTANCE_SLUG, "session-token", "__Secure-", secure);
@@ -98,6 +137,14 @@ export function buildScopedCookies(): CookiesOptions | undefined {
     callbackUrl: {
       name: callbackUrlName,
       options: {
+        // AuthJS deep-merges user-supplied cookie options into its built-in
+        // defaults; that default is `httpOnly: true`. Earlier revisions of
+        // this file omitted the flag, intending to mirror AuthJS, and a test
+        // asserted on the literal pre-merge output. The post-merge effective
+        // value was still `true` — the test passed for the wrong reason. We
+        // now set it explicitly so the wire-level behavior matches what the
+        // test sees and audits stay readable. (Codex S-1 / Opus C-1.)
+        httpOnly: true,
         sameSite: "lax",
         path: COOKIE_PATH,
         secure,
