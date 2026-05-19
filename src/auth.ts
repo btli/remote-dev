@@ -9,6 +9,7 @@ import { users, accounts, sessions, verificationTokens, authorizedUsers } from "
 import { encrypt, decryptSafe } from "@/lib/encryption";
 import { createLogger } from "@/lib/logger";
 import { GITHUB_SCOPE_STRING } from "@/lib/github-scopes";
+import { buildScopedCookies } from "@/lib/auth-cookies";
 import type { Adapter, AdapterAccount } from "next-auth/adapters";
 
 const log = createLogger("Auth");
@@ -81,9 +82,16 @@ async function isLocalhostRequest(): Promise<boolean> {
   return true;
 }
 
+// When RDV_BASE_PATH is unset, leave the `cookies` key out entirely so NextAuth
+// applies its built-in defaults (preserves AC-1: byte-identical single-server
+// behavior). When set, `buildScopedCookies` returns a fully-formed block that
+// path-scopes every cookie to the instance basePath.
+const scopedCookies = buildScopedCookies();
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: createEncryptedAdapter(),
   session: { strategy: "jwt" },
+  ...(scopedCookies ? { cookies: scopedCookies } : {}),
   providers: [
     GitHub({
       clientId: process.env.GITHUB_CLIENT_ID,

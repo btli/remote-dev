@@ -1,3 +1,17 @@
+/**
+ * RDV_BASE_PATH audit (2026-05-19): no changes needed in this file.
+ *
+ * - Cloudflare Access JWT validation is hostname-scoped at the Cloudflare edge
+ *   (CF_ACCESS_TEAM + CF_ACCESS_AUD), not path-scoped. The same JWT is valid
+ *   across all paths on the host, so multi-instance basePath has no effect on
+ *   this code path.
+ * - The CF token is read from the `cf-access-jwt-assertion` header or
+ *   `CF_Authorization` cookie — both are present regardless of which prefix
+ *   the request hit.
+ * - This module does not construct any absolute URLs and does not read cookies
+ *   by NextAuth's scoped names (that is handled inside NextAuth itself, via
+ *   the config in `src/auth.ts` + `src/lib/auth-cookies.ts`).
+ */
 import { auth } from "@/auth";
 import { db } from "@/db";
 import { authorizedUsers, users } from "@/db/schema";
