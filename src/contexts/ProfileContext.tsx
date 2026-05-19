@@ -26,6 +26,8 @@ import type {
   UpdateProfileSecretsConfigInput,
 } from "@/types/agent";
 
+import { apiFetch } from "@/lib/api-fetch";
+
 interface ProfileContextValue {
   // State
   profiles: AgentProfile[];
@@ -87,7 +89,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
     setError(null);
 
     try {
-      const response = await fetch("/api/profiles");
+      const response = await apiFetch("/api/profiles");
       if (!response.ok) {
         throw new Error(`Failed to fetch profiles: ${response.statusText}`);
       }
@@ -139,7 +141,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
   const createProfile = useCallback(
     async (input: CreateAgentProfileInput): Promise<AgentProfile> => {
-      const response = await fetch("/api/profiles", {
+      const response = await apiFetch("/api/profiles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),

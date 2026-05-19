@@ -29,6 +29,8 @@ import type { UpdateStatusResponse } from "@/interface/presenters/UpdatePresente
  * Displays current version, latest available version, and provides
  * "Check Now" and "Update & Restart" actions.
  */
+
+import { apiFetch } from "@/lib/api-fetch";
 export function UpdateManager() {
   const [status, setStatus] = useState<UpdateStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -41,7 +43,7 @@ export function UpdateManager() {
   const loadStatus = useCallback(async () => {
     try {
       setError(null);
-      const res = await fetch("/api/system/update");
+      const res = await apiFetch("/api/system/update");
       if (!res.ok) throw new Error("Failed to fetch update status");
       const data = await res.json();
       setStatus(data);
@@ -61,7 +63,7 @@ export function UpdateManager() {
     setChecking(true);
     setError(null);
     try {
-      const res = await fetch("/api/system/update", {
+      const res = await apiFetch("/api/system/update", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "check" }),
@@ -82,7 +84,7 @@ export function UpdateManager() {
     setError(null);
     setShowUpdateDialog(false);
     try {
-      const res = await fetch("/api/system/update", {
+      const res = await apiFetch("/api/system/update", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "apply" }),

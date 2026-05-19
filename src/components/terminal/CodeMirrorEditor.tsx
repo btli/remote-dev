@@ -20,6 +20,7 @@ import type { Extension } from "@codemirror/state";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { apiFetch, prefixApiPath } from "@/lib/api-fetch";
 
 type ViewMode = "rendered" | "editor";
 
@@ -228,7 +229,7 @@ export function CodeMirrorEditor({
     setSaveError(null);
 
     try {
-      const response = await fetch("/api/files/write", {
+      const response = await apiFetch("/api/files/write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: filePathRef.current, content: currentContent }),
@@ -281,7 +282,7 @@ export function CodeMirrorEditor({
       const currentOriginal = originalContentRef.current;
       if (currentContent !== null && currentContent !== currentOriginal) {
         navigator.sendBeacon(
-          "/api/files/write",
+          prefixApiPath("/api/files/write"),
           new Blob(
             [JSON.stringify({ path: filePathRef.current, content: currentContent })],
             { type: "application/json" }

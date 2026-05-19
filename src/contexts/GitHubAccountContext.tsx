@@ -20,6 +20,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { apiFetch, prefixApiPath } from "@/lib/api-fetch";
+
 export interface LinkedGitHubAccount {
   providerAccountId: string;
   userId: string;
@@ -76,7 +78,7 @@ export function GitHubAccountProvider({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/github/accounts");
+      const res = await apiFetch("/api/github/accounts");
       if (!res.ok) throw new Error("Failed to fetch accounts");
       const data = await res.json();
       setAccounts(data.accounts ?? []);
@@ -171,7 +173,7 @@ export function GitHubAccountProvider({
   }, [folderBindings]);
 
   const addAccount = useCallback(() => {
-    window.location.href = "/api/auth/github/link";
+    window.location.href = prefixApiPath("/api/auth/github/link");
   }, []);
 
   const getAccountForProject = useCallback(

@@ -23,6 +23,8 @@ import type {
 // Context
 // ============================================================================
 
+import { apiFetch } from "@/lib/api-fetch";
+
 const PortContext = createContext<PortContextValue | null>(null);
 
 interface PortProviderProps {
@@ -62,7 +64,7 @@ export function PortProvider({ children }: PortProviderProps) {
    */
   const refreshAllocations = useCallback(async () => {
     try {
-      const response = await fetch("/api/ports", {
+      const response = await apiFetch("/api/ports", {
         credentials: "include",
       });
 
@@ -106,7 +108,7 @@ export function PortProvider({ children }: PortProviderProps) {
       }
 
       try {
-        const response = await fetch("/api/ports/detect-frameworks", {
+        const response = await apiFetch("/api/ports/detect-frameworks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
@@ -151,7 +153,7 @@ export function PortProvider({ children }: PortProviderProps) {
       }
 
       try {
-        const response = await fetch("/api/ports/detect-runtime", {
+        const response = await apiFetch("/api/ports/detect-runtime", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
@@ -200,7 +202,7 @@ export function PortProvider({ children }: PortProviderProps) {
     }
 
     try {
-      const response = await fetch("/api/ports/status", {
+      const response = await apiFetch("/api/ports/status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",

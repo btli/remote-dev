@@ -25,6 +25,8 @@ import { useSessionContext } from "@/contexts/SessionContext";
 // Context State
 // =============================================================================
 
+import { apiFetch } from "@/lib/api-fetch";
+
 const initialState: ScheduleState = {
   schedules: [],
   loading: false,
@@ -112,7 +114,7 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
   const refreshSchedules = useCallback(async () => {
     dispatch({ type: "LOAD_START" });
     try {
-      const response = await fetch("/api/schedules");
+      const response = await apiFetch("/api/schedules");
       if (!response.ok) {
         throw new Error("Failed to load schedules");
       }
@@ -134,7 +136,7 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
   // Create a new schedule
   const createSchedule = useCallback(
     async (input: CreateScheduleInput): Promise<SessionScheduleWithCommands> => {
-      const response = await fetch("/api/schedules", {
+      const response = await apiFetch("/api/schedules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),

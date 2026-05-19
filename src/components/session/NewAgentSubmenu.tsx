@@ -39,6 +39,8 @@ import { PROVIDER_DISPLAY_NAMES } from "@/types/agent";
 // ---------------------------------------------------------------------------
 
 /** Subset of /api/agent-cli/status useful to the submenu UI. */
+
+import { apiFetch } from "@/lib/api-fetch";
 export interface AgentCLISummary {
   provider: Exclude<AgentProviderType, "none">;
   installed: boolean;
@@ -93,7 +95,7 @@ async function fetchOnce(): Promise<void> {
   if (cache.loading) return;
   setCache({ loading: true, error: null });
   try {
-    const res = await fetch("/api/agent-cli/status");
+    const res = await apiFetch("/api/agent-cli/status");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as {
       statuses?: Array<{

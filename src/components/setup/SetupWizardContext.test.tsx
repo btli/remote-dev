@@ -92,7 +92,8 @@ describe("SetupWizardProvider", () => {
       expect(screen.getByTestId("is-complete")).toHaveTextContent("true")
     );
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/setup/complete");
+    // apiFetch wrapper forwards (url, init) — `init` is undefined here.
+    expect(fetchMock).toHaveBeenCalledWith("/api/setup/complete", undefined);
     expect(screen.getByTestId("working-directory")).toHaveTextContent(
       savedConfig.workingDirectory
     );

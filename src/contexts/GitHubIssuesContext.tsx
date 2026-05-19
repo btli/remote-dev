@@ -21,6 +21,8 @@ import React, {
 // =============================================================================
 
 /** Issue type matching the API response */
+
+import { apiFetch } from "@/lib/api-fetch";
 export interface GitHubIssueDTO {
   id: string;
   repositoryId: string;
@@ -234,7 +236,7 @@ export function GitHubIssuesProvider({ children }: GitHubIssuesProviderProps) {
 
   const markIssuesSeen = useCallback(async (repositoryId: string) => {
     try {
-      const response = await fetch("/api/github/issues/mark-seen", {
+      const response = await apiFetch("/api/github/issues/mark-seen", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repositoryId }),

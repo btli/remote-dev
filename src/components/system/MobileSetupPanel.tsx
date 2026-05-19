@@ -17,6 +17,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { apiFetch } from "@/lib/api-fetch";
 
 interface ApiKeyInfo {
   id: string;
@@ -47,7 +48,7 @@ export function MobileSetupPanel() {
 
   const fetchKeys = useCallback(async () => {
     try {
-      const res = await fetch("/api/keys");
+      const res = await apiFetch("/api/keys");
       if (!res.ok) return;
       const data = await res.json();
       setKeys(data.keys ?? []);
@@ -64,7 +65,7 @@ export function MobileSetupPanel() {
     if (!newKeyName.trim()) return;
     setCreating(true);
     try {
-      const res = await fetch("/api/keys", {
+      const res = await apiFetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: newKeyName.trim() }),

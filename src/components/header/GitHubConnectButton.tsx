@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { Github, Plus } from "lucide-react";
+import { prefixApiPath } from "@/lib/api-fetch";
 
 interface GitHubConnectButtonProps {
   isConnected?: boolean;
@@ -14,7 +15,7 @@ export function GitHubConnectButton({ isConnected = false }: GitHubConnectButton
       size="sm"
       className="text-muted-foreground hover:text-foreground"
       onClick={() => {
-        window.location.href = "/api/auth/github/link";
+        window.location.href = prefixApiPath("/api/auth/github/link");
       }}
     >
       {isConnected ? (

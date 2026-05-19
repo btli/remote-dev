@@ -25,6 +25,8 @@ import { getColorScheme, oklchToCSS } from "@/lib/color-schemes";
 // Types
 // =============================================================================
 
+import { apiFetch } from "@/lib/api-fetch";
+
 interface SchemePreview {
   id: ColorSchemeId;
   name: string;
@@ -100,7 +102,7 @@ export function AppearanceProvider({ children }: AppearanceProviderProps) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/appearance", { credentials: "include" });
+      const res = await apiFetch("/api/appearance", { credentials: "include" });
       if (!res.ok) {
         if (res.status === 401) {
           // Not authenticated - expected during initial load
@@ -212,7 +214,7 @@ export function AppearanceProvider({ children }: AppearanceProviderProps) {
     setSettings((prev) => prev ? { ...prev, ...updates, updatedAt: new Date() } : prev);
 
     try {
-      const res = await fetch("/api/appearance", {
+      const res = await apiFetch("/api/appearance", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),

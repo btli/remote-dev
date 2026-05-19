@@ -6,8 +6,22 @@ import { validateSignedState } from "@/lib/oauth-state";
 import { encrypt } from "@/lib/encryption";
 import { linkGitHubAccountUseCase } from "@/infrastructure/container";
 import { createLogger } from "@/lib/logger";
+import { prefixPath } from "@/lib/base-path";
 
 const log = createLogger("api/auth");
+
+/**
+ * Build a same-origin redirect URL that respects `RDV_BASE_PATH`.
+ *
+ * Next.js strips the deployment prefix (`/alpha`) from `request.url` before
+ * route handlers run, so `new URL("/?error=...", request.url)` would build
+ * `https://host/?error=...` and drop the user into the wrong instance (or
+ * a 404 if no landing app sits at the bare root). Prefixing here keeps the
+ * user inside the instance.
+ */
+function buildRedirect(request: NextRequest, target: string): URL {
+  return new URL(prefixPath(target), request.url);
+}
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -15,20 +29,20 @@ export async function GET(request: NextRequest) {
   const state = searchParams.get("state");
 
   if (!code || !state) {
-    return NextResponse.redirect(new URL("/?error=missing_params", request.url));
+    return NextResponse.redirect(buildRedirect(request, "/?error=missing_params"));
   }
 
   // Validate HMAC-signed state to prevent CSRF attacks
   const stateResult = validateSignedState(state);
   if (!stateResult.valid) {
     log.warn("OAuth state validation failed", { error: stateResult.error });
-    return NextResponse.redirect(new URL(`/?error=${encodeURIComponent(stateResult.error)}`, request.url));
+    return NextResponse.redirect(buildRedirect(request, `/?error=${encodeURIComponent(stateResult.error)}`));
   }
 
   const stateData = stateResult.payload;
 
   if (stateData.action !== "link") {
-    return NextResponse.redirect(new URL("/?error=invalid_action", request.url));
+    return NextResponse.redirect(buildRedirect(request, "/?error=invalid_action"));
   }
 
   // Exchange code for access token
@@ -49,7 +63,7 @@ export async function GET(request: NextRequest) {
 
   if (tokenData.error) {
     log.error("GitHub token error", { error: String(tokenData.error) });
-    return NextResponse.redirect(new URL("/?error=github_auth_failed", request.url));
+    return NextResponse.redirect(buildRedirect(request, "/?error=github_auth_failed"));
   }
 
   const { access_token, token_type, scope } = tokenData;
@@ -65,7 +79,7 @@ export async function GET(request: NextRequest) {
   const githubUser = await userResponse.json();
 
   if (!githubUser.id) {
-    return NextResponse.redirect(new URL("/?error=github_user_fetch_failed", request.url));
+    return NextResponse.redirect(buildRedirect(request, "/?error=github_user_fetch_failed"));
   }
 
   // Check if this GitHub account is already linked to another user
@@ -78,7 +92,7 @@ export async function GET(request: NextRequest) {
 
   if (existingAccount && existingAccount.userId !== stateData.userId) {
     return NextResponse.redirect(
-      new URL("/?error=github_already_linked", request.url)
+      buildRedirect(request, "/?error=github_already_linked")
     );
   }
 
@@ -130,5 +144,5 @@ export async function GET(request: NextRequest) {
     // Non-fatal: the OAuth account was already saved above
   }
 
-  return NextResponse.redirect(new URL("/?github=connected", request.url));
+  return NextResponse.redirect(buildRedirect(request, "/?github=connected"));
 }

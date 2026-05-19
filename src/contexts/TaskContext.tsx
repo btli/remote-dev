@@ -23,6 +23,8 @@ import { useSessionContext } from "./SessionContext";
 import { useProjectTree } from "./ProjectTreeContext";
 
 /** Hydrate date strings from API response into Date objects */
+
+import { apiFetch } from "@/lib/api-fetch";
 function hydrateTask(raw: Record<string, unknown>): ProjectTask {
   return {
     ...(raw as unknown as ProjectTask),
@@ -166,7 +168,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
   const createTask = useCallback(
     async (input: CreateTaskInput): Promise<ProjectTask | null> => {
       try {
-        const response = await fetch("/api/tasks", {
+        const response = await apiFetch("/api/tasks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

@@ -21,6 +21,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import type { MCPServer, MCPTransport, CreateMCPServerInput } from "@/types/agent";
+import { apiFetch } from "@/lib/api-fetch";
 
 interface ProfileMcpServersTabProps {
   profileId: string;
@@ -104,7 +105,7 @@ export function ProfileMcpServersTab({ profileId }: ProfileMcpServersTabProps) {
         autoStart,
       };
 
-      const response = await fetch("/api/mcp-servers", {
+      const response = await apiFetch("/api/mcp-servers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...input, profileId }),

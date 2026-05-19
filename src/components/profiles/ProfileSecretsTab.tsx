@@ -25,6 +25,7 @@ import {
 import { useProfileContext } from "@/contexts/ProfileContext";
 import type { ProfileSecretsProviderType, ProfileSecretsConfig } from "@/types/agent";
 import { SECRETS_PROVIDERS } from "@/types/secrets";
+import { apiFetch } from "@/lib/api-fetch";
 
 interface ProfileSecretsTabProps {
   profileId: string;
@@ -167,7 +168,7 @@ export function ProfileSecretsTab({ profileId }: ProfileSecretsTabProps) {
     setError(null);
 
     try {
-      const response = await fetch("/api/secrets/validate", {
+      const response = await apiFetch("/api/secrets/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -16,6 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { apiFetch } from "@/lib/api-fetch";
 
 interface CLIStatus {
   provider: string;
@@ -64,7 +65,7 @@ export function AgentCLIStatusPanel() {
     else setLoading(true);
 
     try {
-      const response = await fetch("/api/agent-cli/status");
+      const response = await apiFetch("/api/agent-cli/status");
       if (response.ok) {
         const data = await response.json();
         setStatus(data);

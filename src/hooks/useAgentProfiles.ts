@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import type { AgentJsonConfig, AgentConfigType } from "@/types/agent-config";
 import { getDefaultConfig } from "@/types/agent-config";
+import { apiFetch } from "@/lib/api-fetch";
 
 interface AgentProfile {
   id: string;
@@ -64,7 +65,7 @@ export function useAgentProfiles(): UseAgentProfilesResult {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/agent-profiles");
+      const res = await apiFetch("/api/agent-profiles");
       if (!res.ok) throw new Error("Failed to fetch profiles");
       const data = await res.json();
       setProfiles(data.profiles || []);
@@ -117,7 +118,7 @@ export function useAgentProfiles(): UseAgentProfilesResult {
     description?: string
   ): Promise<AgentProfile | null> => {
     try {
-      const res = await fetch("/api/agent-profiles", {
+      const res = await apiFetch("/api/agent-profiles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, description }),

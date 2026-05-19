@@ -28,6 +28,8 @@ import type {
   AddLiteLLMModelInput,
 } from "@/types/litellm";
 
+import { apiFetch } from "@/lib/api-fetch";
+
 interface LiteLLMContextValue {
   config: LiteLLMConfig | null;
   status: LiteLLMStatus;
@@ -80,7 +82,7 @@ export function LiteLLMProvider({ children }: LiteLLMProviderProps) {
   // Fetch config
   const fetchConfig = useCallback(async () => {
     try {
-      const response = await fetch("/api/litellm");
+      const response = await apiFetch("/api/litellm");
       if (!response.ok) return;
       const data = await response.json();
       setConfig(data.config ?? data);
@@ -92,7 +94,7 @@ export function LiteLLMProvider({ children }: LiteLLMProviderProps) {
   // Fetch status (with change detection to avoid unnecessary re-renders)
   const refreshStatus = useCallback(async () => {
     try {
-      const response = await fetch("/api/litellm/status");
+      const response = await apiFetch("/api/litellm/status");
       if (!response.ok) return;
       const data: LiteLLMStatus = await response.json();
       setStatus((prev) => {
@@ -114,7 +116,7 @@ export function LiteLLMProvider({ children }: LiteLLMProviderProps) {
   // Fetch models
   const fetchModels = useCallback(async () => {
     try {
-      const response = await fetch("/api/litellm/models");
+      const response = await apiFetch("/api/litellm/models");
       if (!response.ok) return;
       const data = await response.json();
       setModels(data.models ?? data);
@@ -191,7 +193,7 @@ export function LiteLLMProvider({ children }: LiteLLMProviderProps) {
   // Update config
   const updateConfig = useCallback(async (input: UpdateLiteLLMConfigInput) => {
     try {
-      const response = await fetch("/api/litellm", {
+      const response = await apiFetch("/api/litellm", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
@@ -214,7 +216,7 @@ export function LiteLLMProvider({ children }: LiteLLMProviderProps) {
   // Control actions
   const start = useCallback(async () => {
     try {
-      const response = await fetch("/api/litellm/control", {
+      const response = await apiFetch("/api/litellm/control", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "start" }),
@@ -236,7 +238,7 @@ export function LiteLLMProvider({ children }: LiteLLMProviderProps) {
 
   const stop = useCallback(async () => {
     try {
-      const response = await fetch("/api/litellm/control", {
+      const response = await apiFetch("/api/litellm/control", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "stop" }),
@@ -258,7 +260,7 @@ export function LiteLLMProvider({ children }: LiteLLMProviderProps) {
 
   const restart = useCallback(async () => {
     try {
-      const response = await fetch("/api/litellm/control", {
+      const response = await apiFetch("/api/litellm/control", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "restart" }),
@@ -281,7 +283,7 @@ export function LiteLLMProvider({ children }: LiteLLMProviderProps) {
   // Model management
   const addModel = useCallback(async (input: AddLiteLLMModelInput) => {
     try {
-      const response = await fetch("/api/litellm/models", {
+      const response = await apiFetch("/api/litellm/models", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),

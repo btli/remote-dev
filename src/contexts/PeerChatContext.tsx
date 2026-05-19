@@ -30,6 +30,8 @@ import { useChannelContextOptional } from "./ChannelContext";
 import type { PeerChatMessage, PeerChatAgent } from "@/types/peer-chat";
 
 /** Map from session ID → current display name, built from active peers. */
+
+import { apiFetch } from "@/lib/api-fetch";
 export type PeerNameMap = ReadonlyMap<string, string>;
 
 interface PeerChatContextValue {
@@ -200,7 +202,7 @@ export function PeerChatProvider({ children }: PeerChatProviderProps) {
 
       try {
         // Server handles @name → @<sid:UUID> mention resolution authoritatively
-        const resp = await fetch("/api/peers/messages", {
+        const resp = await apiFetch("/api/peers/messages", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ folderId, body: trimmedBody }),

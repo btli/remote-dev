@@ -30,6 +30,8 @@ import {
 } from "./types";
 
 // Type for electron API in window object
+
+import { apiFetch } from "@/lib/api-fetch";
 interface ElectronSetupAPI {
   detectPlatform: () => Promise<PlatformInfo>;
   checkDependencies: () => Promise<DependencyStatus[]>;
@@ -136,7 +138,7 @@ export function SetupWizardProvider({ children }: { children: ReactNode }) {
         const electron = getElectronAPI();
         const setupState = electron
           ? await electron.getSetupConfig()
-          : await fetch("/api/setup/complete").then(async (response) => {
+          : await apiFetch("/api/setup/complete").then(async (response) => {
               if (!response.ok) {
                 throw new Error("Failed to load setup configuration");
               }
@@ -231,7 +233,7 @@ export function SetupWizardProvider({ children }: { children: ReactNode }) {
         dispatch({ type: "SET_PLATFORM", platform });
       } else {
         // Fallback to API route
-        const response = await fetch("/api/setup/platform");
+        const response = await apiFetch("/api/setup/platform");
         if (!response.ok) {
           throw new Error("Failed to detect platform");
         }
@@ -267,7 +269,7 @@ export function SetupWizardProvider({ children }: { children: ReactNode }) {
         dispatch({ type: "SET_DEPENDENCIES", dependencies });
       } else {
         // Fallback to API route
-        const response = await fetch("/api/setup/dependencies");
+        const response = await apiFetch("/api/setup/dependencies");
         if (!response.ok) {
           throw new Error("Failed to check dependencies");
         }
@@ -313,7 +315,7 @@ export function SetupWizardProvider({ children }: { children: ReactNode }) {
           }
         } else {
           // Fallback to API route
-          const response = await fetch("/api/setup/install", {
+          const response = await apiFetch("/api/setup/install", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ dependency: name }),
@@ -400,7 +402,7 @@ export function SetupWizardProvider({ children }: { children: ReactNode }) {
       if (electron) {
         await electron.saveSetupConfig(state.configuration);
       } else {
-        const response = await fetch("/api/setup/complete", {
+        const response = await apiFetch("/api/setup/complete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(state.configuration),

@@ -36,6 +36,8 @@ import {
 // Module-local cache + lazy fetch hook
 // ---------------------------------------------------------------------------
 
+import { apiFetch } from "@/lib/api-fetch";
+
 interface SshConnSummary {
   id: string;
   name: string;
@@ -82,7 +84,7 @@ async function fetchOnce(): Promise<void> {
   if (cache.loading) return;
   setCache({ loading: true, error: null });
   try {
-    const res = await fetch("/api/ssh-connections");
+    const res = await apiFetch("/api/ssh-connections");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as { connections?: SshConnSummary[] };
     setCache({

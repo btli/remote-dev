@@ -75,6 +75,7 @@ import { ProfileTab } from "./profile/ProfileTab";
 import { MobileLockScreen } from "./auth/MobileLockScreen";
 import { MobileWelcomeScreen } from "./auth/MobileWelcomeScreen";
 import { useFirstRun } from "./auth/useFirstRun";
+import { prefixApiPath } from "@/lib/api-fetch";
 
 export interface MobileAuthUser {
   email: string | null;
@@ -299,7 +300,7 @@ export function MobileApp({ isGitHubConnected, initialUser }: MobileAppProps) {
 
   const handleConnectGitHub = useCallback(() => {
     if (typeof window !== "undefined") {
-      window.location.href = "/api/auth/github/link";
+      window.location.href = prefixApiPath("/api/auth/github/link");
     }
   }, []);
 

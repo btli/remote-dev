@@ -22,6 +22,7 @@ import type {
   UpdateFolderSecretsConfigInput,
 } from "@/types/secrets";
 import { clearSecretsCache } from "@/hooks/useEnvironmentWithSecrets";
+import { apiFetch } from "@/lib/api-fetch";
 
 interface SecretsContextValue {
   // State
@@ -86,7 +87,7 @@ export function SecretsProvider({ children }: SecretsProviderProps) {
     setError(null);
 
     try {
-      const response = await fetch("/api/secrets/configs");
+      const response = await apiFetch("/api/secrets/configs");
       if (!response.ok) {
         throw new Error(`Failed to fetch secrets configs: ${response.statusText}`);
       }
@@ -225,7 +226,7 @@ export function SecretsProvider({ children }: SecretsProviderProps) {
       provider: string,
       config: Record<string, string>
     ): Promise<SecretsValidationResult> => {
-      const response = await fetch("/api/secrets/validate", {
+      const response = await apiFetch("/api/secrets/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider, config }),

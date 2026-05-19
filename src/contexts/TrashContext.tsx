@@ -12,6 +12,8 @@ import {
 import type { TrashItem, TrashItemWithMetadata, WorktreeTrashItem, RestoreOptions } from "@/types/trash";
 
 /** Trash items grouped by folder */
+
+import { apiFetch } from "@/lib/api-fetch";
 export interface TrashByFolder {
   folderId: string | null;
   folderName: string | null;
@@ -70,7 +72,7 @@ export function TrashProvider({ children }: TrashProviderProps) {
 
   const refreshTrash = useCallback(async () => {
     try {
-      const response = await fetch("/api/trash");
+      const response = await apiFetch("/api/trash");
       if (!response.ok) throw new Error("Failed to fetch trash");
       const data = await response.json();
 
@@ -261,7 +263,7 @@ export function TrashProvider({ children }: TrashProviderProps) {
 
   const cleanupExpired = useCallback(async (): Promise<number> => {
     try {
-      const response = await fetch("/api/trash", {
+      const response = await apiFetch("/api/trash", {
         method: "POST",
       });
 

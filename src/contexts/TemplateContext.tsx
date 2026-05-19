@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import type { SessionTemplate, CreateTemplateInput, UpdateTemplateInput } from "@/types/template";
+import { apiFetch } from "@/lib/api-fetch";
 
 interface TemplateContextValue {
   templates: SessionTemplate[];
@@ -44,7 +45,7 @@ export function TemplateProvider({ children }: TemplateProviderProps) {
     try {
       setLoading(true);
       setError(null);
-      const response = await fetch("/api/templates");
+      const response = await apiFetch("/api/templates");
       if (!response.ok) {
         throw new Error("Failed to fetch templates");
       }
@@ -65,7 +66,7 @@ export function TemplateProvider({ children }: TemplateProviderProps) {
   const createTemplate = useCallback(
     async (input: CreateTemplateInput): Promise<SessionTemplate | null> => {
       try {
-        const response = await fetch("/api/templates", {
+        const response = await apiFetch("/api/templates", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(input),

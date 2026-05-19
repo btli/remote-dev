@@ -19,6 +19,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { apiFetch } from "@/lib/api-fetch";
+
 export type SshAuthType = "key" | "agent" | "password" | "system";
 export type SshKnownHostsPolicy = "strict" | "accept-new" | "no";
 
@@ -99,7 +101,7 @@ export function SshConnectionProvider({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/ssh-connections");
+      const res = await apiFetch("/api/ssh-connections");
       if (!res.ok) throw new Error("Failed to fetch SSH connections");
       const data = await res.json();
       setConnections(data.connections ?? []);
@@ -118,7 +120,7 @@ export function SshConnectionProvider({
 
   const create = useCallback(
     async (payload: CreateSshConnectionPayload) => {
-      const res = await fetch("/api/ssh-connections", {
+      const res = await apiFetch("/api/ssh-connections", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

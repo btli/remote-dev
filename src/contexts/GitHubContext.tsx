@@ -27,6 +27,8 @@ import type {
 /**
  * API response types
  */
+
+import { apiFetch } from "@/lib/api-fetch";
 interface AccountResponse {
   connected: boolean;
   account: GitHubAccountInfo | null;
@@ -129,7 +131,7 @@ export function GitHubProvider({
     setError(null);
 
     try {
-      const response = await fetch("/api/github/account");
+      const response = await apiFetch("/api/github/account");
       if (!response.ok) {
         throw new Error("Failed to fetch account data");
       }
@@ -161,7 +163,7 @@ export function GitHubProvider({
     setError(null);
 
     try {
-      const response = await fetch("/api/github/repositories?cached=true");
+      const response = await apiFetch("/api/github/repositories?cached=true");
       if (!response.ok) {
         throw new Error("Failed to fetch repositories");
       }
@@ -213,7 +215,7 @@ export function GitHubProvider({
     setError(null);
 
     try {
-      const response = await fetch("/api/github/account", {
+      const response = await apiFetch("/api/github/account", {
         method: "POST",
       });
 

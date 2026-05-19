@@ -31,6 +31,8 @@ import type { ChannelGroup, Channel, ChannelMessage } from "@/types/channels";
 // Map update helpers — reduces duplication in optimistic update logic
 // ---------------------------------------------------------------------------
 
+import { apiFetch } from "@/lib/api-fetch";
+
 type MapSetter<V> = Dispatch<SetStateAction<Map<string, V[]>>>;
 
 /** Replace an optimistic message with the server version, or remove it if already present. */
@@ -390,7 +392,7 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
   const createChannel = useCallback(
     async (name: string, topic?: string) => {
       if (!folderId) return;
-      const resp = await fetch("/api/channels", {
+      const resp = await apiFetch("/api/channels", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ folderId, name, topic }),

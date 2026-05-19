@@ -43,6 +43,7 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { apiFetch, prefixApiPath } from "@/lib/api-fetch";
 import { ActionSheet, type ActionSheetItem } from "../common/ActionSheet";
 
 import { ProfileRow } from "./ProfileRow";
@@ -105,7 +106,7 @@ export function ProfileTab({
       return;
     }
     if (typeof window !== "undefined") {
-      window.location.href = DEFAULT_GITHUB_LINK_HREF;
+      window.location.href = prefixApiPath(DEFAULT_GITHUB_LINK_HREF);
     }
   }, [onConnectGitHub]);
 
@@ -128,7 +129,7 @@ export function ProfileTab({
     // we navigate there. If something fails we fall through to /login so
     // the user is never stranded.
     try {
-      const response = await fetch(DEFAULT_SIGN_OUT_HREF, {
+      const response = await apiFetch(DEFAULT_SIGN_OUT_HREF, {
         method: "POST",
         redirect: "follow",
         credentials: "same-origin",
@@ -140,7 +141,7 @@ export function ProfileTab({
     } catch {
       // fall through to the local login redirect
     }
-    window.location.href = "/login";
+    window.location.href = prefixApiPath("/login");
   }, [signOutOverride]);
 
   const signOutItems: ActionSheetItem[] = [
