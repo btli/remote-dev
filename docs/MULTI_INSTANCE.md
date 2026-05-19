@@ -42,6 +42,36 @@ Key constraints:
 
 ---
 
+## Building the image
+
+The runtime image must be built with `docker buildx` (not the legacy
+`docker build`) so the native modules (`better-sqlite3`, `node-pty`) are
+compiled for both architectures K8s nodes commonly run on:
+
+```sh
+# One-time: create a multi-arch builder
+docker buildx create --use --name rdv-builder
+
+# Build + push (replace VERSION with your tag, e.g. 0.3.18 or a git SHA)
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --tag ghcr.io/btli/remote-dev:VERSION \
+  --push \
+  .
+```
+
+Verify the manifest list includes both architectures:
+
+```sh
+docker buildx imagetools inspect ghcr.io/btli/remote-dev:VERSION
+# → look for `linux/amd64` AND `linux/arm64` under Manifests
+```
+
+If you're rolling out from a CI pipeline, use the commit SHA as the tag so
+each deploy is uniquely identifiable and rollbacks are precise.
+
+---
+
 ## StatefulSet
 
 ```yaml
@@ -77,7 +107,10 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: rdv
-          image: ghcr.io/btli/remote-dev:0.3.18
+          # Replace VERSION with the tag you built and pushed (see
+          # "Building the image" below). Do NOT use `latest` in production —
+          # it disables image-pull cache invalidation.
+          image: ghcr.io/btli/remote-dev:VERSION
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

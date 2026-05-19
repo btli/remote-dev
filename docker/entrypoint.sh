@@ -18,8 +18,13 @@ if ! mkdir -p "$RDV_DATA_DIR" 2>/dev/null; then
     echo "[entrypoint] FATAL: cannot create $RDV_DATA_DIR — pod needs securityContext.fsGroup: 10001" >&2
     exit 1
 fi
-if ! [ -w "$RDV_DATA_DIR" ]; then
-    echo "[entrypoint] FATAL: $RDV_DATA_DIR is not writable by uid $(id -u) — check securityContext.fsGroup" >&2
+# Check both write (-w) AND execute (-x). On POSIX, the execute bit on a
+# directory is required to traverse it (open files inside, create subdirs).
+# A PVC mounted with mode 0666 (writable but not searchable) would pass a
+# `-w` check, then fail later on `tmux start` with cryptic "permission
+# denied" errors. Fail loudly here instead.
+if ! [ -w "$RDV_DATA_DIR" ] || ! [ -x "$RDV_DATA_DIR" ]; then
+    echo "[entrypoint] FATAL: $RDV_DATA_DIR is not writable+executable by uid $(id -u) — check securityContext.fsGroup (need 10001) and PVC mount mode" >&2
     exit 1
 fi
 

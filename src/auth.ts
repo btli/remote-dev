@@ -16,6 +16,54 @@ import type { Adapter, AdapterAccount } from "next-auth/adapters";
 const log = createLogger("Auth");
 
 /**
+ * Startup-time refusal: `ENABLE_LOCAL_CREDENTIALS=true` makes the Credentials
+ * provider accept any allowlisted email without a password. That's the
+ * intended behavior for local development, but a single Helm typo enabling
+ * it on a production non-localhost deploy would turn every authorized email
+ * into a passwordless backdoor. Refuse to start in that combination so a
+ * mis-set env var fails loudly rather than silently.
+ *
+ * Triggered conditions: `ENABLE_LOCAL_CREDENTIALS=true` AND
+ * `NODE_ENV=production` AND the `AUTH_URL` (or legacy `NEXTAUTH_URL`) does
+ * NOT contain `localhost` or `127.0.0.1`.
+ */
+{
+  const enableLocalCreds = process.env.ENABLE_LOCAL_CREDENTIALS === "true";
+  // Treat empty strings as absent so callers can clear an inherited env
+  // var without falling through past the second alias. `??` alone would
+  // preserve `""`, which then fails the `!== ""` check below — but
+  // important: a deliberately empty AUTH_URL should still let NEXTAUTH_URL
+  // be consulted, so we OR the two and pick the first non-empty.
+  const authUrl =
+    (process.env.AUTH_URL && process.env.AUTH_URL !== "" ? process.env.AUTH_URL : undefined) ??
+    (process.env.NEXTAUTH_URL && process.env.NEXTAUTH_URL !== "" ? process.env.NEXTAUTH_URL : undefined) ??
+    "";
+  const isProductionRemote =
+    process.env.NODE_ENV === "production" &&
+    authUrl !== "" &&
+    !authUrl.includes("localhost") &&
+    !authUrl.includes("127.0.0.1");
+
+  if (enableLocalCreds && isProductionRemote) {
+    log.error(
+      "FATAL: ENABLE_LOCAL_CREDENTIALS=true is set on a production non-localhost deploy. " +
+        "This would allow passwordless sign-in by anyone who knows an authorized email. Refusing to start.",
+      { authUrl, NODE_ENV: process.env.NODE_ENV },
+    );
+    // Exit in real processes; vitest tests use `vi.spyOn(process, "exit")`
+    // to assert without killing the test runner.
+    process.exit(1);
+  }
+
+  if (enableLocalCreds) {
+    log.warn(
+      "ENABLE_LOCAL_CREDENTIALS=true — passwordless email sign-in is ENABLED. " +
+        "This is acceptable for local development only. Do not set in production.",
+    );
+  }
+}
+
+/**
  * Check if the request is from localhost (127.0.0.1 or ::1)
  * Used to restrict credentials auth to local development only
  */

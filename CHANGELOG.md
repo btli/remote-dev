@@ -62,6 +62,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `getBasePath()` when redirecting back to the app so the link flow
   works under `RDV_BASE_PATH`. **Default (empty basePath) deployments
   remain byte-identical**: `apiFetch` becomes a thin pass-through.
+- **Multi-instance hosting (Phase 5 — K8s production hardening)**: new
+  `/api/healthz` (liveness) and `/api/readyz` (readiness) probes plus the
+  full set of container hardening required to safely run multiple
+  isolated `remote-dev` instances on Kubernetes. Both probes are
+  unauthenticated and bypassed by the proxy middleware so the kubelet can
+  hit them without CF Access. `/api/readyz` probes the SQLite database,
+  the `tmux` binary, and the in-pod terminal server (`/health` on
+  `TERMINAL_PORT`) with a 1s timeout — a wedged terminal server now
+  drops the pod out of LB endpoints instead of routing failing session
+  creates to a half-dead pod. `Dockerfile` ships native modules
+  (`better-sqlite3`, `node-pty`) into `/app/node_modules` so the
+  terminal server (built with `--external node-pty`) can resolve them
+  at runtime, runs the native-module ABI smoke test post-`USER rdv`
+  switch, and is built multi-arch (`linux/amd64,linux/arm64`) via
+  `docker buildx`. `docker/entrypoint.sh` pins `TMUX_TMPDIR` onto the
+  PVC so tmux sessions survive container restarts within a pod, checks
+  both write AND execute permissions on `RDV_DATA_DIR` for a clean
+  pre-flight error when `securityContext.fsGroup` is wrong, and
+  force-kills children at t=25s to exit cleanly inside K8s's default
+  30s `terminationGracePeriodSeconds`. New advisory instance lock
+  (`src/lib/instance-lock.ts`) writes a JSON record with hostname +
+  PID + startedAt + writer nonce at `${RDV_DATA_DIR}/instance.lock`
+  and refuses to start when a *live, same-host, recent* PID owns it —
+  cross-host or aged-out same-host locks are reclaimed automatically
+  so the lock no longer crashloops K8s pods whose previous incarnation
+  crashed without cleanup (tini-as-PID-1 is always alive in a fresh
+  PID namespace). The lock release runs on `process.on('exit')` and
+  `uncaughtException` in addition to the explicit shutdown handler,
+  and defensively skips the unlink when the on-disk nonce no longer
+  matches ours. New `ENABLE_LOCAL_CREDENTIALS` env var (`true` |
+  `false` | unset) makes the localhost-credentials gate deterministic
+  in containers where `x-forwarded-for` doesn't reflect the loopback;
+  `src/auth.ts` refuses to start when `ENABLE_LOCAL_CREDENTIALS=true`
+  AND `NODE_ENV=production` AND `AUTH_URL` is a non-loopback host, so
+  a single Helm typo can't accidentally turn every authorized email
+  into a passwordless backdoor. `scripts/rdv.ts` honors `PORT`,
+  `TERMINAL_PORT`, and `AUTH_URL` env vars so process-manager starts
+  inside the container respect the K8s manifest's port/URL config.
+  New `docs/MULTI_INSTANCE.md` deployment guide covers
+  StatefulSet/Service/IngressRoute reference manifests, multi-arch
+  `docker buildx` build instructions, per-instance `AUTH_SECRET`
+  rotation, first-boot seeding, and known limitations.
 - **Multi-instance hosting (Phase 4 — init + docs + integration test)**:
   `scripts/init.sh` accepts `--base-path` and `--instance-slug` flags,
   validates them against the same lowercase-segment regex

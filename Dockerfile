@@ -79,6 +79,20 @@ ENV NODE_ENV=production
 RUN bun run build
 RUN bun run terminal:build
 
+# Stage the native modules at a known path. The terminal server bundle is
+# built with `--external node-pty` (see scripts/build-terminal.ts), so the
+# Next.js standalone output ships better-sqlite3 in `.next/standalone/node_modules`
+# but NOT node-pty. The terminal server's runtime CWD is `/app`, so we copy
+# both into `/app/node_modules` in the runtime stage to keep `require('node-pty')`
+# and `require('better-sqlite3')` resolvable from there.
+#
+# `cp -RL` dereferences symlinks (bun's isolated layout uses internal symlinks);
+# this gives the runtime stage a self-contained tree that doesn't depend on
+# anything else under /app/node_modules.
+RUN mkdir -p /opt/native && \
+    cp -RL node_modules/node-pty /opt/native/node-pty && \
+    cp -RL node_modules/better-sqlite3 /opt/native/better-sqlite3
+
 # Build the rdv Rust CLI (statically linkable so it runs in the slim runtime)
 RUN cd crates/rdv && cargo build --release --locked && \
     cp target/release/rdv /tmp/rdv-binary
@@ -138,20 +152,18 @@ COPY --from=build --chown=rdv:rdv /app/package.json ./package.json
 COPY --from=build --chown=rdv:rdv /app/src ./src
 COPY --from=build --chown=rdv:rdv /app/tsconfig.json ./tsconfig.json
 
-# Bring the rebuilt native modules in (next build's standalone output already
-# includes node_modules, but better-sqlite3 / node-pty must match the runtime
-# arch — they were compiled in stage 1 for this stage's arch via buildx, so the
-# binaries in standalone/node_modules are already correct).
+# Bring the rebuilt native modules into /app/node_modules. The terminal
+# server bundle is built with `--external node-pty`, so node-pty is NOT
+# inside the .next/standalone tree — without this COPY the terminal server
+# crashes at first session-create with `Cannot find module 'node-pty'`.
+# better-sqlite3 is already inside `.next/standalone/node_modules`, but the
+# terminal server runs from `/app` (not `.next/standalone`), so we mirror
+# it here too so `require('better-sqlite3')` resolves from CWD=/app.
+COPY --from=build --chown=rdv:rdv /opt/native/node-pty ./node_modules/node-pty
+COPY --from=build --chown=rdv:rdv /opt/native/better-sqlite3 ./node_modules/better-sqlite3
 
 # rdv Rust CLI
 COPY --from=build --chown=rdv:rdv /tmp/rdv-binary /usr/local/bin/rdv
-
-# Native ABI smoke test: native modules (better-sqlite3, node-pty) were
-# rebuilt in stage 1 against the bun debian image. Both build and runtime
-# stages use Debian/glibc so the ABI should match — fail-fast here if it
-# doesn't, instead of crashing at the first runtime request with a cryptic
-# NAPI error.
-RUN node -e "require('better-sqlite3'); require('node-pty'); console.log('native modules OK')"
 
 # Future work: `src/` + `tsconfig.json` are copied solely so `bun run db:seed`
 # can resolve `@/lib/paths` and `@/db/schema` from `src/db/seed.ts` when
@@ -165,6 +177,15 @@ COPY --chown=rdv:rdv docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 USER rdv
+
+# Native ABI smoke test: native modules (better-sqlite3, node-pty) were
+# rebuilt in stage 1 against the bun debian image. Both build and runtime
+# stages use Debian/glibc so the ABI should match — fail-fast here if it
+# doesn't, instead of crashing at the first runtime request with a cryptic
+# NAPI error. Run AFTER `USER rdv` so we verify the runtime user can also
+# load them (catches permission/path issues that would only manifest at
+# request time).
+RUN node -e "require('better-sqlite3'); require('node-pty'); console.log('native modules OK')"
 
 ENV RDV_DATA_DIR=/var/lib/rdv \
     PORT=6001 \
