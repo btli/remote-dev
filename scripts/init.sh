@@ -223,10 +223,17 @@ if [ ! -f "$ENV_FILE" ]; then
         echo ""
         echo -e "${BLUE}GitHub OAuth Setup (optional - press Enter to skip)${NC}"
         echo "Create an OAuth app at: https://github.com/settings/developers"
+        # Register BOTH callbacks: NextAuth uses /api/auth/callback/github
+        # (sign-in), and the multi-account link flow uses
+        # /api/auth/github/callback. Missing the second breaks "Link
+        # another GitHub account" with a redirect_uri mismatch.
+        echo "Register BOTH callback URLs in your GitHub OAuth app:"
         if [ -n "$BASE_PATH" ]; then
-            echo "Callback URL: http://localhost:$PORT$BASE_PATH/api/auth/callback/github"
+            echo "  Sign-in (NextAuth):    http://localhost:$PORT$BASE_PATH/api/auth/callback/github"
+            echo "  Account-linking:       http://localhost:$PORT$BASE_PATH/api/auth/github/callback"
         else
-            echo "Callback URL: http://localhost:$PORT/api/auth/github/callback"
+            echo "  Sign-in (NextAuth):    http://localhost:$PORT/api/auth/callback/github"
+            echo "  Account-linking:       http://localhost:$PORT/api/auth/github/callback"
         fi
         echo ""
         read -p "GitHub Client ID: " GITHUB_CLIENT_ID
@@ -265,6 +272,20 @@ else
     if [ -n "$BASE_PATH" ]; then
         upsert_env "RDV_BASE_PATH" "$BASE_PATH"
         echo -e "${GREEN}✓${NC} Set RDV_BASE_PATH=$BASE_PATH in .env.local"
+
+        # Multi-instance deployments MUST use a unique AUTH_SECRET per
+        # pod — two instances sharing a secret can decrypt each other's
+        # JWTs, defeating the path-scoped cookies. We don't auto-rotate
+        # (destructive — would log everyone out), but we WARN loudly
+        # when the user is configuring a basePath against an existing
+        # AUTH_SECRET that may have been carried over from a baseline
+        # single-instance setup.
+        if grep -qE "^AUTH_SECRET=" "$ENV_FILE"; then
+            echo -e "${YELLOW}WARNING:${NC} --base-path is set but AUTH_SECRET in $ENV_FILE appears unchanged."
+            echo "  For multi-instance deployments, AUTH_SECRET MUST be unique per instance."
+            echo "  Generate fresh: openssl rand -base64 32"
+            echo "  Then update AUTH_SECRET in $ENV_FILE manually."
+        fi
     fi
     if [ -n "$INSTANCE_SLUG" ]; then
         upsert_env "RDV_INSTANCE_SLUG" "$INSTANCE_SLUG"

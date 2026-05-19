@@ -41,15 +41,21 @@ export function MobileSetupPanel() {
   const [deleteKeyId, setDeleteKeyId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  // Server URL for the QR payload. We include the runtime basePath
-  // (from `window.__RDV_BASE_PATH__`, SSR-injected by app/layout.tsx) so
-  // the mobile app dials the correct instance when this server is part of
-  // a multi-instance fleet — e.g. `https://host/alpha` instead of
-  // `https://host`. The terminal port hop on localhost still works
-  // unchanged because the mobile bridge always uses the prefixed HTTP
-  // path for API calls, not a separate WS port.
+  // Server URL for the QR payload.
+  //
+  // TODO: thread basePath into mobile client (Dio baseUrl handling) —
+  // currently the Flutter app dials origin only and is single-tenant.
+  // We deliberately do NOT append `window.__RDV_BASE_PATH__` here: the
+  // Dio client (`mobile/lib/infrastructure/api/remote_dev_client.dart`)
+  // calls every endpoint with a leading-slash path (`/api/sessions`),
+  // and Dio's `Uri.resolve` will strip the baseUrl's path under those
+  // semantics. So a QR of `https://host/alpha` would mislead operators
+  // into thinking the mobile app works under basePath when in practice
+  // it would still dial `https://host/api/...` and miss the instance.
+  // Mobile multi-instance support is a separate phase — see follow-up
+  // bd issue.
   const serverUrl = typeof window !== "undefined"
-    ? `${window.location.origin}${window.__RDV_BASE_PATH__ ?? ""}`
+    ? window.location.origin
     : "";
   const terminalPort = typeof window !== "undefined"
     ? (process.env.NEXT_PUBLIC_TERMINAL_PORT || "6002")

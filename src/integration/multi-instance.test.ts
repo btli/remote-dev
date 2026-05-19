@@ -74,6 +74,25 @@ describeMaybe("multi-instance hosting (live server)", () => {
     expect([404, 308]).toContain(res.status);
   });
 
+  // Helper: parse all Set-Cookie headers off a Response using the
+  // standard `headers.getSetCookie()` API (Node 22+, undici). This
+  // sidesteps the lossy split-on-comma hack the rest of the suite used
+  // and lets us reason about *every* cookie the endpoint emits.
+  const getAllCookies = (res: Response): string[] => {
+    type WithGetSetCookie = { getSetCookie?: () => string[] };
+    const h = res.headers as unknown as WithGetSetCookie;
+    if (typeof h.getSetCookie === "function") {
+      return h.getSetCookie();
+    }
+    // Fallback for older runtimes: split on the comma-followed-by-cookie
+    // pattern. NextAuth emits ISO timestamps in the Expires attribute
+    // which can confuse a naive split, so we anchor on `name=` after
+    // the comma to be safer.
+    return (res.headers.get("set-cookie") ?? "")
+      .split(/, (?=[^;=,\s]+=)/)
+      .filter(Boolean);
+  };
+
   it("AC-5: NextAuth cookies from /alpha carry Path=/alpha", async () => {
     // /api/auth/csrf is one of the few NextAuth endpoints that issues
     // cookies without requiring a sign-in flow. It always sets the
@@ -81,34 +100,84 @@ describeMaybe("multi-instance hosting (live server)", () => {
     const res = await fetch(`${baseUrl}${prefix}/api/auth/csrf`);
     expect(res.status).toBe(200);
 
-    const setCookieHeader = res.headers.get("set-cookie") ?? "";
-    expect(setCookieHeader.length).toBeGreaterThan(0);
+    const cookies = getAllCookies(res);
+    expect(cookies.length).toBeGreaterThan(0);
 
     // The callback-url cookie is the load-bearing path-scoped one. Its
     // name is suffixed with the instance slug per `src/auth.ts`.
-    const callbackUrlCookie = setCookieHeader
-      .split(/, (?=[^;]+=)/)
-      .find((c) => /callback-url=/i.test(c));
+    const callbackUrlCookie = cookies.find((c) => /callback-url=/i.test(c));
     expect(
       callbackUrlCookie,
-      `expected a callback-url cookie in Set-Cookie: ${setCookieHeader}`,
+      `expected a callback-url cookie in Set-Cookie: ${cookies.join(" | ")}`,
     ).toBeTruthy();
     expect(callbackUrlCookie).toMatch(/Path=\/alpha(;|$)/i);
   });
 
-  it("AC-5 (negative): no NextAuth cookies declare Path=/ except __Host-", async () => {
+  it("AC-5: every NextAuth cookie issued without a sign-in carries the expected Path", async () => {
+    // The non-OAuth-flow endpoints fire the cookies we can sniff without
+    // driving a real GitHub round-trip:
+    //
+    //   - GET /api/auth/csrf     → callback-url cookie (+ csrf-token on POST)
+    //   - POST /api/auth/csrf    → csrf-token cookie (__Host-, Path=/)
+    //
+    // The remaining four (session-token, pkce, state, nonce) only
+    // materialize during a real OAuth flow or after sign-in, which the
+    // integration suite can't drive. We assert on each cookie that
+    // DOES fire — and reject any auth cookie that incorrectly declares
+    // Path=/ instead of Path=/alpha.
+    const csrfGet = await fetch(`${baseUrl}${prefix}/api/auth/csrf`);
+    const csrfPost = await fetch(`${baseUrl}${prefix}/api/auth/csrf`, {
+      method: "POST",
+    });
+
+    const seen = [...getAllCookies(csrfGet), ...getAllCookies(csrfPost)];
+    expect(seen.length).toBeGreaterThan(0);
+
+    // The set of NextAuth cookie name fragments that should be path-
+    // scoped under /alpha. (Excludes webauthn, unused in this app, and
+    // the __Host-prefixed csrf-token which must be Path=/ per RFC.)
+    const scopedFragments = [
+      "session-token",
+      "callback-url",
+      "pkce.code_verifier",
+      "state",
+      "nonce",
+    ] as const;
+    const fragmentsHit = new Set<string>();
+
+    for (const cookie of seen) {
+      // Skip __Host- cookies entirely — they're spec-mandated Path=/
+      // and isolation comes from per-instance AUTH_SECRET.
+      if (/^__Host-/i.test(cookie.trim())) continue;
+      for (const frag of scopedFragments) {
+        if (cookie.toLowerCase().includes(frag.toLowerCase())) {
+          fragmentsHit.add(frag);
+          expect(
+            cookie,
+            `cookie containing "${frag}" should be Path=/alpha, got: ${cookie}`,
+          ).toMatch(/Path=\/alpha(;|$)/i);
+        }
+      }
+    }
+
+    // We require at least the callback-url cookie to have fired; the
+    // others are best-effort coverage. Track which we actually
+    // observed so a future NextAuth version that drops one fails loudly
+    // rather than silently shrinking our assertion surface.
+    expect(
+      fragmentsHit.has("callback-url"),
+      `expected callback-url cookie; observed fragments: ${[...fragmentsHit].join(", ") || "(none)"}`,
+    ).toBe(true);
+  });
+
+  it("AC-5 (negative): no auth cookie declares Path=/ except __Host-", async () => {
     // A cookie that's both auth-related AND set to Path=/ is the AC-5
     // failure mode (would leak across instances). The __Host- prefix
     // requires Path=/ by RFC 6265bis — that one is allowed.
     const res = await fetch(`${baseUrl}${prefix}/api/auth/csrf`);
-    const setCookieHeader = res.headers.get("set-cookie") ?? "";
-    const cookies = setCookieHeader.split(/, (?=[^;]+=)/);
-
-    for (const cookie of cookies) {
+    for (const cookie of getAllCookies(res)) {
       if (!/path=\//i.test(cookie)) continue;
-      // __Host- cookies are spec-mandated to Path=/. Skip them.
       if (/^__Host-/i.test(cookie.trim())) continue;
-      // All other auth cookies must declare Path=/alpha.
       if (/(session-token|callback-url|pkce|state|nonce)/i.test(cookie)) {
         expect(
           cookie,

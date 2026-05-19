@@ -67,7 +67,13 @@ start_run() {
     AUTH_SECRET="$(openssl rand -base64 32)" \
     AUTH_URL="http://localhost:${PORT}${auth_suffix}" \
     bun run rdv:prod >/dev/null
-  wait_for "http://localhost:${PORT}${auth_suffix:-/}login"
+  # NOTE on path-joining: `${auth_suffix}/login` only works because
+  # `auth_suffix` is either empty or a leading-slash prefix like
+  # `/alpha`. Concatenating without a separator yields
+  # `${PORT}/login` (baseline) or `${PORT}/alpha/login` (prefixed) —
+  # the previous form `${auth_suffix:-/}login` silently produced
+  # `/alphalogin` when auth_suffix was non-empty and times out.
+  wait_for "http://localhost:${PORT}${auth_suffix}/login"
 }
 
 assert_code() {
@@ -123,3 +129,38 @@ if ! echo "$COOKIE_HEADERS" | grep -iE '__Host-rdv-alpha-csrf-token=.*Path=/($|;
 fi
 
 echo "[smoke] All checks passed."
+
+# AC-6 ("two pods don't interfere"): NOT automated here.
+#
+# Why: `scripts/rdv.ts` hardcodes ports 6001/6002 (see the file's `nextPort`
+# / `terminalPort` constants) and does NOT honor $PORT / $TERMINAL_PORT.
+# Booting two concurrent pods via `bun run rdv:prod` would require either
+# patching rdv.ts to respect env-port overrides, or bypassing it entirely
+# to run `node .next/standalone/server.js` directly — both expand the
+# scope of this script meaningfully and risk drifting from how operators
+# actually deploy.
+#
+# Verify AC-6 manually with two terminals (uses two ad-hoc standalone
+# builds, sidestepping rdv.ts):
+#
+#     # Terminal 1 — pod alpha on :6101
+#     RDV_BASE_PATH=/alpha RDV_INSTANCE_SLUG=alpha \
+#       RDV_DATA_DIR=/tmp/rdv-test-alpha \
+#       AUTH_SECRET="$(openssl rand -base64 32)" \
+#       AUTH_URL=http://localhost:6101/alpha \
+#       PORT=6101 TERMINAL_PORT=6102 \
+#       bun run build && \
+#     RDV_BASE_PATH=/alpha RDV_INSTANCE_SLUG=alpha \
+#       RDV_DATA_DIR=/tmp/rdv-test-alpha \
+#       AUTH_SECRET=... AUTH_URL=http://localhost:6101/alpha \
+#       PORT=6101 node .next/standalone/server.js
+#
+#     # Terminal 2 — pod beta on :6201 (separate build dir)
+#     # Same as above with /beta + 6201/6202 + a different AUTH_SECRET.
+#
+#     # Assertions:
+#     curl -i http://localhost:6101/alpha/api/config   # 401 (unauth)
+#     curl -i http://localhost:6201/beta/api/config    # 401 (unauth)
+#     # Sign into alpha; copy its session cookie; show it does NOT
+#     # authenticate against beta (per-instance AUTH_SECRET blocks JWT
+#     # decode even if a name collision happened).

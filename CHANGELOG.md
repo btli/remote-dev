@@ -44,6 +44,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   empty to a value (or vice versa), the NextAuth cookie names change too,
   so every signed-in user must sign in again on the first request after the
   rollout — no data loss, but a one-time logout is unavoidable.
+- **Multi-instance hosting (Phase 3 — URL audit + runtime config)**: new
+  `apiFetch` client-side wrapper (`src/lib/api-fetch.ts`) prefixes
+  `window.__RDV_BASE_PATH__` onto every browser-initiated request so the
+  client survives a non-empty basePath. All 108 bare `fetch("/api/...")`
+  call sites in the app code were migrated to `apiFetch` (see commit
+  `c3c56950`), and an ESLint guard (`no-restricted-syntax` on bare-
+  string-literal fetch arguments starting with `/api`) prevents the
+  pattern from creeping back. New `/api/config` endpoint behind
+  `withApiAuth` (so it accepts session cookies **and** Bearer API keys)
+  returns the deployment's `basePath`, `instanceSlug`, and package
+  version — used by ops tooling and the multi-instance smoke test to
+  prove which pod answered a request. Every response now carries an
+  `X-RDV-Instance` header echoing the slug, set in the middleware so
+  it survives 404s and static asset responses. The GitHub OAuth
+  account-linking callback (`/api/auth/github/callback`) now reads
+  `getBasePath()` when redirecting back to the app so the link flow
+  works under `RDV_BASE_PATH`. **Default (empty basePath) deployments
+  remain byte-identical**: `apiFetch` becomes a thin pass-through.
+- **Multi-instance hosting (Phase 4 — init + docs + integration test)**:
+  `scripts/init.sh` accepts `--base-path` and `--instance-slug` flags,
+  validates them against the same lowercase-segment regex
+  `src/lib/base-path.ts` uses, and either seeds a fresh `.env.local`
+  with `RDV_BASE_PATH` / `RDV_INSTANCE_SLUG` / a prefixed `AUTH_URL`,
+  or upserts those keys into an existing file. Docs landed for the
+  full feature: `docs/SETUP.md` gained a "Multi-Instance Deployment"
+  section with the per-instance env-var table; `docs/ARCHITECTURE.md`
+  added a short section on the layering; `docs/API.md` documents
+  `/api/config` and `X-RDV-Instance`; `docs/openapi.yaml` got a
+  matching `/api/config` path. New opt-in integration test
+  (`src/integration/multi-instance.test.ts`, gated on
+  `RDV_INTEGRATION_URL`) re-asserts AC-2/3/5 against a real running
+  server with structured cookie parsing — kept opt-in so the unit
+  runner doesn't pay a `next build` per CI run.
 - **Mobile**: terminal search overlay reachable on both the PWA and the
   Flutter embed. PWA users get a "Search terminal" item in the session
   more-menu (`SessionMetadataSheet`). The Flutter shell drives the same

@@ -186,14 +186,27 @@ For the full spec see
 ### GitHub OAuth per instance
 
 GitHub OAuth callbacks are path-scoped, so each instance needs its own
-OAuth app (or its own callback URL registered against a shared app):
+OAuth app (or its own callback URLs registered against a shared app).
+
+**Two callbacks must be registered per instance**:
 
 ```
+# Sign-in flow (NextAuth handler)
 https://dev.example.com/alpha/api/auth/callback/github
-https://dev.example.com/beta/api/auth/callback/github
+
+# Account-linking flow (custom handler, used for adding extra GitHub
+# accounts to an already-signed-in user)
+https://dev.example.com/alpha/api/auth/github/callback
 ```
 
-Add these URLs in the OAuth app settings on
+NextAuth uses the first; the multi-GitHub-account link flow
+(`src/app/api/auth/github/callback/route.ts`) uses the second. Both
+are required even if you do not use account linking — GitHub OAuth
+apps reject requests whose `redirect_uri` is not in the registered
+list, so missing the second callback breaks the link flow with a
+hard 400.
+
+Add both URLs (per instance) in the OAuth app settings on
 [GitHub Developer Settings](https://github.com/settings/developers).
 
 ### Same image, different basePath at deploy time
