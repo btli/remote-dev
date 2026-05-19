@@ -13,11 +13,22 @@
  * Next.js and crashes when invoked on the server. Server code should
  * import `resolveTerminalWsUrlFromHost` from `@/lib/terminal-ws-url`
  * directly and pass the host/proto from request headers.
+ *
+ * basePath: the page's base path is embedded into `window.__RDV_BASE_PATH__`
+ * by a SSR script in `src/app/layout.tsx`, so the runtime prefix is known
+ * to the browser without rebuilding the image. Empty string means no
+ * prefix (the default deployment).
  */
 
 import { useMemo } from "react";
 
 import { resolveTerminalWsUrlFromHost } from "@/lib/terminal-ws-url";
+
+declare global {
+  interface Window {
+    __RDV_BASE_PATH__?: string;
+  }
+}
 
 /**
  * Browser-side resolver, exported for unit tests — `renderHook` requires
@@ -27,7 +38,11 @@ import { resolveTerminalWsUrlFromHost } from "@/lib/terminal-ws-url";
 export function resolveTerminalWsUrl(): string {
   if (typeof window === "undefined") return "ws://localhost:3001";
   const { protocol, host } = window.location;
-  return resolveTerminalWsUrlFromHost({ protocol, host });
+  return resolveTerminalWsUrlFromHost({
+    protocol,
+    host,
+    basePath: window.__RDV_BASE_PATH__ || "",
+  });
 }
 
 export function useTerminalWsUrl(): string {

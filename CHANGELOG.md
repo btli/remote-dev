@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Multi-instance hosting (Phase 1 — plumbing core)**: new `RDV_BASE_PATH`
+  env var lets one domain host multiple isolated `remote-dev` pods under
+  path prefixes (`/alpha/`, `/beta/`, …). Phase 1 wires up the helper module
+  (`src/lib/base-path.ts`), Next.js `basePath`, terminal-server WebSocket
+  upgrade gating on `{prefix}/ws` with a strict-boundary match, the
+  client-side WS URL builder (`window.__RDV_BASE_PATH__` read by
+  `useTerminalWsUrl`), and a SSR-embedded base-path script in
+  `<head>`. Default (empty `RDV_BASE_PATH`) deployments are byte-identical
+  to current behavior. NextAuth cookie scoping, the absolute-URL audit, the
+  `/api/config` endpoint, init.sh, and docs follow in Phases 2–4.
 - **Mobile**: terminal search overlay reachable on both the PWA and the
   Flutter embed. PWA users get a "Search terminal" item in the session
   more-menu (`SessionMetadataSheet`). The Flutter shell drives the same

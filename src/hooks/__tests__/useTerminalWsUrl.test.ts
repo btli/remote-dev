@@ -38,6 +38,15 @@ function setLocation(opts: {
   });
 }
 
+function setBasePath(value: string | undefined): void {
+  if (value === undefined) {
+    // Important: the resolver checks for absence, not just empty string.
+    delete (window as Window & { __RDV_BASE_PATH__?: string }).__RDV_BASE_PATH__;
+  } else {
+    (window as Window & { __RDV_BASE_PATH__?: string }).__RDV_BASE_PATH__ = value;
+  }
+}
+
 describe("useTerminalWsUrl", () => {
   const originalEnv = process.env.NEXT_PUBLIC_TERMINAL_PORT;
 
@@ -51,6 +60,7 @@ describe("useTerminalWsUrl", () => {
       writable: true,
       value: REAL_LOCATION,
     });
+    setBasePath(undefined);
     if (originalEnv === undefined) {
       delete process.env.NEXT_PUBLIC_TERMINAL_PORT;
     } else {
@@ -102,6 +112,27 @@ describe("useTerminalWsUrl", () => {
     delete process.env.NEXT_PUBLIC_TERMINAL_PORT;
     setLocation({ protocol: "http:", hostname: "localhost", port: "6001" });
     expect(resolveTerminalWsUrl()).toBe("ws://localhost:3001");
+  });
+
+  it("appends window.__RDV_BASE_PATH__ to remote WS URLs", () => {
+    setLocation({ protocol: "https:", hostname: "rdv.example.com" });
+    setBasePath("/alpha");
+    const { result } = renderHook(() => useTerminalWsUrl());
+    expect(result.current).toBe("wss://rdv.example.com/alpha/ws");
+  });
+
+  it("ignores empty basePath on remote WS URLs (back-compat with single-instance)", () => {
+    setLocation({ protocol: "https:", hostname: "rdv.example.com" });
+    setBasePath("");
+    const { result } = renderHook(() => useTerminalWsUrl());
+    expect(result.current).toBe("wss://rdv.example.com/ws");
+  });
+
+  it("never prepends basePath on localhost (terminal server has its own port)", () => {
+    setLocation({ protocol: "http:", hostname: "localhost", port: "6001" });
+    setBasePath("/alpha");
+    const { result } = renderHook(() => useTerminalWsUrl());
+    expect(result.current).toBe("ws://localhost:6002");
   });
 
   it("returns the legacy ws://localhost:3001 placeholder during SSR", () => {

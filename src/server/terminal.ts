@@ -12,6 +12,7 @@ import { promisify } from "node:util";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
 import { validateWsToken, getAuthSecret } from "../lib/ws-token.js";
 import { createLogger } from "../lib/logger.js";
+import { WS_PATH_PREFIX } from "../lib/base-path.js";
 
 const log = createLogger("Terminal");
 const agentLog = createLogger("AgentExit");
@@ -1870,8 +1871,30 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     }
   });
 
-  // Attach WebSocket server to HTTP server
-  const wss = new WebSocketServer({ server });
+  // WebSocket upgrades only on the prefixed path (`WS_PATH_PREFIX`, e.g.
+  // `/alpha/ws` when RDV_BASE_PATH=/alpha, or `/ws` when unset). `noServer`
+  // mode lets us gate the upgrade manually before the WebSocket handshake
+  // completes — any other path returns a plain HTTP 404.
+  //
+  // The match is strict-boundary: a path equal to WS_PATH_PREFIX, or starting
+  // with WS_PATH_PREFIX + "/". A naive `startsWith` would also match
+  // `/alpha/ws-evil`, which we explicitly reject.
+  const wss = new WebSocketServer({ noServer: true });
+
+  server.on("upgrade", (req, socket, head) => {
+    const pathOnly = (req.url || "").split("?", 1)[0] ?? "";
+    const allowed =
+      pathOnly === WS_PATH_PREFIX || pathOnly.startsWith(WS_PATH_PREFIX + "/");
+    if (!allowed) {
+      log.debug("Rejected WebSocket upgrade", { path: pathOnly, expected: WS_PATH_PREFIX });
+      socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit("connection", ws, req);
+    });
+  });
 
   // Listen on socket or port
   if (options.socket) {
