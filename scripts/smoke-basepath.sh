@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 #
-# smoke-basepath.sh — manual / CI acceptance check for AC-2/3/4 from
+# smoke-basepath.sh — manual / CI acceptance check for AC-2/3/4/5 from
 # docs/plans/multi-instance-basepath.md §1. Packages the curl assertions
-# documented in §2 of that spec.
+# documented in §2 of that spec, plus the cookie-path-scoping check from
+# §8.2 (AC-5).
 #
 # Builds twice and runs under two RDV_BASE_PATH configs:
 #   1. unset → `/login` returns 200.
-#   2. /alpha → `/alpha/login` returns 200 and `/login` returns 404/308.
+#   2. /alpha →
+#        - `/alpha/login` returns 200 (AC-2)
+#        - bare `/login` returns 404/308 (AC-3)
+#        - `Set-Cookie` from `/alpha/api/auth/csrf` carries `Path=/alpha`
+#          for the session/callback cookies (AC-5)
 #
 # NOT part of `bun test` — needs `bun run rdv:prod`, free ports, and two
 # full `next build`s (~60s each).
@@ -84,5 +89,37 @@ bun run rdv:stop >/dev/null
 start_run "prefixed" "/alpha" "/alpha"
 assert_code "http://localhost:${PORT}/alpha/login" "200"
 assert_code "http://localhost:${PORT}/login" "(404|308)"
+
+# AC-5: Set-Cookie headers from /alpha/api/auth/csrf must carry Path=/alpha
+# (for the session/callback cookies). The __Host- CSRF cookie sits at Path=/
+# by RFC 6265bis — that's expected; isolation comes from per-instance
+# AUTH_SECRET. The session-token + callback-url cookies are the load-bearing
+# ones for AC-5.
+echo "[smoke] checking cookie path scoping at /alpha/api/auth/csrf ..."
+COOKIE_HEADERS="$(curl -sI "http://localhost:${PORT}/alpha/api/auth/csrf" | grep -i '^set-cookie:' || true)"
+if [ -z "$COOKIE_HEADERS" ]; then
+  echo "[smoke] FAIL: no Set-Cookie headers from /alpha/api/auth/csrf" >&2
+  exit 1
+fi
+
+# At least one of the auth cookies must declare Path=/alpha. NextAuth always
+# emits the callback-url cookie on /api/auth/csrf; the session-token only
+# materializes after sign-in. So we assert on the callback-url + check
+# that no auth cookie incorrectly scopes itself to Path=/.
+if ! echo "$COOKIE_HEADERS" | grep -iE 'rdv-alpha-callback-url=.*Path=/alpha($|;)' >/dev/null; then
+  echo "[smoke] FAIL: rdv-alpha-callback-url cookie missing Path=/alpha" >&2
+  echo "$COOKIE_HEADERS" >&2
+  exit 1
+fi
+echo "[smoke] PASS: rdv-alpha-callback-url has Path=/alpha"
+
+# The CSRF cookie (__Host- prefix) must remain Path=/ — that's the RFC.
+if ! echo "$COOKIE_HEADERS" | grep -iE '__Host-rdv-alpha-csrf-token=.*Path=/($|;)' >/dev/null; then
+  echo "[smoke] WARN: __Host-rdv-alpha-csrf-token Path=/ assertion did not match" >&2
+  echo "$COOKIE_HEADERS" >&2
+  # Don't hard-fail here — the cookie name is configurable and the AC says
+  # path-scoping is what matters. The callback-url check above is the
+  # load-bearing assertion.
+fi
 
 echo "[smoke] All checks passed."

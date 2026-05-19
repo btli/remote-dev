@@ -35,6 +35,8 @@ tags:
     description: GitHub repository integration
   - name: Git
     description: Git repository utilities
+  - name: Config
+    description: Runtime configuration probe (multi-instance support)
 paths:
   # Sessions API
   /api/sessions:
@@ -1069,6 +1071,41 @@ paths:
                     type: boolean
                   branch:
                     type: string
+
+  # Config API
+  /api/config:
+    get:
+      tags: [Config]
+      summary: Get runtime configuration
+      description: |
+        Return the deployment's basePath, instance slug, and package
+        version. Used by external tooling (k8s probes, ops scripts) and
+        the multi-instance smoke tests to confirm the right pod answered.
+        Requires authentication; instanceSlug is part of the cookie-name
+        suffix and treated as semi-sensitive.
+      responses:
+        '200':
+          description: Runtime config
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [basePath, instanceSlug, version]
+                properties:
+                  basePath:
+                    type: string
+                    description: RDV_BASE_PATH at process start; empty string when unset.
+                    example: /alpha
+                  instanceSlug:
+                    type: string
+                    description: RDV_INSTANCE_SLUG, defaulted to the last basePath segment.
+                    example: alpha
+                  version:
+                    type: string
+                    description: npm_package_version at process start, or "unknown".
+                    example: 0.1.0
+        '401':
+          description: Unauthorized
 
   # Git API
   /api/git/validate:

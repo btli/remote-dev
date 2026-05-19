@@ -41,7 +41,16 @@ export function MobileSetupPanel() {
   const [deleteKeyId, setDeleteKeyId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const serverUrl = typeof window !== "undefined" ? window.location.origin : "";
+  // Server URL for the QR payload. We include the runtime basePath
+  // (from `window.__RDV_BASE_PATH__`, SSR-injected by app/layout.tsx) so
+  // the mobile app dials the correct instance when this server is part of
+  // a multi-instance fleet — e.g. `https://host/alpha` instead of
+  // `https://host`. The terminal port hop on localhost still works
+  // unchanged because the mobile bridge always uses the prefixed HTTP
+  // path for API calls, not a separate WS port.
+  const serverUrl = typeof window !== "undefined"
+    ? `${window.location.origin}${window.__RDV_BASE_PATH__ ?? ""}`
+    : "";
   const terminalPort = typeof window !== "undefined"
     ? (process.env.NEXT_PUBLIC_TERMINAL_PORT || "6002")
     : "6002";

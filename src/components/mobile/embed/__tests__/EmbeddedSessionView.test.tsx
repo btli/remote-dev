@@ -23,7 +23,14 @@ let restartAgentSpy: ReturnType<typeof vi.fn>;
 // Captured props handed to the mocked TerminalWithKeyboard. Refs to the
 // latest invocation so tests can drive the parent-supplied callbacks
 // (`onNotification`, `onSessionRestart`, `onSessionDelete`) directly.
-let capturedTerminalProps: {
+//
+// We keep this as a stable object whose *properties* are reassigned in
+// the mock render — reassigning the binding itself trips the
+// react-hooks/globals rule ("Cannot reassign variables declared outside
+// of the component/hook"), since the rule treats the mock render as a
+// real component render. Mutating properties of a captured container
+// is the rule-compliant equivalent for test-spy purposes.
+const capturedTerminalProps: {
   onNotification?: (n: Record<string, unknown>) => void;
   onSessionRestart?: () => Promise<void>;
   onSessionDelete?: (deleteWorktree?: boolean) => Promise<void>;
@@ -68,11 +75,16 @@ vi.mock("@/components/terminal/TerminalWithKeyboard", async () => {
       toggleSearch: vi.fn() as unknown as () => void,
     }));
     const p = props as StubTerminalProps;
-    capturedTerminalProps = {
-      onNotification: p.onNotification,
-      onSessionRestart: p.onSessionRestart,
-      onSessionDelete: p.onSessionDelete,
-    };
+    // Capture parent-supplied callbacks in an effect so the
+    // react-hooks/immutability rule is satisfied — modifying a
+    // module-scope binding during render is flagged, even on a test
+    // mock. Effects run after commit, which is exactly when tests
+    // need to drive the captured callbacks.
+    React.useEffect(() => {
+      capturedTerminalProps.onNotification = p.onNotification;
+      capturedTerminalProps.onSessionRestart = p.onSessionRestart;
+      capturedTerminalProps.onSessionDelete = p.onSessionDelete;
+    }, [p.onNotification, p.onSessionRestart, p.onSessionDelete]);
     return React.createElement("div", {
       "data-testid": "terminal-mock",
       "data-font-size": p.fontSize,
@@ -150,7 +162,9 @@ beforeEach(() => {
   updateUserSettingsSpy.mockClear();
   addNotificationSpy.mockClear();
   capturedPinchOpts = null;
-  capturedTerminalProps = {};
+  delete capturedTerminalProps.onNotification;
+  delete capturedTerminalProps.onSessionRestart;
+  delete capturedTerminalProps.onSessionDelete;
   setMockPrefs({
     currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
   });

@@ -1173,6 +1173,39 @@ DELETE /api/keys/:id
 
 ---
 
+## Config API
+
+### Get Runtime Configuration
+
+Return the deployment's basePath, instance slug, and package version.
+Used by external tooling (k8s probes, ops scripts) and the
+multi-instance smoke tests to confirm the right pod answered a request.
+
+```http
+GET /api/config
+```
+
+**Authentication:** required (session cookie or API key). Returns 401 to
+unauthenticated callers — the `instanceSlug` is part of the cookie name
+suffix and is treated as semi-sensitive.
+
+**Response:**
+```json
+{
+  "basePath": "/alpha",
+  "instanceSlug": "alpha",
+  "version": "0.1.0"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `basePath` | string | The `RDV_BASE_PATH` env var (empty string when unset). |
+| `instanceSlug` | string | The `RDV_INSTANCE_SLUG`, defaulted to the last basePath segment. |
+| `version` | string | `npm_package_version` at process start, or `"unknown"`. |
+
+---
+
 ## Git API
 
 ### Validate Repository
