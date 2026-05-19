@@ -10,9 +10,26 @@ set -euo pipefail
 : "${PORT:=6001}"
 : "${TERMINAL_PORT:=6002}"
 
-# Only ensure the mount root. The app's ensureDataDirectories() (src/lib/paths.ts)
-# creates the rest at startup.
-mkdir -p "$RDV_DATA_DIR"
+# PVC writability checks. Without these, a wrong `fsGroup` or read-only
+# mount surfaces as a cryptic `set -e` exit later when the app first tries
+# to write — a clear pre-flight error here gives operators an obvious
+# pointer to securityContext.fsGroup.
+if ! mkdir -p "$RDV_DATA_DIR" 2>/dev/null; then
+    echo "[entrypoint] FATAL: cannot create $RDV_DATA_DIR — pod needs securityContext.fsGroup: 10001" >&2
+    exit 1
+fi
+if ! [ -w "$RDV_DATA_DIR" ]; then
+    echo "[entrypoint] FATAL: $RDV_DATA_DIR is not writable by uid $(id -u) — check securityContext.fsGroup" >&2
+    exit 1
+fi
+
+# Pin tmux sockets to the PVC. Default tmux socket dir is /tmp which is
+# ephemeral inside a container: on pod restart, every "running" session in
+# SQLite would become an orphan because its tmux socket is gone. Putting
+# the socket dir under RDV_DATA_DIR (a PVC in production) keeps sockets
+# alive across container restarts within the same pod.
+export TMUX_TMPDIR="${RDV_DATA_DIR}/tmux"
+mkdir -p "$TMUX_TMPDIR"
 
 # Seed the authorized_users table by running `bun run db:seed` against this
 # container after first boot:
@@ -30,19 +47,34 @@ echo "[entrypoint] starting next.js on port ${PORT}"
 node ./server.js &
 NEXT_PID=$!
 
-# Propagate signals to both children.
+# Propagate signals to both children with a hard timeout. K8s default
+# terminationGracePeriodSeconds=30 sends SIGTERM, waits, then SIGKILLs at
+# t=30s. We force-kill at t=25s so we exit cleanly under our own control
+# rather than getting K9'd mid-flush.
 term() {
     echo "[entrypoint] received termination signal, stopping children"
     kill -TERM "$TERMINAL_PID" "$NEXT_PID" 2>/dev/null || true
+    # Background killer: if children haven't exited in 25s, SIGKILL them
+    # so the foreground `wait` returns before K8s' SIGKILL hits us.
+    ( sleep 25 && kill -KILL "$TERMINAL_PID" "$NEXT_PID" 2>/dev/null || true ) &
+    KILLER=$!
     wait "$TERMINAL_PID" "$NEXT_PID" 2>/dev/null || true
+    kill "$KILLER" 2>/dev/null || true
     exit 0
 }
 trap term TERM INT
 
 # Wait on either child; whichever exits first wins.
-# `wait -n` returns the exit status of the first child to exit.
+#
+# `wait -n` under `set -e` is a footgun: if the first child exits non-zero,
+# `wait -n` returns that code and `set -e` would kill the entrypoint before
+# `RC=$?` runs, masking the actual exit code. Disable `set -e` around the
+# wait so we can capture the code reliably, then re-enable.
+set +e
 wait -n
 RC=$?
+set -e
+
 echo "[entrypoint] a child exited (rc=$RC); shutting down siblings"
 kill -TERM "$TERMINAL_PID" "$NEXT_PID" 2>/dev/null || true
 wait || true

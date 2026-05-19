@@ -31,14 +31,20 @@ const MODE_FILE = join(PID_DIR, "mode");
 const STANDALONE_DIR = join(PROJECT_ROOT, ".next", "standalone");
 const SOCKET_DIR = join(DATA_DIR, "run");
 
+// Ports come from env vars so two pods on the same host can run concurrently
+// for multi-instance smoke tests (`PORT=6101 TERMINAL_PORT=6102 ...`).
+// Defaults match the legacy hardcoded values for single-instance dev.
+const DEV_NEXT_PORT = parseInt(process.env.PORT || "6001", 10);
+const DEV_TERMINAL_PORT = parseInt(process.env.TERMINAL_PORT || "6002", 10);
+
 const CONFIG = {
   dev: {
     type: "port" as const,
-    nextPort: 6001,
-    terminalPort: 6002,
-    nextCmd: ["bun", "run", "next", "dev", "--turbopack", "-p", "6001"],
+    nextPort: DEV_NEXT_PORT,
+    terminalPort: DEV_TERMINAL_PORT,
+    nextCmd: ["bun", "run", "next", "dev", "--turbopack", "-p", String(DEV_NEXT_PORT)],
     // Local development URL - credentials auth works here
-    nextAuthUrl: "http://localhost:6001",
+    nextAuthUrl: process.env.AUTH_URL || `http://localhost:${DEV_NEXT_PORT}`,
   },
   prod: {
     type: "socket" as const,
@@ -46,7 +52,7 @@ const CONFIG = {
     terminalSocket: join(SOCKET_DIR, "terminal.sock"),
     nextCmd: ["node", "scripts/standalone-server.js"],
     // Production URL - accessed via Cloudflare tunnel
-    nextAuthUrl: "https://dev.bryanli.net",
+    nextAuthUrl: process.env.AUTH_URL || "https://dev.bryanli.net",
   },
 } as const;
 

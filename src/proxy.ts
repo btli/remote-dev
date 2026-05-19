@@ -49,6 +49,13 @@ export async function proxy(request: NextRequest) {
     return tagInstance(NextResponse.next());
   }
 
+  // Allow K8s health probes (kubelets call these without auth). The bare
+  // unprefixed pathname is what Next.js exposes after stripping the
+  // basePath, so this matches both `/api/healthz` and `/alpha/api/healthz`.
+  if (pathname === "/api/healthz" || pathname === "/api/readyz") {
+    return tagInstance(NextResponse.next());
+  }
+
   // Allow deploy webhook (uses its own HMAC-SHA256 auth)
   if (pathname === "/api/deploy") {
     return tagInstance(NextResponse.next());

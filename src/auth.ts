@@ -138,11 +138,30 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         email: { label: "Email", type: "email" },
       },
       async authorize(credentials) {
-        // Security: Only allow credentials auth from localhost
-        // Remote access must use Cloudflare Access (JWT validated in getAuthSession)
-        const isLocalhost = await isLocalhostRequest();
-        if (!isLocalhost) {
-          log.warn("Credentials auth attempted from non-localhost, rejecting");
+        // Security: Only allow credentials auth from localhost.
+        // Remote access must use Cloudflare Access (JWT validated in getAuthSession).
+        //
+        // The `ENABLE_LOCAL_CREDENTIALS` env var makes the gate deterministic
+        // in containers, where the `x-forwarded-for` header reflects the
+        // pod's loopback or the LB's IP rather than 127.0.0.1:
+        //
+        //   ENABLE_LOCAL_CREDENTIALS=true   → always allow (do NOT set in prod!)
+        //   ENABLE_LOCAL_CREDENTIALS=false  → always deny (recommended for K8s)
+        //   unset                           → fall back to 127.0.0.1 detection
+        //
+        // Default behavior (unset) preserves the existing local-dev flow.
+        const explicit = process.env.ENABLE_LOCAL_CREDENTIALS;
+        let credentialsAllowed: boolean;
+        if (explicit === "true") {
+          credentialsAllowed = true;
+        } else if (explicit === "false") {
+          credentialsAllowed = false;
+        } else {
+          credentialsAllowed = await isLocalhostRequest();
+        }
+
+        if (!credentialsAllowed) {
+          log.warn("Credentials auth attempted from non-localhost or disabled via ENABLE_LOCAL_CREDENTIALS, rejecting");
           return null;
         }
 

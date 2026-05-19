@@ -2,12 +2,16 @@
 #
 # remote-dev container image
 #
-# Build:
+# Build (single arch):
 #   docker buildx build \
 #     --platform linux/arm64 \
 #     --tag ghcr.io/btli/remote-dev:<version> \
 #     --push \
 #     .
+#
+# Build (multi-arch — recommended for fleet rollouts):
+#   docker buildx build --platform linux/amd64,linux/arm64 \
+#     --tag ghcr.io/btli/remote-dev:<version> --push .
 #
 # Notes:
 #   - Builds Next.js standalone + terminal server bundle inside the image
@@ -141,6 +145,20 @@ COPY --from=build --chown=rdv:rdv /app/tsconfig.json ./tsconfig.json
 
 # rdv Rust CLI
 COPY --from=build --chown=rdv:rdv /tmp/rdv-binary /usr/local/bin/rdv
+
+# Native ABI smoke test: native modules (better-sqlite3, node-pty) were
+# rebuilt in stage 1 against the bun debian image. Both build and runtime
+# stages use Debian/glibc so the ABI should match — fail-fast here if it
+# doesn't, instead of crashing at the first runtime request with a cryptic
+# NAPI error.
+RUN node -e "require('better-sqlite3'); require('node-pty'); console.log('native modules OK')"
+
+# Future work: `src/` + `tsconfig.json` are copied solely so `bun run db:seed`
+# can resolve `@/lib/paths` and `@/db/schema` from `src/db/seed.ts` when
+# invoked via `kubectl exec`. They are unused by the standalone runtime
+# server. A future Dockerfile.seed sidecar image could carry the seed
+# dependencies separately, trimming the main runtime image's surface area.
+# Left in-place for Phase 5 to avoid breaking the existing seed flow.
 
 # Entrypoint
 COPY --chown=rdv:rdv docker/entrypoint.sh /usr/local/bin/entrypoint.sh
