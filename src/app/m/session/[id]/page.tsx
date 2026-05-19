@@ -48,6 +48,7 @@ import { NotificationProvider } from "@/contexts/NotificationContext";
 import { PreferencesProvider } from "@/contexts/PreferencesContext";
 import { EmbeddedSessionView } from "@/components/mobile/embed/EmbeddedSessionView";
 import { resolveTerminalWsUrlFromHost } from "@/lib/terminal-ws-url";
+import { BASE_PATH } from "@/lib/base-path";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -68,12 +69,21 @@ export default async function MobileSessionPage({ params }: PageProps) {
   // Resolve WS URL from the request host so the WebView talks back to
   // the same Remote Dev origin it loaded the page from. Uses the shared
   // resolver so the mobile WebView and the desktop client agree on the
-  // URL shape (notably `wss://host/ws` for Cloudflare-tunneled prod, not
-  // a direct hit on the terminal-server port).
+  // URL shape (notably `wss://host{basePath}/ws` for Cloudflare-tunneled
+  // prod, not a direct hit on the terminal-server port).
+  //
+  // basePath: server-side, the resolver has no `window.__RDV_BASE_PATH__`
+  // to read from, so we pass the validated BASE_PATH constant explicitly.
+  // Without this, multi-instance deployments under `/alpha` would point
+  // the embed WebSocket at `/ws` and be rejected by the upgrade gate.
   const h = await headers();
   const host = h.get("host") ?? "localhost";
   const protocol = h.get("x-forwarded-proto") ?? "http";
-  const wsUrl = resolveTerminalWsUrlFromHost({ host, protocol });
+  const wsUrl = resolveTerminalWsUrlFromHost({
+    host,
+    protocol,
+    basePath: BASE_PATH,
+  });
 
   // Provider order mirrors `src/app/page.tsx` and `/m/channel/[id]`:
   // PreferencesProvider is the outermost context-bearing wrapper; the

@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<head>`. Default (empty `RDV_BASE_PATH`) deployments are byte-identical
   to current behavior. NextAuth cookie scoping, the absolute-URL audit, the
   `/api/config` endpoint, init.sh, and docs follow in Phases 2–4.
+  **Do not set `RDV_BASE_PATH` in production multi-instance deployments
+  yet** — cookie path scoping lands in Phase 2 (see
+  `docs/plans/multi-instance-basepath.md` §7.6). Without it, sessions can
+  bleed between instances on the same host.
 - **Mobile**: terminal search overlay reachable on both the PWA and the
   Flutter embed. PWA users get a "Search terminal" item in the session
   more-menu (`SessionMetadataSheet`). The Flutter shell drives the same

@@ -16,10 +16,23 @@ const RAW = process.env.RDV_BASE_PATH ?? "";
 function validateBasePath(input: string): string {
   if (input === "") return "";
   if (!/^(\/[a-z0-9][a-z0-9-]*)+$/.test(input)) {
-    throw new Error(
+    const message =
       `Invalid RDV_BASE_PATH: ${JSON.stringify(input)}. ` +
-        `Must be empty or match /[a-z0-9][a-z0-9-]*(/[a-z0-9][a-z0-9-]*)*`,
-    );
+      `Must be empty or match /[a-z0-9][a-z0-9-]*(/[a-z0-9][a-z0-9-]*)*`;
+    // The logger isn't safe to import here — base-path.ts sits very low in
+    // the module graph (consumed by both server entry points). The throw
+    // below would otherwise surface as a bare unhandled-rejection stack
+    // trace at process startup, with no namespace. Writing to stderr first
+    // gives operators a clear, prefixed error before the crash.
+    //
+    // Note: next.config.ts bypasses this validation entirely — it reads
+    // `process.env.RDV_BASE_PATH` directly because it loads before any
+    // module graph exists. Malformed values that Next.js itself can't
+    // parse will fail with a separate `next build` error.
+    if (typeof process !== "undefined" && process.stderr) {
+      process.stderr.write(`[fatal] [BasePath] ${message}\n`);
+    }
+    throw new Error(message);
   }
   return input;
 }
@@ -33,7 +46,7 @@ export const BASE_PATH: string = validateBasePath(RAW);
  */
 export const INSTANCE_SLUG: string =
   process.env.RDV_INSTANCE_SLUG ??
-  (BASE_PATH ? BASE_PATH.replace(/^\//, "").split("/").pop()! : "");
+  (BASE_PATH ? (BASE_PATH.split("/").filter(Boolean).at(-1) ?? "") : "");
 
 /** Cookie path: must be "/" when no prefix, else the prefix itself. */
 export const COOKIE_PATH: string = BASE_PATH || "/";

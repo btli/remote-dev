@@ -74,14 +74,14 @@ describe("useTerminalWsUrl", () => {
     expected: string;
   }> = [
     {
-      name: "localhost uses NEXT_PUBLIC_TERMINAL_PORT",
+      name: "localhost uses NEXT_PUBLIC_TERMINAL_PORT + /ws",
       location: { protocol: "http:", hostname: "localhost", port: "6001" },
-      expected: "ws://localhost:6002",
+      expected: "ws://localhost:6002/ws",
     },
     {
       name: "127.0.0.1 is treated as localhost",
       location: { protocol: "http:", hostname: "127.0.0.1", port: "6001" },
-      expected: "ws://localhost:6002",
+      expected: "ws://localhost:6002/ws",
     },
     {
       name: "https tunnel without explicit port → wss://host/ws",
@@ -111,7 +111,7 @@ describe("useTerminalWsUrl", () => {
   it("falls back to port 3001 on localhost when NEXT_PUBLIC_TERMINAL_PORT is unset", () => {
     delete process.env.NEXT_PUBLIC_TERMINAL_PORT;
     setLocation({ protocol: "http:", hostname: "localhost", port: "6001" });
-    expect(resolveTerminalWsUrl()).toBe("ws://localhost:3001");
+    expect(resolveTerminalWsUrl()).toBe("ws://localhost:3001/ws");
   });
 
   it("appends window.__RDV_BASE_PATH__ to remote WS URLs", () => {
@@ -128,11 +128,14 @@ describe("useTerminalWsUrl", () => {
     expect(result.current).toBe("wss://rdv.example.com/ws");
   });
 
-  it("never prepends basePath on localhost (terminal server has its own port)", () => {
+  it("appends basePath on localhost too — the dev terminal server's upgrade gate matches WS_PATH_PREFIX", () => {
+    // Regression guard for Phase 1: pre-fix the localhost branch returned
+    // `ws://localhost:6002` (no path), but `WS_PATH_PREFIX` is
+    // `{BASE_PATH}/ws` so the upgrade was rejected with 404.
     setLocation({ protocol: "http:", hostname: "localhost", port: "6001" });
     setBasePath("/alpha");
     const { result } = renderHook(() => useTerminalWsUrl());
-    expect(result.current).toBe("ws://localhost:6002");
+    expect(result.current).toBe("ws://localhost:6002/alpha/ws");
   });
 
   it("returns the legacy ws://localhost:3001 placeholder during SSR", () => {
