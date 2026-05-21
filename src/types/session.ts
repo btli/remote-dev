@@ -191,7 +191,7 @@ export const AGENT_PROVIDERS: AgentProviderConfig[] = [
 ];
 
 // AI Agent presets for feature sessions
-export type AgentPreset = "claude" | "clauded" | "gemini" | "geminy" | "custom";
+export type AgentPreset = "claude" | "clauded" | "gemini" | "geminy" | "antigravity" | "custom";
 
 export interface AgentConfig {
   id: AgentPreset;

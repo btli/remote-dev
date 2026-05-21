@@ -25,6 +25,7 @@ export type AgentConfigType = Exclude<AgentProvider, "all">;
 type ConfigTypeMap = {
   claude: ClaudeCodeConfig;
   gemini: GeminiCLIConfig;
+  antigravity: GeminiCLIConfig;
   opencode: OpenCodeConfig;
   codex: CodexCLIConfig;
 };

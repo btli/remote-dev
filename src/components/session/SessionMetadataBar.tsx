@@ -11,6 +11,7 @@ import {
 import { useSessionGitStatus } from "@/hooks/useSessionGitStatus";
 import { usePortContext } from "@/contexts/PortContext";
 import type { TerminalSession } from "@/types/session";
+import { AGENT_VISUALS } from "./project-tree/agentVisuals";
 
 interface SessionMetadataBarProps {
   session: TerminalSession;
@@ -29,11 +30,31 @@ export function SessionMetadataBar({
     ? allocations.filter((p) => p.folderId === session.projectId)
     : [];
 
+  const hasAgent = session.agentProvider && session.agentProvider !== "none" && AGENT_VISUALS[session.agentProvider];
+
   if (isCollapsed) return null;
-  if (!gitStatus && sessionPorts.length === 0) return null;
+  if (!gitStatus && sessionPorts.length === 0 && !hasAgent) return null;
 
   return (
     <div className="flex flex-wrap gap-1 mt-0.5 px-1">
+      {/* Active Agent Chip */}
+      {session.agentProvider && AGENT_VISUALS[session.agentProvider] && (
+        (() => {
+          const config = AGENT_VISUALS[session.agentProvider]!;
+          const AgentIcon = config.icon;
+          return (
+            <span
+              className={cn(
+                "inline-flex items-center gap-0.5 text-[9px] font-semibold border rounded-md px-1.5 py-0.5 shrink-0 uppercase tracking-wider",
+                config.classes
+              )}
+            >
+              <AgentIcon className="w-2.5 h-2.5 shrink-0" />
+              <span>{config.label}</span>
+            </span>
+          );
+        })()
+      )}
       {/* Branch chip with ahead/behind */}
       {gitStatus?.branch && (
         <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground/70 bg-muted/30 rounded px-1 py-0.5 max-w-[120px] truncate">

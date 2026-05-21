@@ -28,6 +28,7 @@ const PROVIDER_COLORS: Record<AgentProvider, string> = {
   claude: "bg-violet-500/20 text-violet-300",
   codex: "bg-emerald-500/20 text-emerald-300",
   gemini: "bg-blue-500/20 text-blue-300",
+  antigravity: "bg-pink-500/20 text-pink-300",
   opencode: "bg-orange-500/20 text-orange-300",
   all: "bg-muted/50 text-muted-foreground",
 };

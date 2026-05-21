@@ -488,6 +488,7 @@ export function getDefaultConfig(agentType: AgentConfigType): AgentJsonConfig {
     case "claude":
       return DEFAULT_CLAUDE_CODE_CONFIG;
     case "gemini":
+    case "antigravity":
       return DEFAULT_GEMINI_CLI_CONFIG;
     case "opencode":
       return DEFAULT_OPENCODE_CONFIG;

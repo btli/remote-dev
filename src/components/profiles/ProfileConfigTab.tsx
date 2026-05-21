@@ -32,13 +32,14 @@ interface ProfileConfigTabProps {
 
 type AgentConfigType = Exclude<AgentProvider, "all">;
 
-const ALL_AGENT_TYPES: AgentConfigType[] = ["claude", "gemini", "opencode", "codex"];
+const ALL_AGENT_TYPES: AgentConfigType[] = ["claude", "gemini", "opencode", "codex", "antigravity"];
 
 const AGENT_LABELS: Record<AgentConfigType, { label: string; icon: string }> = {
   claude: { label: "Claude Code", icon: "🤖" },
   gemini: { label: "Gemini CLI", icon: "✨" },
   opencode: { label: "OpenCode", icon: "💻" },
   codex: { label: "Codex CLI", icon: "🧠" },
+  antigravity: { label: "Antigravity CLI", icon: "✨" },
 };
 
 function getDefaultConfig(agentType: AgentConfigType): AgentJsonConfig {
@@ -46,6 +47,7 @@ function getDefaultConfig(agentType: AgentConfigType): AgentJsonConfig {
     case "claude":
       return DEFAULT_CLAUDE_CODE_CONFIG;
     case "gemini":
+    case "antigravity":
       return DEFAULT_GEMINI_CLI_CONFIG;
     case "opencode":
       return DEFAULT_OPENCODE_CONFIG;

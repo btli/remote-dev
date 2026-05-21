@@ -92,6 +92,7 @@ export function useAgentProfiles(): UseAgentProfilesResult {
         gemini: undefined,
         opencode: undefined,
         codex: undefined,
+        antigravity: undefined,
       };
 
       for (const config of configsData.configs || []) {

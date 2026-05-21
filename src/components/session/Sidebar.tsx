@@ -40,6 +40,7 @@ import {
 } from "./ProjectTreeSidebar";
 import { TrashButtonContextMenu } from "./TrashButtonContextMenu";
 import { getSessionIconColor } from "./project-tree/sessionIconColor";
+import { AGENT_VISUALS } from "./project-tree/agentVisuals";
 import { TerminalTypeClientRegistry } from "@/lib/terminal-plugins/client";
 import {
   initializeClientPlugins,
@@ -586,9 +587,13 @@ export function Sidebar({
                           aria-current={isActive ? "true" : undefined}
                           className={cn(
                             "h-7 w-7 transition-colors",
-                            isActive
-                              ? "bg-accent"
-                              : "hover:bg-accent"
+                            s.agentProvider && AGENT_VISUALS[s.agentProvider]
+                              ? (isActive
+                                  ? AGENT_VISUALS[s.agentProvider]!.collapsedClasses.active
+                                  : cn("hover:bg-accent", AGENT_VISUALS[s.agentProvider]!.collapsedClasses.inactive))
+                              : (isActive
+                                  ? "bg-accent"
+                                  : "hover:bg-accent")
                           )}
                         >
                           <Icon className={cn("w-3.5 h-3.5", iconColor)} />
