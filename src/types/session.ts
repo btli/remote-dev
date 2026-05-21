@@ -9,7 +9,7 @@ export type SessionStatus = "active" | "suspended" | "closed" | "trashed";
 /**
  * Agent provider types for agent-aware sessions
  */
-export type AgentProviderType = "claude" | "codex" | "gemini" | "opencode" | "none";
+export type AgentProviderType = "claude" | "codex" | "gemini" | "antigravity" | "opencode" | "none";
 
 /**
  * Worktree type determines the branch name prefix (e.g., feature/, fix/, chore/)
@@ -165,6 +165,14 @@ export const AGENT_PROVIDERS: AgentProviderConfig[] = [
     defaultFlags: [],
   },
   {
+    id: "antigravity",
+    name: "Antigravity CLI",
+    description: "Google's next-generation AI coding agent (successor to Gemini CLI)",
+    command: "agy",
+    configFile: "ANTIGRAVITY.md",
+    defaultFlags: [],
+  },
+  {
     id: "opencode",
     name: "OpenCode",
     description: "Multi-provider AI coding assistant",
@@ -197,6 +205,7 @@ export const AGENT_PRESETS: AgentConfig[] = [
   { id: "clauded", label: "Claude (Daemon)", command: "clauded", description: "Claude daemon mode" },
   { id: "gemini", label: "Gemini", command: "gemini", description: "Google Gemini AI" },
   { id: "geminy", label: "Geminy", command: "geminy", description: "Gemini daemon mode" },
+  { id: "antigravity", label: "Antigravity", command: "agy", description: "Antigravity AI coding agent" },
   { id: "custom", label: "Custom", command: "", description: "Enter custom command" },
 ];
 

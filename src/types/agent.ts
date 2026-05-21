@@ -7,12 +7,12 @@ import type { AppearanceMode, ColorSchemeId } from "./appearance";
 /**
  * Supported AI coding agent providers.
  */
-export type AgentProvider = "claude" | "codex" | "gemini" | "opencode" | "all";
+export type AgentProvider = "claude" | "codex" | "gemini" | "antigravity" | "opencode" | "all";
 
 /**
  * Agent configuration file types.
  */
-export type AgentConfigType = "CLAUDE.md" | "AGENTS.md" | "GEMINI.md" | "OPENCODE.md";
+export type AgentConfigType = "CLAUDE.md" | "AGENTS.md" | "GEMINI.md" | "ANTIGRAVITY.md" | "OPENCODE.md";
 
 /**
  * MCP server transport types.
@@ -248,6 +248,7 @@ export interface ProfileEnvironment {
   CLAUDE_CONFIG_DIR?: string;
   CODEX_HOME?: string;
   GEMINI_HOME?: string;
+  ANTIGRAVITY_HOME?: string;
   OPENCODE_HOME?: string;
   GIT_CONFIG_GLOBAL?: string;
   GIT_SSH_COMMAND?: string;
@@ -312,6 +313,7 @@ export const PROVIDER_DISPLAY_NAMES: Record<AgentProvider, string> = {
   claude: "Claude Code",
   codex: "OpenAI Codex",
   gemini: "Gemini CLI",
+  antigravity: "Antigravity CLI",
   opencode: "OpenCode",
   all: "All Providers",
 };
@@ -326,6 +328,7 @@ export const PROVIDER_CONFIG_FILES: Record<
   claude: "CLAUDE.md",
   codex: "AGENTS.md",
   gemini: "GEMINI.md",
+  antigravity: "ANTIGRAVITY.md",
   opencode: "OPENCODE.md",
 };
 
@@ -336,6 +339,7 @@ export const PROVIDER_CLI_COMMANDS: Record<AgentProvider, string> = {
   claude: "claude",
   codex: "codex",
   gemini: "gemini",
+  antigravity: "agy",
   opencode: "opencode",
   all: "",
 };
@@ -347,6 +351,7 @@ export const PROVIDER_CONFIG_DIRS: Record<AgentProvider, string> = {
   claude: ".claude",
   codex: ".codex",
   gemini: ".gemini",
+  antigravity: ".gemini",
   opencode: ".config/opencode",
   all: "",
 };

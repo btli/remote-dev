@@ -3,8 +3,8 @@ import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as AgentConfigService from "@/services/agent-config-service";
 import type { AgentProvider, AgentConfigType } from "@/types/agent";
 
-const VALID_PROVIDERS: AgentProvider[] = ["claude", "codex", "gemini", "opencode", "all"];
-const VALID_CONFIG_TYPES: AgentConfigType[] = ["CLAUDE.md", "AGENTS.md", "GEMINI.md"];
+const VALID_PROVIDERS: AgentProvider[] = ["claude", "codex", "gemini", "antigravity", "opencode", "all"];
+const VALID_CONFIG_TYPES: AgentConfigType[] = ["CLAUDE.md", "AGENTS.md", "GEMINI.md", "ANTIGRAVITY.md", "OPENCODE.md"];
 
 /**
  * GET /api/agent-configs - Get all agent configs for the current user

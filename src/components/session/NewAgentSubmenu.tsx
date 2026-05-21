@@ -80,12 +80,13 @@ export function invalidateAgentCLIStatus(): void {
   notify();
 }
 
-/** Show all four providers even when uninstalled — disabled items are useful
+/** Show all providers even when uninstalled — disabled items are useful
  * affordances pointing users at the install instructions in Settings. */
 const ALL_PROVIDERS: Array<Exclude<AgentProviderType, "none">> = [
   "claude",
   "codex",
   "gemini",
+  "antigravity",
   "opencode",
 ];
 

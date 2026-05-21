@@ -58,6 +58,7 @@ const PROVIDER_CONFIG_FILES: Array<{
   { provider: "claude", dir: ".claude", filename: "CLAUDE.md", displayName: "Claude Code" },
   { provider: "codex", dir: ".codex", filename: "AGENTS.md", displayName: "OpenAI Codex" },
   { provider: "gemini", dir: ".gemini", filename: "GEMINI.md", displayName: "Gemini CLI" },
+  { provider: "antigravity", dir: ".gemini", filename: "ANTIGRAVITY.md", displayName: "Antigravity CLI" },
   {
     provider: "opencode",
     dir: join(".config", "opencode"),

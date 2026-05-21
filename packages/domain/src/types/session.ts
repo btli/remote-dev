@@ -10,7 +10,7 @@ export type SessionStatusType = "active" | "suspended" | "closed" | "trashed";
 /**
  * Agent provider types for agent-aware sessions
  */
-export type AgentProviderType = "claude" | "codex" | "gemini" | "opencode" | "none";
+export type AgentProviderType = "claude" | "codex" | "gemini" | "antigravity" | "opencode" | "none";
 
 /**
  * Terminal session data transfer object
@@ -113,6 +113,14 @@ export const AGENT_PROVIDERS: AgentProviderConfig[] = [
     description: "Google's Gemini AI for code assistance",
     command: "gemini",
     configFile: "GEMINI.md",
+    defaultFlags: [],
+  },
+  {
+    id: "antigravity",
+    name: "Antigravity CLI",
+    description: "Google's next-generation AI coding agent (successor to Gemini CLI)",
+    command: "agy",
+    configFile: "ANTIGRAVITY.md",
     defaultFlags: [],
   },
   {

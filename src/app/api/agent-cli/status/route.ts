@@ -72,7 +72,7 @@ export const POST = withAuth(async (request) => {
     return errorResponse("Provider is required and cannot be 'all'", 400);
   }
 
-  const validProviders = ["claude", "codex", "gemini", "opencode"];
+  const validProviders = ["claude", "codex", "gemini", "antigravity", "opencode"];
   if (!validProviders.includes(provider)) {
     return errorResponse(`Invalid provider: ${provider}`, 400);
   }

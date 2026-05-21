@@ -423,17 +423,95 @@ OpenCode supports multiple AI providers. Configure in ~/.config/opencode/config.
 `,
 };
 
+const TYPESCRIPT_ANTIGRAVITY_TEMPLATE: AgentConfigTemplate = {
+  id: "typescript-antigravity",
+  name: "TypeScript - Antigravity",
+  description: "Antigravity CLI configuration for TypeScript/Node.js projects",
+  provider: "antigravity",
+  configType: "ANTIGRAVITY.md",
+  tags: ["typescript", "javascript", "node", "bun"],
+  projectType: "typescript",
+  content: `# ANTIGRAVITY.md - TypeScript Project
+
+## Project Setup
+This is a TypeScript project using modern tooling. Antigravity CLI (agy) is the successor to Gemini CLI.
+
+## Development Workflow
+1. \`bun install\` - Install dependencies
+2. \`bun run dev\` - Start development
+3. \`bun run typecheck\` - Verify types
+4. \`bun run test\` - Run tests
+5. \`bun run build\` - Build for production
+
+## Code Standards
+- TypeScript strict mode enabled
+- ESLint for code quality
+- Prettier for formatting
+`,
+};
+
+const PYTHON_ANTIGRAVITY_TEMPLATE: AgentConfigTemplate = {
+  id: "python-antigravity",
+  name: "Python - Antigravity",
+  description: "Antigravity CLI configuration for Python projects",
+  provider: "antigravity",
+  configType: "ANTIGRAVITY.md",
+  tags: ["python", "uv"],
+  projectType: "python",
+  content: `# ANTIGRAVITY.md - Python Project
+
+## Development Setup
+Python project using uv for package management.
+
+## Commands
+- \`uv sync\` - Sync dependencies
+- \`uv run pytest\` - Run tests
+- \`uv run ruff check --fix\` - Fix linting issues
+`,
+};
+
+const RUST_ANTIGRAVITY_TEMPLATE: AgentConfigTemplate = {
+  id: "rust-antigravity",
+  name: "Rust - Antigravity",
+  description: "Antigravity CLI configuration for Rust projects",
+  provider: "antigravity",
+  configType: "ANTIGRAVITY.md",
+  tags: ["rust", "cargo"],
+  projectType: "rust",
+  content: `# ANTIGRAVITY.md - Rust Project
+
+## Project Overview
+Rust project managed with Cargo.
+
+## Commands
+\`\`\`bash
+cargo build          # Build project
+cargo run            # Run project
+cargo test           # Run tests
+cargo clippy         # Lint
+cargo fmt            # Format code
+\`\`\`
+
+## Code Quality
+- Run \`cargo clippy\` before commits
+- Use \`cargo fmt\` for consistent formatting
+\`\`\``,
+};
+
 // Collection of all built-in templates
 const BUILT_IN_TEMPLATES: AgentConfigTemplate[] = [
   TYPESCRIPT_CLAUDE_TEMPLATE,
   TYPESCRIPT_CODEX_TEMPLATE,
   TYPESCRIPT_GEMINI_TEMPLATE,
+  TYPESCRIPT_ANTIGRAVITY_TEMPLATE,
   TYPESCRIPT_OPENCODE_TEMPLATE,
   PYTHON_CLAUDE_TEMPLATE,
   PYTHON_CODEX_TEMPLATE,
   PYTHON_GEMINI_TEMPLATE,
+  PYTHON_ANTIGRAVITY_TEMPLATE,
   PYTHON_OPENCODE_TEMPLATE,
   RUST_CLAUDE_TEMPLATE,
+  RUST_ANTIGRAVITY_TEMPLATE,
   RUST_OPENCODE_TEMPLATE,
   REACT_CLAUDE_TEMPLATE,
   NEXTJS_CLAUDE_TEMPLATE,

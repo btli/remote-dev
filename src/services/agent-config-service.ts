@@ -273,6 +273,7 @@ export function getConfigTypeForProvider(
     claude: "CLAUDE.md",
     codex: "AGENTS.md",
     gemini: "GEMINI.md",
+    antigravity: "ANTIGRAVITY.md",
     opencode: "OPENCODE.md",
   };
   return mapping[provider];

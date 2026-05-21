@@ -22,6 +22,7 @@ export const AGENT_CONFIG_FILES = [
   "CLAUDE.md",
   "AGENTS.md",
   "GEMINI.md",
+  "ANTIGRAVITY.md",
   "OPENCODE.md",
   ".claude/settings.json",
   ".codex/settings.json",

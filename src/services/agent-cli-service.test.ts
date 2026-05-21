@@ -15,6 +15,7 @@ describe("AgentCLIService", () => {
       expect(getCLICommand("claude")).toBe("claude");
       expect(getCLICommand("codex")).toBe("codex");
       expect(getCLICommand("gemini")).toBe("gemini");
+      expect(getCLICommand("antigravity")).toBe("agy");
       expect(getCLICommand("opencode")).toBe("opencode");
     });
 
@@ -42,6 +43,12 @@ describe("AgentCLIService", () => {
       expect(instructions).toContain("gemini-cli");
     });
 
+    it("returns installation instructions for antigravity", () => {
+      const instructions = getInstallInstructions("antigravity");
+      expect(instructions).toContain("google.dev/antigravity");
+      expect(instructions).toContain("| sh");
+    });
+
     it("returns installation instructions for opencode", () => {
       const instructions = getInstallInstructions("opencode");
       expect(instructions).toContain("npm install -g");
@@ -54,6 +61,7 @@ describe("AgentCLIService", () => {
       expect(getProviderDocsUrl("claude")).toContain("anthropic.com");
       expect(getProviderDocsUrl("codex")).toContain("openai.com");
       expect(getProviderDocsUrl("gemini")).toContain("geminicli.com");
+      expect(getProviderDocsUrl("antigravity")).toContain("antigravity.google");
       expect(getProviderDocsUrl("opencode")).toContain("opencode.ai");
     });
   });
@@ -71,6 +79,11 @@ describe("AgentCLIService", () => {
 
     it("returns GOOGLE_API_KEY for gemini", () => {
       const envVars = getRequiredEnvVars("gemini");
+      expect(envVars).toContain("GOOGLE_API_KEY");
+    });
+
+    it("returns GOOGLE_API_KEY for antigravity", () => {
+      const envVars = getRequiredEnvVars("antigravity");
       expect(envVars).toContain("GOOGLE_API_KEY");
     });
 
@@ -111,6 +124,12 @@ describe("AgentCLIService", () => {
 
     it("returns invalid for gemini without GOOGLE_API_KEY", () => {
       const result = checkRequiredEnvVars("gemini", {});
+      expect(result.valid).toBe(false);
+      expect(result.missing).toContain("GOOGLE_API_KEY");
+    });
+
+    it("returns invalid for antigravity without GOOGLE_API_KEY", () => {
+      const result = checkRequiredEnvVars("antigravity", {});
       expect(result.valid).toBe(false);
       expect(result.missing).toContain("GOOGLE_API_KEY");
     });

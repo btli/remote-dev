@@ -107,6 +107,7 @@ export async function checkAllCLIStatus(): Promise<AllCLIStatus> {
     "claude",
     "codex",
     "gemini",
+    "antigravity",
     "opencode",
   ];
 
@@ -170,6 +171,9 @@ npm install -g @google/gemini-cli
 # Or with bun
 bun install -g @google/gemini-cli`,
 
+    antigravity: `# Install Antigravity CLI
+curl -sSL https://google.dev/antigravity/install | sh`,
+
     opencode: `# Install OpenCode CLI
 npm install -g opencode
 # Or with bun
@@ -189,6 +193,7 @@ export function getProviderDocsUrl(
     claude: "https://docs.anthropic.com/claude-code",
     codex: "https://platform.openai.com/docs/codex-cli",
     gemini: "https://geminicli.com/docs/",
+    antigravity: "https://antigravity.google/docs/cli-overview",
     opencode: "https://opencode.ai/docs/",
   };
 
@@ -240,6 +245,7 @@ export function getRequiredEnvVars(
     claude: ["ANTHROPIC_API_KEY"],
     codex: ["OPENAI_API_KEY"],
     gemini: ["GOOGLE_API_KEY"],
+    antigravity: ["GOOGLE_API_KEY"],
     opencode: [], // OpenCode supports multiple providers, configured in its own config
   };
 

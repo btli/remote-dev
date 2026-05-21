@@ -21,7 +21,7 @@ import { TmuxEnvironment } from "./TmuxEnvironment";
 /**
  * Supported agent providers for profile-specific config directories.
  */
-export type AgentProvider = "claude" | "codex" | "gemini" | "opencode" | "all";
+export type AgentProvider = "claude" | "codex" | "gemini" | "antigravity" | "opencode" | "all";
 
 export interface ProfileIsolationOptions {
   /** The profile directory (e.g., ~/.remote-dev/profiles/{id}/) */
@@ -180,6 +180,13 @@ export class ProfileIsolation {
   }
 
   /**
+   * Get the Antigravity config directory.
+   */
+  getAntigravityHome(): string {
+    return join(this.profileDir, ".gemini");
+  }
+
+  /**
    * Get the OpenCode config directory.
    */
   getOpenCodeConfigDir(): string {
@@ -230,6 +237,9 @@ export class ProfileIsolation {
     }
     if (this.provider === "all" || this.provider === "gemini") {
       env.GEMINI_HOME = this.getGeminiHome();
+    }
+    if (this.provider === "all" || this.provider === "antigravity") {
+      env.ANTIGRAVITY_HOME = this.getAntigravityHome();
     }
     if (this.provider === "all" || this.provider === "opencode") {
       env.OPENCODE_CONFIG_DIR = this.getOpenCodeConfigDir();
