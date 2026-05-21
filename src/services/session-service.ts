@@ -245,6 +245,7 @@ export async function createSessionWithDedupFlag(
   }
 
   // Build a partial session stub for the plugin to introspect if needed.
+  const isAgentTerminal = terminalType === "agent" || terminalType === "loop";
   const pluginSessionStub: Partial<TerminalSession> = {
     id: sessionId,
     userId,
@@ -252,7 +253,7 @@ export async function createSessionWithDedupFlag(
     projectId: input.projectId,
     profileId: input.profileId ?? null,
     terminalType,
-    agentProvider: input.agentProvider ?? "claude",
+    agentProvider: isAgentTerminal ? (input.agentProvider ?? "claude") : null,
   };
 
   // Pre-resolve folder/user preferences so we can layer in per-provider
@@ -765,7 +766,7 @@ export async function createSessionWithDedupFlag(
         terminalType,
         typeMetadata,
         scopeKey: input.scopeKey ?? null,
-        agentProvider: input.agentProvider ?? "claude",
+        agentProvider: isAgentTerminal ? (mergedAgentProvider ?? "claude") : null,
         // Initialize the agent-style exit-state machine for any plugin that
         // opts into the exit-screen / restart UX (agent / loop / ssh today).
         // Driven by the plugin registry capability flag, not hardcoded types.

@@ -54,7 +54,7 @@ export const POST = withApiAuth(async (request, { userId, params }) => {
     const input: CreateSessionInput = {
       name,
       terminalType: body.terminalType || parent.terminalType || "agent",
-      agentProvider: (body.agentProvider || parent.agentProvider || "claude") as CreateSessionInput["agentProvider"],
+      agentProvider: (body.agentProvider ?? parent.agentProvider ?? undefined) as CreateSessionInput["agentProvider"],
       projectId: resolvedProjectId,
       projectPath: body.workingDirectory || parent.projectPath || undefined,
       profileId: body.profileId || parent.profileId || undefined,

@@ -59,6 +59,7 @@ bun run db:migrate-agents  # One-time agent session migration
 bun run db:migrate-github-accounts  # Backfill GitHub account metadata from existing OAuth accounts
 bun run db:migrate-profile-gitconfigs  # Add [credential] section to existing profile .gitconfig files
 bun run db:migrate-channels  # Migrate existing messages to channels
+bun run db:migrate-agent-provider  # One-time: null out agent_provider on non-agent sessions
 ```
 
 ## Logging (NON-NEGOTIABLE)
