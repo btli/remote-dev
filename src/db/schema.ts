@@ -342,7 +342,7 @@ export const terminalSessions = sqliteTable(
     // Terminal type: shell, agent, file, or custom plugin types
     terminalType: text("terminal_type").$type<TerminalType>().default("shell"),
     // Agent-aware session: which AI agent is associated
-    agentProvider: text("agent_provider").$type<AgentProviderType>().default("claude"),
+    agentProvider: text("agent_provider").$type<AgentProviderType>(),
     // Agent session state (for agent terminal type)
     agentExitState: text("agent_exit_state").$type<AgentExitState>(),
     agentExitCode: integer("agent_exit_code"),
