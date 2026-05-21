@@ -208,8 +208,8 @@ function ProviderLine({ status }: { status: AgentCLISummary }) {
   const label = PROVIDER_DISPLAY_NAMES[status.provider] ?? status.provider;
   return (
     <div className="flex flex-col items-start gap-0.5 min-w-0">
-      <span className="text-sm font-medium truncate max-w-[220px]">{label}</span>
-      <span className="text-[11px] text-muted-foreground truncate max-w-[220px]">
+      <span className="text-xs font-medium truncate max-w-[220px]">{label}</span>
+      <span className="text-[10px] text-muted-foreground truncate max-w-[220px]">
         {status.installed
           ? `v${status.version ?? "?"} · ${status.command}`
           : "Not installed"}
@@ -261,7 +261,6 @@ export function DropdownNewAgentSubmenu({ onSelect, onManage }: SubmenuProps) {
                   key={s.provider}
                   onClick={() => onSelect(s.provider)}
                   disabled={!s.installed}
-                  className="py-2"
                 >
                   <Icon className={`w-3.5 h-3.5 mr-2 shrink-0 ${colorClass}`} />
                   <ProviderLine status={s} />
@@ -322,7 +321,6 @@ export function ContextNewAgentSubmenu({ onSelect, onManage }: SubmenuProps) {
                   key={s.provider}
                   onSelect={() => onSelect(s.provider)}
                   disabled={!s.installed}
-                  className="py-2"
                 >
                   <Icon className={`mr-2 h-4 w-4 shrink-0 ${colorClass}`} />
                   <ProviderLine status={s} />
