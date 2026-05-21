@@ -33,6 +33,23 @@ import {
 } from "@/components/ui/context-menu";
 import type { AgentProviderType } from "@/types/session";
 import { PROVIDER_DISPLAY_NAMES } from "@/types/agent";
+import { AGENT_VISUALS } from "./project-tree/agentVisuals";
+
+/**
+ * Brand-color Tailwind classes for the leading icon on each provider row.
+ * Mirrors the chip palette in `agentVisuals.ts` so the submenu matches the
+ * agent chips in `SessionMetadataBar` and the collapsed sidebar rail icons.
+ * Kept here (rather than in `agentVisuals.ts`) because the chip `classes`
+ * field bundles background/border/text together for chip rendering, whereas
+ * menu rows only need a foreground tint on the svg itself.
+ */
+const PROVIDER_ICON_COLORS: Record<Exclude<AgentProviderType, "none">, string> = {
+  claude: "text-violet-500 dark:text-violet-400",
+  codex: "text-emerald-500 dark:text-emerald-400",
+  gemini: "text-sky-500 dark:text-sky-400",
+  antigravity: "text-pink-500 dark:text-pink-400",
+  opencode: "text-amber-500 dark:text-amber-400",
+};
 
 // ---------------------------------------------------------------------------
 // Module-local cache + lazy fetch hook
@@ -236,17 +253,21 @@ export function DropdownNewAgentSubmenu({ onSelect, onManage }: SubmenuProps) {
         )}
         {!loading && !error && statuses && (
           <>
-            {statuses.map((s) => (
-              <DropdownMenuItem
-                key={s.provider}
-                onClick={() => onSelect(s.provider)}
-                disabled={!s.installed}
-                className="py-2"
-              >
-                <Sparkles className="w-3.5 h-3.5 mr-2 shrink-0" />
-                <ProviderLine status={s} />
-              </DropdownMenuItem>
-            ))}
+            {statuses.map((s) => {
+              const Icon = AGENT_VISUALS[s.provider]?.icon ?? Sparkles;
+              const colorClass = PROVIDER_ICON_COLORS[s.provider] ?? "";
+              return (
+                <DropdownMenuItem
+                  key={s.provider}
+                  onClick={() => onSelect(s.provider)}
+                  disabled={!s.installed}
+                  className="py-2"
+                >
+                  <Icon className={`w-3.5 h-3.5 mr-2 shrink-0 ${colorClass}`} />
+                  <ProviderLine status={s} />
+                </DropdownMenuItem>
+              );
+            })}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={onManage}>
               <SettingsIcon className="w-3.5 h-3.5 mr-2" />
@@ -293,17 +314,21 @@ export function ContextNewAgentSubmenu({ onSelect, onManage }: SubmenuProps) {
         )}
         {!loading && !error && statuses && (
           <>
-            {statuses.map((s) => (
-              <ContextMenuItem
-                key={s.provider}
-                onSelect={() => onSelect(s.provider)}
-                disabled={!s.installed}
-                className="py-2"
-              >
-                <Sparkles className="mr-2 h-4 w-4 shrink-0" />
-                <ProviderLine status={s} />
-              </ContextMenuItem>
-            ))}
+            {statuses.map((s) => {
+              const Icon = AGENT_VISUALS[s.provider]?.icon ?? Sparkles;
+              const colorClass = PROVIDER_ICON_COLORS[s.provider] ?? "";
+              return (
+                <ContextMenuItem
+                  key={s.provider}
+                  onSelect={() => onSelect(s.provider)}
+                  disabled={!s.installed}
+                  className="py-2"
+                >
+                  <Icon className={`mr-2 h-4 w-4 shrink-0 ${colorClass}`} />
+                  <ProviderLine status={s} />
+                </ContextMenuItem>
+              );
+            })}
             <ContextMenuSeparator />
             <ContextMenuItem onSelect={onManage}>
               <SettingsIcon className="mr-2 h-4 w-4" />
