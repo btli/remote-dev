@@ -48,6 +48,8 @@ function parseSessionFile(filePath: string): Promise<{
 } | null> {
   return new Promise((resolve) => {
     const stream = createReadStream(filePath, { encoding: "utf8" });
+    // Swallow destroy-time errors once; readline owns the real error path below.
+    stream.on("error", () => {});
     const rl = createInterface({
       input: stream,
       crlfDelay: Infinity,
@@ -61,8 +63,10 @@ function parseSessionFile(filePath: string): Promise<{
       timestamp?: string;
     } | null = null;
     let firstUserMessage: string | undefined;
+    let done = false;
 
     rl.on("line", (line) => {
+      if (done) return;
       const trimmed = line.trim();
       if (!trimmed) return;
 
@@ -106,7 +110,7 @@ function parseSessionFile(filePath: string): Promise<{
 
         // Stop reading once we have both pieces
         if (header && firstUserMessage) {
-          stream.on("error", () => {});
+          done = true;
           rl.close();
           stream.destroy();
         }
