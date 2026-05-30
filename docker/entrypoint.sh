@@ -36,6 +36,81 @@ fi
 export TMUX_TMPDIR="${RDV_DATA_DIR}/tmux"
 mkdir -p "$TMUX_TMPDIR"
 
+# ──────────────────────────────────────────────────────────────────────────
+# basePath materialization (slug-aware single image)
+#
+# Next.js bakes `basePath`/`assetPrefix` at BUILD time, so the image was built
+# once with the `/rdvslug` sentinel (Dockerfile build stage). Here we rewrite
+# that sentinel to this instance's real slug across the ENTIRE runtime tree so
+# the static build output matches the runtime RDV_BASE_PATH that the node
+# processes read via src/lib/base-path.ts.
+#
+# Scope (Codex B1): rewrite /app/server.js AND /app/.next AND /app/public.
+# `Dockerfile` copies `.next/standalone` -> `/app`, so the standalone entry
+# `/app/server.js` (and its server chunks) also embed the baked basePath; a
+# naive `.next`-only rewrite would leave server.js pointing at /rdvslug.
+# /app/public is scanned too as a defensive safety net: it currently carries
+# NO sentinel (the service worker moved to the runtime-templated route
+# src/app/sw.js/route.ts, and manifest.json uses manifest-relative paths), but
+# scanning it costs nothing and guards against any future sentinel-bearing
+# static asset landing in public/.
+#
+# Slug semantics (Codex M1): under the supervisor, instances are ALWAYS slugged
+# (they live at /<slug>); root (empty SLUG_PREFIX) is the non-k8s build path
+# (local dev / Electron / single-host prod) which builds normally with basePath
+# omitted and does NOT use this image. Materialize-to-empty is supported here
+# (sentinel -> "") for completeness, but the canonical k8s use is a real slug.
+#
+# This pass REWRITES FILES IN /app (the build output), so the image requires a
+# writable root filesystem: `securityContext.readOnlyRootFilesystem: true` is
+# INCOMPATIBLE with this image and would crash the boot. (No manifest in-repo;
+# noted here so a later hardening pass doesn't silently break startup.)
+#
+# No idempotency marker: in standard k8s the image layer is ephemeral per
+# container start, so every fresh boot sees the pristine `/rdvslug` artifact and
+# a marker would never save work; on a hypothetically persisted layer with a
+# changed slug, a marker would cause a silent stale-slug skip. We always run the
+# (no-match-tolerant) pass, then the hard gate — simpler and always correct.
+SLUG_PREFIX="${RDV_BASE_PATH:-}"
+MATERIALIZE_TARGETS=(/app/server.js /app/.next /app/public)
+
+echo "[entrypoint] materializing basePath: /rdvslug -> '${SLUG_PREFIX:-<root>}'"
+# Escape any '#' in the slug so it can't break the sed s### delimiter (slugs are
+# validated to /[a-z0-9-]/ upstream, but be defensive).
+SED_REPL="${SLUG_PREFIX//#/\\#}"
+# Stream NUL-delimited matches straight into `xargs -0 sed` (NUL-safe for any
+# filename — do NOT capture into a shell var, which strips NUL bytes and would
+# glue every path into one bogus argument). `xargs -r` no-ops on zero matches.
+#
+# Under `set -euo pipefail` a no-match grep exits 1 and pipefail would propagate
+# it, aborting the boot before the servers start — and that fires on any
+# sentinel-free tree (root build, or a re-run). So we disable errexit/pipefail
+# for just this pipeline (same `set +e`/`set -e` pattern used around `wait -n`
+# below), then check ONLY sed's exit status: no-match (grep=1, sed not run, or
+# sed=0) is benign; a real sed failure (rc>1 region) still aborts via the gate
+# below and an explicit re-raise here.
+set +e
+set +o pipefail
+grep -rlZ '/rdvslug' "${MATERIALIZE_TARGETS[@]}" 2>/dev/null \
+    | xargs -0 -r sed -i "s#/rdvslug#${SED_REPL}#g"
+SED_RC="${PIPESTATUS[1]}"   # status of `xargs/sed`, independent of grep no-match
+set -o pipefail
+set -e
+if [ "${SED_RC:-0}" -ne 0 ]; then
+    echo "[entrypoint] FATAL: sed failed during basePath materialization (rc=${SED_RC})" >&2
+    exit 1
+fi
+
+# Hard gate (Codex B1): no sentinel may survive ANYWHERE in the runtime tree.
+# A surviving /rdvslug means a broken instance (assets 404, auth loops), so fail
+# loudly at boot instead of serving a half-rewritten app.
+if grep -rq '/rdvslug' "${MATERIALIZE_TARGETS[@]}" 2>/dev/null; then
+    echo "[entrypoint] FATAL: basePath materialization incomplete — '/rdvslug' still present in:" >&2
+    grep -rl '/rdvslug' "${MATERIALIZE_TARGETS[@]}" 2>/dev/null | sed 's/^/[entrypoint]   /' >&2
+    exit 1
+fi
+echo "[entrypoint] basePath materialization complete"
+
 # Seed the authorized_users table by running `bun run db:seed` against this
 # container after first boot:
 #   kubectl -n rdv exec deploy/rdv -- env AUTHORIZED_USERS=... bun run db:seed

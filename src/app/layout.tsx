@@ -25,7 +25,12 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Remote Dev",
   description: "Remote development terminal interface",
-  manifest: "/manifest.json",
+  // Root-absolute asset refs are NOT prefixed by Next's basePath, so make them
+  // runtime-slug-aware via the server-side BASE_PATH. The root layout renders
+  // server-side and BASE_PATH is read at process start (= the real runtime
+  // slug after the entrypoint exports RDV_BASE_PATH), so these emit correct
+  // per-instance URLs with no boot-time materialization needed.
+  manifest: `${BASE_PATH}/manifest.json`,
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
@@ -82,8 +87,17 @@ export default async function RootLayout({
             __html: `window.__RDV_BASE_PATH__=${JSON.stringify(BASE_PATH)};`,
           }}
         />
-        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-        <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
+        {/* Root-absolute hrefs aren't prefixed by Next's basePath; interpolate
+            the server-side BASE_PATH so icons resolve under the instance slug. */}
+        <link
+          rel="icon"
+          type="image/svg+xml"
+          href={`${BASE_PATH}/favicon.svg`}
+        />
+        <link
+          rel="apple-touch-icon"
+          href={`${BASE_PATH}/icons/icon-192x192.png`}
+        />
         <meta name="mobile-web-app-capable" content="yes" />
       </head>
       <body

@@ -31,8 +31,13 @@ import { BASE_PATH, prefixPath } from "@/lib/base-path";
  * `window.__RDV_BASE_PATH__` so the same JS bundle works across instances
  * (per spec NF-4: the build artifact does not bake basePath in). On the
  * server we fall back to the import-time `BASE_PATH` constant.
+ *
+ * Exported so other client code that needs the runtime prefix for things
+ * Next never prefixes (e.g. `next-auth/react` `SessionProvider basePath`,
+ * service-worker registration scope) can reuse the same resolution instead
+ * of re-reading `window.__RDV_BASE_PATH__` ad hoc.
  */
-function runtimeBasePath(): string {
+export function runtimeBasePath(): string {
   if (typeof window !== "undefined") {
     return window.__RDV_BASE_PATH__ ?? BASE_PATH;
   }

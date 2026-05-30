@@ -75,7 +75,18 @@ COPY . .
 # errors — fail the build loudly here instead.
 RUN bun rebuild better-sqlite3 node-pty
 
-ENV NODE_ENV=production
+# Slug-aware image: build ONCE with a sentinel basePath, then rewrite the
+# sentinel to the real per-instance slug at container start (docker/entrypoint.sh).
+# Next.js bakes `basePath`/`assetPrefix` at BUILD time, so we cannot pick the
+# slug at runtime — instead we bake a placeholder. `/rdvslug` is a valid
+# basePath per src/lib/base-path.ts's validator `^(/[a-z0-9][a-z0-9-]*)+$`, and
+# is a unique token unlikely to collide with anything else in the build output.
+# assetPrefix follows basePath automatically, so assets emit under
+# `/rdvslug/_next/...`. The RUNTIME stage deliberately does NOT set
+# RDV_BASE_PATH — the entrypoint materializes the sentinel and exports the real
+# value per instance.
+ENV NODE_ENV=production \
+    RDV_BASE_PATH=/rdvslug
 RUN bun run build
 RUN bun run terminal:build
 
@@ -187,6 +198,11 @@ USER rdv
 # request time).
 RUN node -e "require('better-sqlite3'); require('node-pty'); console.log('native modules OK')"
 
+# NOTE: RDV_BASE_PATH is intentionally NOT set here. The build stage baked the
+# `/rdvslug` sentinel into the static output; the entrypoint rewrites it to the
+# real per-instance slug (from RDV_BASE_PATH injected by the K8s manifest) and
+# then exports the real value for the node processes. Hard-baking it here would
+# defeat the one-image-many-slugs design.
 ENV RDV_DATA_DIR=/var/lib/rdv \
     PORT=6001 \
     TERMINAL_PORT=6002 \

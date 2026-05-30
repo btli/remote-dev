@@ -62,6 +62,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `getBasePath()` when redirecting back to the app so the link flow
   works under `RDV_BASE_PATH`. **Default (empty basePath) deployments
   remain byte-identical**: `apiFetch` becomes a thin pass-through.
+- **k3s slug-aware image (Phase 0 — runtime basePath materialization)**:
+  one container image now serves any instance slug chosen at runtime,
+  removing the per-slug image build requirement. Next.js bakes
+  `basePath`/`assetPrefix` at build time, so the image is built once with a
+  sentinel basePath (`Dockerfile` build stage sets `RDV_BASE_PATH=/rdvslug`)
+  and the container entrypoint (`docker/entrypoint.sh`) rewrites that sentinel
+  to the real per-instance slug — or empty for root — across the FULL runtime
+  tree (`/app/server.js`, `/app/.next`, AND `/app/public`) before starting the
+  servers. The pass is idempotent (PVC done-marker keyed on the target slug)
+  and HARD-FAILS the boot if any `/rdvslug` survives anywhere, so a
+  half-rewritten app never serves. App-owned, root-absolute URLs that Next
+  never prefixes are made slug-aware: `src/app/layout.tsx` interpolates the
+  server-side `BASE_PATH` into the PWA manifest link, favicon, and
+  apple-touch-icon; `next-auth/react` `SessionProvider` is mounted with
+  `basePath={`${slug}/api/auth`}` (via the now-exported `runtimeBasePath()`
+  helper in `src/lib/api-fetch.ts`) so client session/CSRF/signout calls hit
+  the slug; the `next/image` logo in `Header.tsx` and the browser-notification
+  icon in `useNotificationPermission.ts` are runtime-prefixed; the service
+  worker is now served from a runtime-templated route handler
+  (`src/app/sw.js/route.ts`, replacing the static `public/sw.js`) whose cached
+  URLs are interpolated from the server-side `BASE_PATH`, so the PWA works both
+  at root (single-host prod) and under a slug with no build-time baking —
+  `ServiceWorkerRegistration` registers `${prefix}/sw.js` with a matching
+  `${prefix}/` scope; `public/manifest.json` uses manifest-relative
+  icon/`start_url` paths so it is correct under any slug and at root with no
+  materialization. Default (empty basePath) local/Electron builds are
+  unaffected — they build normally with `basePath` omitted and do not use this
+  image.
 - **Multi-instance hosting (Phase 5 — K8s production hardening)**: new
   `/api/healthz` (liveness) and `/api/readyz` (readiness) probes plus the
   full set of container hardening required to safely run multiple

@@ -1,4 +1,5 @@
 import { useCallback, useSyncExternalStore } from "react";
+import { runtimeBasePath } from "@/lib/api-fetch";
 
 type Listener = () => void;
 const listeners = new Set<Listener>();
@@ -49,7 +50,9 @@ export function sendBrowserNotification(options: {
   try {
     const notification = new Notification(options.title, {
       body: options.body,
-      icon: "/favicon.ico",
+      // Root-absolute icon path is not basePath-prefixed; resolve under the
+      // runtime slug so the notification badge loads on slug instances.
+      icon: `${runtimeBasePath()}/favicon.ico`,
       tag: options.tag,
     });
 

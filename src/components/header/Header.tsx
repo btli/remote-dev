@@ -22,6 +22,7 @@ import { LogOut } from "lucide-react";
 import Image from "next/image";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { ProxyEndpointIndicator } from "@/components/litellm/ProxyEndpointIndicator";
+import { runtimeBasePath } from "@/lib/api-fetch";
 
 interface HeaderProps {
   isGitHubConnected: boolean;
@@ -31,6 +32,12 @@ interface HeaderProps {
 
 function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps) {
   const isMobile = useMobile();
+  // `next/image` does NOT prefix Next's basePath onto a root-absolute `src`
+  // (verified: build output keeps bare "/favicon.svg"), so under a slug
+  // instance the logo would 404 at the bare origin. Prefix with the runtime
+  // basePath (same SSR-injected source apiFetch uses) so it resolves under the
+  // instance slug.
+  const faviconSrc = `${runtimeBasePath()}/favicon.svg`;
 
   // The maintenance view is now a per-repo terminal-type tab rather than a
   // global modal. Dispatch a window event so SessionManager can pick a
@@ -48,7 +55,7 @@ function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps)
         <header className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-card">
           <div className="flex items-center gap-2">
             <Image
-              src="/favicon.svg"
+              src={faviconSrc}
               alt="Remote Dev"
               width={24}
               height={24}
@@ -96,7 +103,7 @@ function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps)
         {/* Logo */}
         <div className="flex items-center gap-3">
           <Image
-            src="/favicon.svg"
+            src={faviconSrc}
             alt="Remote Dev"
             width={32}
             height={32}
