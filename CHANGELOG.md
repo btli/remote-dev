@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Scaffolded the k3s Supervisor control-plane service (apps/supervisor): Next.js + Drizzle schema, role-based auth (admin/operator/viewer, owner-scoped instances), @kubernetes/client-node wrapper, and a controller-process skeleton — foundation for Phase 1 of the k3s supervisor epic (remote-dev-jvcx.3).
 - **Documentation overhaul — new docs**: added `docs/README.md` (docs index /
   landing page), `docs/DEPLOYMENT.md` (blue/green + HMAC auto-deploy webhook),
   `docs/AGENTS.md` (the 5 agent CLIs + profile isolation), and

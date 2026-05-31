@@ -496,6 +496,14 @@ bd create --title "Phase 4: cloud-VM + Proxmox MachineProviders, auto scale-up/d
 
 ## 14. Open questions (resolve before/with Phase 1)
 
+> **Phase 1 status:** being built task-by-task against this section. `jvcx.3`
+> (the `apps/supervisor` scaffold) has landed: bun workspace, Drizzle schema
+> (owner-scoped instances), role-based `withSupervisorAuth`, `@kubernetes/client-node`
+> wrapper, slug validation + reserved names, dashboard shell, health route,
+> auth-wrapped API route stubs, and a controller-process skeleton. Provisioning
+> (`jvcx.4`), storage discovery (`jvcx.5`), the router (`jvcx.6`), and
+> RBAC/Deployments (`jvcx.7`) are the remaining Phase-1 tasks.
+
 1. **Host + tunnel:** confirm the single external host (e.g. `dev.example.com`) and that the
    existing Cloudflare tunnel can be pointed at the router Service.
 2. **Cloudflare Access:** one app covering `dev.example.com/*` for instances + a separate app for
@@ -503,8 +511,11 @@ bd create --title "Phase 4: cloud-VM + Proxmox MachineProviders, auto scale-up/d
 3. **GitHub OAuth at scale:** one GitHub App with callback `https://dev.example.com/<slug>/api/auth/callback/github`
    per instance, vs a shared wildcard-capable GitHub App. Decide before enabling GitHub features
    on provisioned instances.
-4. **Instance ownership / multi-user:** are instances per-operator (owner-scoped lists) or a shared
-   fleet all operators manage? Affects `instance.ownerId` enforcement in the API.
+4. **Instance ownership / multi-user:** **RESOLVED — instances are owner-scoped** (operators
+   manage only their own; admins see all). `instance.ownerId` enforcement is baked into the
+   schema and the `canManageInstance(user, instance)` auth helper from Phase 1 (`jvcx.3`):
+   non-admin list/detail/mutation paths funnel through it, and detail returns 404 (not 403) for
+   instances the caller doesn't own so existence isn't leaked.
 5. **Default storage target:** which backend is the default in the dropdown for this cluster
    (local-path vs Longhorn)? Drives the resiliency default.
 6. **Router vs Supervisor co-location:** ship the router as a separate Deployment (recommended,

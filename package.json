@@ -5,7 +5,8 @@
   "author": "Remote Dev Team",
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "apps/*"
   ],
   "main": "dist-electron/main/index.js",
   "scripts": {
@@ -15,6 +16,8 @@
     "build": "next build --experimental-build-mode compile",
     "start": "dotenv -e .env.local -- sh -c 'next start -p $PORT'",
     "start:terminal": "dotenv -e .env.local -- tsx src/server/index.ts",
+    "dev:supervisor": "cd apps/supervisor && bun run dev",
+    "build:supervisor": "cd apps/supervisor && bun run build",
     "rdv": "bun run scripts/rdv.ts",
     "rdv:dev": "bun run scripts/rdv.ts start dev",
     "rdv:prod": "bun run scripts/rdv.ts start prod",

@@ -1,0 +1,27 @@
+# Dependencies (bun's isolated layout creates a local node_modules with
+# symlinks into the repo-root store — never commit it).
+node_modules/
+.vite/
+
+# Next.js
+/.next/
+/out/
+next-env.d.ts
+
+# Build output
+/dist/
+
+# Local data (SQLite) + drizzle generated migrations
+/.data/
+/drizzle/
+
+# Env
+.env
+.env.local
+.env*.local
+# Re-include the documented template (the repo-root .gitignore's broad `.env*`
+# rule would otherwise swallow it).
+!.env.example
+
+# Misc
+*.tsbuildinfo
