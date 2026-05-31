@@ -12,7 +12,7 @@ if (!process.env.LC_CTYPE) process.env.LC_CTYPE = "en_US.UTF-8";
 if (!process.env.TERM) process.env.TERM = "xterm-256color";
 
 import { config } from "dotenv";
-import { createTerminalServer } from "./terminal.js";
+import { createTerminalServer, shutdownTerminalConnections } from "./terminal.js";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
 import { updateScheduler } from "../services/update-scheduler.js";
 import { autoUpdateOrchestrator } from "../infrastructure/container.js";
@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { createLogger } from "../lib/logger.js";
 import { closeLogDatabase } from "../infrastructure/logging/LogDatabase.js";
 import { acquireInstanceLock, releaseInstanceLock } from "../lib/instance-lock.js";
+import { withTimeout } from "../lib/with-timeout.js";
 
 const log = createLogger("Server");
 
@@ -39,6 +40,21 @@ try {
 
 const TERMINAL_SOCKET = process.env.TERMINAL_SOCKET;
 const TERMINAL_PORT = parseInt(process.env.TERMINAL_PORT || "6002");
+
+/**
+ * Guards against a second signal racing the shutdown already in flight. The
+ * first SIGTERM/SIGINT/SIGHUP runs the (bounded) cleanup; a second one short-
+ * circuits straight to exit so we can't double-run cleanup or hang.
+ */
+let shuttingDown = false;
+
+/**
+ * Hard ceiling on async cleanup during shutdown. The deploy stop phase
+ * (`scripts/deploy.ts` `PROCESS_STOP_TIMEOUT_MS`) SIGKILLs us at 10s; a
+ * SIGKILL can't release the instance lock or sockets. Cap cleanup well under
+ * that so we always reach the explicit `releaseInstanceLock()` + `exit(0)`.
+ */
+const SHUTDOWN_CLEANUP_TIMEOUT_MS = 7_000;
 
 /**
  * Check if the rdv CLI is installed and accessible.
@@ -107,30 +123,73 @@ async function startServer(): Promise<void> {
     .catch((error) => log.error("Failed to auto-start LiteLLM", { error: String(error) }));
 
   async function shutdown(signal: string): Promise<void> {
+    // A second signal while we're already tearing down must not re-run
+    // cleanup or wedge — force an immediate exit instead.
+    if (shuttingDown) {
+      log.warn("Second shutdown signal received during teardown — exiting now", { signal });
+      process.exit(0);
+    }
+    shuttingDown = true;
     log.info("Shutdown signal received", { signal });
 
-    updateScheduler.stop();
-    autoUpdateOrchestrator.stop();
-
+    // Synchronous stops — cheap, no awaits. Guarded so a synchronous throw
+    // here can't escape as an unhandledRejection (shutdown is async, invoked
+    // fire-and-forget from the signal handler) and skip the graceful tail
+    // below (terminal teardown + lock release + exit).
     try {
-      await schedulerOrchestrator.stop();
-      log.info("Scheduler stopped");
-    } catch (error) {
-      log.error("Error stopping scheduler", { error: String(error) });
+      updateScheduler.stop();
+      autoUpdateOrchestrator.stop();
+    } catch (err) {
+      log.error("Error during synchronous shutdown stops", { error: String(err) });
     }
 
-    try {
-      const { litellmProcessManager } = await import("../services/litellm-process-manager.js");
-      await litellmProcessManager.stop();
-    } catch (error) {
-      log.error("Error stopping LiteLLM", { error: String(error) });
+    // Bound the async cleanup so we ALWAYS reach the lock release + exit
+    // below within the deploy's 10s stop window. If a hung scheduler / proxy
+    // teardown blows past SHUTDOWN_CLEANUP_TIMEOUT_MS we stop waiting and
+    // proceed to exit anyway. A timeout here is far less harmful than being
+    // SIGKILLed (which orphans the instance lock + sockets).
+    const cleanup = (async () => {
+      try {
+        await schedulerOrchestrator.stop();
+        log.info("Scheduler stopped");
+      } catch (error) {
+        log.error("Error stopping scheduler", { error: String(error) });
+      }
+
+      try {
+        const { litellmProcessManager } = await import("../services/litellm-process-manager.js");
+        await litellmProcessManager.stop();
+      } catch (error) {
+        log.error("Error stopping LiteLLM", { error: String(error) });
+      }
+
+      try {
+        const { closeAnalyticsDatabase } = await import("../infrastructure/analytics/AnalyticsDatabase.js");
+        closeAnalyticsDatabase();
+      } catch { /* ignore */ }
+    })();
+
+    const { timedOut } = await withTimeout(cleanup, SHUTDOWN_CLEANUP_TIMEOUT_MS);
+    if (timedOut) {
+      log.warn("Shutdown cleanup exceeded timeout — exiting without finishing cleanup", {
+        timeoutMs: SHUTDOWN_CLEANUP_TIMEOUT_MS,
+      });
     }
 
+    // Tear down terminal connections (destroy PTYs, close WebSockets; tmux
+    // sessions are preserved). Synchronous + fast, so it runs OUTSIDE the
+    // bounded async race — this guarantees PTY teardown even if the async
+    // cleanup above timed out. terminal.ts no longer self-exits or traps
+    // signals; index.ts is the single shutdown authority (remote-dev-i85i).
     try {
-      const { closeAnalyticsDatabase } = await import("../infrastructure/analytics/AnalyticsDatabase.js");
-      closeAnalyticsDatabase();
-    } catch { /* ignore */ }
+      shutdownTerminalConnections();
+    } catch (e) {
+      log.error("Error during terminal connection cleanup", { error: String(e) });
+    }
 
+    // Always run these, even if cleanup timed out. `instance-lock.ts` also
+    // releases on `process.on("exit")`, so exit(0) is a backstop — but call
+    // it explicitly so a hung exit listener can't leave the lock orphaned.
     closeLogDatabase();
     releaseInstanceLock();
     process.exit(0);

@@ -161,6 +161,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Production deploy/restart resilience** (remote-dev-i85i): auto-deploy
+  restarts could wedge with "Terminal socket not ready" and were
+  undiagnosable because all child stdio was discarded. Three fixes: (1)
+  `rdv.ts` now redirects the prod terminal + Next.js child stdout/stderr to
+  append-only `~/.remote-dev/logs/{terminal,nextjs}.log` (with a per-restart
+  banner; falls back to inherited stdio if the log can't be opened, and dev
+  mode is unchanged); (2) the terminal server's graceful shutdown is now
+  bounded (7s) and consolidated into a single authority in
+  `src/server/index.ts` — `terminal.ts` no longer self-exits or traps signals
+  — so SIGTERM always exits cleanly within the deploy's 10s window, releasing
+  the instance lock instead of being SIGKILLed; (3) `deploy.ts`'s stop phase
+  now clears a stale instance lock (ownership-checked: only same-host,
+  dead-holder locks are removed; a live owner is preserved).
 - **Mobile release CI**: Android `:app:signReleaseBundle` no longer crashes
   with `Tag number over 30 is not supported`. The Gradle signing config
   now sets `storeType = "PKCS12"` by default (matching `keytool`'s modern

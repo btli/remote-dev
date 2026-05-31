@@ -38,7 +38,7 @@ import {
   renameSync,
 } from "fs";
 import { join } from "path";
-import { homedir } from "os";
+import { homedir, hostname as osHostname } from "os";
 import http from "http";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -225,6 +225,22 @@ function isProcessRunning(pid: number): boolean {
   }
 }
 
+// Liveness probe for the instance-lock holder. Unlike isProcessRunning above
+// (which treats EPERM as "dead"), this mirrors instance-lock.ts's isPidAlive:
+// EPERM means the process EXISTS but is owned by another user, so it is alive.
+// We MUST err toward "alive" here so the deploy never deletes a live lock it
+// merely can't signal — wrongly removing a held lock is the failure this
+// ownership check exists to prevent.
+function isLockHolderAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    return code === "EPERM";
+  }
+}
+
 // Kill an entire process group by negative PID. Servers are spawned
 // `detached: true` so each is its own session/pgid leader — signalling
 // `-pid` reaches every descendant (tsx wrapper + actual node server)
@@ -300,6 +316,47 @@ function stopCurrentServers(): void {
     } catch {
       // Ignore
     }
+  }
+
+  // Clear a STALE instance lock (src/lib/instance-lock.ts). A SIGKILLed
+  // terminal server can't release its own lock on the way out, and a leftover
+  // lock would block the restart we're about to trigger via rdv.ts. The deploy
+  // lock already serializes deploys, but a manual out-of-band `rdv:prod` could
+  // hold a live lock — so we mirror releaseInstanceLock()'s defensiveness and
+  // only remove the lock when it's same-host AND its holder PID is dead. A
+  // live-owner lock is preserved (we warn instead). Only deploy.ts clears the
+  // lock; rdv.ts manual start must NOT, so it preserves the double-start guard.
+  const instanceLock = join(DATA_DIR, "instance.lock");
+  try {
+    if (existsSync(instanceLock)) {
+      let lockPid: number | null = null;
+      let lockHost: string | null = null;
+      try {
+        const parsed = JSON.parse(readFileSync(instanceLock, "utf-8"));
+        if (parsed && typeof parsed === "object") {
+          if (typeof parsed.pid === "number") lockPid = parsed.pid;
+          if (typeof parsed.hostname === "string") lockHost = parsed.hostname;
+        }
+      } catch {
+        // Unreadable/malformed lock → treat as stale and remove below.
+      }
+
+      const sameHost = lockHost === null || lockHost === osHostname();
+      const holderAlive = lockPid !== null && isLockHolderAlive(lockPid);
+
+      if (sameHost && !holderAlive) {
+        unlinkSync(instanceLock);
+        logDeploy(
+          `Removed stale instance lock (pid=${lockPid ?? "?"}, host=${lockHost ?? "?"})`,
+        );
+      } else {
+        logError(
+          `Instance lock held by a live process (pid=${lockPid ?? "?"}, host=${lockHost ?? "?"}) — leaving it in place`,
+        );
+      }
+    }
+  } catch {
+    // Ignore
   }
 
   logDeploy("Servers stopped");
