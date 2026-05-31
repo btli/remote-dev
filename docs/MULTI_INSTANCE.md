@@ -6,12 +6,16 @@ is a single-replica StatefulSet with its own PVC, SQLite database, tmux
 namespace, and `AUTH_SECRET`.
 
 > **Status — superseded approach.** The Traefik/Ingress prefix-stripping model
-> documented here is being superseded by the k3s **"supervisor platform"**
-> (supervisor-owned router + slug-aware data-plane image). That design is a
-> **DRAFT** — see
-> [`docs/plans/2026-05-30-k3s-supervisor-platform.md`](./plans/2026-05-30-k3s-supervisor-platform.md);
-> the `apps/supervisor` control plane is **not yet built**. The manifests below
-> remain valid for hand-rolled multi-instance hosting today.
+> documented here (the per-instance `IngressRoute` in "Ingress (Traefik
+> example)" below) is **superseded** by the k3s **"supervisor platform"**: a
+> supervisor-owned **router** that routes `/<slug>/*` to a slug-aware data-plane
+> image by convention — **no per-instance Ingress object at all**. The Phase-1
+> control plane (`apps/supervisor` + `apps/supervisor-router`) now exists; deploy
+> it with the runbook **[`docs/SUPERVISOR_DEPLOY.md`](./SUPERVISOR_DEPLOY.md)**
+> (manifests in [`deploy/k8s/supervisor/`](../deploy/k8s/supervisor/)). Design:
+> [`docs/plans/2026-05-30-k3s-supervisor-platform.md`](./plans/2026-05-30-k3s-supervisor-platform.md).
+> The hand-rolled manifests below remain valid for static multi-instance hosting
+> without the Supervisor.
 >
 > Regardless of orchestration approach, **`src/lib/base-path.ts` is the runtime
 > single source of truth for `RDV_BASE_PATH`** URL prefixing (ESLint-guarded;
@@ -20,8 +24,9 @@ namespace, and `AUTH_SECRET`.
 > hosting".
 
 See also:
+- `docs/SUPERVISOR_DEPLOY.md` — **deploy runbook for the k3s supervisor platform** (router + control plane; supersedes the per-instance IngressRoute model below)
 - `docs/plans/multi-instance-basepath.md` — the design spec and acceptance criteria
-- `docs/plans/2026-05-30-k3s-supervisor-platform.md` — the newer k3s supervisor platform (DRAFT)
+- `docs/plans/2026-05-30-k3s-supervisor-platform.md` — the k3s supervisor platform design
 - `docs/SETUP.md` — single-host installation
 - `Dockerfile` — image build (multi-arch supported via `buildx`)
 
@@ -259,6 +264,13 @@ spec:
 ---
 
 ## Ingress (Traefik example)
+
+> **Superseded by the supervisor router.** Under the k3s supervisor platform you
+> do **not** create this `IngressRoute` (or any per-instance Ingress): the
+> stateless `router` Deployment forwards `/<slug>/*` to the matching instance
+> Service by convention, with WebSocket-aware `/<slug>/ws` handling and no prefix
+> stripping. See [`docs/SUPERVISOR_DEPLOY.md`](./SUPERVISOR_DEPLOY.md). The
+> example below applies only to the hand-rolled, Supervisor-less model.
 
 ```yaml
 apiVersion: traefik.io/v1alpha1

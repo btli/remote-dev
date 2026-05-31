@@ -1,0 +1,189 @@
+# Supervisor control plane (spec §6.1): the two-process model in ONE pod.
+#
+#   • `web`        — the Next.js dashboard + REST API (port 6003).
+#   • `controller` — the long-running reconciler/capacity loop (no port).
+#
+# Both processes share the SAME SQLite database on a single RWO PVC mounted at
+# SUPERVISOR_DATA_DIR. Because SQLite is single-writer over a RWO volume, this is
+# a 1-replica Deployment (NOT scaled, NOT a StatefulSet — a single Deployment
+# replica with a bound PVC is sufficient and simpler; the router is the
+# stateless/scalable tier).
+#
+# The CF tunnel for the SUPERVISOR hostname (e.g. sup.example.com, §15 M3) points
+# at the `supervisor` Service below.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rdv-supervisor-data
+  namespace: rdv-system
+  labels:
+    managed-by: rdv-supervisor
+spec:
+  accessModes: ["ReadWriteOnce"]
+  # MUST be a REPLICATED StorageClass (Longhorn / NFS / cloud CSI) — NOT
+  # local-path — so the Supervisor's SQLite (the source of truth for every
+  # instance + user + audit row) survives node loss (§6.1). A local-path PVC
+  # would pin all control-plane state to one node with no replication.
+  storageClassName: REPLACE_ME
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rdv-supervisor
+  namespace: rdv-system
+  labels:
+    managed-by: rdv-supervisor
+    app.kubernetes.io/name: rdv-supervisor
+spec:
+  replicas: 1
+  # RWO PVC + single-writer SQLite: never run two pods at once. Recreate (not
+  # RollingUpdate) so the old pod releases the PVC before the new one binds it.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rdv-supervisor
+  template:
+    metadata:
+      labels:
+        managed-by: rdv-supervisor
+        app.kubernetes.io/name: rdv-supervisor
+    spec:
+      serviceAccountName: rdv-supervisor
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: rdv-supervisor-data
+        # Writable scratch for readOnlyRootFilesystem containers (bun/tsx/next
+        # write to /tmp). Per-container /tmp mounts below.
+        - name: tmp
+          emptyDir: {}
+      containers:
+        # ── web: Next.js UI + REST API ──────────────────────────────────────
+        - name: web
+          image: REPLACE_ME-ghcr.io/btli/remote-dev-supervisor:<sha>
+          imagePullPolicy: IfNotPresent
+          # The supervisor builds with `output: "standalone"`, so the SUPPORTED
+          # runtime is the traced server.js — NOT `next start` (Next warns it
+          # "does not work with standalone"). server.js reads PORT + HOSTNAME from
+          # env. This matches the image's default CMD; stated explicitly here.
+          command: ["node", ".next/standalone/apps/supervisor/server.js"]
+          # Per-container hardening for the restricted Pod Security Standard.
+          # Verified: the standalone server.js serves /api/health with a read-only
+          # root + an emptyDir /tmp (writes only to /tmp; SQLite is on the PVC).
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+            readOnlyRootFilesystem: true
+          ports:
+            - name: http
+              containerPort: 6003
+          env:
+            - name: PORT
+              value: "6003"
+            # Bind all interfaces in-container (server.js defaults to 0.0.0.0 but
+            # set explicitly so the probe + Service can reach it).
+            - name: HOSTNAME
+              value: "0.0.0.0"
+            - name: SUPERVISOR_DATA_DIR
+              value: /var/lib/rdv-supervisor
+          # All operator-supplied config (CF Access AUDs, internal secret, admin
+          # email, provisioning host/image/storage, instances' CF tags).
+          envFrom:
+            - secretRef:
+                name: rdv-supervisor-config
+          # Resource requests/limits are STARTING POINTS — tune per cluster.
+          resources:
+            requests: { cpu: "250m", memory: "256Mi" }
+            limits: { cpu: "1", memory: "512Mi" }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/rdv-supervisor
+            # Writable scratch (readOnlyRootFilesystem). bun/next write to /tmp.
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+        # ── controller: reconciler + capacity loop (worker, no port/probe) ──
+        - name: controller
+          image: REPLACE_ME-ghcr.io/btli/remote-dev-supervisor:<sha>
+          imagePullPolicy: IfNotPresent
+          # Overrides the image default to run the controller process instead of
+          # the web server. `bun run controller` == `tsx src/controller/index.ts`
+          # (added to apps/supervisor/package.json for this manifest).
+          command: ["bun", "run", "controller"]
+          # Per-container hardening for the restricted Pod Security Standard.
+          # Verified: the controller (bun/tsx) boots with a read-only root + an
+          # emptyDir /tmp; the SQLite DB it shares is on the `data` PVC.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+            readOnlyRootFilesystem: true
+          env:
+            - name: SUPERVISOR_DATA_DIR
+              value: /var/lib/rdv-supervisor
+          # SAME config as web (it provisions against the k8s API + reads the
+          # same SQLite DB).
+          envFrom:
+            - secretRef:
+                name: rdv-supervisor-config
+          # Resource requests/limits are STARTING POINTS — tune per cluster.
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { cpu: "500m", memory: "256Mi" }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/rdv-supervisor
+            # Writable scratch (readOnlyRootFilesystem). bun/tsx write to /tmp.
+            - name: tmp
+              mountPath: /tmp
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: supervisor
+  namespace: rdv-system
+  labels:
+    managed-by: rdv-supervisor
+    app.kubernetes.io/name: rdv-supervisor
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: rdv-supervisor
+  ports:
+    # The CF tunnel for the supervisor host targets this. The router also reaches
+    # GET /api/internal/routes here via
+    # http://supervisor.rdv-system.svc.cluster.local:6003.
+    - name: http
+      port: 6003
+      targetPort: http

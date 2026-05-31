@@ -1,0 +1,134 @@
+# Supervisor data-plane router (spec §5 + §15 M4): a stateless Bun reverse proxy.
+#
+# Routes /<slug>/* → the instance Service rdv.rdv-<slug>.svc.cluster.local
+# (HTTP :6001, WS /<slug>/ws :6002) with NO prefix stripping (the instance image
+# is slug-aware). It polls the Supervisor's GET /api/internal/routes for the
+# ready-instance allowlist and FAILS OPEN from a last-known-good cache when the
+# Supervisor is briefly unreachable.
+#
+# replicas: 2 — stateless, so run ≥2 for availability on the data path (§15 M4).
+#
+# The CF tunnel for the INSTANCES hostname (e.g. dev.example.com, §15 M3) points
+# at the `router` Service below.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rdv-router
+  namespace: rdv-system
+  labels:
+    managed-by: rdv-supervisor
+    app.kubernetes.io/name: rdv-router
+spec:
+  replicas: 2
+  # Stateless: rolling updates are safe and keep ≥1 replica serving.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rdv-router
+  template:
+    metadata:
+      labels:
+        managed-by: rdv-supervisor
+        app.kubernetes.io/name: rdv-router
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+      # Spread the 2 replicas across nodes where possible (best-effort) so a
+      # single node loss can't take out the whole front door.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: rdv-router
+      volumes:
+        # Writable scratch for readOnlyRootFilesystem (bun writes to /tmp).
+        - name: tmp
+          emptyDir: {}
+      containers:
+        - name: router
+          image: REPLACE_ME-ghcr.io/btli/remote-dev-router:<sha>
+          imagePullPolicy: IfNotPresent
+          # Image default is `bun run start` (bun run src/index.ts). Explicit.
+          command: ["bun", "run", "start"]
+          # Per-container hardening for the restricted Pod Security Standard.
+          # Verified: the router (bun) boots with a read-only root + an emptyDir
+          # /tmp (it is stateless and writes nothing to disk).
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+            readOnlyRootFilesystem: true
+          ports:
+            - name: http
+              containerPort: 6004
+          env:
+            - name: ROUTER_PORT
+              value: "6004"
+            # In-cluster Supervisor Service DNS (where /api/internal/routes lives).
+            - name: ROUTER_SUPERVISOR_URL
+              value: http://supervisor.rdv-system.svc.cluster.local:6003
+            # Allowlist poll cadence (ms). Matches the router default.
+            - name: ROUTER_ALLOWLIST_POLL_MS
+              value: "10000"
+            # MUST match the Supervisor's value (the router presents it as the
+            # x-supervisor-internal-secret header). Sourced from the shared config
+            # Secret, same key the supervisor pod reads.
+            - name: SUPERVISOR_INTERNAL_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: rdv-supervisor-config
+                  key: SUPERVISOR_INTERNAL_SECRET
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # Resource requests/limits are STARTING POINTS — tune per cluster.
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "250m", memory: "128Mi" }
+          volumeMounts:
+            # Writable scratch (readOnlyRootFilesystem). bun writes to /tmp.
+            - name: tmp
+              mountPath: /tmp
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: router
+  namespace: rdv-system
+  labels:
+    managed-by: rdv-supervisor
+    app.kubernetes.io/name: rdv-router
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: rdv-router
+  ports:
+    # The CF tunnel for the instances host targets this.
+    - name: http
+      port: 6004
+      targetPort: http

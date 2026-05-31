@@ -1,0 +1,108 @@
+# Least-privilege RBAC for the Supervisor control plane (spec §6.5 + §15 B3).
+#
+# A ClusterRole (not a Role) is required because the Supervisor creates and
+# deletes *namespaces* at runtime (one per instance, `rdv-<slug>`) and operates
+# on objects inside those namespaces — cluster-scoped reach with a tightly
+# scoped verb set.
+#
+# Grant model: the Supervisor CREATES and DELETES instance objects but never
+# needs to read Secret values back (it generates AUTH_SECRET, writes it once,
+# and forgets it — §10). It uses a POLL model (30s reconcile, §6.3), so it never
+# needs `watch` anywhere.
+#
+# ── Deferred to later phases (intentionally NOT granted here) ─────────────────
+#   Phase 2 (lifecycle depth):
+#     • persistentvolumeclaims: patch/update — PVC resize. §15 B3 explicitly
+#       defers resize to Phase 2 and drops it from the Phase-1 PATCH contract,
+#       so the StatefulSet owns PVC creation and we grant only get/list now.
+#   Phase 3 (capacity + machines):
+#     • pods/eviction: create        — node drain during scale-down.
+#     • nodes: patch/delete          — cordon + remove worker machines.
+#     • metrics.k8s.io/nodes: get/list — utilization-driven autoscale.
+#   These are withheld now to keep the blast radius minimal: a Phase-1
+#   Supervisor can provision/suspend/delete instances and discover storage, but
+#   cannot evict pods, mutate node state, or read cluster metrics.
+#
+# ── Deliberately never granted ───────────────────────────────────────────────
+#   • watch (any resource)   — poll model, no Watch streams (§6.3).
+#   • pods/exec              — the first-boot seed runs as a batch/Job, not exec
+#                              (§6.4); exec into instance pods is out of scope.
+#   • persistentvolumes      — NFS uses the nfs-subdir-external-provisioner
+#                              (a DYNAMIC StorageClass), so no static PVs are
+#                              created and no `persistentvolumes` verbs are
+#                              needed (§15 B3).
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rdv-supervisor
+  namespace: rdv-system
+  labels:
+    managed-by: rdv-supervisor
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: rdv-supervisor
+  labels:
+    managed-by: rdv-supervisor
+rules:
+  # Instance namespaces (created/deleted per instance), plus the per-instance
+  # Services and Secrets. Secrets are write-only from the Supervisor's view:
+  # get/list are present so reconcile can confirm existence, but values are
+  # never read back after create (§10).
+  - apiGroups: [""]
+    resources: ["namespaces", "services", "secrets"]
+    verbs: ["get", "list", "create", "delete"]
+  # PVCs: read-only. The StatefulSet's volumeClaimTemplate OWNS PVC creation, so
+  # the Supervisor only lists/gets them (e.g. for status). NO patch/update:
+  # resize is deferred to Phase 2 (§15 B3).
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list"]
+  # Pod status + logs (read-only): readiness checks and the logs/events API
+  # surface (§6.7). NO pods/exec (seed runs via a Job, §6.4).
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list"]
+  # Namespace events (read-only): surfaced via GET /api/instances/:id/events.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list"]
+  # Nodes (read-only): storage discovery (local-path-per-node options, §7) and
+  # the nodes/capacity summary (§6.7). Phase 3 adds patch/delete for machine
+  # lifecycle — withheld here.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  # StatefulSets: the core instance workload. Full lifecycle — create on
+  # provision, patch/update for image rollout + suspend/resume (scale 0↔1),
+  # delete on terminate.
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "create", "patch", "update", "delete"]
+  # Jobs (§15 B3): the first-boot seed Job (buildSeedJob). Dispatch lands fully
+  # in Phase 2, but B3 says to grant the verbs now so the ClusterRole is stable.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "delete"]
+  # StorageClasses (read-only): live storage-target discovery (§7) — detect
+  # Longhorn (replicated) vs generic/cloud-CSI classes for the dropdown.
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: rdv-supervisor
+  labels:
+    managed-by: rdv-supervisor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: rdv-supervisor
+subjects:
+  - kind: ServiceAccount
+    name: rdv-supervisor
+    namespace: rdv-system
