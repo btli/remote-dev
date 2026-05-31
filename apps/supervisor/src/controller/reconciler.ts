@@ -41,7 +41,11 @@ import {
   type InstanceStatus,
 } from "@/db/schema";
 import { assertTransition } from "@/lib/instance-state";
-import { resolveDefaultStorageTarget } from "@/lib/storage";
+import {
+  resolveDefaultStorageTarget,
+  resolvedFromSnapshot,
+  type ResolvedStorageTarget,
+} from "@/lib/storage";
 import {
   provisionInstance as defaultProvisionInstance,
   checkInstanceReady as defaultCheckInstanceReady,
@@ -181,18 +185,44 @@ async function transition(
 }
 
 /**
+ * Build the PVC source for an instance from its SNAPSHOT (authoritative, §7).
+ * The snapshot was written at create time by `resolveStorageTarget`, so the
+ * reconciler rebuilds the PVC template from it WITHOUT re-querying the cluster —
+ * a later edit/delete of the target can't change an existing instance's volume.
+ *
+ * Falls back to the cluster default only when the snapshot is absent/empty/
+ * malformed (older rows from before storage targets, or a corrupt snapshot).
+ */
+function storageFromRow(row: InstanceRow): ResolvedStorageTarget {
+  const raw = row.storageConfigSnapshot;
+  if (raw && raw.trim() !== "") {
+    try {
+      const snapshot = JSON.parse(raw) as Record<string, unknown>;
+      return resolvedFromSnapshot(snapshot);
+    } catch (err) {
+      log.warn("storageConfigSnapshot unusable; falling back to cluster default", {
+        slug: row.slug,
+        error: String(err),
+      });
+    }
+  }
+  return resolveDefaultStorageTarget(row.storageRequest ?? undefined);
+}
+
+/**
  * Build the provisioning options for an instance (shared by the initial
  * `requested→provisioning` claim and the within-budget self-heal re-provision).
  * Generates a fresh UNIQUE AUTH_SECRET each call (never logged, never persisted).
+ *
+ * Storage is rebuilt from the row's authoritative `storageConfigSnapshot`
+ * (see {@link storageFromRow}), NOT re-resolved live.
  *
  * NOTE: `authorizedEmails`/seed handling is intentionally NOT wired in here —
  * the seed Job dispatch is deferred to Phase 2 (jvcx.8), see provisionInstance.
  */
 function buildProvisionOptions(row: InstanceRow): ProvisionOptions {
   const env = readProvisionEnv();
-  // Storage: snapshot is already on the row; re-resolve the default for the PVC
-  // template (jvcx.5 will resolve by storageTargetId from the snapshot).
-  const storage = resolveDefaultStorageTarget(row.storageRequest ?? undefined);
+  const storage = storageFromRow(row);
   return {
     image: env.image,
     host: env.host,

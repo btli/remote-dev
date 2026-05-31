@@ -16,7 +16,10 @@ import { db } from "@/db";
 import { instance, instanceSeed, instanceAuditLog } from "@/db/schema";
 import { withSupervisorAuth } from "@/lib/auth";
 import { validateSlug, namespaceForSlug } from "@/lib/slug";
-import { resolveDefaultStorageTarget } from "@/lib/storage";
+import {
+  resolveStorageTarget,
+  StorageTargetResolutionError,
+} from "@/lib/storage";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("api/instances");
@@ -120,9 +123,25 @@ export const POST = withSupervisorAuth("operator", async (request, { user }) => 
     );
   }
 
-  // Resolve storage now so the chosen config is snapshotted onto the row (jvcx.5
-  // will resolve by storageTargetId; Phase 1 always uses the cluster default).
-  const storage = resolveDefaultStorageTarget();
+  // Resolve the chosen storage target NOW so its config is snapshotted onto the
+  // row. The snapshot is authoritative (§7): the reconciler builds the PVC
+  // template from `storageConfigSnapshot`, never by re-resolving the target —
+  // so a later edit/delete of the target can't change this instance's volume.
+  // A bad/unknown id → 400 (404 for a missing registered row).
+  const storageTargetId =
+    typeof body.storageTargetId === "string" ? body.storageTargetId : null;
+  let storage;
+  try {
+    storage = await resolveStorageTarget(storageTargetId);
+  } catch (err) {
+    if (err instanceof StorageTargetResolutionError) {
+      return NextResponse.json(
+        { error: err.message, code: "INVALID_STORAGE_TARGET" },
+        { status: err.code === "NOT_FOUND" ? 404 : 400 },
+      );
+    }
+    throw err;
+  }
 
   let created;
   try {

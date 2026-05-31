@@ -108,6 +108,48 @@ describe("POST /api/instances — validation", () => {
   });
 });
 
+describe("POST /api/instances — storage target (jvcx.5)", () => {
+  it("default (no storageTargetId) snapshots the cluster-default config onto the row", async () => {
+    const res = await POST(postReq({ slug: "alpha", displayName: "Alpha" }));
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    const snap = JSON.parse(body.instance.storageConfigSnapshot);
+    expect(snap).toMatchObject({ kind: "storage-class", isDefault: true });
+    expect(body.instance.storageTargetId).toBeNull();
+  });
+
+  it("a chosen node:<host> id is resolved + snapshotted (local-path, pinned)", async () => {
+    const res = await POST(
+      postReq({
+        slug: "beta",
+        displayName: "Beta",
+        storageTargetId: "node:worker-1",
+      }),
+    );
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body.instance.storageTargetId).toBe("node:worker-1");
+    const snap = JSON.parse(body.instance.storageConfigSnapshot);
+    expect(snap).toMatchObject({
+      kind: "local-path",
+      storageClassName: "local-path",
+      nodeHostname: "worker-1",
+    });
+  });
+
+  it("a bad/unknown storageTargetId → 400 INVALID_STORAGE_TARGET", async () => {
+    const res = await POST(
+      postReq({
+        slug: "gamma",
+        displayName: "Gamma",
+        storageTargetId: "bogus:x",
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("INVALID_STORAGE_TARGET");
+  });
+});
+
 describe("POST /api/instances — insert error handling (Fix 4)", () => {
   it("409 SLUG_TAKEN when the insert hits a UNIQUE violation", async () => {
     dbState.insertError = new Error(

@@ -149,6 +149,41 @@ describe("reconcileInstances — requested → provisioning", () => {
     expect(allWrites).not.toContain(seenSecret!);
   });
 
+  it("builds the storage target from the row's snapshot (authoritative, jvcx.5)", async () => {
+    const snapshot = {
+      kind: "local-path",
+      storageClassName: "local-path",
+      nodeHostname: "worker-7",
+      size: "10Gi",
+    };
+    const { db } = makeDb([
+      row("requested", { storageConfigSnapshot: JSON.stringify(snapshot) }),
+    ]);
+    let seenStorage: unknown;
+    const provisionInstance = vi.fn(async (_r, opts) => {
+      seenStorage = opts.storage;
+    });
+    await reconcileInstances(baseDeps({ db, provisionInstance }));
+
+    expect(seenStorage).toMatchObject({
+      kind: "local-path",
+      storageClassName: "local-path",
+      nodeHostname: "worker-7",
+    });
+  });
+
+  it("falls back to the cluster default when the snapshot is absent (older rows)", async () => {
+    const { db } = makeDb([row("requested", { storageConfigSnapshot: null })]);
+    let seenStorage: { kind?: string; configSnapshot?: Record<string, unknown> } | undefined;
+    const provisionInstance = vi.fn(async (_r, opts) => {
+      seenStorage = opts.storage;
+    });
+    await reconcileInstances(baseDeps({ db, provisionInstance }));
+
+    expect(seenStorage?.kind).toBe("storage-class");
+    expect(seenStorage?.configSnapshot).toMatchObject({ isDefault: true });
+  });
+
   it("a ProvisioningError transitions the instance to error", async () => {
     const { db, updates } = makeDb([row("requested")]);
     const provisionInstance = vi.fn(async () => {

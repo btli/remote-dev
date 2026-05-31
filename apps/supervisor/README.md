@@ -11,10 +11,11 @@ Kubernetes API directly via `@kubernetes/client-node`.
 
 > **Status: Phase 1 in progress.** Provisioning has landed (remote-dev-jvcx.4):
 > `POST`/`DELETE /api/instances` now create/terminate real instances via the
-> reconciler. Still pending: storage discovery + dropdown (jvcx.5), the router
-> (jvcx.6), and RBAC/Deployments (jvcx.7). Suspend/resume
-> (`POST /api/instances/:id/{suspend,resume}`) are defined in the state machine
-> but return `501 { code: "PHASE1_PENDING" }` until Phase 2 (jvcx.8).
+> reconciler. Storage targets have landed (remote-dev-jvcx.5): live discovery +
+> the 4-backend PVC translation + a create-instance form with a storage-target
+> dropdown. Still pending: the router (jvcx.6) and RBAC/Deployments (jvcx.7).
+> Suspend/resume (`POST /api/instances/:id/{suspend,resume}`) are defined in the
+> state machine but return `501 { code: "PHASE1_PENDING" }` until Phase 2 (jvcx.8).
 
 ## Architecture
 
@@ -71,9 +72,54 @@ cluster state:
 If no cluster is reachable (local dev without `KUBECONFIG`), the reconcile tick
 logs a warning and returns without erroring any instance.
 
-> Storage targets are the cluster **default** for now
-> (`SUPERVISOR_DEFAULT_STORAGE_CLASS`/`_SIZE`); live discovery + the per-instance
-> dropdown (4 backends) land in jvcx.5.
+## Storage targets
+
+Each instance picks **where its persistent data lives** at create time. Targets
+are surfaced in the create-instance dropdown, each with a **resiliency note** so
+the operator sees the trade-off. Options come from three sources:
+
+| Source | Option id | Discovered from | Kind |
+|--------|-----------|-----------------|------|
+| Cluster default | `default` | `SUPERVISOR_DEFAULT_STORAGE_CLASS`/`_SIZE` (env) | storage-class |
+| StorageClass | `sc:<name>` | live `listStorageClass()` | storage-class, or **cloud-csi** for a known cloud CSI provisioner |
+| Node (local-path) | `node:<host>` | live `listNode()` (control-plane nodes skipped) | local-path (node-pinned) |
+| Registered NFS/custom | `reg:<uuid>` | `registered_storage_target` table | nfs / custom |
+
+Provisioner detection:
+
+- `driver.longhorn.io` → *"Replicated (Longhorn); survives node loss."*
+- `ebs.csi.aws.com` / `pd.csi.storage.gke.io` / `disk.csi.azure.com` →
+  cloud-csi, *"Cloud volume; reattaches on node loss within its AZ."*
+- local-path → *"Node-pinned (local-path); NO replication — data is lost if the
+  node is lost."*
+
+The chosen target's config is **snapshotted** into `instance.storageConfigSnapshot`
+at create time. The reconciler builds the PVC `volumeClaimTemplate` from that
+snapshot (never by re-resolving the target live), so editing or deleting a target
+later **never changes an existing instance's volume** — it only affects future
+dropdowns.
+
+### API
+
+```
+GET    /api/storage-targets        viewer   live discovery (default + SCs + nodes + registered)
+POST   /api/storage-targets        admin    register an NFS/custom target
+DELETE /api/storage-targets/:id    admin    delete a registered (reg:<uuid>) target
+```
+
+`POST` body: `{ name, kind, config, resiliencyNote?, isDefault? }`. For **NFS**,
+prefer the dynamic `nfs-subdir-external-provisioner` StorageClass over a static
+PV (§15 B3) — put its name in `config.storageClassName`, e.g.
+`{ "name": "office-nfs", "kind": "nfs", "config": { "storageClassName": "nfs-client" } }`.
+Only `reg:<uuid>` targets are deletable; `sc:`/`node:`/`default` are discovered
+(not stored) and return `400`. Deleting a target does **not** affect existing
+instances (their config is snapshotted).
+
+Resilience: if no cluster is reachable (local dev without `KUBECONFIG`), discovery
+degrades to the `default` option + any registered rows rather than failing.
+
+If no `storageTargetId` is supplied to `POST /api/instances`, the cluster default
+is used.
 
 ## Development
 
