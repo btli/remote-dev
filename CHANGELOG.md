@@ -166,6 +166,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Production deploy no longer aborts on a dirty/untracked working tree**
+  (remote-dev-1oxx): `scripts/deploy.ts` → `buildSlot()` Step 1 previously ran
+  `git merge --ff-only origin/master` in `PROJECT_ROOT`, which aborts the entire
+  deploy when a stray untracked file collides with an incoming tracked file
+  (a real incident: an untracked `docs/MOBILE_ARCHITECTURE.md` blocked PR #309's
+  deploy with "untracked working tree files would be overwritten by merge …
+  Aborting") or when a tracked file is dirty (e.g. `.beads/issues.jsonl`, which
+  `bd` auto-flushes). `buildSlot` now `git reset --hard origin/master` instead,
+  guarded by a `git merge-base --is-ancestor HEAD origin/master` divergence
+  check that refuses to reset (preserving the old `--ff-only` safety) if
+  `PROJECT_ROOT` has local commits not on origin. Gitignored runtime data
+  (`.env.local`, `sqlite.db`, `node_modules`, build slots) is left untouched.
+  Also fixes a stale log label that read `git merge --ff-only origin/main` —
+  the wrong branch name (remote-dev-k1jg).
 - **Watchdog now health-checks the local origin, not the CF-Access-fronted
   public URL** (remote-dev-j4wr): `scripts/watchdog.sh` previously curled
   `https://dev.bryanli.net/api/sessions` with an app Bearer token and accepted

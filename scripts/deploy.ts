@@ -441,15 +441,51 @@ function buildSlot(slot: Slot): boolean {
 
   logDeploy(`Building into ${slot} slot...`);
 
-  // Step 1: Git pull
+  // Step 1: Sync PROJECT_ROOT to origin/master, robust against a dirty/untracked
+  // working tree. A plain `git merge --ff-only` aborts the whole deploy if any
+  // untracked file collides with an incoming tracked file (e.g. a stray
+  // docs/*.md — see remote-dev-1oxx) or if a tracked file is dirty (e.g.
+  // .beads/issues.jsonl, which bd auto-flushes). We keep the fast-forward
+  // SAFETY — never silently discard divergent local commits — via an ancestry
+  // check, then `git reset --hard` to force the tree to match origin/master.
+  // reset --hard discards dirty tracked changes and deletes only untracked
+  // files in the way of incoming tracked files; gitignored runtime data
+  // (.env.local, sqlite.db, node_modules, build slots) is left untouched.
   if (!runCommand(["git", "fetch", "origin"], PROJECT_ROOT, "git fetch")) {
+    return false;
+  }
+  // Refuse to deploy if PROJECT_ROOT/HEAD has diverged from origin/master
+  // (local commits not on origin) — a hard reset would silently lose them.
+  // This preserves the protection the old `--ff-only` gave us.
+  // `git merge-base --is-ancestor` exits 0 when HEAD is an ancestor of
+  // origin/master (fast-forwardable or already equal), 1 when it is NOT
+  // (PROJECT_ROOT has diverged — local commits not on origin), and a different
+  // non-zero (typically 128) on a git error such as a missing origin/master ref
+  // after a bad fetch. Distinguish the two so the log isn't misleading.
+  const ancestry = spawnSync(
+    ["git", "merge-base", "--is-ancestor", "HEAD", "origin/master"],
+    { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe" }
+  );
+  if (ancestry.exitCode === 1) {
+    logError(
+      "PROJECT_ROOT HEAD has diverged from origin/master (local commits not on " +
+        "origin?). Refusing to hard-reset and risk losing them; resolve PROJECT_ROOT manually."
+    );
+    return false;
+  }
+  if (ancestry.exitCode !== 0) {
+    logError(
+      `git merge-base --is-ancestor failed (exit ${ancestry.exitCode}): ` +
+        (ancestry.stderr?.toString().trim() ||
+          "unknown git error (origin/master ref missing after a bad fetch?)")
+    );
     return false;
   }
   if (
     !runCommand(
-      ["git", "merge", "--ff-only", "origin/master"],
+      ["git", "reset", "--hard", "origin/master"],
       PROJECT_ROOT,
-      "git merge --ff-only origin/main"
+      "git reset --hard origin/master"
     )
   ) {
     return false;
