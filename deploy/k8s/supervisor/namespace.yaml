@@ -1,0 +1,17 @@
+# rdv-system — the control-plane namespace for the k3s Supervisor platform.
+#
+# Holds the Supervisor (web + controller) and the router (spec §3 / §15 B2).
+# Per-instance namespaces are NOT created here: the Supervisor's provisioner
+# creates one namespace per instance at runtime, named `rdv-<slug>`, labelled
+# `managed-by=rdv-supervisor` (see apps/supervisor/src/lib/provisioner-builders.ts).
+#
+# Apply first; rbac.yaml, supervisor.yaml and router.yaml all reference it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rdv-system
+  labels:
+    # Same ownership label the provisioner stamps on instance namespaces, so a
+    # single `kubectl get ns -l managed-by=rdv-supervisor` lists the whole fleet
+    # (control plane + instances).
+    managed-by: rdv-supervisor

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- k3s deployment manifests for the Supervisor platform (deploy/k8s/supervisor/): least-privilege ServiceAccount/ClusterRole, the Supervisor Deployment (web + controller, replicated-PVC SQLite) and the replicas≥2 router Deployment in rdv-system, plus per-app Dockerfiles and a deploy runbook (docs/SUPERVISOR_DEPLOY.md) — completes Phase 1 of the k3s supervisor epic (remote-dev-jvcx.7).
 - Scaffolded the Supervisor data-plane router (apps/supervisor-router): a stateless Bun proxy that routes /<slug>/* to the instance Service (no prefix stripping), proxies the /<slug>/ws terminal WebSocket, and fails open from a last-known-good allowlist polled from the Supervisor's /internal/routes (remote-dev-jvcx.6).
 - Supervisor storage targets (apps/supervisor): live discovery of StorageClasses + schedulable nodes (local-path) + registered NFS/custom targets, the 4-backend PVC translation with per-backend resiliency notes, a register/delete API, and a create-instance form with a storage-target dropdown; instance creation snapshots the chosen target so later edits don't affect existing instances (remote-dev-jvcx.5).
 - Supervisor provisioner-service (apps/supervisor): k8s object builders (namespace/secret/service/statefulset/seed-job), transactional create with namespace-delete rollback, instance state machine, and a 30s reconciler that drives create→ready and terminate→delete; POST/DELETE /api/instances now provision/terminate via the reconciler (remote-dev-jvcx.4).
