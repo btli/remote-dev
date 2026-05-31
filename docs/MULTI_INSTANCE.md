@@ -379,6 +379,16 @@ body in the 503 response identifies which check failed.
   live PID holds it. This catches accidental misconfiguration (two pods
   sharing a PVC via a non-RWO mount) but is not kernel-enforced. ReadWriteOnce
   PVCs are the real isolation guarantee.
+
+  The lock engages **only in multi-instance mode** — i.e. when `RDV_BASE_PATH`
+  is non-empty (as in every manifest above). In single-host mode (empty
+  `RDV_BASE_PATH`: dev, Electron, self-hosted single-tenant prod) it is a no-op:
+  there, the launchd/systemd watchdog and the deploy/restart scripts are the
+  single-writer guard, and an engaged lock would deadlock a restart (the new
+  server sees the old one's still-live lock and crash-loops). Set
+  `RDV_FORCE_INSTANCE_LOCK=1` to force the lock on even with an empty
+  `RDV_BASE_PATH` — for the unusual single-host setup that genuinely runs
+  multiple writers against one `RDV_DATA_DIR`.
 - **No horizontal scale per instance.** SQLite is single-writer. Use
   more instances under different prefixes if you need to spread load.
 - **tmux sockets on PVC.** `entrypoint.sh` sets `TMUX_TMPDIR` under

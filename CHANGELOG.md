@@ -161,6 +161,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Instance lock no longer deadlocks single-host restarts** (remote-dev-i85i):
+  the `instance.lock` data-dir guard now engages ONLY in multi-instance mode
+  (non-empty `RDV_BASE_PATH`), or when forced via `RDV_FORCE_INSTANCE_LOCK=1`.
+  On single-host (dev, Electron, self-hosted single-tenant prod) it is a no-op
+  and never touches the lock file. Previously a watchdog/`rdv.ts`/`deploy.ts`
+  restart — which spawns the new terminal server while the old one is briefly
+  still alive — hit `acquireInstanceLock()`, saw the live holder, and refused
+  to start, crash-looping until the 5-minute age-reclaim (which then left two
+  live writers on one data dir). Process management is the real single-writer
+  guard on single-host, so the lock was pure harm there.
+- **Readiness probe checks the terminal server over its Unix socket in prod**
+  (remote-dev-i85i): `GET /api/readyz` previously always probed
+  `http://127.0.0.1:$TERMINAL_PORT/health`, but production runs the terminal
+  server on a Unix socket (`TERMINAL_SOCKET`), so the check always failed and
+  `/readyz` falsely returned 503 even when the terminal server was healthy. It
+  now reaches `/health` over the Unix socket when `TERMINAL_SOCKET` is set
+  (via `node:http`, matching `scheduler-client.ts`), falling back to the TCP
+  port in dev. Same 1s timeout and `{ ok, error }` result shape.
 - **Production deploy/restart resilience** (remote-dev-i85i): auto-deploy
   restarts could wedge with "Terminal socket not ready" and were
   undiagnosable because all child stdio was discarded. Three fixes: (1)
