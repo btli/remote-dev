@@ -18,6 +18,8 @@
     "start:terminal": "dotenv -e .env.local -- tsx src/server/index.ts",
     "dev:supervisor": "cd apps/supervisor && bun run dev",
     "build:supervisor": "cd apps/supervisor && bun run build",
+    "dev:router": "cd apps/supervisor-router && bun run dev",
+    "build:router": "cd apps/supervisor-router && bun run build",
     "rdv": "bun run scripts/rdv.ts",
     "rdv:dev": "bun run scripts/rdv.ts start dev",
     "rdv:prod": "bun run scripts/rdv.ts start prod",

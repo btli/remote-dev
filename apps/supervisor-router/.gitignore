@@ -1,0 +1,12 @@
+# Dependencies
+/node_modules
+
+# Build output
+/dist
+
+# Lint / test caches
+/.eslintcache
+/coverage
+
+# The root .gitignore ignores all `.env*`; opt the committed template back in.
+!.env.example
