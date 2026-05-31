@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Documentation overhaul — new docs**: added `docs/README.md` (docs index /
+  landing page), `docs/DEPLOYMENT.md` (blue/green + HMAC auto-deploy webhook),
+  `docs/AGENTS.md` (the 5 agent CLIs + profile isolation), and
+  `docs/RDV_CLI.md` (full `rdv` Rust CLI reference). Documented the
+  **Antigravity** (`agy`, `ANTIGRAVITY.md`, shares `.gemini`) agent provider.
 - **Multi-instance hosting (Phase 1 — plumbing core)**: new `RDV_BASE_PATH`
   env var lets one domain host multiple isolated `remote-dev` pods under
   path prefixes (`/alpha/`, `/beta/`, …). Phase 1 wires up the helper module
@@ -243,6 +248,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the terminal — a single canonical source of truth instead of a
   parallel Dart-side font scale. A JS-side touch-event pinch detector
   will land in a follow-up (closes remote-dev-d76d).
+- **Documentation overhaul**: slimmed the root `CLAUDE.md` (~909 → ~230 lines)
+  to agent-init essentials plus pointers into `docs/`. Refreshed
+  `docs/ARCHITECTURE.md` (corrected dev ports to 6001/6002, `middleware.ts` →
+  `proxy.ts`, full 54-service and 59-table coverage). Regenerated `docs/API.md`
+  and `docs/openapi.yaml` to the full current surface (246 operations). Rewrote
+  the root `README.md` and `docs/ENHANCEMENTS.md`.
 
 ## [0.3.18] - 2026-05-13
 

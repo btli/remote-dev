@@ -5,8 +5,23 @@ instances behind a shared Cloudflare tunnel + Access policy. Each instance
 is a single-replica StatefulSet with its own PVC, SQLite database, tmux
 namespace, and `AUTH_SECRET`.
 
+> **Status — superseded approach.** The Traefik/Ingress prefix-stripping model
+> documented here is being superseded by the k3s **"supervisor platform"**
+> (supervisor-owned router + slug-aware data-plane image). That design is a
+> **DRAFT** — see
+> [`docs/plans/2026-05-30-k3s-supervisor-platform.md`](./plans/2026-05-30-k3s-supervisor-platform.md);
+> the `apps/supervisor` control plane is **not yet built**. The manifests below
+> remain valid for hand-rolled multi-instance hosting today.
+>
+> Regardless of orchestration approach, **`src/lib/base-path.ts` is the runtime
+> single source of truth for `RDV_BASE_PATH`** URL prefixing (ESLint-guarded;
+> only it and `next.config.ts` may read the env var). See
+> [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) → "Multi-instance / multi-tenant
+> hosting".
+
 See also:
 - `docs/plans/multi-instance-basepath.md` — the design spec and acceptance criteria
+- `docs/plans/2026-05-30-k3s-supervisor-platform.md` — the newer k3s supervisor platform (DRAFT)
 - `docs/SETUP.md` — single-host installation
 - `Dockerfile` — image build (multi-arch supported via `buildx`)
 
