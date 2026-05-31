@@ -81,6 +81,8 @@ const eslintConfig = defineConfig([
     "scripts/**",
     // Mobile app (separate React Native project)
     "packages/**",
+    // Supervisor & other apps workspaces (each has its own eslint config)
+    "apps/**",
     // Git worktrees (separate checkouts with their own lint)
     ".worktrees/**",
     // Agent worktrees (stale isolated checkouts inside .claude/)
