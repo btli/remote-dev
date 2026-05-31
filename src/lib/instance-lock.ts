@@ -7,6 +7,28 @@
  * pods from mounting concurrently — this is a belt-and-suspenders sentinel
  * for non-K8s deployments and for the brief overlap during pod restarts.
  *
+ * ## When the lock engages
+ *
+ * The lock ONLY engages in **multi-instance mode** — i.e. when `RDV_BASE_PATH`
+ * is non-empty (the env var that gives each co-hosted instance its own URL
+ * prefix). In **single-host mode** (empty `RDV_BASE_PATH`: dev, Electron, and
+ * self-hosted single-tenant prod) `acquireInstanceLock()` is a no-op and never
+ * touches the lock file.
+ *
+ * Why: on single-host the lock is pure harm. The launchd/systemd watchdog and
+ * the deploy/restart scripts (`rdv.ts`, `deploy.ts`) are the real single-writer
+ * guard there — and they restart by killing the old server and re-spawning. A
+ * restart momentarily has the old terminal server still alive while the new one
+ * starts; with the lock engaged the new server's `acquireInstanceLock()` saw
+ * the still-live holder and refused to start, crash-looping until the 5-min
+ * age-reclaim — which then left TWO live writers on one data dir. The
+ * `BASE_PATH === ""` gate disables the lock in exactly the deployments where it
+ * caused this deadlock and adds no value. See remote-dev-i85i.
+ *
+ * Escape hatch: set `RDV_FORCE_INSTANCE_LOCK=1` to engage the lock even with an
+ * empty `RDV_BASE_PATH` (tests, or unusual single-host setups that genuinely
+ * run multiple writers against one data dir).
+ *
  * ## Lock-file format
  *
  * The lock file at `${RDV_DATA_DIR}/instance.lock` is a JSON record:
@@ -58,6 +80,7 @@ import { hostname as osHostname } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
+import { BASE_PATH } from "@/lib/base-path";
 import { createLogger } from "@/lib/logger";
 import { getDataDir } from "@/lib/paths";
 
@@ -171,6 +194,18 @@ function registerProcessHandlers(): void {
  * no-op.
  */
 export function acquireInstanceLock(): void {
+  // Single-host mode (empty RDV_BASE_PATH): the lock is pure harm — process
+  // management is the real single-writer guard, and the lock would deadlock
+  // watchdog/deploy restarts. No-op without reading or writing the lock file.
+  // RDV_FORCE_INSTANCE_LOCK=1 forces it on (tests / unusual setups).
+  // BASE_PATH is resolved once at module load (see base-path.ts), so multi-instance
+  // deployments must set RDV_BASE_PATH in the real process env (k8s/Docker/entrypoint),
+  // not .env.local — same requirement as every other BASE_PATH consumer.
+  if (BASE_PATH === "" && process.env.RDV_FORCE_INSTANCE_LOCK !== "1") {
+    log.info("Instance lock skipped (single-host mode; set RDV_FORCE_INSTANCE_LOCK=1 to force)");
+    return;
+  }
+
   if (heldRecord !== null) {
     return; // already held in this process
   }
