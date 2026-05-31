@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { resolve as pathResolve } from "node:path";
 import { promisify } from "node:util";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
+import { getSchedulerHealth } from "./scheduler-health.js";
 import { validateWsToken, getAuthSecret } from "../lib/ws-token.js";
 import { createLogger } from "../lib/logger.js";
 import { WS_PATH_PREFIX } from "../lib/base-path.js";
@@ -630,7 +631,8 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
   const query = Object.fromEntries(parsedUrl.searchParams);
 
   if (pathname === "/health" && req.method === "GET") {
-    sendJson(res, 200, { status: "ok", scheduler: schedulerOrchestrator.isStarted() });
+    const health = getSchedulerHealth();
+    sendJson(res, health.code, health.body);
     return true;
   }
 

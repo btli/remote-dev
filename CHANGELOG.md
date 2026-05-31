@@ -166,6 +166,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Terminal server `/health` now returns 503 (not a 200 with the detail buried in the body) when the scheduler subsystem isn't running, so `/api/readyz` correctly reports the pod as not-ready and pulls a wedged terminal server out of the load balancer instead of routing session-create traffic to it (remote-dev-n1uv).
 - Deploy pipeline now reports the true async deploy outcome to CI: the GH workflow polls a new HMAC-authed `GET /api/deploy/status` after triggering and fails if the deploy doesn't land, closing the silent false-positive-deploy gap where a server-side abort left CI green on the old commit (remote-dev-6pbo).
 - Deploy-status CI feedback loop: allow `/api/deploy/status` through the proxy auth boundary (it has its own HMAC auth) and make the deploy workflow's status poll tolerant of non-JSON responses, so the poll reaches the endpoint and a transient garbled response can't false-fail the job (follow-up to remote-dev-6pbo).
 - **Production deploy no longer aborts on a dirty/untracked working tree**

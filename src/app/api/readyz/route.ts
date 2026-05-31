@@ -97,7 +97,10 @@ async function healthOverPort(port: string): Promise<CheckResult> {
  * healthy — readiness would say "ready" and the LB would route session-create
  * requests that immediately fail. We hit the terminal server's `/health`
  * endpoint (see `src/server/terminal.ts`) with a 1s timeout so a wedged
- * terminal server is detected quickly.
+ * terminal server is detected quickly. That `/health` now returns 503 (not just
+ * 200-when-the-listener-is-up) when its scheduler subsystem is down, so this
+ * status-code gate reflects scheduler health too — not merely "the process is
+ * listening" (remote-dev-n1uv).
  *
  * Transport selection mirrors the rest of the codebase (scheduler-client.ts,
  * terminal-server-url.ts): prod runs on a Unix socket (`TERMINAL_SOCKET`), dev
