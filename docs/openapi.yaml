@@ -1,59 +1,146 @@
-openapi: 3.0.3
+openapi: 3.1.0
 info:
   title: Remote Dev API
+  version: 0.3.18
   description: |
-    API for Remote Dev - a web-based terminal interface with persistent sessions,
-    GitHub integration, and session management features.
-  version: 1.0.0
+    REST API for Remote Dev — a web-based terminal interface with persistent
+    tmux-backed sessions, multi-agent CLI support, GitHub integration, project
+    organization, tasks, channels, and more.
+
+    Served by the Next.js app on `/api/*` (default port 6001). This spec covers
+    the public HTTP API only.
+
+    NOTE: The terminal server (default port 6002) additionally exposes
+    `/internal/*` routes (`/internal/peers/*`, `/internal/channels/*`,
+    `/internal/litellm/*`, `/health`). Those are an in-process control channel
+    between the Next.js app and the terminal server, are NOT user-authenticated
+    endpoints, and are intentionally out of scope here. See `src/server/`.
+
+    Authentication is dual: NextAuth session cookies (browser) or an
+    `Authorization: Bearer rdv_<key>` API key. Handlers wrapped with `withAuth`
+    accept the session cookie only; handlers wrapped with `withApiAuth` accept
+    either. A small set of endpoints use other mechanisms (HMAC for the deploy
+    webhook, a shared secret for cron and the LiteLLM webhook, and the Kubernetes
+    health probes which are unauthenticated).
   contact:
     name: Remote Dev
   license:
     name: MIT
 
 servers:
-  - url: http://localhost:3000
-    description: Development server
   - url: http://localhost:6001
-    description: Production server
+    description: Next.js app (default)
+  - url: http://localhost:6001{basePath}
+    description: Multi-instance deployment with RDV_BASE_PATH
+    variables:
+      basePath:
+        default: ""
+        description: e.g. /alpha
 
 tags:
   - name: Sessions
-    description: Terminal session management
+    description: Terminal session lifecycle and I/O
+  - name: Session Browser
+    description: Headless browser automation for browser-type sessions
+  - name: Session MCP
+    description: Per-session MCP server config (on disk)
   - name: Groups
-    description: Project groups (containers; preferences only)
+    description: Project groups (nestable containers; preferences only)
   - name: Projects
     description: Projects (leaves; own sessions, tasks, channels)
   - name: NodePreferences
-    description: Polymorphic preferences for groups or projects
+    description: Polymorphic preferences for a group or project
   - name: Preferences
-    description: User settings and active node selection
+    description: User settings and active-node selection
   - name: Templates
     description: Reusable session templates
   - name: Recordings
     description: Terminal session recordings
+  - name: Tasks
+    description: Project task tracker
+  - name: Channels
+    description: Project-scoped chat channels and threads
+  - name: Notifications
+    description: User notifications and push tokens
+  - name: Peers
+    description: Inter-agent peer discovery and messaging (read side)
   - name: GitHub
     description: GitHub repository integration
+  - name: GitHubAccounts
+    description: Multi-account GitHub linking and bindings
+  - name: ApiKeys
+    description: API keys for programmatic access
+  - name: Profiles
+    description: Agent profiles and per-profile config
+  - name: AgentCLI
+    description: Agent CLI installation status
+  - name: AgentProviders
+    description: Supported agent providers
+  - name: AgentConfigs
+    description: Agent instruction files (CLAUDE.md, AGENTS.md, ...)
+  - name: ClaudeSessions
+    description: Resumable Claude Code sessions
+  - name: MCPServers
+    description: User/folder MCP server registry
+  - name: Secrets
+    description: External secrets-manager integration
+  - name: SSH
+    description: SSH connection definitions
+  - name: Schedules
+    description: Scheduled command execution
+  - name: Ports
+    description: Port registry and framework/runtime detection
+  - name: LiteLLM
+    description: LiteLLM proxy config, models, control, analytics
+  - name: Beads
+    description: Read-only bridge to the bd issue tracker
+  - name: Trash
+    description: Polymorphic trash with retention
+  - name: Appearance
+    description: User appearance settings
+  - name: Dashboard
+    description: Activity and usage dashboard
+  - name: System
+    description: Application logs and self-update
+  - name: Tmux
+    description: Low-level tmux session inspection
+  - name: Files
+    description: File read/write/probe for the editor
+  - name: Directories
+    description: Filesystem directory browsing
   - name: Git
     description: Git repository utilities
+  - name: Images
+    description: Image upload
   - name: Config
-    description: Runtime configuration probe (multi-instance support)
+    description: Runtime configuration probe
+  - name: Setup
+    description: First-run setup wizard
+  - name: Health
+    description: Kubernetes liveness/readiness probes
+  - name: Deploy
+    description: Blue-green deploy webhook (HMAC)
+  - name: Cron
+    description: Scheduled maintenance endpoints (shared secret)
+  - name: Auth
+    description: NextAuth and OAuth endpoints
+
+security:
+  - apiKey: []
+  - sessionCookie: []
+
 paths:
-  # Sessions API
+  # ============================ Sessions ============================
   /api/sessions:
     get:
       tags: [Sessions]
       summary: List sessions
-      description: Get all terminal sessions for the current user
       parameters:
-        - name: status
-          in: query
-          schema:
-            type: string
-            enum: [active, suspended, closed]
-          description: Filter by session status
+        - { name: status, in: query, schema: { type: string }, description: "Comma-separated: active,suspended,closed" }
+        - { name: parentSessionId, in: query, schema: { type: string } }
       responses:
         '200':
-          description: List of sessions
+          description: Session list
           content:
             application/json:
               schema:
@@ -61,211 +148,280 @@ paths:
                 properties:
                   sessions:
                     type: array
-                    items:
-                      $ref: '#/components/schemas/Session'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-
+                    items: { $ref: '#/components/schemas/Session' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
     post:
       tags: [Sessions]
       summary: Create session
-      description: Create a new terminal session
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/CreateSessionRequest'
+            schema: { $ref: '#/components/schemas/CreateSessionInput' }
       responses:
         '201':
-          description: Session created
+          description: Created (or 200 with _reused on dedup hit)
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/Session'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-
-  /api/sessions/{id}:
-    get:
-      tags: [Sessions]
-      summary: Get session
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
-      responses:
-        '200':
-          description: Session details
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Session'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-    patch:
-      tags: [Sessions]
-      summary: Update session
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateSessionRequest'
-      responses:
-        '200':
-          description: Session updated
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  session:
-                    $ref: '#/components/schemas/Session'
-
-    delete:
-      tags: [Sessions]
-      summary: Delete session
-      description: Close and delete a session
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
-        - name: deleteWorktree
-          in: query
-          schema:
-            type: string
-            enum: ['true', 'false']
-          description: Also delete git worktree from disk
-      responses:
-        '200':
-          $ref: '#/components/responses/Success'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /api/sessions/{id}/suspend:
-    post:
-      tags: [Sessions]
-      summary: Suspend session
-      description: Suspend an active session (keeps tmux running)
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
-      responses:
-        '200':
-          $ref: '#/components/responses/Success'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /api/sessions/{id}/resume:
-    post:
-      tags: [Sessions]
-      summary: Resume session
-      description: Resume a suspended session
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
-      responses:
-        '200':
-          $ref: '#/components/responses/Success'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '410':
-          description: tmux session no longer exists
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /api/sessions/{id}/folder:
-    put:
-      tags: [Sessions]
-      summary: Move session to project
-      description: |
-        Moves the session to a different project (or detaches it). The path
-        retains `/folder` for backwards compatibility, but the underlying
-        column is `terminal_session.project_id`. The body accepts either
-        `projectId` (preferred) or `folderId` (legacy alias).
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                projectId:
-                  type: string
-                  format: uuid
-                  nullable: true
-                  description: Project UUID (null to detach)
-                folderId:
-                  type: string
-                  format: uuid
-                  nullable: true
-                  description: Legacy alias for `projectId`
-      responses:
-        '200':
-          $ref: '#/components/responses/Success'
-
-  /api/sessions/{id}/token:
-    get:
-      tags: [Sessions]
-      summary: Get session WebSocket token
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
-      responses:
-        '200':
-          description: WebSocket authentication token
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  token:
-                    type: string
-
+              schema: { $ref: '#/components/schemas/Session' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
   /api/sessions/reorder:
     post:
       tags: [Sessions]
-      summary: Reorder sessions
-      description: Update tab order for multiple sessions
+      summary: Reorder session tabs
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required:
-                - sessionIds
+              required: [sessionIds]
               properties:
-                sessionIds:
-                  type: array
-                  items:
-                    type: string
-                    format: uuid
+                sessionIds: { type: array, items: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /api/sessions/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [Sessions]
+      summary: Get session
+      responses:
+        '200': { description: Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Sessions]
+      summary: Update session
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                tabOrder: { type: integer }
+                status: { type: string }
+      responses:
+        '200': { description: Updated session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }
+    delete:
+      tags: [Sessions]
+      summary: Delete (close) session
+      parameters:
+        - { name: deleteWorktree, in: query, schema: { type: string, enum: ['true'] } }
+        - { name: trash, in: query, schema: { type: string, enum: ['true'] } }
+        - { name: cleanup, in: query, schema: { type: string, enum: ['true'] } }
+        - { name: force, in: query, schema: { type: string, enum: ['true'] } }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /api/sessions/{id}/suspend:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [Sessions]
+      summary: Suspend session
+      responses:
+        '200': { description: Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }
+  /api/sessions/{id}/resume:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [Sessions]
+      summary: Resume session
+      responses:
+        '200': { description: Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }
+        '410': { description: tmux session no longer exists }
+  /api/sessions/{id}/restart:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [Sessions]
+      summary: Restart an exited agent session
+      responses:
+        '200': { description: Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }
+  /api/sessions/{id}/spawn:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [Sessions]
+      summary: Spawn a child session
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                terminalType: { type: string, enum: [shell, agent, file, browser] }
+                agentProvider: { type: string }
+                projectId: { type: string }
+                workingDirectory: { type: string }
+                profileId: { type: string }
+      responses:
+        '201': { description: Child session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }
+  /api/sessions/{id}/exec:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [Sessions]
+      summary: Execute a command (fire-and-forget)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [command]
+              properties:
+                command: { type: string }
+                pressEnter: { type: boolean, default: true }
       responses:
         '200':
-          $ref: '#/components/responses/Success'
+          description: Command sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  sessionId: { type: string }
+                  command: { type: string }
+                  message: { type: string }
+        '410': { description: tmux session gone }
+  /api/sessions/{id}/token:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [Sessions]
+      summary: Get a WebSocket auth token
+      responses:
+        '200':
+          description: Token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  sessionId: { type: string }
+                  tmuxSessionName: { type: string }
+                  expiresIn: { type: integer, example: 300 }
+  /api/sessions/{id}/git-status:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [Sessions]
+      summary: Get git status for a session
+      responses:
+        '200': { description: Git status, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/sessions/{id}/folder:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    put:
+      tags: [Sessions]
+      summary: Move session to a project (legacy path name)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                projectId: { type: string, nullable: true }
+                folderId: { type: string, nullable: true, description: legacy alias }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  # ===================== Session browser automation =====================
+  /api/sessions/{id}/browser/navigate:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [Session Browser]
+      summary: Navigate to a URL
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [url], properties: { url: { type: string } } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+  /api/sessions/{id}/browser/screenshot:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [Session Browser]
+      summary: Capture a screenshot
+      responses: { '200': { description: Screenshot result, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/sessions/{id}/browser/snapshot:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [Session Browser]
+      summary: Accessibility snapshot
+      responses: { '200': { description: Snapshot, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/sessions/{id}/browser/click:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [Session Browser]
+      summary: Click at coordinates
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [x, y], properties: { x: { type: number }, y: { type: number } } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+  /api/sessions/{id}/browser/type:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [Session Browser]
+      summary: Type text
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [text], properties: { text: { type: string } } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+  /api/sessions/{id}/browser/evaluate:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [Session Browser]
+      summary: Evaluate JavaScript
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [expression], properties: { expression: { type: string } } } } }
+      responses: { '200': { description: Evaluation result, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/sessions/{id}/browser/back:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [Session Browser]
+      summary: Navigate back
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+  /api/sessions/{id}/browser/forward:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [Session Browser]
+      summary: Navigate forward
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+  # ===================== Session MCP servers =====================
+  /api/sessions/{id}/mcp-servers:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [Session MCP]
+      summary: Get MCP servers for a session
+      responses: { '200': { description: MCP config, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    patch:
+      tags: [Session MCP]
+      summary: Update an MCP server config
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [serverName, sourceFile, updates]
+              properties:
+                serverName: { type: string }
+                sourceFile: { type: string }
+                updates: { type: object, additionalProperties: true }
+      responses: { '200': { description: Updated MCP config, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/sessions/{id}/mcp-servers/discover:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [Session MCP]
+      summary: Discover MCP servers for a session
+      responses: { '200': { description: Discovery results, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
 
-  # Project Groups API
+  # ============================ Groups ============================
   /api/groups:
     get:
       tags: [Groups]
       summary: List groups
       responses:
         '200':
-          description: List of project groups
+          description: Groups
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  groups:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Group'
-
+              schema: { type: object, properties: { groups: { type: array, items: { $ref: '#/components/schemas/Group' } } } }
     post:
       tags: [Groups]
       summary: Create group
@@ -275,137 +431,56 @@ paths:
           application/json:
             schema:
               type: object
-              required:
-                - name
-                - parentGroupId
+              required: [name, parentGroupId]
               properties:
-                name:
-                  type: string
-                parentGroupId:
-                  type: string
-                  format: uuid
-                  nullable: true
-                sortOrder:
-                  type: integer
+                name: { type: string }
+                parentGroupId: { type: string, nullable: true }
+                sortOrder: { type: integer }
       responses:
-        '201':
-          description: Group created
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  group:
-                    $ref: '#/components/schemas/Group'
-
+        '201': { description: Created, content: { application/json: { schema: { type: object, properties: { group: { $ref: '#/components/schemas/Group' } } } } } }
   /api/groups/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
     get:
       tags: [Groups]
       summary: Get group
-      parameters:
-        - $ref: '#/components/parameters/GroupId'
-      responses:
-        '200':
-          description: Group
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  group:
-                    $ref: '#/components/schemas/Group'
-
+      responses: { '200': { description: Group, content: { application/json: { schema: { $ref: '#/components/schemas/Group' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
     patch:
       tags: [Groups]
       summary: Update group
-      parameters:
-        - $ref: '#/components/parameters/GroupId'
       requestBody:
-        required: true
         content:
           application/json:
             schema:
               type: object
-              properties:
-                name:
-                  type: string
-                collapsed:
-                  type: boolean
-                sortOrder:
-                  type: integer
-      responses:
-        '200':
-          description: Group updated
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  group:
-                    $ref: '#/components/schemas/Group'
-
+              properties: { name: { type: string }, collapsed: { type: boolean }, sortOrder: { type: integer } }
+      responses: { '200': { description: Updated group, content: { application/json: { schema: { $ref: '#/components/schemas/Group' } } } } }
     delete:
       tags: [Groups]
       summary: Delete group
-      parameters:
-        - $ref: '#/components/parameters/GroupId'
-        - name: force
-          in: query
-          schema:
-            type: boolean
-          description: Required when the group has descendants
-      responses:
-        '200':
-          $ref: '#/components/responses/Success'
-
+      parameters: [{ name: force, in: query, schema: { type: boolean }, description: Required true when the group has descendants }]
+      responses: { '200': { $ref: '#/components/responses/Success' }, '400': { $ref: '#/components/responses/BadRequest' } }
   /api/groups/{id}/move:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
     post:
       tags: [Groups]
-      summary: Move group to a new parent
-      parameters:
-        - $ref: '#/components/parameters/GroupId'
+      summary: Reparent group
       requestBody:
         required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - newParentGroupId
-              properties:
-                newParentGroupId:
-                  type: string
-                  format: uuid
-                  nullable: true
-      responses:
-        '200':
-          $ref: '#/components/responses/Success'
+        content: { application/json: { schema: { type: object, properties: { newParentGroupId: { type: string, nullable: true } } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
 
-  # Projects API
+  # ============================ Projects ============================
   /api/projects:
     get:
       tags: [Projects]
       summary: List projects
-      parameters:
-        - name: groupId
-          in: query
-          schema:
-            type: string
-            format: uuid
-          description: Filter to one group; omit to list every project the user owns
+      parameters: [{ name: groupId, in: query, schema: { type: string } }]
       responses:
         '200':
-          description: List of projects
+          description: Projects
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  projects:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Project'
-
+              schema: { type: object, properties: { projects: { type: array, items: { $ref: '#/components/schemas/Project' } } } }
     post:
       tags: [Projects]
       summary: Create project
@@ -415,240 +490,96 @@ paths:
           application/json:
             schema:
               type: object
-              required:
-                - groupId
-                - name
-              properties:
-                groupId:
-                  type: string
-                  format: uuid
-                name:
-                  type: string
-                sortOrder:
-                  type: integer
-      responses:
-        '201':
-          description: Project created
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  project:
-                    $ref: '#/components/schemas/Project'
-
+              required: [groupId, name]
+              properties: { groupId: { type: string }, name: { type: string }, sortOrder: { type: integer } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { type: object, properties: { project: { $ref: '#/components/schemas/Project' } } } } } } }
   /api/projects/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
     get:
       tags: [Projects]
       summary: Get project
-      parameters:
-        - $ref: '#/components/parameters/ProjectId'
-      responses:
-        '200':
-          description: Project
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  project:
-                    $ref: '#/components/schemas/Project'
-
+      responses: { '200': { description: Project, content: { application/json: { schema: { $ref: '#/components/schemas/Project' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
     patch:
       tags: [Projects]
       summary: Update project
-      parameters:
-        - $ref: '#/components/parameters/ProjectId'
       requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                name:
-                  type: string
-                collapsed:
-                  type: boolean
-                sortOrder:
-                  type: integer
-      responses:
-        '200':
-          description: Project updated
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  project:
-                    $ref: '#/components/schemas/Project'
-
+        content: { application/json: { schema: { type: object, properties: { name: { type: string }, collapsed: { type: boolean }, sortOrder: { type: integer } } } } }
+      responses: { '200': { description: Updated project, content: { application/json: { schema: { $ref: '#/components/schemas/Project' } } } } }
     delete:
       tags: [Projects]
       summary: Delete project
-      parameters:
-        - $ref: '#/components/parameters/ProjectId'
-      responses:
-        '200':
-          $ref: '#/components/responses/Success'
-
+      responses: { '200': { $ref: '#/components/responses/Success' } }
   /api/projects/{id}/move:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
     post:
       tags: [Projects]
-      summary: Move project to a different group
-      parameters:
-        - $ref: '#/components/parameters/ProjectId'
+      summary: Move project to another group
       requestBody:
         required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - newGroupId
-              properties:
-                newGroupId:
-                  type: string
-                  format: uuid
-      responses:
-        '200':
-          $ref: '#/components/responses/Success'
+        content: { application/json: { schema: { type: object, required: [newGroupId], properties: { newGroupId: { type: string } } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+  /api/projects/{id}/open:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [Projects]
+      summary: Open the project's default working directory (OS-level)
+      responses: { '200': { $ref: '#/components/responses/Success' } }
 
-  # Node Preferences API
+  # ===================== Node preferences =====================
   /api/node-preferences/{ownerType}/{ownerId}:
+    parameters:
+      - { name: ownerType, in: path, required: true, schema: { type: string, enum: [group, project] } }
+      - { name: ownerId, in: path, required: true, schema: { type: string } }
     get:
       tags: [NodePreferences]
       summary: Get node preferences
-      parameters:
-        - $ref: '#/components/parameters/NodeOwnerType'
-        - $ref: '#/components/parameters/NodeOwnerId'
-      responses:
-        '200':
-          description: Preferences (null if none stored)
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  preferences:
-                    nullable: true
-                    type: object
-                    additionalProperties: true
-
+      responses: { '200': { description: Preferences, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
     put:
       tags: [NodePreferences]
       summary: Upsert node preferences
-      description: |
-        Group preferences accept a restricted subset of fields (no
-        `localRepoPath`); project preferences accept the full schema. See
-        `NodePreferences.forGroup` / `NodePreferences.forProject` in
-        `src/domain/value-objects/NodePreferences.ts`.
-      parameters:
-        - $ref: '#/components/parameters/NodeOwnerType'
-        - $ref: '#/components/parameters/NodeOwnerId'
       requestBody:
         required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-      responses:
-        '200':
-          $ref: '#/components/responses/Success'
-
+        content: { application/json: { schema: { type: object, additionalProperties: true } } }
+      responses: { '200': { description: Saved preferences, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
     delete:
       tags: [NodePreferences]
-      summary: Delete node preferences
-      parameters:
-        - $ref: '#/components/parameters/NodeOwnerType'
-        - $ref: '#/components/parameters/NodeOwnerId'
-      responses:
-        '200':
-          $ref: '#/components/responses/Success'
+      summary: Reset node preferences
+      responses: { '200': { $ref: '#/components/responses/Success' } }
 
-  # Preferences API
+  # ===================== Preferences =====================
   /api/preferences:
     get:
       tags: [Preferences]
-      summary: Get preferences
-      description: Get user settings and all node preferences
-      responses:
-        '200':
-          description: User preferences
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  userSettings:
-                    $ref: '#/components/schemas/UserSettings'
-                  nodePreferences:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/NodePreferencesEntry'
-
+      summary: Get user settings and node preferences
+      responses: { '200': { description: Preferences, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
     patch:
       tags: [Preferences]
       summary: Update user settings
       requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UserSettingsUpdate'
-      responses:
-        '200':
-          description: Settings updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserSettings'
-
+        content: { application/json: { schema: { type: object, additionalProperties: true } } }
+      responses: { '200': { description: Updated settings, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
   /api/preferences/active-node:
     post:
       tags: [Preferences]
-      summary: Set the active node (group or project)
-      description: |
-        Selects the active node. When `nodeType` is `group`, project-scoped
-        views (tasks, channels, peer messages) aggregate across every
-        descendant project. When `nodeType` is `project`, those views filter
-        to that single project.
+      summary: Set the active node
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required:
-                - nodeId
-                - nodeType
               properties:
-                nodeId:
-                  type: string
-                  format: uuid
-                nodeType:
-                  type: string
-                  enum: [group, project]
-      responses:
-        '200':
-          $ref: '#/components/responses/Success'
+                nodeId: { type: string, nullable: true }
+                nodeType: { type: string, enum: [group, project], nullable: true }
+                pinned: { type: boolean }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } } } }
 
-  # Templates API
+  # ===================== Templates =====================
   /api/templates:
     get:
       tags: [Templates]
       summary: List templates
-      responses:
-        '200':
-          description: List of templates
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Template'
-
+      responses: { '200': { description: Templates, content: { application/json: { schema: { type: array, items: { type: object, additionalProperties: true } } } } } }
     post:
       tags: [Templates]
       summary: Create template
@@ -657,93 +588,44 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateTemplateRequest'
-      responses:
-        '201':
-          description: Template created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Template'
-
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                projectPath: { type: string }
+                startupCommand: { type: string }
+                theme: { type: string }
+                fontSize: { type: integer }
+                fontFamily: { type: string }
+      responses: { '201': { description: Created template, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
   /api/templates/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
     get:
       tags: [Templates]
       summary: Get template
-      parameters:
-        - $ref: '#/components/parameters/TemplateId'
-      responses:
-        '200':
-          description: Template details
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Template'
-
-    post:
-      tags: [Templates]
-      summary: Record template usage
-      parameters:
-        - $ref: '#/components/parameters/TemplateId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - action
-              properties:
-                action:
-                  type: string
-                  enum: [use]
-      responses:
-        '200':
-          $ref: '#/components/responses/Success'
-
+      responses: { '200': { description: Template, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
     patch:
       tags: [Templates]
       summary: Update template
-      parameters:
-        - $ref: '#/components/parameters/TemplateId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateTemplateRequest'
-      responses:
-        '200':
-          description: Template updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Template'
-
+      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Updated template, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
     delete:
       tags: [Templates]
       summary: Delete template
-      parameters:
-        - $ref: '#/components/parameters/TemplateId'
-      responses:
-        '200':
-          $ref: '#/components/responses/Success'
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+    post:
+      tags: [Templates]
+      summary: Record template usage
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { action: { type: string, enum: [use] } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
 
-  # Recordings API
+  # ===================== Recordings =====================
   /api/recordings:
     get:
       tags: [Recordings]
       summary: List recordings
-      responses:
-        '200':
-          description: List of recordings
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Recording'
-
+      responses: { '200': { description: Recordings, content: { application/json: { schema: { type: array, items: { type: object, additionalProperties: true } } } } } }
     post:
       tags: [Recordings]
       summary: Create recording
@@ -752,340 +634,1020 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateRecordingRequest'
-      responses:
-        '201':
-          description: Recording saved
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Recording'
-
+              type: object
+              required: [name, data, duration]
+              properties:
+                name: { type: string }
+                data: { type: string, description: base64 }
+                duration: { type: number }
+                sessionId: { type: string }
+      responses: { '201': { description: Created recording, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
   /api/recordings/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
     get:
       tags: [Recordings]
       summary: Get recording
-      parameters:
-        - $ref: '#/components/parameters/RecordingId'
-        - name: parsed
-          in: query
-          schema:
-            type: string
-            enum: ['true', 'false']
-          description: Return parsed recording data
-      responses:
-        '200':
-          description: Recording with data
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RecordingWithData'
-
+      parameters: [{ name: parsed, in: query, schema: { type: string, enum: ['true'] } }]
+      responses: { '200': { description: Recording, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
     patch:
       tags: [Recordings]
-      summary: Update recording
-      parameters:
-        - $ref: '#/components/parameters/RecordingId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                name:
-                  type: string
-                sessionId:
-                  type: string
-                  format: uuid
-      responses:
-        '200':
-          description: Recording updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Recording'
-
+      summary: Update recording metadata
+      requestBody: { content: { application/json: { schema: { type: object, properties: { name: { type: string }, sessionId: { type: string } } } } } }
+      responses: { '200': { description: Updated recording, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
     delete:
       tags: [Recordings]
       summary: Delete recording
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+
+  # ===================== Tasks =====================
+  /api/tasks:
+    get:
+      tags: [Tasks]
+      summary: List tasks
       parameters:
-        - $ref: '#/components/parameters/RecordingId'
+        - { name: folderId, in: query, schema: { type: string }, description: Single-project filter }
+        - { name: nodeId, in: query, schema: { type: string } }
+        - { name: nodeType, in: query, schema: { type: string, enum: [group, project] } }
       responses:
         '200':
-          $ref: '#/components/responses/Success'
+          description: Tasks
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Task' } } } }
+    post:
+      tags: [Tasks]
+      summary: Create task
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateTaskInput' } } } }
+      responses: { '201': { description: Created task, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } } }
+    delete:
+      tags: [Tasks]
+      summary: Bulk clear tasks
+      parameters:
+        - { name: folderId, in: query, required: true, schema: { type: string } }
+        - { name: source, in: query, schema: { type: string, enum: [manual, agent] } }
+        - { name: sessionId, in: query, schema: { type: string } }
+        - { name: completedOnly, in: query, schema: { type: boolean } }
+      responses: { '200': { description: Count cleared, content: { application/json: { schema: { type: object, properties: { deleted: { type: integer } } } } } } }
+  /api/tasks/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [Tasks]
+      summary: Get task
+      responses: { '200': { description: Task, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+    patch:
+      tags: [Tasks]
+      summary: Update task
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Updated task, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } } }
+    delete:
+      tags: [Tasks]
+      summary: Delete task
+      responses: { '204': { description: Deleted } }
 
-  # GitHub API
+  # ===================== Channels =====================
+  /api/channels:
+    get:
+      tags: [Channels]
+      summary: List channel groups with unread counts
+      parameters:
+        - { name: projectId, in: query, schema: { type: string } }
+        - { name: nodeId, in: query, schema: { type: string } }
+        - { name: nodeType, in: query, schema: { type: string, enum: [group, project] } }
+      responses: { '200': { description: Channel groups, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    post:
+      tags: [Channels]
+      summary: Create channel
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [projectId, name], properties: { projectId: { type: string }, name: { type: string }, topic: { type: string } } } } }
+      responses: { '201': { description: Created channel, content: { application/json: { schema: { type: object, properties: { channel: { $ref: '#/components/schemas/Channel' } } } } } } }
+  /api/channels/dm:
+    post:
+      tags: [Channels]
+      summary: Find or create a DM channel
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [projectId, targetSessionId, fromSessionId], properties: { projectId: { type: string }, targetSessionId: { type: string }, fromSessionId: { type: string } } } } }
+      responses: { '200': { description: DM channel, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/channels/{channelId}:
+    parameters: [{ name: channelId, in: path, required: true, schema: { type: string } }]
+    get:
+      tags: [Channels]
+      summary: Get channel details
+      responses: { '200': { description: Channel, content: { application/json: { schema: { $ref: '#/components/schemas/Channel' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+    delete:
+      tags: [Channels]
+      summary: Archive channel
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+  /api/channels/{channelId}/messages:
+    parameters: [{ name: channelId, in: path, required: true, schema: { type: string } }]
+    get:
+      tags: [Channels]
+      summary: List channel messages
+      parameters:
+        - { name: before, in: query, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, minimum: 1, maximum: 200 } }
+      responses: { '200': { description: Messages, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    post:
+      tags: [Channels]
+      summary: Send a channel message
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [body], properties: { body: { type: string, maxLength: 8192 }, parentMessageId: { type: string } } } } }
+      responses: { '201': { description: Created message, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/channels/{channelId}/messages/{messageId}/thread:
+    parameters:
+      - { name: channelId, in: path, required: true, schema: { type: string } }
+      - { name: messageId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Channels]
+      summary: Get thread replies
+      responses: { '200': { description: Thread replies, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/channels/{channelId}/read:
+    parameters: [{ name: channelId, in: path, required: true, schema: { type: string } }]
+    post:
+      tags: [Channels]
+      summary: Mark channel read
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [messageId], properties: { messageId: { type: string } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+
+  # ===================== Notifications =====================
+  /api/notifications:
+    get:
+      tags: [Notifications]
+      summary: List notifications
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 50, minimum: 1, maximum: 200 } }
+        - { name: unreadOnly, in: query, schema: { type: boolean } }
+      responses: { '200': { description: Notifications, content: { application/json: { schema: { type: object, properties: { notifications: { type: array, items: { type: object, additionalProperties: true } }, unreadCount: { type: integer } } } } } } }
+    post:
+      tags: [Notifications]
+      summary: Create notification
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [title], properties: { title: { type: string }, type: { type: string }, body: { type: string }, sessionId: { type: string } } } } }
+      responses: { '200': { description: Created notification (or debounced), content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    patch:
+      tags: [Notifications]
+      summary: Mark notifications read
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/IdsOrAll' } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+    delete:
+      tags: [Notifications]
+      summary: Delete notifications
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/IdsOrAll' } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+  /api/notifications/push-token:
+    post:
+      tags: [Notifications]
+      summary: Register an FCM push token
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+    delete:
+      tags: [Notifications]
+      summary: Unregister an FCM push token
+      requestBody: { content: { application/json: { schema: { type: object, properties: { token: { type: string } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+
+  # ===================== Peers =====================
+  /api/peers/peers:
+    get:
+      tags: [Peers]
+      summary: List peers in a project
+      parameters: [{ name: folderId, in: query, required: true, schema: { type: string } }]
+      responses: { '200': { description: Peers, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/peers/messages:
+    get:
+      tags: [Peers]
+      summary: List recent peer messages
+      parameters:
+        - { name: folderId, in: query, required: true, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 200 } }
+      responses: { '200': { description: Messages, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    post:
+      tags: [Peers]
+      summary: Send a broadcast user message to peers
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [folderId, body], properties: { folderId: { type: string }, body: { type: string } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+
+  # ===================== GitHub =====================
   /api/github/repositories:
     get:
       tags: [GitHub]
       summary: List repositories
       parameters:
-        - name: cached
-          in: query
-          schema:
-            type: string
-            enum: ['true', 'false']
-          description: Return only cloned repositories
-        - name: page
-          in: query
-          schema:
-            type: integer
-            default: 1
-        - name: perPage
-          in: query
-          schema:
-            type: integer
-            default: 100
-        - name: sort
-          in: query
-          schema:
-            type: string
-            enum: [updated, created, pushed, full_name]
-            default: updated
-      responses:
-        '200':
-          description: List of repositories
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  repositories:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Repository'
-                  page:
-                    type: integer
-                  hasMore:
-                    type: boolean
-        '400':
-          description: GitHub not connected
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                  code:
-                    type: string
-                    enum: [GITHUB_NOT_CONNECTED]
-
+        - { name: cached, in: query, schema: { type: string, enum: ['true'] } }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: perPage, in: query, schema: { type: integer, default: 100 } }
+        - { name: sort, in: query, schema: { type: string, enum: [updated, created, pushed, full_name] } }
+      responses: { '200': { description: Repositories, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
   /api/github/repositories/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
     get:
       tags: [GitHub]
-      summary: Get repository
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Database UUID or GitHub numeric ID
-      responses:
-        '200':
-          description: Repository details
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Repository'
-
+      summary: Get cached repository
+      responses: { '200': { description: Repository, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
     post:
       tags: [GitHub]
-      summary: Clone repository
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Repository cloned
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  localPath:
-                    type: string
-                  repositoryId:
-                    type: string
-                    format: uuid
-
+      summary: Clone repository to disk
+      responses: { '200': { description: Clone result, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    delete:
+      tags: [GitHub]
+      summary: Remove cached repository
+      responses: { '200': { $ref: '#/components/responses/Success' } }
   /api/github/repositories/{id}/branches:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
     get:
       tags: [GitHub]
       summary: List branches
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: List of branches
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  branches:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        name:
-                          type: string
-                        isRemote:
-                          type: boolean
-                        isDefault:
-                          type: boolean
-
+      responses: { '200': { description: Branches, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
   /api/github/repositories/{id}/folders:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
     get:
       tags: [GitHub]
-      summary: Get folder structure
+      summary: Get directory tree of a cloned repo
+      parameters: [{ name: maxDepth, in: query, schema: { type: integer, default: 3 } }]
+      responses: { '200': { description: Folder tree, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/github/repositories/{id}/issues:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [GitHub]
+      summary: List repository issues
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: maxDepth
-          in: query
-          schema:
-            type: integer
-            default: 3
-      responses:
-        '200':
-          description: Folder structure
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  folders:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/FolderTree'
-                  rootPath:
-                    type: string
-
+        - { name: state, in: query, schema: { type: string, enum: [open, closed, all], default: open } }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: per_page, in: query, schema: { type: integer, default: 30, maximum: 100 } }
+      responses: { '200': { description: Issues, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/github/repositories/{id}/issues/{number}:
+    parameters:
+      - { $ref: '#/components/parameters/IdPath' }
+      - { name: number, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [GitHub]
+      summary: Get a single issue
+      responses: { '200': { description: Issue, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/github/repositories/{id}/issues/{number}/comments:
+    parameters:
+      - { $ref: '#/components/parameters/IdPath' }
+      - { name: number, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [GitHub]
+      summary: Get issue comments
+      responses: { '200': { description: Comments, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
   /api/github/worktrees:
     post:
       tags: [GitHub]
-      summary: Create worktree
+      summary: Create a worktree
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required:
-                - repositoryId
-                - branch
-              properties:
-                repositoryId:
-                  type: string
-                  format: uuid
-                branch:
-                  type: string
-                createNewBranch:
-                  type: boolean
-                baseBranch:
-                  type: string
-      responses:
-        '200':
-          description: Worktree created
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  worktreePath:
-                    type: string
-                  branch:
-                    type: string
-
+              required: [repositoryId, branch]
+              properties: { repositoryId: { type: string }, branch: { type: string }, createNewBranch: { type: boolean }, baseBranch: { type: string } }
+      responses: { '200': { description: Worktree, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
     delete:
       tags: [GitHub]
-      summary: Delete worktree
+      summary: Remove a worktree
       requestBody:
         required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - repositoryId
-                - worktreePath
-              properties:
-                repositoryId:
-                  type: string
-                  format: uuid
-                worktreePath:
-                  type: string
-                force:
-                  type: boolean
-                  default: false
-      responses:
-        '200':
-          $ref: '#/components/responses/Success'
-
+        content: { application/json: { schema: { type: object, required: [repositoryId, worktreePath], properties: { repositoryId: { type: string }, worktreePath: { type: string }, force: { type: boolean } } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
   /api/github/worktrees/check:
     post:
       tags: [GitHub]
-      summary: Check worktree status
-      description: Check for uncommitted changes in a worktree
+      summary: Check worktree for uncommitted changes
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [repositoryId, worktreePath], properties: { repositoryId: { type: string }, worktreePath: { type: string } } } } } }
+      responses: { '200': { description: Status, content: { application/json: { schema: { type: object, properties: { hasUncommittedChanges: { type: boolean }, branch: { type: string } } } } } } }
+  /api/github/pr-worktree:
+    post:
+      tags: [GitHub]
+      summary: Create a worktree + session for a PR
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: PR worktree result, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/github/issues:
+    post:
+      tags: [GitHub]
+      summary: Create an issue
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required:
-                - repositoryId
-                - worktreePath
+              required: [owner, repo, title]
               properties:
-                repositoryId:
-                  type: string
-                  format: uuid
-                worktreePath:
-                  type: string
-      responses:
-        '200':
-          description: Worktree status
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  hasUncommittedChanges:
-                    type: boolean
-                  branch:
-                    type: string
+                owner: { type: string }
+                repo: { type: string }
+                title: { type: string }
+                body: { type: string }
+                labels: { type: array, items: { type: string } }
+                assignees: { type: array, items: { type: string } }
+      responses: { '200': { description: Created issue, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/github/issues/mark-seen:
+    post:
+      tags: [GitHub]
+      summary: Mark issues as seen
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+  /api/github/stats:
+    get:
+      tags: [GitHub]
+      summary: Enriched repository list with stats
+      responses: { '200': { description: Stats, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    post:
+      tags: [GitHub]
+      summary: Refresh all repository stats
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+  /api/github/stats/{repoId}:
+    parameters: [{ name: repoId, in: path, required: true, schema: { type: string } }]
+    get:
+      tags: [GitHub]
+      summary: Stats for one repository (unwrapped auth)
+      responses: { '200': { description: Stats, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    post:
+      tags: [GitHub]
+      summary: Refresh stats for one repository (unwrapped auth)
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+  /api/github/stats/mark-seen:
+    post:
+      tags: [GitHub]
+      summary: Mark stat changes as seen (unwrapped auth)
+      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
 
-  # Config API
+  # ===================== GitHub accounts =====================
+  /api/github/accounts:
+    get:
+      tags: [GitHubAccounts]
+      summary: List linked GitHub accounts and bindings
+      responses: { '200': { description: Accounts, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/github/accounts/{accountId}:
+    parameters: [{ name: accountId, in: path, required: true, schema: { type: string } }]
+    patch:
+      tags: [GitHubAccounts]
+      summary: Set default / bind / unbind project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [set-default, bind-project, unbind-project] }
+                projectId: { type: string }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+    delete:
+      tags: [GitHubAccounts]
+      summary: Unlink a GitHub account
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+  /api/github/account:
+    get:
+      tags: [GitHubAccounts]
+      summary: Current account info and stats (legacy single-account)
+      responses: { '200': { description: Account, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    post:
+      tags: [GitHubAccounts]
+      summary: Connect or refresh the current account
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+    delete:
+      tags: [GitHubAccounts]
+      summary: Disconnect the current account
+      parameters: [{ name: clearCache, in: query, schema: { type: string, enum: ['true'] } }]
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+
+  # ===================== API keys =====================
+  /api/keys:
+    get:
+      tags: [ApiKeys]
+      summary: List API keys
+      responses: { '200': { description: Keys, content: { application/json: { schema: { type: object, properties: { keys: { type: array, items: { $ref: '#/components/schemas/ApiKey' } } } } } } } }
+    post:
+      tags: [ApiKeys]
+      summary: Create API key
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string, maxLength: 100 }, expiresAt: { type: string, format: date-time } } } } }
+      responses:
+        '201':
+          description: Created (full key returned once)
+          content: { application/json: { schema: { allOf: [ { $ref: '#/components/schemas/ApiKey' }, { type: object, properties: { key: { type: string } } } ] } } }
+  /api/keys/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [ApiKeys]
+      summary: Get API key
+      responses: { '200': { description: Key, content: { application/json: { schema: { $ref: '#/components/schemas/ApiKey' } } } } }
+    delete:
+      tags: [ApiKeys]
+      summary: Revoke API key
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+
+  # ===================== Profiles =====================
+  /api/profiles:
+    get:
+      tags: [Profiles]
+      summary: List profiles and folder links
+      responses: { '200': { description: Profiles, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    post:
+      tags: [Profiles]
+      summary: Create profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, provider]
+              properties:
+                name: { type: string }
+                provider: { type: string, enum: [claude, codex, gemini, opencode, all] }
+                description: { type: string }
+                isDefault: { type: boolean }
+      responses: { '201': { description: Created profile, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/profiles/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [Profiles]
+      summary: Get profile
+      responses: { '200': { description: Profile, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    patch:
+      tags: [Profiles]
+      summary: Update profile
+      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Updated profile, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    delete:
+      tags: [Profiles]
+      summary: Delete profile
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+  /api/profiles/{id}/appearance:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get: { tags: [Profiles], summary: Get profile appearance, responses: { '200': { description: Appearance, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+    put:
+      tags: [Profiles]
+      summary: Update profile appearance
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Updated appearance, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    delete: { tags: [Profiles], summary: Reset profile appearance, responses: { '200': { $ref: '#/components/responses/Success' } } }
+  /api/profiles/{id}/git-identity:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get: { tags: [Profiles], summary: Get profile git identity, responses: { '200': { description: Git identity, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+    put:
+      tags: [Profiles]
+      summary: Set profile git identity
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+  /api/profiles/{id}/environment:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get: { tags: [Profiles], summary: Get profile environment overlay, responses: { '200': { description: Environment, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+  /api/profiles/{id}/secrets:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get: { tags: [Profiles], summary: Get profile secrets config, responses: { '200': { description: Secrets config, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+    put:
+      tags: [Profiles]
+      summary: Create/update profile secrets config
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Saved, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    patch:
+      tags: [Profiles]
+      summary: Toggle profile secrets enabled
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [enabled], properties: { enabled: { type: boolean } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+    delete: { tags: [Profiles], summary: Delete profile secrets config, responses: { '200': { $ref: '#/components/responses/Success' } } }
+  /api/profiles/folders/{folderId}:
+    parameters: [{ name: folderId, in: path, required: true, schema: { type: string } }]
+    put:
+      tags: [Profiles]
+      summary: Link a folder/project to a profile
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [profileId], properties: { profileId: { type: string } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+    delete: { tags: [Profiles], summary: Unlink folder from profile, responses: { '200': { $ref: '#/components/responses/Success' } } }
+  /api/agent-profiles/{id}/configs:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get: { tags: [Profiles], summary: Get all JSON configs for a profile, responses: { '200': { description: Configs, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, '404': { $ref: '#/components/responses/NotFound' } } }
+    post:
+      tags: [Profiles]
+      summary: Create/update a JSON config for an agent type
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Saved config, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    delete: { tags: [Profiles], summary: Delete profile JSON configs, responses: { '200': { $ref: '#/components/responses/Success' } } }
+  /api/agent-profiles/{id}/configs/{agentType}:
+    parameters:
+      - { $ref: '#/components/parameters/IdPath' }
+      - { name: agentType, in: path, required: true, schema: { type: string, enum: [claude, gemini, opencode, codex] } }
+    get: { tags: [Profiles], summary: Get one agent type's JSON config, responses: { '200': { description: Config, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '404': { $ref: '#/components/responses/NotFound' } } }
+    put:
+      tags: [Profiles]
+      summary: Replace an agent type's JSON config
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Replaced config, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    patch:
+      tags: [Profiles]
+      summary: Merge/update an agent type's JSON config
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Updated config, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    delete: { tags: [Profiles], summary: Delete an agent type's JSON config, responses: { '200': { $ref: '#/components/responses/Success' } } }
+
+  # ===================== Agent CLI / providers / configs =====================
+  /api/agent-cli/status:
+    get:
+      tags: [AgentCLI]
+      summary: Get CLI installation status
+      parameters: [{ name: provider, in: query, schema: { type: string } }]
+      responses: { '200': { description: CLI status, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    post:
+      tags: [AgentCLI]
+      summary: Verify CLI execution with environment
+      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Verification result, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/agent-providers:
+    get:
+      tags: [AgentProviders]
+      summary: List supported agent providers
+      responses: { '200': { description: Providers, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/agent-configs:
+    get:
+      tags: [AgentConfigs]
+      summary: List agent config files
+      parameters: [{ name: folderId, in: query, schema: { type: string }, description: "folder id, or 'global'" }]
+      responses: { '200': { description: Configs, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    post:
+      tags: [AgentConfigs]
+      summary: Create an agent config file
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '201': { description: Created config, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/agent-configs/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    patch:
+      tags: [AgentConfigs]
+      summary: Update an agent config file
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Updated config, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    delete: { tags: [AgentConfigs], summary: Delete an agent config file, responses: { '200': { $ref: '#/components/responses/Success' } } }
+  /api/agent-configs/templates:
+    get:
+      tags: [AgentConfigs]
+      summary: List agent config templates
+      parameters:
+        - { name: projectType, in: query, schema: { type: string, enum: [typescript, python, rust] } }
+        - { name: provider, in: query, schema: { type: string } }
+        - { name: tags, in: query, schema: { type: string } }
+      responses: { '200': { description: Templates, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    post:
+      tags: [AgentConfigs]
+      summary: Template operation
+      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Result, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/agent/claude-sessions:
+    get:
+      tags: [ClaudeSessions]
+      summary: List resumable Claude Code sessions
+      parameters:
+        - { name: projectPath, in: query, required: true, schema: { type: string } }
+        - { name: profileId, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 50 } }
+      responses: { '200': { description: Sessions, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+
+  # ===================== MCP server registry =====================
+  /api/mcp-servers:
+    get:
+      tags: [MCPServers]
+      summary: List MCP servers
+      parameters:
+        - { name: folderId, in: query, schema: { type: string } }
+        - { name: global, in: query, schema: { type: string, enum: ['true'] } }
+      responses: { '200': { description: Servers, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    post:
+      tags: [MCPServers]
+      summary: Create MCP server
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '201': { description: Created server, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/mcp-servers/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get: { tags: [MCPServers], summary: Get MCP server, responses: { '200': { description: Server, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, '404': { $ref: '#/components/responses/NotFound' } } }
+    patch:
+      tags: [MCPServers]
+      summary: Update MCP server
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Updated server, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    delete: { tags: [MCPServers], summary: Delete MCP server, responses: { '200': { $ref: '#/components/responses/Success' } } }
+  /api/mcp-servers/{id}/toggle:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [MCPServers]
+      summary: Toggle MCP server enabled
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [enabled], properties: { enabled: { type: boolean } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+  /api/mcp-servers/{id}/tools:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get: { tags: [MCPServers], summary: Discovered tools for a server, responses: { '200': { description: Tools, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+  /api/mcp-servers/{id}/resources:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get: { tags: [MCPServers], summary: Discovered resources for a server, responses: { '200': { description: Resources, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+  /api/mcp-servers/{id}/discover:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [MCPServers]
+      summary: Trigger discovery for a server
+      parameters: [{ name: refresh, in: query, schema: { type: string, enum: ['true'] } }]
+      responses: { '200': { description: Discovery result, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    delete: { tags: [MCPServers], summary: Clear a server's discovery cache, responses: { '200': { $ref: '#/components/responses/Success' } } }
+  /api/mcp-servers/discovery:
+    get: { tags: [MCPServers], summary: All discovered tools and resources, responses: { '200': { description: Discovery, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+    post: { tags: [MCPServers], summary: Trigger discovery across servers, responses: { '200': { description: Discovery, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+  /api/mcp-servers/auto-start:
+    get: { tags: [MCPServers], summary: Servers configured to auto-start, responses: { '200': { description: Servers, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+  /api/mcp-servers/tools/search:
+    get:
+      tags: [MCPServers]
+      summary: Search discovered tools
+      parameters: [{ name: q, in: query, schema: { type: string } }]
+      responses: { '200': { description: Search results, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+
+  # ===================== Secrets =====================
+  /api/secrets/configs:
+    get: { tags: [Secrets], summary: List all project secrets configs, responses: { '200': { description: Configs, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+  /api/secrets/folders/{folderId}:
+    parameters: [{ name: folderId, in: path, required: true, schema: { type: string }, description: A projectId (path kept for back-compat) }]
+    get: { tags: [Secrets], summary: Get a project's secrets config, responses: { '200': { description: Config, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, '404': { $ref: '#/components/responses/NotFound' } } }
+    put:
+      tags: [Secrets]
+      summary: Create/update secrets config
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [provider, config], properties: { provider: { type: string }, config: { type: object, additionalProperties: { type: string } }, enabled: { type: boolean } } } } }
+      responses: { '200': { description: Saved config, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, '400': { $ref: '#/components/responses/BadRequest' } }
+    patch:
+      tags: [Secrets]
+      summary: Toggle secrets enabled
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [enabled], properties: { enabled: { type: boolean } } } } } }
+      responses: { '200': { description: Updated config, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    delete: { tags: [Secrets], summary: Delete secrets config, responses: { '200': { $ref: '#/components/responses/Success' } } }
+  /api/secrets/folders/{folderId}/secrets:
+    parameters: [{ name: folderId, in: path, required: true, schema: { type: string } }]
+    get: { tags: [Secrets], summary: Fetch secret values from the provider, responses: { '200': { description: Secret values, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+  /api/secrets/validate:
+    post:
+      tags: [Secrets]
+      summary: Validate provider credentials
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Validation result, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+
+  # ===================== SSH connections =====================
+  /api/ssh-connections:
+    get:
+      tags: [SSH]
+      summary: List SSH connections
+      parameters: [{ name: projectId, in: query, schema: { type: string }, description: "id | 'null' (unbound) | absent (all)" }]
+      responses: { '200': { description: Connections, content: { application/json: { schema: { type: object, properties: { connections: { type: array, items: { $ref: '#/components/schemas/SshConnection' } } } } } } } }
+    post:
+      tags: [SSH]
+      summary: Create SSH connection
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateSshConnectionInput' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { type: object, properties: { connection: { $ref: '#/components/schemas/SshConnection' }, publicKey: { type: string, nullable: true } } } } } } }
+  /api/ssh-connections/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get: { tags: [SSH], summary: Get SSH connection metadata, responses: { '200': { description: Connection, content: { application/json: { schema: { $ref: '#/components/schemas/SshConnection' } } } }, '404': { $ref: '#/components/responses/NotFound' } } }
+    patch:
+      tags: [SSH]
+      summary: Update SSH connection
+      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Updated connection, content: { application/json: { schema: { $ref: '#/components/schemas/SshConnection' } } } } }
+    delete: { tags: [SSH], summary: Delete SSH connection, responses: { '200': { $ref: '#/components/responses/Success' } } }
+  /api/ssh-connections/{id}/test:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [SSH]
+      summary: Connectivity probe (rate-limited 1/5s)
+      responses: { '200': { description: Probe result, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, '429': { description: Rate limited } }
+  /api/ssh-connections/{id}/public-key:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get: { tags: [SSH], summary: Read the connection's public key, responses: { '200': { description: Public key, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+
+  # ===================== Schedules =====================
+  /api/schedules:
+    get:
+      tags: [Schedules]
+      summary: List schedules
+      parameters: [{ name: sessionId, in: query, schema: { type: string } }]
+      responses: { '200': { description: Schedules, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    post:
+      tags: [Schedules]
+      summary: Create schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId, name, commands]
+              properties:
+                sessionId: { type: string }
+                name: { type: string }
+                commands: { type: array, items: { type: string }, minItems: 1 }
+                scheduleType: { type: string, enum: [one-time, recurring], default: one-time }
+                cronExpression: { type: string }
+                scheduledAt: { type: string, format: date-time }
+                timezone: { type: string }
+                enabled: { type: boolean }
+                maxRetries: { type: integer }
+                retryDelaySeconds: { type: integer }
+                timeoutSeconds: { type: integer }
+      responses: { '201': { description: Created schedule, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/schedules/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get: { tags: [Schedules], summary: Get schedule, responses: { '200': { description: Schedule, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, '404': { $ref: '#/components/responses/NotFound' } } }
+    patch:
+      tags: [Schedules]
+      summary: Update schedule
+      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Updated schedule, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    delete: { tags: [Schedules], summary: Delete schedule, responses: { '200': { $ref: '#/components/responses/Success' } } }
+  /api/schedules/{id}/execute:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [Schedules]
+      summary: Trigger manual execution
+      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Execution result, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/schedules/{id}/executions:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [Schedules]
+      summary: Execution history
+      parameters: [{ name: limit, in: query, schema: { type: integer, default: 50 } }]
+      responses: { '200': { description: Executions, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+
+  # ===================== Ports =====================
+  /api/ports:
+    get: { tags: [Ports], summary: List port allocations, responses: { '200': { description: Ports, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+  /api/ports/status:
+    post:
+      tags: [Ports]
+      summary: Check live status of ports
+      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Status, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/ports/detect-frameworks:
+    post:
+      tags: [Ports]
+      summary: Detect web frameworks for a project
+      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Frameworks, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/ports/detect-runtime:
+    post:
+      tags: [Ports]
+      summary: Detect runtime/listening ports
+      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Runtime ports, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+
+  # ===================== LiteLLM =====================
+  /api/litellm:
+    get: { tags: [LiteLLM], summary: Get LiteLLM config, responses: { '200': { description: Config, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+    patch:
+      tags: [LiteLLM]
+      summary: Update LiteLLM config
+      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Updated config, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/litellm/status:
+    get: { tags: [LiteLLM], summary: Proxy run status, responses: { '200': { description: Status, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+  /api/litellm/control:
+    post:
+      tags: [LiteLLM]
+      summary: Start / stop / restart the proxy
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [action], properties: { action: { type: string, enum: [start, stop, restart] } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+  /api/litellm/models:
+    get: { tags: [LiteLLM], summary: List models, responses: { '200': { description: Models, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+    post:
+      tags: [LiteLLM]
+      summary: Add a model
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '201': { description: Created model, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/litellm/models/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    patch:
+      tags: [LiteLLM]
+      summary: Update a model
+      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Updated model, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    put:
+      tags: [LiteLLM]
+      summary: Replace a model
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Replaced model, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    delete: { tags: [LiteLLM], summary: Remove a model, responses: { '200': { $ref: '#/components/responses/Success' } } }
+  /api/litellm/models/{id}/default:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post: { tags: [LiteLLM], summary: Set model as default, responses: { '200': { $ref: '#/components/responses/Success' } } }
+  /api/litellm/analytics:
+    get:
+      tags: [LiteLLM]
+      summary: Usage analytics
+      parameters:
+        - { name: type, in: query, schema: { type: string, enum: [summary, timeseries, models, sessions, latency] } }
+        - { name: start, in: query, schema: { type: string, format: date-time } }
+        - { name: end, in: query, schema: { type: string, format: date-time } }
+        - { name: model, in: query, schema: { type: string } }
+        - { name: granularity, in: query, schema: { type: string, enum: [hourly, daily, weekly] } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses: { '200': { description: Analytics, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/litellm/webhook:
+    post:
+      tags: [LiteLLM]
+      summary: Usage webhook receiver (x-webhook-secret auth)
+      security: []
+      parameters: [{ name: x-webhook-secret, in: header, schema: { type: string } }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' }, '401': { $ref: '#/components/responses/Unauthorized' } }
+
+  # ===================== Beads =====================
+  /api/beads:
+    get:
+      tags: [Beads]
+      summary: List bd issues
+      parameters:
+        - { name: projectPath, in: query, required: true, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [open, in_progress, closed, deferred] } }
+        - { name: type, in: query, schema: { type: string, enum: [task, bug, feature, epic, chore, message] } }
+      responses: { '200': { description: Issues, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /api/beads/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [Beads]
+      summary: Get a bd issue
+      parameters: [{ name: projectPath, in: query, required: true, schema: { type: string } }]
+      responses: { '200': { description: Issue, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /api/beads/{id}/comments:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [Beads]
+      summary: Get bd issue comments
+      parameters: [{ name: projectPath, in: query, required: true, schema: { type: string } }]
+      responses: { '200': { description: Comments, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/beads/config:
+    get:
+      tags: [Beads]
+      summary: Read .beads/config.yaml
+      parameters: [{ name: projectPath, in: query, required: true, schema: { type: string } }]
+      responses: { '200': { description: Config content, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/beads/stats:
+    get:
+      tags: [Beads]
+      summary: Issue statistics
+      parameters: [{ name: projectPath, in: query, required: true, schema: { type: string } }]
+      responses: { '200': { description: Stats, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+
+  # ===================== Trash =====================
+  /api/trash:
+    get:
+      tags: [Trash]
+      summary: List trash items
+      parameters: [{ name: type, in: query, schema: { type: string } }]
+      responses: { '200': { description: Items, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    post: { tags: [Trash], summary: Trigger cleanup of expired items, responses: { '200': { $ref: '#/components/responses/Success' } } }
+  /api/trash/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get: { tags: [Trash], summary: Get trash item, responses: { '200': { description: Item, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, '404': { $ref: '#/components/responses/NotFound' } } }
+    delete: { tags: [Trash], summary: Permanently delete, responses: { '200': { $ref: '#/components/responses/Success' } } }
+  /api/trash/{id}/restore:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get: { tags: [Trash], summary: Check restore availability, responses: { '200': { description: Availability, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+    post:
+      tags: [Trash]
+      summary: Restore from trash
+      requestBody: { content: { application/json: { schema: { type: object, properties: { restorePath: { type: string }, targetFolderId: { type: string } } } } } }
+      responses: { '200': { description: Restore result, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+
+  # ===================== Appearance =====================
+  /api/appearance:
+    get: { tags: [Appearance], summary: Get appearance settings and color schemes, responses: { '200': { description: Appearance, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+    patch:
+      tags: [Appearance]
+      summary: Update appearance settings
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Updated appearance, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+
+  # ===================== Dashboard =====================
+  /api/dashboard:
+    get:
+      tags: [Dashboard]
+      summary: Dashboard summary
+      parameters: [{ name: days, in: query, schema: { type: integer, default: 30, minimum: 1, maximum: 365 } }]
+      responses: { '200': { description: Summary, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    post:
+      tags: [Dashboard]
+      summary: Dashboard action
+      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Result, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/dashboard/errors:
+    get:
+      tags: [Dashboard]
+      summary: Recent error events
+      parameters: [{ name: limit, in: query, schema: { type: integer, default: 50, minimum: 1, maximum: 200 } }]
+      responses: { '200': { description: Errors, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/dashboard/events:
+    get:
+      tags: [Dashboard]
+      summary: Recent activity events
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 50 } }
+        - { name: type, in: query, schema: { type: string } }
+      responses: { '200': { description: Events, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+  /api/dashboard/providers:
+    get:
+      tags: [Dashboard]
+      summary: Per-provider stats
+      parameters: [{ name: days, in: query, schema: { type: integer, default: 30, minimum: 1, maximum: 365 } }]
+      responses: { '200': { description: Provider stats, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+
+  # ===================== System =====================
+  /api/system/logs:
+    get:
+      tags: [System]
+      summary: Query application logs
+      parameters:
+        - { name: level, in: query, schema: { type: string, enum: [error, warn, info, debug, trace] } }
+        - { name: source, in: query, schema: { type: string, enum: [nextjs, terminal] } }
+        - { name: namespace, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses: { '200': { description: Log entries, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    delete: { tags: [System], summary: Clear log entries, responses: { '200': { $ref: '#/components/responses/Success' } } }
+  /api/system/logs/namespaces:
+    get: { tags: [System], summary: Distinct log namespaces, responses: { '200': { description: Namespaces, content: { application/json: { schema: { type: object, properties: { namespaces: { type: array, items: { type: string } } } } } } } } }
+  /api/system/update:
+    get: { tags: [System], summary: Current update status, responses: { '200': { description: Update status, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+    post:
+      tags: [System]
+      summary: Perform update action
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { action: { type: string, enum: [check, apply, cancel] } } } } } }
+      responses: { '200': { description: Action result, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+
+  # ===================== tmux =====================
+  /api/tmux/sessions:
+    get: { tags: [Tmux], summary: List tmux sessions (with orphan detection), responses: { '200': { description: tmux sessions, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+    delete:
+      tags: [Tmux]
+      summary: Terminate a tmux session
+      parameters: [{ name: name, in: query, required: true, schema: { type: string } }]
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+  /api/tmux/sessions/orphaned:
+    delete: { tags: [Tmux], summary: Terminate all orphaned tmux sessions, responses: { '200': { $ref: '#/components/responses/Success' } } }
+
+  # ===================== Files =====================
+  /api/files/read:
+    get:
+      tags: [Files]
+      summary: Read a file
+      parameters: [{ name: path, in: query, required: true, schema: { type: string } }]
+      responses: { '200': { description: File contents, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /api/files/write:
+    post:
+      tags: [Files]
+      summary: Write a file (atomic)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [path, content], properties: { path: { type: string }, content: { type: string } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /api/files/exists:
+    post:
+      tags: [Files]
+      summary: Batch file existence check
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [paths], properties: { paths: { type: array, items: { type: string } } } } } } }
+      responses: { '200': { description: Path-to-boolean map, content: { application/json: { schema: { type: object, additionalProperties: { type: boolean } } } } } }
+
+  # ===================== Directories =====================
+  /api/directories:
+    get:
+      tags: [Directories]
+      summary: Browse filesystem directories
+      parameters: [{ name: path, in: query, schema: { type: string } }]
+      responses: { '200': { description: Directory entries, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+
+  # ===================== Git =====================
+  /api/git/validate:
+    get:
+      tags: [Git]
+      summary: Validate a git repository path
+      parameters: [{ name: path, in: query, schema: { type: string } }]
+      responses: { '200': { description: Validation, content: { application/json: { schema: { type: object, properties: { isGitRepo: { type: boolean }, branches: { type: array, items: { type: string } } } } } } } }
+
+  # ===================== Images =====================
+  /api/images:
+    post:
+      tags: [Images]
+      summary: Upload an image
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { type: object, properties: { image: { type: string, format: binary } } }
+          application/json:
+            schema: { type: object, properties: { data: { type: string, description: base64 }, mediaType: { type: string } } }
+      responses: { '200': { description: Saved image, content: { application/json: { schema: { type: object, properties: { path: { type: string }, size: { type: integer }, mediaType: { type: string } } } } } } }
+
+  # ===================== Config =====================
   /api/config:
     get:
       tags: [Config]
-      summary: Get runtime configuration
-      description: |
-        Return the deployment's basePath, instance slug, and package
-        version. Used by external tooling (k8s probes, ops scripts) and
-        the multi-instance smoke tests to confirm the right pod answered.
-        Requires authentication; instanceSlug is part of the cookie-name
-        suffix and treated as semi-sensitive.
-      security:
-        - sessionCookie: []
-        - bearerAuth: []
+      summary: Runtime configuration probe
       responses:
         '200':
           description: Runtime config
@@ -1093,585 +1655,377 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [basePath, instanceSlug, version]
                 properties:
-                  basePath:
-                    type: string
-                    description: RDV_BASE_PATH at process start; empty string when unset.
-                    example: /alpha
-                  instanceSlug:
-                    type: string
-                    description: RDV_INSTANCE_SLUG, defaulted to the last basePath segment.
-                    example: alpha
-                  version:
-                    type: string
-                    description: npm_package_version at process start, or "unknown".
-                    example: 0.1.0
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+                  basePath: { type: string }
+                  instanceSlug: { type: string }
+                  version: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
-  # Git API
-  /api/git/validate:
-    get:
-      tags: [Git]
-      summary: Validate repository
-      description: Check if a path is a valid git repository
-      parameters:
-        - name: path
-          in: query
-          required: true
-          schema:
-            type: string
-          description: Filesystem path to validate
-      responses:
-        '200':
-          description: Validation result
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  isGitRepo:
-                    type: boolean
-                  branches:
-                    type: array
-                    items:
-                      type: string
-
-  # Images API
-  /api/images:
+  # ===================== Setup =====================
+  /api/setup/platform:
+    get: { tags: [Setup], summary: Detect platform (public), security: [], responses: { '200': { description: Platform info, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+  /api/setup/dependencies:
+    get: { tags: [Setup], summary: Check dependencies (public), security: [], responses: { '200': { description: Dependency checks, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+  /api/setup/complete:
+    get: { tags: [Setup], summary: Read setup state (public), security: [], responses: { '200': { description: Setup state, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
     post:
-      tags: [Images]
-      summary: Upload image
-      description: Upload an image and save to filesystem
-      requestBody:
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              properties:
-                image:
-                  type: string
-                  format: binary
-          application/json:
-            schema:
-              type: object
-              required:
-                - data
-                - mediaType
-              properties:
-                data:
-                  type: string
-                  description: Base64-encoded image data
-                mediaType:
-                  type: string
-                  enum: [image/jpeg, image/png, image/gif, image/webp]
+      tags: [Setup]
+      summary: Persist setup configuration (public)
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+  /api/setup/install:
+    post:
+      tags: [Setup]
+      summary: Return/run an install command for a dependency
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [dependency], properties: { dependency: { type: string } } } } } }
+      responses: { '200': { description: Install command, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+
+  # ===================== Health =====================
+  /api/healthz:
+    get:
+      tags: [Health]
+      summary: Liveness probe (unauthenticated)
+      security: []
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { status: { type: string, example: ok } } } } } } }
+  /api/readyz:
+    get:
+      tags: [Health]
+      summary: Readiness probe (unauthenticated)
+      security: []
       responses:
-        '200':
-          description: Image uploaded
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  path:
-                    type: string
-                  size:
-                    type: integer
-                  mediaType:
-                    type: string
+        '200': { description: Ready, content: { application/json: { schema: { $ref: '#/components/schemas/Readiness' } } } }
+        '503': { description: Degraded, content: { application/json: { schema: { $ref: '#/components/schemas/Readiness' } } } }
+
+  # ===================== Deploy =====================
+  /api/deploy:
+    post:
+      tags: [Deploy]
+      summary: Blue-green deploy webhook (HMAC-SHA256 auth)
+      security: []
+      parameters:
+        - { name: X-Hub-Signature-256, in: header, required: true, schema: { type: string } }
+        - { name: X-GitHub-Event, in: header, schema: { type: string } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses:
+        '202': { description: Deploy triggered, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '401': { description: Invalid signature }
+        '409': { description: Deploy already in progress }
+        '410': { description: Webhook deprecated (auto-update enabled) }
+        '503': { description: Deploy not configured }
+
+  # ===================== Cron =====================
+  /api/cron/trash-cleanup:
+    post:
+      tags: [Cron]
+      summary: Purge expired trash (CRON_SECRET auth)
+      security: [{ cronSecret: [] }]
+      parameters: [{ name: secret, in: query, schema: { type: string } }]
+      responses: { '200': { $ref: '#/components/responses/Success' }, '401': { $ref: '#/components/responses/Unauthorized' } }
+    get:
+      tags: [Cron]
+      summary: Purge expired trash (GET variant)
+      security: [{ cronSecret: [] }]
+      parameters: [{ name: secret, in: query, schema: { type: string } }]
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+  /api/cron/litellm-cleanup:
+    post:
+      tags: [Cron]
+      summary: Purge old LiteLLM request logs (CRON_SECRET auth)
+      security: [{ cronSecret: [] }]
+      parameters: [{ name: secret, in: query, schema: { type: string } }]
+      responses: { '200': { $ref: '#/components/responses/Success' }, '401': { $ref: '#/components/responses/Unauthorized' } }
+    get:
+      tags: [Cron]
+      summary: Purge old LiteLLM request logs (GET variant)
+      security: [{ cronSecret: [] }]
+      parameters: [{ name: secret, in: query, schema: { type: string } }]
+      responses: { '200': { $ref: '#/components/responses/Success' } }
+
+  # ===================== Auth =====================
+  /api/auth/{nextauth}:
+    parameters: [{ name: nextauth, in: path, required: true, schema: { type: string }, description: NextAuth catch-all segment }]
+    get:
+      tags: [Auth]
+      summary: NextAuth handler (sign-in, session, csrf, callback, ...)
+      security: []
+      responses: { '200': { description: NextAuth response } }
+    post:
+      tags: [Auth]
+      summary: NextAuth handler (POST actions)
+      security: []
+      responses: { '200': { description: NextAuth response } }
+  /api/auth/github/link:
+    get:
+      tags: [Auth]
+      summary: Start the GitHub OAuth account-link flow
+      responses: { '302': { description: Redirect to GitHub } }
+  /api/auth/github/callback:
+    get:
+      tags: [Auth]
+      summary: GitHub OAuth callback
+      security: []
+      responses: { '302': { description: Redirect after linking } }
+  /api/auth/mobile-exchange:
+    post:
+      tags: [Auth]
+      summary: Exchange a Cloudflare Access JWT for an API key
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [cfToken], properties: { cfToken: { type: string } } } } } }
+      responses:
+        '200': { description: API key issued, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/auth/signout:
+    post:
+      tags: [Auth]
+      summary: Sign out / clear session
+      security: []
+      responses: { '200': { $ref: '#/components/responses/Success' } }
 
 components:
-  schemas:
-    Session:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        name:
-          type: string
-        tmuxSessionName:
-          type: string
-        projectPath:
-          type: string
-          nullable: true
-        githubRepoId:
-          type: string
-          format: uuid
-          nullable: true
-        worktreeBranch:
-          type: string
-          nullable: true
-        projectId:
-          type: string
-          format: uuid
-          nullable: true
-        status:
-          type: string
-          enum: [active, suspended, closed]
-        tabOrder:
-          type: integer
-        lastActivityAt:
-          type: string
-          format: date-time
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-
-    CreateSessionRequest:
-      type: object
-      properties:
-        name:
-          type: string
-          description: Display name. Defaults to parent project name with counter (e.g., "remote-dev 1") or "Terminal N" if unscoped.
-        projectPath:
-          type: string
-        githubRepoId:
-          type: string
-          format: uuid
-        worktreeBranch:
-          type: string
-        projectId:
-          type: string
-          format: uuid
-        startupCommand:
-          type: string
-        featureDescription:
-          type: string
-        createWorktree:
-          type: boolean
-        baseBranch:
-          type: string
-
-    UpdateSessionRequest:
-      type: object
-      properties:
-        name:
-          type: string
-        tabOrder:
-          type: integer
-        status:
-          type: string
-          enum: [active, suspended, closed]
-
-    Group:
-      type: object
-      description: Project group (container; preferences only)
-      properties:
-        id:
-          type: string
-          format: uuid
-        userId:
-          type: string
-          format: uuid
-        name:
-          type: string
-        parentGroupId:
-          type: string
-          format: uuid
-          nullable: true
-        collapsed:
-          type: boolean
-        sortOrder:
-          type: integer
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-
-    Project:
-      type: object
-      description: Project (leaf; owns sessions, tasks, channels, secrets)
-      properties:
-        id:
-          type: string
-          format: uuid
-        userId:
-          type: string
-          format: uuid
-        groupId:
-          type: string
-          format: uuid
-        name:
-          type: string
-        collapsed:
-          type: boolean
-        sortOrder:
-          type: integer
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-
-    UserSettings:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        userId:
-          type: string
-          format: uuid
-        defaultWorkingDirectory:
-          type: string
-          nullable: true
-        defaultShell:
-          type: string
-          nullable: true
-        startupCommand:
-          type: string
-          nullable: true
-        theme:
-          type: string
-        fontSize:
-          type: integer
-        fontFamily:
-          type: string
-        activeNodeId:
-          type: string
-          format: uuid
-          nullable: true
-        activeNodeType:
-          type: string
-          enum: [group, project]
-          nullable: true
-        autoFollowActiveSession:
-          type: boolean
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-
-    UserSettingsUpdate:
-      type: object
-      properties:
-        defaultWorkingDirectory:
-          type: string
-        defaultShell:
-          type: string
-        startupCommand:
-          type: string
-        theme:
-          type: string
-        fontSize:
-          type: integer
-        fontFamily:
-          type: string
-        autoFollowActiveSession:
-          type: boolean
-
-    NodePreferencesEntry:
-      type: object
-      description: |
-        Per-node preferences. Group entries omit project-only fields such as
-        `localRepoPath`. Project entries accept the full schema.
-      properties:
-        ownerType:
-          type: string
-          enum: [group, project]
-        ownerId:
-          type: string
-          format: uuid
-        userId:
-          type: string
-          format: uuid
-        fields:
-          type: object
-          additionalProperties: true
-          description: Discriminated payload — see `NodePreferences.forGroup` / `forProject`
-
-    Template:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        name:
-          type: string
-        description:
-          type: string
-          nullable: true
-        projectPath:
-          type: string
-          nullable: true
-        startupCommand:
-          type: string
-          nullable: true
-        theme:
-          type: string
-          nullable: true
-        fontSize:
-          type: integer
-          nullable: true
-        fontFamily:
-          type: string
-          nullable: true
-        usageCount:
-          type: integer
-        userId:
-          type: string
-          format: uuid
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-
-    CreateTemplateRequest:
-      type: object
-      required:
-        - name
-      properties:
-        name:
-          type: string
-        description:
-          type: string
-        projectPath:
-          type: string
-        startupCommand:
-          type: string
-        theme:
-          type: string
-        fontSize:
-          type: integer
-        fontFamily:
-          type: string
-
-    Recording:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        name:
-          type: string
-        sessionId:
-          type: string
-          format: uuid
-          nullable: true
-        duration:
-          type: integer
-          description: Duration in seconds
-        userId:
-          type: string
-          format: uuid
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-
-    RecordingWithData:
-      allOf:
-        - $ref: '#/components/schemas/Recording'
-        - type: object
-          properties:
-            data:
-              type: string
-              description: Base64-encoded recording data
-
-    CreateRecordingRequest:
-      type: object
-      required:
-        - name
-        - data
-        - duration
-      properties:
-        name:
-          type: string
-        data:
-          type: string
-          description: Base64-encoded recording data
-        duration:
-          type: integer
-          description: Duration in seconds
-        sessionId:
-          type: string
-          format: uuid
-
-    Repository:
-      type: object
-      properties:
-        id:
-          type: integer
-        name:
-          type: string
-        fullName:
-          type: string
-        cloneUrl:
-          type: string
-        sshUrl:
-          type: string
-        defaultBranch:
-          type: string
-        isPrivate:
-          type: boolean
-        description:
-          type: string
-          nullable: true
-        language:
-          type: string
-          nullable: true
-        stargazersCount:
-          type: integer
-        forksCount:
-          type: integer
-        updatedAt:
-          type: string
-          format: date-time
-        owner:
-          type: object
-          properties:
-            login:
-              type: string
-            avatarUrl:
-              type: string
-
-    FolderTree:
-      type: object
-      properties:
-        name:
-          type: string
-        path:
-          type: string
-        isDirectory:
-          type: boolean
-        children:
-          type: array
-          items:
-            $ref: '#/components/schemas/FolderTree'
-
-    Error:
-      type: object
-      properties:
-        error:
-          type: string
-        code:
-          type: string
-
+  securitySchemes:
+    apiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: rdv_<key>
+      description: API key as a bearer token (handlers wrapped with withApiAuth)
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: authjs.session-token
+      description: NextAuth session cookie (browser)
+    cronSecret:
+      type: http
+      scheme: bearer
+      description: CRON_SECRET as a bearer token (or ?secret= query param)
   parameters:
-    SessionId:
+    IdPath:
       name: id
       in: path
       required: true
-      schema:
-        type: string
-        format: uuid
-      description: Session UUID
-
-    GroupId:
-      name: id
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
-      description: Project group UUID
-
-    ProjectId:
-      name: id
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
-      description: Project UUID
-
-    NodeOwnerType:
-      name: ownerType
-      in: path
-      required: true
-      schema:
-        type: string
-        enum: [group, project]
-      description: Node discriminator
-
-    NodeOwnerId:
-      name: ownerId
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
-      description: Group or project UUID
-
-    TemplateId:
-      name: id
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
-      description: Template UUID
-
-    RecordingId:
-      name: id
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
-      description: Recording UUID
-
+      schema: { type: string }
   responses:
     Success:
-      description: Operation successful
+      description: Generic success
       content:
         application/json:
-          schema:
-            type: object
-            properties:
-              success:
-                type: boolean
-                const: true
-
-    BadRequest:
-      description: Invalid request parameters
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-
+          schema: { type: object, properties: { success: { type: boolean, example: true } } }
     Unauthorized:
-      description: Not authenticated
+      description: Missing or invalid authentication
       content:
         application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-
+          schema: { $ref: '#/components/schemas/Error' }
+    BadRequest:
+      description: Validation error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     NotFound:
       description: Resource not found
       content:
         application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-
-  securitySchemes:
-    sessionCookie:
-      type: apiKey
-      in: cookie
-      name: next-auth.session-token
-      description: NextAuth session cookie
-    bearerAuth:
-      type: http
-      scheme: bearer
-      description: |
-        API key issued via `POST /api/keys` and passed as
-        `Authorization: Bearer <key>`. Accepted by every route wrapped
-        in `withApiAuth` (see `src/lib/api.ts`).
-
-security:
-  - sessionCookie: []
-  - bearerAuth: []
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Not authorized for this resource/path
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        code: { type: string }
+        details: { type: string }
+    IdsOrAll:
+      type: object
+      properties:
+        ids: { type: array, items: { type: string } }
+        all: { type: boolean }
+    Session:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        tmuxSessionName: { type: string }
+        projectPath: { type: string, nullable: true }
+        projectId: { type: string, nullable: true }
+        githubRepoId: { type: string, nullable: true }
+        worktreeBranch: { type: string, nullable: true }
+        terminalType: { type: string, enum: [shell, agent, ssh, file, browser, loop] }
+        agentProvider: { type: string, nullable: true }
+        agentExitState: { type: string, nullable: true }
+        status: { type: string, enum: [active, suspended, closed] }
+        tabOrder: { type: integer }
+        parentSessionId: { type: string, nullable: true }
+        lastActivityAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreateSessionInput:
+      type: object
+      required: [projectId]
+      properties:
+        projectId: { type: string, description: "Required (alias: folderId)" }
+        folderId: { type: string, description: Legacy alias for projectId }
+        name: { type: string }
+        projectPath: { type: string }
+        terminalType: { type: string, enum: [shell, agent, ssh, file, browser, loop] }
+        githubRepoId: { type: string }
+        worktreeBranch: { type: string }
+        createWorktree: { type: boolean }
+        baseBranch: { type: string }
+        worktreeType: { type: string }
+        featureDescription: { type: string }
+        filePath: { type: string }
+        profileId: { type: string }
+        agentProvider: { type: string }
+        autoLaunchAgent: { type: boolean }
+        agentFlags: { type: array, items: { type: string } }
+        parentSessionId: { type: string }
+        loopConfig: { type: object, additionalProperties: true }
+        sshConnectionId: { type: string }
+        scopeKey: { type: string, nullable: true }
+        typeMetadata: { type: object, additionalProperties: true }
+    Group:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        name: { type: string }
+        parentGroupId: { type: string, nullable: true }
+        sortOrder: { type: integer }
+        collapsed: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Project:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        groupId: { type: string }
+        name: { type: string }
+        sortOrder: { type: integer }
+        collapsed: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Task:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        projectId: { type: string, nullable: true }
+        sessionId: { type: string, nullable: true }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        status: { type: string, enum: [open, in_progress, done, cancelled] }
+        priority: { type: string, enum: [critical, high, medium, low] }
+        source: { type: string, enum: [manual, agent] }
+        labels:
+          type: array
+          items: { type: object, properties: { name: { type: string }, color: { type: string } } }
+        subtasks:
+          type: array
+          items: { type: object, properties: { id: { type: string }, title: { type: string }, completed: { type: boolean } } }
+        blockedBy: { type: array, items: { type: string } }
+        owner: { type: string, nullable: true }
+        dueDate: { type: string, format: date-time, nullable: true }
+        githubIssueUrl: { type: string, nullable: true }
+        instructions: { type: string, nullable: true }
+        metadata: { type: object, additionalProperties: true }
+        sortOrder: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreateTaskInput:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string }
+        projectId: { type: string, nullable: true }
+        sessionId: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        status: { type: string, enum: [open, in_progress, done, cancelled] }
+        priority: { type: string, enum: [critical, high, medium, low] }
+        source: { type: string, enum: [manual, agent] }
+        labels:
+          type: array
+          items: { type: object, properties: { name: { type: string }, color: { type: string } } }
+        subtasks:
+          type: array
+          items: { type: object, properties: { id: { type: string }, title: { type: string }, completed: { type: boolean } } }
+        blockedBy: { type: array, items: { type: string } }
+        owner: { type: string, nullable: true }
+        dueDate: { type: string, nullable: true }
+        githubIssueUrl: { type: string, nullable: true }
+        instructions: { type: string, nullable: true }
+        metadata: { type: object, additionalProperties: true }
+        sortOrder: { type: integer }
+    Channel:
+      type: object
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        groupId: { type: string }
+        name: { type: string }
+        topic: { type: string, nullable: true }
+        unreadCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    SshConnection:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        projectId: { type: string, nullable: true }
+        name: { type: string }
+        host: { type: string }
+        port: { type: integer }
+        username: { type: string }
+        authType: { type: string, enum: [key, agent, password, system] }
+        hasPassphrase: { type: boolean }
+        knownHostsPolicy: { type: string, enum: [strict, accept-new, no] }
+        extraOptions: { type: array, items: { type: string } }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreateSshConnectionInput:
+      type: object
+      required: [name, host, username, authType]
+      properties:
+        name: { type: string }
+        host: { type: string }
+        username: { type: string }
+        authType: { type: string, enum: [key, agent, password, system] }
+        port: { type: integer }
+        password: { type: string }
+        hasPassphrase: { type: boolean }
+        knownHostsPolicy: { type: string, enum: [strict, accept-new, no] }
+        extraOptions: { type: array, items: { type: string } }
+        projectId: { type: string, nullable: true }
+        privateKey: { type: string }
+        publicKey: { type: string }
+        generateKeypair: { type: boolean }
+    ApiKey:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        keyPrefix: { type: string }
+        lastUsedAt: { type: string, format: date-time, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+    Readiness:
+      type: object
+      properties:
+        ready: { type: boolean }
+        checks:
+          type: object
+          properties:
+            db: { $ref: '#/components/schemas/CheckResult' }
+            tmux: { $ref: '#/components/schemas/CheckResult' }
+            terminal: { $ref: '#/components/schemas/CheckResult' }
+    CheckResult:
+      type: object
+      properties:
+        ok: { type: boolean }
+        error: { type: string }

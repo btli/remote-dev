@@ -1,41 +1,56 @@
 # Architecture
 
-This document describes the technical architecture of Remote Dev.
+This document is the technical architecture reference for Remote Dev. It is the
+canonical home for the service-layer, database, plugin, and subsystem detail that
+used to live in the root `CLAUDE.md`.
+
+> **See also:** [`docs/README.md`](./README.md) (docs index) ·
+> [`docs/SETUP.md`](./SETUP.md) · [`docs/API.md`](./API.md) ·
+> [`docs/RDV_CLI.md`](./RDV_CLI.md) · [`docs/AGENTS.md`](./AGENTS.md) ·
+> [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) ·
+> [`docs/MULTI_INSTANCE.md`](./MULTI_INSTANCE.md) ·
+> [`docs/MOBILE_ARCHITECTURE.md`](./MOBILE_ARCHITECTURE.md)
 
 ## Overview
 
-Remote Dev is a web-based terminal interface that provides:
+Remote Dev (v0.3.18) is a web-based terminal interface built with **Next.js 16**,
+**React 19**, **xterm.js**, **NextAuth v5**, and **Drizzle ORM + libsql**. It provides:
+
 - Multiple persistent terminal sessions via tmux
-- GitHub repository integration with worktree support
-- Modern React-based UI with real-time terminal emulation
-- Session recording and playback
-- Reusable session templates
+- Multi-GitHub-account integration with per-project account binding and worktree support
+- Multi-agent CLI support (Claude Code, Codex, Gemini, Antigravity, OpenCode) with isolated profiles
 - Two-level project group + project organization with preference inheritance
-- Self-hosted Nerd Fonts with mobile optimization
-- Glassmorphism UI with Tokyo Night theme
+- Session recording and playback, reusable session templates
+- Project tasks, channels, and inter-agent peer messaging
+- An extensible terminal-type plugin system (shell, agent, SSH, file viewer, browser, and rich panels)
+- Self-hosted Nerd Fonts with mobile optimization, glassmorphism UI on a Tokyo Night theme
+
+The stack is delivered three ways: the **web app** (PWA-capable), an **Electron
+desktop app**, and **native mobile clients** (see
+[`docs/MOBILE_ARCHITECTURE.md`](./MOBILE_ARCHITECTURE.md)).
 
 ## System Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                              Browser                                     │
-│  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐               │
-│  │  React App    │  │   xterm.js    │  │  SessionCtx   │               │
-│  │  (Next.js)    │  │  (Terminal)   │  │  (State Mgmt) │               │
-│  └───────┬───────┘  └───────┬───────┘  └───────────────┘               │
-│          │                  │                                           │
-│          │ HTTP/RSC         │ WebSocket                                 │
+│                              Browser                                      │
+│  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐                 │
+│  │  React App    │  │   xterm.js    │  │  SessionCtx   │                 │
+│  │  (Next.js)    │  │  (Terminal)   │  │  (State Mgmt)  │                 │
+│  └───────┬───────┘  └───────┬───────┘  └───────────────┘                 │
+│          │                  │                                            │
+│          │ HTTP/RSC         │ WebSocket                                  │
 └──────────┼──────────────────┼───────────────────────────────────────────┘
            │                  │
            ▼                  ▼
 ┌──────────────────┐  ┌──────────────────┐
 │   Next.js App    │  │  Terminal Server │
-│   (Port 3000)    │  │   (Port 3001)    │
+│   (Port 6001)    │  │   (Port 6002)    │   ← $PORT / $TERMINAL_PORT
 │                  │  │                  │
 │  ┌────────────┐  │  │  ┌────────────┐  │
 │  │ API Routes │  │  │  │  ws Server │  │
 │  ├────────────┤  │  │  ├────────────┤  │
-│  │ Auth (v5)  │  │  │  │  node-pty  │  │
+│  │ proxy.ts   │  │  │  │  node-pty  │  │   ← auth at the network boundary
 │  ├────────────┤  │  │  ├────────────┤  │
 │  │ Services   │  │  │  │ tmux mgmt  │  │
 │  └────────────┘  │  │  └────────────┘  │
@@ -52,533 +67,481 @@ Remote Dev is a web-based terminal interface that provides:
 │  - groups        │  │  - Detachable    │
 │  - projects      │  │                  │
 │  - node_prefs    │  │                  │
-│  - templates     │  │                  │
-│  - recordings    │  │                  │
-│  - repositories  │  │                  │
+│  - …59 tables    │  │                  │
 └──────────────────┘  └──────────────────┘
 ```
 
-### Multi-instance URL prefixing (`RDV_BASE_PATH`)
-
-When `RDV_BASE_PATH=/alpha` is set, every layer above is prefixed
-without changing the storage model:
-
-- **Next.js** reads it in `next.config.ts` and applies it as `basePath`,
-  so pages, `_next/*` assets, and API routes resolve under `/alpha/...`.
-- **Terminal server** rejects WebSocket upgrades whose path does not
-  start with `/alpha/ws` (see `src/server/terminal.ts`).
-- **NextAuth** issues `__Secure-rdv-{slug}-session-token` cookies with
-  `Path=/alpha` so a request to `/beta/...` carries no `/alpha` cookies.
-  Footnote: the `__Secure-` and `__Host-` prefixes are HTTPS-only per
-  RFC 6265bis. HTTP development setups (e.g. `http://localhost:6001/alpha`)
-  fall back to unprefixed cookie names (`rdv-{slug}-session-token`,
-  `rdv-{slug}-csrf-token`) — `src/lib/auth-cookies.ts` picks the right
-  prefix based on the `AUTH_URL` scheme. Path scoping still applies.
-- **Client code** reads `window.__RDV_BASE_PATH__` (injected by
-  `src/app/layout.tsx`) via `src/lib/api-fetch.ts` and
-  `src/lib/terminal-ws-url.ts` so all browser-initiated URLs include
-  the prefix.
-
-The basePath is **routing only** — SQLite, tmux, and `RDV_DATA_DIR`
-remain single-tenant per instance. See
-[`docs/plans/multi-instance-basepath.md`](./plans/multi-instance-basepath.md)
-for the full RFC.
+Ports come from `.env.local`: **`$PORT` (default 6001)** for Next.js and
+**`$TERMINAL_PORT` (default 6002)** for the terminal server. In production both
+servers can also bind Unix sockets instead of TCP ports (see
+[`docs/DEPLOYMENT.md`](./DEPLOYMENT.md)).
 
 ## Two-Server Model
 
 ### Why Two Servers?
 
-1. **Bun Compatibility**: Bun doesn't fully support `node-pty` native bindings
-2. **Isolation**: Terminal processes are isolated from the web server
-3. **Scalability**: Servers can be scaled independently
-4. **Reliability**: Terminal server crash doesn't affect web UI
+1. **Bun Compatibility**: Bun doesn't fully support `node-pty` native bindings, so the
+   terminal server runs under `tsx`/Node.js while the web app runs under Bun/Turbopack.
+2. **Isolation**: Terminal processes are isolated from the web server.
+3. **Reliability**: A terminal-server crash doesn't take down the web UI.
+4. **Independent lifecycle**: The two servers start, stop, and restart independently
+   (managed by the `rdv` process manager / Electron process manager).
 
-### Next.js Server (Port 3000)
+### Next.js Server (Port 6001, `$PORT`)
 
-Handles:
-- React Server Components and SSR
-- Authentication (NextAuth v5)
-- API routes for session and GitHub management
-- Static assets and client bundles
+Handles React Server Components and SSR, authentication (NextAuth v5 + `proxy.ts`),
+all API routes, the secrets/peer internal API, and static assets/client bundles.
 
-Technologies:
-- Next.js 16 with App Router and Turbopack
-- React 19 with Server Components
-- Drizzle ORM with SQLite (libsql)
-- Tailwind CSS v4 with CSS variables
+Technologies: Next.js 16 (App Router + Turbopack), React 19 (Server Components),
+Drizzle ORM with SQLite (libsql), Tailwind CSS v4.
 
-### Terminal Server (Port 3001)
+### Terminal Server (Port 6002, `$TERMINAL_PORT`)
 
-Handles:
-- WebSocket connections from xterm.js
-- PTY (pseudo-terminal) spawning via node-pty
-- tmux session attachment/creation
-- Terminal I/O multiplexing
+Handles WebSocket connections from xterm.js, PTY spawning via node-pty,
+tmux session attachment/creation, terminal I/O multiplexing, and the MCP push
+socket for inter-agent events.
 
-Technologies:
-- Node.js with tsx (for TypeScript)
-- ws (WebSocket server)
-- node-pty (native PTY bindings)
-- tmux (session persistence)
+Technologies: Node.js with `tsx`, `ws` (WebSocket server), `node-pty` (native PTY
+bindings), tmux (session persistence). Entry point: `src/server/index.ts`;
+implementation: `src/server/terminal.ts`.
 
-## Data Flow
-
-### Terminal Session Lifecycle
+## Terminal Flow with tmux Persistence
 
 ```
-1. User clicks "New Session"
-       │
-       ▼
-2. POST /api/sessions
-   - Generate tmux session name (rdv-{uuid})
-   - Create DB record
-   - Return session metadata
-       │
-       ▼
-3. Frontend connects WebSocket
-   ws://localhost:3001?sessionId=X&tmuxSession=rdv-abc
-       │
-       ▼
-4. Terminal Server
-   - Check if tmux session exists
-   - If not: tmux new-session -d -s rdv-abc
-   - Spawn PTY: pty.spawn("tmux", ["attach", "-t", "rdv-abc"])
-       │
-       ▼
-5. Bidirectional I/O
-   Browser <--WebSocket--> PTY <---> tmux <---> Shell
-       │
-       ▼
-6. User closes browser
-   - WebSocket closes
-   - PTY attachment terminates
-   - tmux session continues running
-       │
-       ▼
-7. User returns
-   - WebSocket reconnects
-   - PTY reattaches to existing tmux session
-   - Full terminal history restored
+Browser (xterm.js) <--WebSocket--> Terminal Server (node-pty) <--> tmux <--> Shell
 ```
 
-### GitHub Integration Flow
+- WebSocket disconnection detaches from tmux but **keeps the session alive**.
+- Reconnecting reattaches to the existing tmux session with full scrollback.
+- Sessions persist across browser refreshes and server restarts.
+
+### Session Lifecycle
 
 ```
-1. User clicks "Connect GitHub"
-       │
-       ▼
-2. GET /api/auth/github/link
-   - Redirect to GitHub OAuth
-   - Scope: read:user, user:email, repo
-       │
-       ▼
-3. GitHub OAuth callback
-   - Exchange code for access token
-   - Store in accounts table
-   - Link to existing user
-       │
-       ▼
-4. User creates session from GitHub
-       │
-       ▼
-5. GET /api/github/repositories
-   - Fetch repos from GitHub API
-   - Cache in github_repositories table
-       │
-       ▼
-6. POST /api/github/repositories/:id
-   - Clone repo to ~/.remote-dev/repos/{owner}/{repo}
-   - Update localPath in DB
-       │
-       ▼
-7. POST /api/github/worktrees (optional)
-   - Create git worktree for branch
-   - Return worktree path
-       │
-       ▼
-8. Create session with worktree as CWD
+1. Create   POST /api/sessions        → DB record + tmux session (rdv-{uuid})
+2. Connect  WebSocket                  → PTY attaches to tmux session
+3. Disconnect                          → PTY terminates, tmux keeps running
+4. Reconnect WebSocket                 → new PTY reattaches to existing tmux session
+5. Suspend  POST /api/sessions/:id/suspend → detach + mark suspended
+6. Resume   POST /api/sessions/:id/resume  → reattach to existing tmux session
+7. Close    DELETE /api/sessions/:id   → kill tmux + mark closed
 ```
+
+The terminal-server WebSocket upgrade path is `${BASE_PATH}/ws` (just `/ws` in the
+default single-tenant deployment). Upgrades whose path does not match are rejected.
+
+## Authentication
+
+Authentication is enforced **at the network boundary** by `src/proxy.ts` — a
+Next.js *proxy* (renamed from `middleware` per the Next.js 16
+[middleware-to-proxy](https://nextjs.org/docs/messages/middleware-to-proxy)
+convention). It exports `proxy(request)` plus
+`export const config = { matcher: ["/((?!_next/static|_next/image).*)"] }`.
+
+There is **no `src/middleware.ts`** — `proxy.ts` is the single entry point.
+
+### Auth model
+
+- **Cloudflare Access JWT** (remote/LAN, via tunnel): the proxy reads the
+  `CF_Authorization` cookie and validates it with `validateAccessJWT`
+  (`src/lib/cloudflare-access.ts`). On success it forwards `x-cf-user-email` /
+  `x-cf-user-id` headers to route handlers; on an invalid token it returns 401.
+- **NextAuth v5 session** (localhost / local dev): when no CF token is present the
+  proxy falls back to `getToken()`, reading the session cookie by its
+  configured name (`getSessionCookieName()` — important under `RDV_BASE_PATH`,
+  where the cookie is renamed). JWT session strategy; a credentials provider is
+  restricted to localhost for security.
+- **API keys** (programmatic/agents): API routes accept a `Bearer` token. The
+  proxy lets `Authorization: Bearer …` requests through to the route handler,
+  where `withApiAuth` (`src/lib/api.ts`) validates session **or** API key.
+- **GitHub OAuth**: optional, for repository access (multi-account, see below).
+
+### Proxy pass-throughs
+
+The proxy always allows static assets and PWA files (`/_next/*`, `/favicon.ico`,
+`/sw.js`, `/manifest.json`, `/icons/*`), NextAuth routes (`/api/auth/*`), K8s
+health probes (`/api/healthz`, `/api/readyz`), and the deploy webhook
+(`/api/deploy`, which carries its own HMAC-SHA256 auth). Unauthenticated page
+requests are redirected to `/login` (prefixed via `prefixPath()` under a base
+path); authenticated requests to `/login` are redirected home.
+
+### Multi-instance response tagging
+
+When `RDV_INSTANCE_SLUG` is set, every response is tagged with an
+`x-rdv-instance` header so operators can tell which pod served a request behind a
+shared Cloudflare tunnel. This is a no-op (byte-identical responses) for
+single-tenant deployments.
+
+### API key security
+
+- Keys carry 256 bits of cryptographic randomness, hashed with SHA-256
+  (appropriate for high-entropy random keys, faster than bcrypt).
+- Validation uses constant-time comparison to prevent timing attacks.
+- A key prefix is stored separately for identification without exposing the hash.
+- Optional expiration dates support time-limited access.
+
+### Command-execution safety
+
+All shell commands use `execFile` (or the `execFileNoThrow` wrapper in
+`src/lib/exec.ts`) with **array arguments** — no shell interpolation of user input.
+
+## Clean Architecture (Domain Layer)
+
+The session / project-group / project core follows Clean Architecture for
+testability and separation of concerns.
+
+```
+src/
+  domain/                    # Layer 1: pure business logic (no dependencies)
+    entities/                # Session, Group, Project entities
+    value-objects/           # SessionStatus, NodeRef, NodePreferences
+    errors/                  # domain-specific errors
+
+  application/               # Layer 2: use cases (depends only on domain)
+    use-cases/               # CreateSession, SuspendSession, …
+    ports/                   # repository & gateway interfaces
+
+  infrastructure/            # Layer 3: implementations (implement ports)
+    persistence/
+      repositories/          # DrizzleSessionRepository, …
+      mappers/               # DB ↔ domain converters
+    external/
+      tmux/                  # TmuxGateway implementation
+      worktree/              # WorktreeGateway implementation
+    container.ts             # dependency-injection wiring
+
+  interface/                 # Layer 4: API adapters
+    presenters/              # domain → API response transformers
+```
+
+**Patterns:** immutable entities (state changes return new instances), value
+objects for type-safe domain concepts, the repository pattern, single-responsibility
+use cases, and dependency injection via `container.ts`.
+
+| File | Purpose |
+|------|---------|
+| `src/domain/entities/Session.ts` | Session entity with state machine |
+| `src/domain/entities/Group.ts` | Project group entity (container, preferences only) |
+| `src/domain/entities/Project.ts` | Project entity (leaf — owns sessions/tasks/channels) |
+| `src/domain/value-objects/SessionStatus.ts` | Type-safe session status |
+| `src/domain/value-objects/NodeRef.ts` | Polymorphic reference to a group or project |
+| `src/domain/value-objects/NodePreferences.ts` | Discriminated preferences (group vs project) |
+| `src/application/use-cases/session/*.ts` | Session use cases |
+| `src/application/ports/*.ts` | Repository and gateway interfaces |
+| `src/infrastructure/container.ts` | DI container with singleton instances |
+
+> Note: not every service has been migrated behind the domain layer. The
+> Clean-Architecture core covers session/group/project lifecycle; many feature
+> services (below) remain direct service classes that talk to Drizzle.
+
+## Terminal Type Plugin System
+
+Sessions carry a `terminalType` field that selects a plugin. Plugins are split
+into **server** and **client** registries (a legacy combined registry is retained
+for back-compat). Built-in plugins are wired in
+`src/lib/terminal-plugins/init.ts` →
+`init-server.ts` / `init-client.ts`.
+
+```
+src/lib/terminal-plugins/
+├── registry.ts        # legacy combined TerminalTypeRegistry (deprecated)
+├── server.ts          # TerminalTypeServerRegistry
+├── client.ts          # TerminalTypeClientRegistry
+├── event-bus.ts       # SessionEventBus for lifecycle events
+├── init.ts            # back-compat entry; calls init-server + init-client
+├── init-server.ts     # registers server-side plugins
+├── init-client.ts     # registers client-side plugins
+└── plugins/           # *-plugin.tsx / *-plugin-server.ts / *-plugin-client.tsx
+```
+
+### Registered plugins
+
+**Terminal / session types** (spawn a PTY or own a view):
+
+| Type | Plugin | Purpose |
+|------|--------|---------|
+| `shell` | ShellPlugin | Standard bash/zsh terminal (the default type) |
+| `agent` | AgentPlugin | AI coding agent as a shell process, with an exit screen + restart |
+| `ssh` | SshPlugin | Remote shell over SSH (tmux-backed), using saved connections |
+| `file` | FileViewerPlugin | File viewer/editor (rendered markdown + CodeMirror), no PTY |
+| `browser` | BrowserPlugin | Headless browser automation (navigate/click/type/screenshot) |
+| `loop-agent` | LoopAgentPlugin | Long-running looping agent variant |
+
+**Panel plugins** (rich non-terminal panes registered server-side):
+`SettingsServerPlugin`, `RecordingsServerPlugin`, `PRsServerPlugin`,
+`IssuesServerPlugin`, `ProfilesServerPlugin`, `PortManagerServerPlugin`,
+`TrashServerPlugin`, `ProjectPrefsServerPlugin`, `GroupPrefsServerPlugin`,
+`SecretsServerPlugin`, `GitHubMaintenanceServerPlugin`. These back the
+in-app settings/recordings/PRs/issues/profiles/ports/trash/preferences/secrets
+panels.
+
+**Plugin interface** (`src/types/terminal-type.ts`): `createSession()` (shell
+command, env, metadata), `renderContent()`, `onSessionExit()`,
+`onSessionRestart()`, `renderExitScreen()`.
+
+**Relevant `terminal_session` columns:** `terminal_type`, `agent_exit_state`
+(running/exited/restarting/closed), `agent_exit_code`, `agent_restarted_at`,
+`agent_restart_count`, `type_metadata` (JSON blob for plugin-specific data).
 
 ## Service Layer
 
-### SessionService (`src/services/session-service.ts`)
-
-Manages terminal session CRUD:
-
-```typescript
-// Create new session
-createSession(userId, { name, projectPath, githubRepoId, worktreeBranch })
-
-// Get user's sessions
-listSessions(userId, status?)
-
-// Update session
-updateSession(sessionId, userId, updates)
-
-// Close session (marks as closed, kills tmux)
-closeSession(sessionId, userId)
-```
-
-### TmuxService (`src/services/tmux-service.ts`)
-
-Manages tmux session lifecycle:
-
-```typescript
-// Check if tmux is available
-isTmuxInstalled()
-
-// Generate unique session name
-generateSessionName(sessionId) // -> "rdv-abc12345"
-
-// Create new tmux session
-createSession(sessionName, cwd?)
-
-// Check if session exists
-sessionExists(sessionName)
-
-// Kill session
-killSession(sessionName)
-
-// List all sessions
-listSessions()
-```
-
-### GitHubService (`src/services/github-service.ts`)
-
-Manages GitHub API integration:
-
-```typescript
-// Get access token from DB
-getAccessToken(userId)
-
-// List user's repositories
-listRepositoriesFromAPI(accessToken, page, perPage, sort)
-
-// Clone repository locally
-cloneRepository(accessToken, repoFullName, localPath?)
-
-// Get folder structure
-getFolderStructure(localPath, maxDepth)
-```
-
-### WorktreeService (`src/services/worktree-service.ts`)
-
-Manages git worktrees:
-
-```typescript
-// Create worktree for branch
-createWorktree(repoPath, branchName, options?)
-
-// Remove worktree
-removeWorktree(worktreePath)
-
-// List worktrees
-listWorktrees(repoPath)
-
-// Get branches
-getBranches(repoPath)
-```
-
-### GroupService (`src/services/group-service.ts`)
-
-Manages project groups (the container layer of the tree). Groups are nestable
-and hold preferences only — they cannot own sessions, tasks, or channels.
-
-```typescript
-// Create group
-GroupService.create({ userId, name, parentGroupId, sortOrder? })
-
-// List user's groups
-GroupService.list(userId)
-
-// Get one group
-GroupService.get(groupId)
-
-// Update group (name / collapsed / sort)
-GroupService.update({ id, name?, collapsed?, sortOrder? })
-
-// Move group to a new parent (or to root with null)
-GroupService.move({ id, newParentGroupId })
-
-// Delete group; force=true cascades to descendants
-GroupService.delete({ id, force })
-```
-
-### ProjectService (`src/services/project-service.ts`)
-
-Manages projects (the leaf layer). Projects own sessions, tasks, channels,
-secrets configs, GitHub bindings, and repository associations.
-
-```typescript
-// Create project under a group
-ProjectService.create({ userId, groupId, name, sortOrder? })
-
-// List by group / by user
-ProjectService.listByGroup(groupId)
-ProjectService.listByUser(userId)
-
-// Get one project
-ProjectService.get(projectId)
-
-// Update project
-ProjectService.update({ id, name?, collapsed?, sortOrder? })
-
-// Reparent
-ProjectService.move({ id, newGroupId })
-
-// Delete
-ProjectService.delete(projectId)
-```
-
-### PreferencesService (`src/services/preferences-service.ts`)
-
-Manages user settings and **node preferences** (polymorphic, keyed by an
-`(ownerType, ownerId)` pair where `ownerType` is `"group" | "project"`).
-
-```typescript
-// User settings
-getUserSettings(userId)
-updateUserSettings(userId, settings)
-
-// Node preferences (group OR project)
-getNodePreferences(ownerRef, userId)
-setNodePreferences(ownerRef, userId, preferences)
-deleteNodePreferences(ownerRef, userId)
-
-// Effective preferences (walks group ancestry, then applies project)
-getEffectivePreferences(userId, projectId?)
-```
-
-Preference inheritance order:
-
-```
-Default Settings → User Settings → Group Preferences (root → leaf) → Project Preferences
-```
-
-Group preferences are restricted to a subset of fields (no `localRepoPath`),
-while project preferences accept the full schema.
-
-### TemplateService (`src/services/template-service.ts`)
-
-Manages reusable session templates:
-
-```typescript
-// Create template
-createTemplate(userId, { name, settings, isDefault? })
-
-// List templates
-listTemplates(userId)
-
-// Get template
-getTemplate(templateId, userId)
-
-// Update template
-updateTemplate(templateId, userId, updates)
-
-// Delete template
-deleteTemplate(templateId, userId)
-```
-
-### RecordingService (`src/services/recording-service.ts`)
-
-Manages terminal session recordings:
-
-```typescript
-// Save recording
-saveRecording(userId, { sessionId, name, data, duration })
-
-// List recordings
-listRecordings(userId)
-
-// Get recording
-getRecording(recordingId, userId)
-
-// Delete recording
-deleteRecording(recordingId, userId)
-```
-
-### ApiKeyService (`src/services/api-key-service.ts`)
-
-Manages API keys for programmatic access:
-
-```typescript
-// Create API key (returns full key once)
-createApiKey(userId, name, expiresAt?)
-
-// Validate API key (constant-time comparison)
-validateApiKey(key) // -> { userId, keyId } | null
-
-// List user's API keys
-listApiKeys(userId)
-
-// Get API key details
-getApiKey(keyId, userId)
-
-// Revoke API key
-revokeApiKey(keyId, userId)
-```
-
-Security notes:
-- Keys are hashed with SHA-256 (appropriate for high-entropy random keys)
-- Validation uses constant-time comparison to prevent timing attacks
-- Key prefix stored separately for efficient lookup without exposing hash
-
-## Database Schema
-
-### Core Tables
-
-```sql
--- Users (NextAuth)
-user (id, name, email, emailVerified, image)
-
--- OAuth Accounts (NextAuth + GitHub)
-account (userId, type, provider, providerAccountId, access_token, ...)
-
--- Authorized Users (allowlist)
-authorized_user (id, email, createdAt)
-
--- Terminal Sessions
-terminal_session (
-  id, userId, name, tmuxSessionName,
-  projectPath, githubRepoId, worktreeBranch,
-  status, tabOrder, projectId, lastActivityAt, createdAt, updatedAt
-)
-
--- Cached GitHub Repositories
-github_repository (
-  id, userId, githubId, name, fullName,
-  cloneUrl, defaultBranch, localPath, isPrivate,
-  addedAt, updatedAt
-)
-
--- Project Groups (nestable containers, preferences only)
-project_group (
-  id, userId, name, parentGroupId, sortOrder,
-  collapsed, createdAt, updatedAt
-)
-
--- Projects (leaves; own sessions, tasks, channels, secrets, repo)
-project (
-  id, userId, groupId, name, sortOrder,
-  collapsed, createdAt, updatedAt
-)
-
--- User Settings (with font, startup, and active node tracking)
-user_settings (
-  id, userId, defaultWorkingDirectory, theme,
-  fontSize, fontFamily, notificationsEnabled,
-  isRecording, startupCommand,
-  activeNodeId, activeNodeType,  -- "group" | "project"
-  createdAt, updatedAt
-)
-
--- Node Preferences (polymorphic per-node overrides)
-node_preferences (
-  id, ownerType, ownerId, userId,
-  fields,  -- JSON; restricted schema for groups, full schema for projects
-  createdAt, updatedAt
-)
-
--- Session Templates (reusable configurations)
-session_template (
-  id, userId, name, settings, isDefault, createdAt, updatedAt
-)
-
--- Session Recordings (terminal playback data)
-session_recording (
-  id, userId, sessionId, name, data, duration, createdAt
-)
-
--- API Keys (programmatic access)
-api_key (
-  id, userId, name, keyPrefix, keyHash,
-  lastUsedAt, expiresAt, createdAt
-)
-
-```
-
-## Security Considerations
-
-### Authentication
-
-- **Browser**: Email allowlist in `authorized_user` table
-- **Programmatic**: API key authentication with Bearer tokens
-- JWT session strategy (stateless)
-- GitHub OAuth for repository access
-- No password storage (credentials are just email verification)
-
-### API Key Security
-
-- Keys generated with 256 bits of cryptographic randomness
-- SHA-256 hashing (appropriate for high-entropy keys, faster than bcrypt)
-- Constant-time comparison prevents timing attacks
-- Key prefix stored for identification without exposing hash
-- Optional expiration dates for time-limited access
-
-### Command Execution
-
-- All shell commands use `execFile` with array arguments
-- No shell interpolation of user input
-- Arguments passed as arrays to prevent injection
-- See `src/lib/exec.ts` for the safe execution utilities
-
-### Local-Only Design
-
-- Designed for local development use
-- No production deployment considerations
-- Database is local SQLite file
-- Repositories cloned to user's home directory
-
-## Performance Considerations
-
-### Terminal Performance
-
-- Direct PTY-to-WebSocket piping
-- No buffering or processing of terminal output
-- Resize events propagated immediately
-
-### React Performance
-
-- Server Components for initial load
-- Client-side state management with Context
-- Optimistic updates for tab operations
-
-### Database Performance
-
-- SQLite for low-latency local operations
-- Drizzle ORM for type-safe queries
-- Connection pooling handled by libsql
-
-## UI Architecture
-
-### Key Components
-
-| Component | Purpose |
-|-----------|---------|
-| `Terminal.tsx` | xterm.js wrapper with WebSocket, resize protection, and recording support |
-| `TerminalWithKeyboard.tsx` | Terminal with mobile virtual keyboard support |
-| `RecordingPlayer.tsx` | Playback recorded terminal sessions with seek controls |
-| `Sidebar.tsx` | Sidebar shell hosting the project tree and global controls |
-| `ProjectTreeSidebar.tsx` | Group + project tree with context menus, drag-drop, active-node selection |
-| `ProjectTreeRow.tsx` | Row renderer for an individual group or project node |
-| `SessionManager.tsx` | Main orchestrator with keyboard shortcuts |
-| `NewSessionWizard.tsx` | Multi-step session creation flow |
-| `SaveTemplateModal.tsx` | Save session as reusable template |
-| `GroupPreferencesModal.tsx` | Per-group preference overrides (subset of fields) |
-| `ProjectPreferencesModal.tsx` | Per-project preference overrides (full schema) |
-| `UserSettingsModal.tsx` | User-level preferences |
-
-### React Contexts
+54 service modules live in `src/services/`. They are plain service classes/functions
+(the Clean-Architecture use cases call into a subset of them). Grouped by domain:
+
+### Sessions, projects & preferences
+
+| Service | Purpose |
+|---------|---------|
+| `session-service` | Session CRUD, status management, plugin dispatch |
+| `tmux-service` | tmux session lifecycle and commands |
+| `worktree-service` | Git worktree management |
+| `worktree-trash-service` | Worktree-specific trash + restore logic |
+| `group-service` | Project group CRUD, hierarchy, move/delete (force) |
+| `project-service` | Project CRUD, group placement, sort order, move |
+| `group-scope-service` | Resolve a node ref to its descendant project IDs (group roll-up) |
+| `preferences-service` | User settings + polymorphic node preferences + inheritance |
+| `template-service` | Reusable session-template management |
+| `recording-service` | Terminal recording storage |
+| `trash-service` | Polymorphic trash management, cleanup scheduling |
+
+### GitHub
+
+| Service | Purpose |
+|---------|---------|
+| `github-service` | GitHub API, repository clone/browse operations |
+| `github-account-service` | Multi-account GitHub operations + metadata |
+| `github-graphql-service` | Batched GitHub queries via GraphQL |
+| `github-stats-service` | High-level repository-stats management |
+| `cache-service` | TTL-based caching for GitHub stats |
+
+### Agents, profiles & MCP
+
+| Service | Purpose |
+|---------|---------|
+| `agent-cli-service` | CLI install verification / version checks for all providers |
+| `agent-config-service` | Markdown agent config files (CLAUDE.md / AGENTS.md / …) |
+| `agent-config-template-service` | Templates for those config files per provider |
+| `agent-profile-service` | Agent-profile directory management + config init |
+| `agent-profile-config-service` | Per-profile JSON agent configs (export/import) |
+| `agent-profile-appearance-service` | Per-profile appearance/theme settings |
+| `agent-mcp-parser-service` | Parse MCP server configs from each agent's config format |
+| `agent-title-service` | Agent session titling utilities |
+| `claude-session-service` | Discover resumable Claude Code sessions from `.jsonl` files |
+| `mcp-discovery-service` | Discover (and persist) tools/resources from MCP servers |
+| `session-mcp-discovery-service` | Session-scoped MCP discovery without DB persistence |
+| `mcp-registry-service` | Manage MCP server configurations |
+
+### Collaboration (tasks, channels, peers, notifications)
+
+| Service | Purpose |
+|---------|---------|
+| `task-service` | Project task CRUD, node-scoped queries, dependencies, bulk archival |
+| `channel-service` | Channel/group lifecycle, unread tracking, migration support |
+| `peer-service` | Project-scoped inter-agent peer discovery + messaging |
+| `notification-service` | Notification CRUD, debounced creation, read/delete |
+
+### Ports, secrets, SSH & browser
+
+| Service | Purpose |
+|---------|---------|
+| `port-registry-service` | Port-allocation tracking + conflict detection |
+| `port-monitoring-service` | Detect actively listening localhost ports (lsof/netstat) |
+| `framework-detection-service` | Detect frameworks/runtimes to suggest ports |
+| `secrets-service` | Secrets-provider abstraction + credential management |
+| `ssh-connection-service` | SSH connection CRUD, key files, ed25519 gen, password enc |
+| `browser-service` | Headless browser automation (navigate/click/type/screenshot) |
+
+### Scheduling & auto-update
+
+| Service | Purpose |
+|---------|---------|
+| `schedule-service` | Scheduled command execution for terminal sessions |
+| `scheduler-orchestrator` | Singleton managing all active cron jobs |
+| `update-scheduler` | Periodic GitHub release checks (`UPDATE_CHECK_INTERVAL_HOURS`) |
+| `auto-update-orchestrator` | Coordinates the full auto-update lifecycle |
+
+### LiteLLM (AI API proxy)
+
+| Service | Purpose |
+|---------|---------|
+| `litellm-service` | LiteLLM config CRUD, model management, YAML generation |
+| `litellm-process-manager` | Singleton LiteLLM child-process lifecycle + health checks |
+| `litellm-analytics-service` | LiteLLM usage analytics (separate SQLite analytics DB) |
+
+### Platform, appearance & misc
+
+| Service | Purpose |
+|---------|---------|
+| `api-key-service` | API key management + constant-time validation |
+| `appearance-service` | User appearance settings + color schemes |
+| `activity-dashboard-service` | Track/analyze agent session activity |
+| `beads-service` | Read the `bd` (beads) issue tracker DB (issues, comments, deps) |
+| `voice-shim-service` | Install `sox`/`rec` shims under `~/.remote-dev/bin` for voice input |
+
+> Many services maintain their own data behind dedicated SQLite databases under
+> `~/.remote-dev/` (logs, LiteLLM analytics) following the `LogDatabase` pattern,
+> keeping high-write side data out of the primary `sqlite.db`.
+
+## Database Layer
+
+- **Drizzle ORM** with **libsql** (SQLite-compatible; runs under both Bun and Node.js).
+- Schema: `src/db/schema.ts` — **59 `sqliteTable` definitions**.
+- Primary database file: `sqlite.db` (gitignored). Logs and LiteLLM analytics use
+  separate databases under `~/.remote-dev/`.
+
+### Table overview (by domain)
+
+**Auth & users**
+
+| Table | Purpose |
+|-------|---------|
+| `user` | NextAuth users |
+| `account` | OAuth accounts (GitHub) |
+| `session` | NextAuth sessions |
+| `verificationToken` | NextAuth email verification tokens |
+| `authorized_user` | Email allowlist |
+| `user_settings` | User-level preferences incl. `active_node_id` + `active_node_type` |
+| `api_key` | API keys for programmatic access |
+| `setup_config` | First-run / setup state |
+
+**Sessions & terminal**
+
+| Table | Purpose |
+|-------|---------|
+| `terminal_session` | Session metadata, tmux name, status, worktree info, `project_id`, agent-exit state |
+| `session_template` | Reusable session configurations |
+| `session_recording` | Terminal-session recordings |
+| `session_memory` | Per-session persisted memory |
+| `command_executions` | Records of fire-and-forget command executions |
+
+**Project tree & preferences**
+
+| Table | Purpose |
+|-------|---------|
+| `project_group` | Nestable grouping containers (preferences only) |
+| `project` | Leaf project nodes (own sessions/tasks/channels/secrets/repo) |
+| `node_preferences` | Polymorphic per-node prefs keyed by (`ownerType`,`ownerId`) |
+| `project_secrets_config` | Per-project secrets-provider configuration |
+| `project_github_account_link` | Per-project GitHub-account binding |
+| `project_profile_link` | Per-project agent-profile binding |
+| `project_repository` | Per-project repo + local clone-path association |
+
+**GitHub & repositories**
+
+| Table | Purpose |
+|-------|---------|
+| `github_repository` | Cached repository data with local paths |
+| `github_account_metadata` | Linked GitHub account metadata (login, avatar, default, config dir) |
+| `github_repository_stats` | Cached repository statistics |
+| `github_pull_requests` | Cached pull-request data |
+| `github_branch_protection` | Cached branch-protection rules |
+| `github_stats_preferences` | Per-user GitHub-stats preferences |
+| `github_change_notifications` | Repo change notifications |
+| `github_issues` | Cached repository issues |
+
+**Agent profiles, configs & MCP**
+
+| Table | Purpose |
+|-------|---------|
+| `agent_profiles` | Agent profiles (isolated environments) |
+| `agent_configs` | Markdown agent config files per profile |
+| `agent_profile_json_configs` | JSON agent configs per profile |
+| `profile_git_identities` | Per-profile git identity |
+| `profile_secrets_config` | Per-profile secrets configuration |
+| `profile_appearance_settings` | Per-profile appearance settings |
+| `mcp_servers` | MCP server configurations |
+| `mcp_discovered_tools` | Discovered MCP tools (persisted) |
+| `mcp_discovered_resources` | Discovered MCP resources (persisted) |
+
+**Activity & appearance**
+
+| Table | Purpose |
+|-------|---------|
+| `agent_activity_events` | Agent session activity events |
+| `agent_daily_stats` | Aggregated per-day agent stats |
+| `color_schemes` | Saved color schemes |
+| `appearance_settings` | User appearance settings |
+
+**Scheduling & updates**
+
+| Table | Purpose |
+|-------|---------|
+| `session_schedules` | Per-session schedule definitions |
+| `schedule_commands` | Commands attached to a schedule |
+| `schedule_executions` | Schedule execution history |
+| `system_update_cache` | Cached update-check results |
+
+**Tasks, channels, peers & notifications**
+
+| Table | Purpose |
+|-------|---------|
+| `project_tasks` | Project tasks (priority, labels, subtasks, deps, due dates) |
+| `task_dependencies` | Junction for task blocked-by relationships |
+| `channel_groups` | Channel-group containers (e.g. Channels, Direct Messages) |
+| `channels` | Individual channels within groups |
+| `channel_read_state` | Per-user/channel unread tracking |
+| `agent_peer_messages` | Project-scoped inter-agent messages (24h TTL) |
+| `notification_events` | Notifications |
+| `push_tokens` | Web-push subscription tokens |
+
+**Ports, trash, SSH & LiteLLM**
+
+| Table | Purpose |
+|-------|---------|
+| `port_registry` | Port allocations for env-var conflict detection |
+| `trash_item` | Polymorphic trash items (30-day retention) |
+| `worktree_trash_metadata` | Worktree-specific trash metadata |
+| `ssh_connection` | User-scoped SSH connection definitions |
+| `litellm_config` | LiteLLM proxy configuration |
+| `litellm_models` | LiteLLM model definitions |
+
+## Agent Peer Communication
+
+Project-scoped inter-agent messaging lets agents in the same project discover one
+another and coordinate. **Push-first** architecture: messages arrive instantly via
+MCP push notifications, with a PreToolUse hook as a reliable fallback.
+
+- An `rdv` MCP server is auto-registered in each agent's `settings.json` at session
+  creation.
+- The terminal server pushes events over a Unix socket
+  (`/tmp/rdv-mcp-{sessionId}.sock`) to the MCP server, which relays them to the
+  agent via `sendLoggingMessage()`.
+- The PreToolUse hook polls for messages as a fallback (dedup via a sentinel file).
+- Read operations (list peers, read channels) go through the `rdv` CLI.
+
+| File | Purpose |
+|------|---------|
+| `src/mcp/peer-server.ts` | MCP stdio server with push-notification relay |
+| `src/server/mcp-push.ts` | Terminal-server Unix-socket push manager |
+| `src/services/peer-service.ts` | DB operations for peer messaging |
+| `crates/rdv/src/commands/peer.rs` | `rdv peer` CLI for non-MCP agents |
+
+**MCP tools (write only):** `send_message`, `send_to_channel`, `set_summary`.
+**Internal API:** `/internal/peers/*` and `/internal/channels/send` on the Next.js server.
+
+See [`docs/RDV_CLI.md`](./RDV_CLI.md) for the full `rdv` command surface and
+[`docs/AGENTS.md`](./AGENTS.md) for agent providers and profiles.
+
+## State Management
+
+React contexts live in `src/contexts/`:
 
 | Context | Purpose |
 |---------|---------|
 | `SessionContext` | Session state with optimistic updates |
 | `ProjectTreeContext` | Combined group + project tree, active-node tracking, descendant aggregation |
 | `PreferencesContext` | User settings + node preferences with inheritance |
-| `TemplateContext` | Session templates state |
-| `RecordingContext` | Recording state management |
+| `TemplateContext` | Session templates |
+| `RecordingContext` | Recording state |
+| `TrashContext` | Trash items + operations |
+| `SecretsContext` | Secrets-provider configs |
+| `PortContext` | Port allocations, framework detection, monitoring |
+| `GitHubAccountContext` | Multi-account GitHub state + project bindings |
+| `TaskContext` | Project tasks (node-scoped CRUD) |
+| `NotificationContext` | Notification state + toast integration |
+| `ChannelContext` | Channel groups, messages, threads, unread tracking |
 
-### Preference Inheritance
+### Preference inheritance
 
 ```
 Default Settings (hardcoded)
@@ -592,33 +555,122 @@ Project Preferences (node_preferences, ownerType="project")
 Effective Preferences (computed at runtime)
 ```
 
-### Active Node and Descendant Aggregation
+Group preferences accept a restricted subset of fields (no `localRepoPath`);
+project preferences accept the full schema.
 
-`user_settings` carries `activeNodeId` + `activeNodeType` (`"group" | "project"`).
-When a project is active, project-scoped views (tasks, channels, peer messages)
-filter to that single project. When a **group** is active, those same views
-roll up across every descendant project — recursively walking the group
-sub-tree — so a group node serves as a workspace pivot, not just a label.
+### Active node and descendant aggregation
+
+`user_settings` carries `active_node_id` + `active_node_type` (`"group" | "project"`),
+replacing the legacy `active_folder_id`. When a **project** is active,
+project-scoped views (tasks, channels, peer messages) filter to that single project.
+When a **group** is active, those same views roll up across every descendant project
+— recursively walking the group sub-tree (see `group-scope-service`) — so a group
+node acts as a workspace pivot, not just a label.
+
+## Key UI Components
+
+| Component | Purpose |
+|-----------|---------|
+| `Terminal.tsx` | xterm.js wrapper with WebSocket + recording support |
+| `TerminalWithKeyboard.tsx` | Terminal with mobile support (xterm.js + native input bar) |
+| `MobileInputBar.tsx` | Native textarea with autocorrect, voice dictation, predictive text |
+| `RecordingPlayer.tsx` | Playback recorded sessions with seek controls |
+| `Sidebar.tsx` | Sidebar shell hosting the project tree + global controls |
+| `ProjectTreeSidebar.tsx` | Group + project tree with context menus, drag/drop, active-node selection |
+| `ProjectTreeRow.tsx` | Row renderer for a single group or project node |
+| `SessionManager.tsx` | Main orchestrator with keyboard shortcuts |
+| `NewSessionWizard.tsx` | Multi-step session creation flow |
+| `TaskSidebar.tsx` / `TaskEditor.tsx` | Project-scoped task tracking + inline editor |
+| `ChannelSidebar.tsx` / `ChannelView.tsx` / `ThreadPanel.tsx` | Chat channels, messages, thread replies |
+| `GroupPreferencesModal.tsx` / `ProjectPreferencesModal.tsx` / `UserSettingsModal.tsx` | Preference editors |
+
+## Logging
+
+Server-side code **must** use the structured logger
+(`createLogger("Namespace")` from `src/lib/logger.ts`); direct `console.*` is
+prohibited server-side. Levels: error / warn / info / debug / trace, gated by
+`LOG_LEVEL` (default `info` in dev, `warn` in prod). Logs are written to console
+**and** a separate SQLite database at `~/.remote-dev/logs/logs.db` (7-day
+retention, pruned on startup, viewable in Settings → Logs).
+
+| File | Purpose |
+|------|---------|
+| `src/lib/logger.ts` | `createLogger` factory (re-export) |
+| `src/infrastructure/logging/AppLogger.ts` | Logger implementation (level gating, console + DB) |
+| `src/infrastructure/logging/LogDatabase.ts` | Separate `logs.db` connection |
+| `src/components/system/LogViewer.tsx` | Log viewer UI |
+
+## Performance Considerations
+
+- **Terminal**: direct PTY-to-WebSocket piping; no buffering/processing of output;
+  resize events propagated immediately.
+- **React**: Server Components for initial load; client-side Context for state;
+  optimistic updates for tab operations.
+- **Database**: SQLite for low-latency local operations; type-safe Drizzle queries;
+  connection handling via libsql; high-write side data kept in dedicated databases.
 
 ## Font System
 
-### Self-Hosted Nerd Fonts
+Remote Dev self-hosts 22 Nerd Font families in WOFF2 for optimal terminal rendering.
+Default: JetBrainsMono Nerd Font Mono. Fonts are declared via `@font-face` in
+`globals.css` with `font-display: swap` and fall back to system monospace.
+Self-hosting avoids external-font-service failures on mobile, works offline,
+compresses well (WOFF2 ≈ 30% smaller than WOFF), and provides full Nerd Font glyphs.
 
-Remote Dev self-hosts 22 Nerd Font families in WOFF2 format for optimal terminal rendering:
+## Deployment, Hosting & Clients
 
-- **Default**: JetBrainsMono Nerd Font Mono
-- **Available**: FiraCode, Hack, SourceCodePro, UbuntuMono, CascadiaCode, Meslo, Inconsolata, RobotoMono, IBMPlexMono, VictorMono, SpaceMono, DroidSansMono, AnonymousPro, DejaVuSansMono, Terminus, Cousine, BitstreamVeraSansMono, DaddyTimeMono, FantasqueSansMono, NotoMono
+The detailed operational docs are kept separate; this section summarizes and links.
 
-### Why Self-Hosted?
+### Production deployment
 
-1. **Mobile Compatibility**: External font services often fail on mobile browsers
-2. **Offline Support**: Fonts work without internet connection
-3. **Performance**: WOFF2 provides excellent compression (~30% smaller than WOFF)
-4. **Nerd Font Icons**: Full glyph support for terminal status lines and dev tools
+Remote Dev **does** support production deployment: a blue/green strategy with an
+HMAC-SHA256-authenticated webhook at `POST /api/deploy` (`src/app/api/deploy/route.ts`),
+which the proxy lets through under its own auth. The prior claim that there are "no
+production deployment considerations" is obsolete. See
+[`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) for the full blue/green flow, restart
+resilience, and rollout details.
 
-### Font Loading
+### Multi-instance / multi-tenant hosting
 
-Fonts are loaded via `@font-face` declarations in `globals.css` with:
-- `font-display: swap` for fast initial render
-- Subset-specific unicode ranges where available
-- Fallback to system monospace fonts
+Multiple path-prefixed instances can run behind a shared Cloudflare tunnel + Access
+policy, each as a single-replica StatefulSet with its own database, tmux namespace,
+and `AUTH_SECRET`. URL prefixing is driven by **`RDV_BASE_PATH`**, and
+`src/lib/base-path.ts` is the **enforced single source of truth** for that env var
+(ESLint-guarded; only it and `next.config.ts` may read the variable). It exports
+`BASE_PATH`, `INSTANCE_SLUG`, `COOKIE_PATH`, `WS_PATH_PREFIX`, and `prefixPath()`.
+See [`docs/MULTI_INSTANCE.md`](./MULTI_INSTANCE.md) (a newer k3s "supervisor
+platform" approach is in draft —
+[`docs/plans/2026-05-30-k3s-supervisor-platform.md`](./plans/2026-05-30-k3s-supervisor-platform.md)).
+
+### Multi-agent CLIs & profiles
+
+Five providers are supported (Claude Code, Codex, Gemini, Antigravity, OpenCode),
+each with its own CLI command, markdown config file, and isolated profile directory
+under `~/.remote-dev/profiles/{profile-id}/`. See [`docs/AGENTS.md`](./AGENTS.md).
+
+### Electron desktop app
+
+A desktop wrapper provides a tray icon, auto-updater, Cloudflare-tunnel integration,
+cross-platform builds, and an embedded process manager for the two servers
+(`electron/main/*`: `index.ts`, `process-manager.ts`, `cloudflared.ts`, `tray.ts`,
+`auto-updater.ts`, `config.ts`).
+
+### rdv CLI (agent interface)
+
+`crates/rdv/` is a Rust CLI agents use (via Bash) to drive the terminal server —
+sessions, groups/projects, agents, worktrees, browser, peers, channels,
+notifications, and Claude Code lifecycle hooks. It discovers the servers via
+`RDV_*` env vars and emits JSON by default (`--human` for tables). See
+[`docs/RDV_CLI.md`](./RDV_CLI.md).
+
+### Mobile & PWA
+
+The web app is itself PWA-capable (`public/manifest.json` + `src/app/sw.js/route.ts`,
+with mobile web routes under `src/app/m/`). Native clients live in `mobile/` (the
+active Flutter app) and `packages/mobile/` (an Expo/React Native app). See
+[`docs/MOBILE_ARCHITECTURE.md`](./MOBILE_ARCHITECTURE.md).
+
+### REST API
+
+The full HTTP surface is documented in [`docs/API.md`](./API.md), with an OpenAPI 3.0
+spec at [`docs/openapi.yaml`](./openapi.yaml).

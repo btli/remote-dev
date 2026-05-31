@@ -1,36 +1,74 @@
 # Remote Dev
 
-A modern web-based terminal interface for local development, featuring multi-session support, GitHub integration, and persistent sessions via tmux.
+A modern, web-based terminal workspace for AI-assisted development. Run persistent terminal sessions in your browser, organize them into projects, and drive multiple AI coding agents — Claude Code, Codex, Gemini, Antigravity, and OpenCode — from one place, on desktop or mobile.
 
-![Version](https://img.shields.io/badge/version-0.2.0-green.svg)
+![Version](https://img.shields.io/badge/version-0.3.18-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)
+![React](https://img.shields.io/badge/React-19-149eca)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)
+
+![Remote Dev Terminal Interface](docs/assets/remote-dev-terminal.png)
+
+---
+
+## Why Remote Dev?
+
+Coding agents live in the terminal. Remote Dev gives that terminal a home you can reach from any
+device: sessions survive disconnects via tmux, agents run in isolated profiles with their own
+identities, and a project tree keeps everything organized. Open it in a browser tab, install it as
+a PWA, or run the native desktop and mobile apps — your work follows you.
 
 ## Features
 
-- **Multiple Terminal Sessions** - Run multiple terminals in browser tabs, switch between them seamlessly
-- **Session Persistence** - Sessions survive browser close via tmux integration
-- **Project Tree** - Organize sessions into a two-level group + project hierarchy with preference inheritance
-- **Session Templates** - Save and reuse session configurations
-- **Session Recording** - Record and playback terminal sessions
-- **GitHub Integration** - Connect your GitHub account, browse repositories, and clone with one click
-- **Git Worktrees** - Create isolated worktrees for feature branches automatically
-- **Agent API** - Programmatic access via API keys for automation and coding agents
-- **Modern UI** - Glassmorphism design with Tokyo Night theme, 22 Nerd Fonts
-- **Secure Authentication** - Cloudflare Access (remote) + localhost email auth (local dev) + API keys
-- **Mobile Support** - Touch-friendly keyboard and responsive design
+### Terminals & Sessions
+- **Persistent sessions** — Multiple terminals backed by tmux; sessions survive browser refreshes, disconnects, and server restarts.
+- **Suspend & resume** — Detach a session and reattach later with full scrollback intact.
+- **Recording & playback** — Capture terminal sessions and replay them.
+- **Templates** — Save session configurations and spin up new ones in a click.
+- **Terminal types** — Pluggable session kinds: `shell`, `agent`, `file` (markdown/code editor), `browser` (headless automation), and `ssh` (tmux-backed remote shells).
 
-## Screenshot
+### AI Coding Agents
+- **Five agents, one workspace** — First-class support for Claude Code, OpenAI Codex, Gemini CLI, Antigravity, and OpenCode.
+- **Agent profiles** — Each profile is a fully isolated environment (its own `HOME`, agent config, git identity, and secrets) with per-profile theming.
+- **Live status & exit handling** — Agent sessions report running/idle/waiting state and offer a restart screen on exit.
+- **Peer messaging** — Agents in the same project discover each other and coordinate over an MCP push channel, with a hook-based fallback.
+- **Voice input** — Dictate into agent sessions with a built-in voice mic.
 
-![Remote Dev Terminal Interface](docs/assets/remote-dev-terminal.png)
+### Organization & Collaboration
+- **Project tree** — A two-level group + project hierarchy with preference inheritance (Default → User → Group chain → Project).
+- **Tasks** — Per-project task tracking with priorities, labels, subtasks, dependencies, and due dates; group views roll up across descendant projects.
+- **Channels** — Slack-style chat channels and DMs with GitHub-flavored markdown, threads, and unread tracking.
+- **Notifications** — Debounced, actionable notifications across the app.
+
+### Git & GitHub
+- **Multi-account GitHub** — Link multiple GitHub accounts and bind a specific account per project.
+- **Repository browsing** — List, clone, and browse repos, branches, folders, and issues.
+- **Git worktrees** — Create isolated worktrees for branch-per-task workflows.
+
+### Platform & Operations
+- **SSH connections** — Saved, encrypted SSH targets with key generation, password/agent/system auth, and connectivity probes.
+- **Secrets** — Per-project secrets provider integration that injects credentials into agent environments.
+- **Multi-instance hosting** — Run several isolated instances behind one domain via a runtime URL base path (`RDV_BASE_PATH`).
+- **Blue/green deploys** — Zero-fuss production deploys with slot swapping, rollback, and an optional HMAC-signed deploy webhook.
+- **Structured logging** — Server-side structured logs with level gating and an in-app Logs viewer.
+- **Trash with retention** — Soft-delete with 30-day recovery for sessions, worktrees, and more.
+
+### Clients
+- **Web + installable PWA** — Works in any modern browser; installs as a standalone app.
+- **Desktop (Electron)** — Native tray, auto-update, and embedded Cloudflare tunnel for remote access (macOS, Linux, Windows).
+- **Mobile** — Touch-friendly terminal with a native input bar (autocorrect, voice dictation), plus dedicated mobile app projects.
+- **rdv CLI** — A Rust CLI that lets agents drive sessions, tasks, channels, peers, and browsers from the shell.
+
+### Authentication
+- **Dual auth model** — Email-only credentials for localhost, Cloudflare Access JWT validation for remote/LAN, and API keys for programmatic access.
 
 ## Quick Start
 
 ### Prerequisites
 
-- [Bun](https://bun.sh/) v1.0+
-- [tmux](https://github.com/tmux/tmux) (for session persistence)
+- [Bun](https://bun.sh/) (latest)
+- [tmux](https://github.com/tmux/tmux) — required for session persistence
 - macOS, Linux, or WSL
 
 ### Installation
@@ -42,280 +80,140 @@ cd remote-dev
 
 # Install dependencies
 bun install
+```
 
-# Set up environment variables
-cp .env.example .env.local
-# Edit .env.local with your settings
+The fastest path is the guided setup script, which writes `.env.local`, initializes the database,
+and seeds your user:
 
-# Initialize the database
+```bash
+./scripts/init.sh --email you@example.com --port 6001 --terminal-port 6002
+```
+
+Or configure manually. Create `.env.local` in the project root:
+
+```bash
+# Required — generate with: openssl rand -base64 32
+AUTH_SECRET=your-secret-here
+
+# Ports
+PORT=6001                       # Next.js web UI
+TERMINAL_PORT=6002              # Terminal WebSocket server
+NEXT_PUBLIC_TERMINAL_PORT=6002  # Must match TERMINAL_PORT (used by the browser)
+
+# NextAuth v5 base URL (legacy NEXTAUTH_URL is still accepted)
+AUTH_URL=http://localhost:6001
+
+# Optional — GitHub integration
+GITHUB_CLIENT_ID=your-client-id
+GITHUB_CLIENT_SECRET=your-client-secret
+```
+
+Then initialize the database and authorize your user:
+
+```bash
 bun run db:push
+AUTHORIZED_USERS="you@example.com" bun run db:seed
+```
 
-# Seed authorized users (replace with your email)
-AUTHORIZED_USERS="your-email@example.com" bun run db:seed
+### Run
 
-# Start development servers
+```bash
 bun run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+This starts the Next.js web UI and the terminal WebSocket server concurrently. Open
+[http://localhost:6001](http://localhost:6001) and sign in with your authorized email.
 
-## Configuration
+> Need GitHub repository browsing? Create an OAuth app at
+> [GitHub Developer Settings](https://github.com/settings/developers) with callback URL
+> `http://localhost:6001/api/auth/github/callback`, then set `GITHUB_CLIENT_ID` /
+> `GITHUB_CLIENT_SECRET`. See [docs/SETUP.md](docs/SETUP.md) for the full walkthrough.
 
-### Environment Variables
-
-Create a `.env.local` file in the project root:
-
-```bash
-# Required - Generate with: openssl rand -base64 32
-AUTH_SECRET=your-secret-key-here
-
-# Optional - GitHub OAuth (for repository integration)
-GITHUB_CLIENT_ID=your-github-client-id
-GITHUB_CLIENT_SECRET=your-github-client-secret
-
-# Optional - Server configuration
-TERMINAL_PORT=3001
-```
-
-### GitHub OAuth Setup
-
-To enable GitHub integration:
-
-1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
-2. Click "New OAuth App"
-3. Fill in:
-   - **Application name:** `Remote Dev`
-   - **Homepage URL:** `http://localhost:3000`
-   - **Authorization callback URL:** `http://localhost:3000/api/auth/github/callback`
-4. Copy the Client ID and generate a Client Secret
-5. Add them to your `.env.local`
-
-### Adding Authorized Users
-
-Set the `AUTHORIZED_USERS` environment variable with comma-separated emails:
+## Common Commands
 
 ```bash
-AUTHORIZED_USERS="your-email@example.com" bun run db:seed
-```
+# Development
+bun run dev            # Web UI + terminal server (concurrent)
+bun run dev:next       # Next.js only (port $PORT)
+bun run dev:terminal   # Terminal server only (port $TERMINAL_PORT)
 
-For multiple users:
+# Process manager (background)
+bun run rdv:dev        # Start both servers in dev mode
+bun run rdv:prod       # Start both servers in prod mode
+bun run rdv:status     # Show server status
+bun run rdv:restart    # Restart servers
 
-```bash
-AUTHORIZED_USERS="user1@example.com,user2@example.com" bun run db:seed
-```
-
-## Architecture
-
-### System Overview
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Browser                                  │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐       │
-│  │   Next.js    │    │   xterm.js   │    │   React UI   │       │
-│  │   (SSR/RSC)  │    │  (Terminal)  │    │  (Sessions)  │       │
-│  └──────┬───────┘    └──────┬───────┘    └──────────────┘       │
-└─────────┼───────────────────┼───────────────────────────────────┘
-          │ HTTP              │ WebSocket
-          ▼                   ▼
-┌─────────────────┐    ┌─────────────────┐
-│  Next.js Server │    │ Terminal Server │
-│   (port 3000)   │    │   (port 3001)   │
-│                 │    │                 │
-│  - Auth         │    │  - WebSocket    │
-│  - API Routes   │    │  - node-pty     │
-│  - React SSR    │    │  - tmux attach  │
-└────────┬────────┘    └────────┬────────┘
-         │                      │
-         ▼                      ▼
-┌─────────────────┐    ┌─────────────────┐
-│     SQLite      │    │      tmux       │
-│   (Drizzle)     │    │   (Sessions)    │
-└─────────────────┘    └─────────────────┘
-```
-
-### Key Technologies
-
-| Layer | Technology |
-|-------|------------|
-| Frontend | Next.js 16, React 19, TypeScript |
-| UI Components | shadcn/ui, Tailwind CSS v4 |
-| Terminal | xterm.js, node-pty |
-| Authentication | NextAuth v5, Cloudflare Access, GitHub OAuth |
-| Database | SQLite (libsql), Drizzle ORM |
-| Persistence | tmux sessions |
-| Runtime | Bun (frontend), tsx (terminal server) |
-
-### Project Structure
-
-```
-src/
-├── app/                    # Next.js App Router
-│   ├── api/               # API routes
-│   │   ├── auth/          # Authentication endpoints
-│   │   ├── github/        # GitHub integration
-│   │   └── sessions/      # Session management
-│   ├── login/             # Login page
-│   └── page.tsx           # Main terminal interface
-├── components/
-│   ├── github/            # GitHub UI components
-│   ├── session/           # Session management UI
-│   ├── terminal/          # Terminal component
-│   └── ui/                # shadcn/ui components
-├── contexts/              # React contexts
-├── db/                    # Database schema and config
-├── hooks/                 # Custom React hooks
-├── lib/                   # Utility functions
-├── server/                # Terminal WebSocket server
-├── services/              # Business logic services
-└── types/                 # TypeScript type definitions
-```
-
-## Development
-
-### Commands
-
-```bash
-# Development (runs both servers)
-bun run dev
-
-# Run servers separately
-bun run dev:next      # Next.js on port 3000
-bun run dev:terminal  # Terminal server on port 3001
-
-# Code quality
-bun run lint          # ESLint
-bun run typecheck     # TypeScript
+# Quality
+bun run lint           # ESLint
+bun run typecheck      # TypeScript
+bun run test:run       # Vitest (single run)
 
 # Database
-bun run db:push       # Push schema to database
-bun run db:studio     # Open Drizzle Studio
-bun run db:seed       # Seed authorized users
+bun run db:push        # Apply schema to SQLite
+bun run db:studio      # Open Drizzle Studio
+bun run db:seed        # Seed authorized users
 
-# Production
+# Production / deploy
 bun run build
-bun run start
-bun run start:terminal
+bun run start          # Next.js
+bun run start:terminal # Terminal server
+bun run deploy         # Blue/green production deploy
+
+# Desktop app
+bun run electron:dev       # Web + terminal + Electron
+bun run electron:dist:mac  # Build a macOS distributable
 ```
 
-### Service Layer
+## Architecture at a Glance
 
-The application uses a clean service layer architecture:
+Remote Dev runs **two servers**:
 
-- **SessionService** - Terminal session CRUD operations
-- **TmuxService** - tmux session lifecycle management
-- **GitHubService** - GitHub API integration, repository caching
-- **WorktreeService** - Git worktree creation and management
-- **GroupService** - Project group (container) hierarchy management
-- **ProjectService** - Project (leaf) management — owns sessions/tasks/channels
-- **PreferencesService** - User settings and node preferences with inheritance
-- **TemplateService** - Session template management
-- **RecordingService** - Session recording storage
-- **ApiKeyService** - API key management for programmatic access
+| Server | Default Port | Responsibility |
+|--------|--------------|----------------|
+| Next.js | `6001` | Web UI, authentication, API routes, static assets |
+| Terminal server | `6002` | WebSocket + node-pty + tmux session management |
 
-### API Routes
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/sessions` | GET, POST | List/create sessions |
-| `/api/sessions/[id]` | GET, PATCH, DELETE | Session CRUD |
-| `/api/sessions/[id]/suspend` | POST | Suspend session |
-| `/api/sessions/[id]/resume` | POST | Resume session |
-| `/api/sessions/[id]/exec` | POST | Execute command (Agent API) |
-| `/api/groups` | GET, POST | List/create project groups |
-| `/api/groups/[id]` | GET, PATCH, DELETE | Group CRUD |
-| `/api/groups/[id]/move` | POST | Reparent group |
-| `/api/projects` | GET, POST | List/create projects |
-| `/api/projects/[id]` | GET, PATCH, DELETE | Project CRUD |
-| `/api/projects/[id]/move` | POST | Move project to another group |
-| `/api/preferences` | GET, PATCH | User settings |
-| `/api/preferences/active-node` | POST | Set the active group/project |
-| `/api/node-preferences/[ownerType]/[ownerId]` | GET, PUT, DELETE | Per-node preferences |
-| `/api/templates` | GET, POST | List/create templates |
-| `/api/recordings` | GET, POST | List/save recordings |
-| `/api/github/repositories` | GET | List GitHub repos |
-| `/api/github/repositories/[id]` | GET, POST | Get/clone repository |
-| `/api/github/repositories/[id]/issues` | GET | List repository issues |
-| `/api/github/worktrees` | POST, DELETE | Create/delete worktree |
-| `/api/keys` | GET, POST | List/create API keys |
-| `/api/keys/[id]` | GET, DELETE | Get/revoke API key |
-
-See `docs/API.md` for complete API documentation.
-
-## Session Persistence
-
-Sessions persist through browser restarts using tmux:
-
-1. **Create Session** - Creates a tmux session with unique name (`rdv-{uuid}`)
-2. **Connect** - Terminal attaches to the tmux session
-3. **Disconnect** - Only the attachment closes; tmux session continues
-4. **Reconnect** - Reattaches to existing tmux session with full history
-
-To list active tmux sessions:
-
-```bash
-tmux list-sessions | grep "^rdv-"
+```
+Browser (xterm.js) <--WebSocket--> Terminal Server (node-pty) <--> tmux <--> Shell
 ```
 
-## Security
+A WebSocket disconnect detaches from tmux but keeps the session alive; reconnecting reattaches with
+full history. The codebase follows a clean, layered architecture (domain → application →
+infrastructure → interface) with Drizzle ORM over libsql (SQLite) for persistence.
 
-- **Multi-Mode Authentication**:
-  - **Localhost** (`127.0.0.1`): Email-only auth for convenient local development
-  - **Remote/LAN**: Cloudflare Access JWT validation required
-  - **API Keys**: Bearer token auth for programmatic access (agents, automation)
-- **Email Allowlist** - Only pre-authorized emails can authenticate
-- **JWT Sessions** - Secure, stateless session management via NextAuth v5
-- **API Key Security** - SHA-256 hashing, constant-time comparison, optional expiration
-- **No Shell Injection** - All commands use `execFile` with array arguments (no shell interpolation)
-- **WebSocket Token Auth** - Session-specific tokens for terminal connections
+For the deep dive, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-### Remote Access via Cloudflare Access
+## Documentation
 
-For secure remote access, configure [Cloudflare Access](https://www.cloudflare.com/products/zero-trust/access/):
-
-1. Set up a Cloudflare Tunnel to your local machine
-2. Configure an Access Application with your identity provider
-3. Add authorized emails to both Cloudflare Access and via `AUTHORIZED_USERS` env var
-
-The app validates Cloudflare Access JWTs automatically via the `CF_Authorization` cookie.
-
-## Troubleshooting
-
-### Terminal won't connect
-
-1. Ensure the terminal server is running: `bun run dev:terminal`
-2. Check if tmux is installed: `tmux -V`
-3. Check WebSocket port (default 3001) isn't blocked
-
-### GitHub integration not working
-
-1. Verify OAuth credentials in `.env.local`
-2. Check callback URL matches exactly: `http://localhost:3000/api/auth/github/callback`
-3. Ensure your GitHub account email is in the authorized users list
-
-### Sessions not persisting
-
-1. Verify tmux is installed and working: `tmux new -s test`
-2. Check for tmux sessions: `tmux list-sessions`
-3. Database might need syncing: `bun run db:push`
+| Document | What's inside |
+|----------|----------------|
+| [docs/README.md](docs/README.md) | Documentation index — start here |
+| [docs/SETUP.md](docs/SETUP.md) | Installation, environment variables, GitHub OAuth, remote access |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture and design |
+| [docs/API.md](docs/API.md) | REST API reference (see also [docs/openapi.yaml](docs/openapi.yaml)) |
+| [docs/AGENTS.md](docs/AGENTS.md) | Multi-agent CLI support, profiles, and isolation |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production blue/green deploys and the deploy webhook |
+| [docs/MULTI_INSTANCE.md](docs/MULTI_INSTANCE.md) | Hosting multiple isolated instances via `RDV_BASE_PATH` |
+| [docs/MOBILE_ARCHITECTURE.md](docs/MOBILE_ARCHITECTURE.md) | Mobile apps and the PWA |
+| [docs/ENHANCEMENTS.md](docs/ENHANCEMENTS.md) | Platform capabilities and forward-looking roadmap |
 
 ## Contributing
 
-Contributions are welcome! Please read our contributing guidelines before submitting a PR.
+Contributions are welcome.
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Commit your changes: `git commit -m 'Add amazing feature'`
-4. Push to the branch: `git push origin feature/amazing-feature`
-5. Open a Pull Request
+3. Run the quality gates: `bun run lint && bun run typecheck && bun run test:run`
+4. Commit and push, then open a Pull Request
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
-- [xterm.js](https://xtermjs.org/) - Terminal emulator
-- [shadcn/ui](https://ui.shadcn.com/) - UI components
-- [Next.js](https://nextjs.org/) - React framework
-- [tmux](https://github.com/tmux/tmux) - Terminal multiplexer
+- [xterm.js](https://xtermjs.org/) — Terminal emulator
+- [Next.js](https://nextjs.org/) — React framework
+- [shadcn/ui](https://ui.shadcn.com/) — UI components
+- [Drizzle ORM](https://orm.drizzle.team/) — Type-safe SQL
+- [tmux](https://github.com/tmux/tmux) — Terminal multiplexer
