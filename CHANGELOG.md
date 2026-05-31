@@ -161,6 +161,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Watchdog now health-checks the local origin, not the CF-Access-fronted
+  public URL** (remote-dev-j4wr): `scripts/watchdog.sh` previously curled
+  `https://dev.bryanli.net/api/sessions` with an app Bearer token and accepted
+  200/401/403 as "alive". But Cloudflare Access intercepts at the edge and
+  returns a 302 login redirect when the request lacks a CF Access *service*
+  token, so every probe was a false FAIL — after 3 consecutive (~15 min) the
+  watchdog restarted perfectly healthy prod. The probe now hits the Next.js
+  origin directly over its unix socket (`$RDV_DATA_DIR/run/nextjs.sock`, with a
+  TCP `127.0.0.1:$PORT` fallback for dev) at `GET /api/healthz`, accepting only
+  `200`. This bypasses Cloudflare entirely and measures actual origin liveness,
+  eliminating the spurious restarts. Failure-count, threshold, deploy-lock, and
+  restart logic are unchanged — only the detection was wrong.
+
 - **Instance lock no longer deadlocks single-host restarts** (remote-dev-i85i):
   the `instance.lock` data-dir guard now engages ONLY in multi-instance mode
   (non-empty `RDV_BASE_PATH`), or when forced via `RDV_FORCE_INSTANCE_LOCK=1`.

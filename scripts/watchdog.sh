@@ -1,48 +1,51 @@
 #!/usr/bin/env bash
-# Watchdog: checks if dev.bryanli.net is reachable, restarts servers after consecutive failures
+# Watchdog: checks the LOCAL origin's liveness, restarts servers after consecutive failures
+#
+# Probes the Next.js app directly over its unix socket (prod) or TCP port (dev)
+# via GET /api/healthz. This intentionally bypasses Cloudflare Access: a probe of
+# the public URL returns 302/401/403 from CF's edge whenever the request lacks a
+# CF Access service token, which proves only that CF is up — NOT that the origin
+# app is alive. Hitting the local origin is the correct liveness signal.
 #
 # Run via launchd every 5 minutes, or manually:
 #   bash scripts/watchdog.sh
 #
 # Environment:
 #   RDV_DATA_DIR       Override default data directory (~/.remote-dev)
-#   EXTERNAL_URL       Override external URL (default: https://dev.bryanli.net)
+#   PORT               TCP port for the dev fallback probe (default: 6001)
 #   MAX_FAILURES       Consecutive failures before restart (default: 3)
 #   DEPLOY_PROJECT_ROOT  Project directory for rdv restart
 
 set -euo pipefail
 
 DATA_DIR="${RDV_DATA_DIR:-$HOME/.remote-dev}"
-EXTERNAL_URL="${EXTERNAL_URL:-https://dev.bryanli.net}"
 MAX_FAILURES="${MAX_FAILURES:-3}"
 PROJECT_ROOT="${DEPLOY_PROJECT_ROOT:-$HOME/Projects/btli/remote-dev}"
 
 DEPLOY_DIR="$DATA_DIR/deploy"
 FAILURE_COUNT_FILE="$DEPLOY_DIR/watchdog-failures"
-LOCAL_KEY_FILE="$DATA_DIR/rdv/.local-key"
+NEXTJS_SOCKET="$DATA_DIR/run/nextjs.sock"
 
 mkdir -p "$DEPLOY_DIR"
 
-# Read local API key if available
-API_KEY=""
-if [ -f "$LOCAL_KEY_FILE" ]; then
-  API_KEY=$(tr -d '[:space:]' < "$LOCAL_KEY_FILE")
+# Probe the local origin's liveness endpoint. Prefer the unix socket (prod);
+# fall back to TCP for dev. The `$(...) || HTTP_CODE="000"` form keeps `set -e`
+# from aborting when curl exits non-zero (connection refused, timeout) and
+# overwrites (rather than appends) the value, so a failure yields a clean "000".
+# HTTP error codes themselves still come through because of `-s -o /dev/null -w`.
+if [ -S "$NEXTJS_SOCKET" ]; then
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+    --max-time 10 \
+    --unix-socket "$NEXTJS_SOCKET" \
+    "http://localhost/api/healthz" 2>/dev/null) || HTTP_CODE="000"
+else
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+    --connect-timeout 10 --max-time 15 \
+    "http://127.0.0.1:${PORT:-6001}/api/healthz" 2>/dev/null) || HTTP_CODE="000"
 fi
 
-# Build auth header
-AUTH_HEADER=""
-if [ -n "$API_KEY" ]; then
-  AUTH_HEADER="Authorization: Bearer $API_KEY"
-fi
-
-# Check external URL
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-  --connect-timeout 10 --max-time 15 \
-  ${AUTH_HEADER:+-H "$AUTH_HEADER"} \
-  "$EXTERNAL_URL/api/sessions" 2>/dev/null || echo "000")
-
-if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
-  # Server is reachable (401/403 = CF Access blocking, still alive)
+if [ "$HTTP_CODE" = "200" ]; then
+  # Local origin is alive and responsive.
   echo "$(date): OK ($HTTP_CODE)"
   echo "0" > "$FAILURE_COUNT_FILE"
   exit 0
