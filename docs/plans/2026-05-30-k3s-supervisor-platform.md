@@ -640,6 +640,8 @@ by Supervisor, router, and instance-env generation. Reserved set must include th
 paths: `api`, `ws`, `_next`, `login`, `healthz`, `readyz`, `manifest.json`, `sw.js`, `favicon.svg`,
 `favicon.ico`, `icons`, plus the Supervisor UI prefix.
 
+Follow-up: the slug validator is currently duplicated in apps/supervisor and apps/supervisor-router; consolidate into a shared package.
+
 ### 15.4 Verdict & impact on phasing
 Materialization is **viable but only after B1 + M1 + M2**: rewrite the full `/app` tree with a
 hard no-residual-sentinel gate, drop materialize-to-empty (k3s instances are always slugged), and
