@@ -17,7 +17,7 @@
  */
 
 import { spawn, spawnSync } from "bun";
-import { existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { ensureLocalApiKey } from "../src/lib/local-api-key";
@@ -30,6 +30,9 @@ const TERMINAL_PID_FILE = join(PID_DIR, "terminal.pid");
 const MODE_FILE = join(PID_DIR, "mode");
 const STANDALONE_DIR = join(PROJECT_ROOT, ".next", "standalone");
 const SOCKET_DIR = join(DATA_DIR, "run");
+const LOGS_DIR = join(DATA_DIR, "logs");
+const TERMINAL_LOG_FILE = join(LOGS_DIR, "terminal.log");
+const NEXT_LOG_FILE = join(LOGS_DIR, "nextjs.log");
 
 // Ports come from env vars so two pods on the same host can run concurrently
 // for multi-instance smoke tests (`PORT=6101 TERMINAL_PORT=6102 ...`).
@@ -290,13 +293,62 @@ function stopProcess(pidFile: string, name: string): boolean {
   return false;
 }
 
+// Resolve the short git commit for the startup banner. Cheap and best-effort:
+// a failed/absent git just yields "unknown" and never blocks startup.
+function getShortCommit(): string {
+  try {
+    const result = spawnSync(["git", "rev-parse", "--short", "HEAD"], { cwd: PROJECT_ROOT });
+    const out = result.stdout?.toString().trim();
+    return out || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+// Open a per-server log file (append mode) and write a one-line banner that
+// delimits this restart. Returns the fd to be handed to bun's spawn as
+// stdout/stderr. The data-dir logs/ directory is created if missing.
+//
+// This is the key diagnosis enabler: in prod the child's stdout/stderr would
+// otherwise chain up to a deploy.ts that /api/deploy spawned with
+// stdio:"ignore", so a terminal-server crash before the structured logger
+// flushes went to /dev/null. Redirecting to a real file makes failed-deploy
+// crash output recoverable.
+function openServerLog(name: string, logFile: string): number {
+  if (!existsSync(LOGS_DIR)) {
+    mkdirSync(LOGS_DIR, { recursive: true });
+  }
+  const fd = openSync(logFile, "a");
+  const banner = `\n===== ${name} starting ${new Date().toISOString()} (commit ${getShortCommit()}) =====\n`;
+  appendFileSync(fd, banner);
+  return fd;
+}
+
 async function startServer(
   name: string,
   cmd: string[],
   env: Record<string, string>,
-  pidFile: string
+  pidFile: string,
+  logFile?: string
 ): Promise<SpawnedProcess | null> {
   console.log(`Starting ${name}...`);
+
+  // In prod mode (logFile provided) redirect the child's stdout+stderr to an
+  // append-only log file. In dev mode (no logFile) keep "inherit" so
+  // `bun run dev` shows server output in the terminal. If the log file can't
+  // be opened (e.g. unwritable logs dir), fall back to "inherit" rather than
+  // aborting an otherwise-healthy start — losing the captured log is far less
+  // harmful than failing the deploy restart.
+  let stdio: number | "inherit" = "inherit";
+  if (logFile) {
+    try {
+      stdio = openServerLog(name, logFile);
+      console.log(`  ${name} stdout/stderr → ${logFile}`);
+    } catch (err) {
+      console.error(`  ${name}: could not open log file ${logFile}, falling back to inherit:`, err);
+      stdio = "inherit";
+    }
+  }
 
   // detached: true makes the child the leader of a new session/process
   // group (POSIX setsid). This lets stop() target the whole tree via
@@ -307,10 +359,21 @@ async function startServer(
     cmd,
     cwd: PROJECT_ROOT,
     env: { ...process.env, ...env },
-    stdout: "inherit",
-    stderr: "inherit",
+    stdout: stdio,
+    stderr: stdio,
     detached: true,
   });
+
+  // The child dup'd the log fd during spawn, so close our copy in the parent
+  // to avoid leaking it. Only close an fd we actually opened (a number) — not
+  // the "inherit" sentinel.
+  if (typeof stdio === "number") {
+    try {
+      closeSync(stdio);
+    } catch {
+      // ignore — fd may already be closed
+    }
+  }
 
   if (proc.pid) {
     writePid(pidFile, proc.pid);
@@ -399,7 +462,8 @@ async function start(mode: Mode): Promise<void> {
         TERMINAL_SOCKET: config.terminalSocket,
         DATABASE_URL: prodDatabaseUrl,
       },
-      TERMINAL_PID_FILE
+      TERMINAL_PID_FILE,
+      TERMINAL_LOG_FILE
     );
 
     console.log("Waiting for terminal server to initialize...");
@@ -416,7 +480,8 @@ async function start(mode: Mode): Promise<void> {
         NEXTAUTH_URL: config.nextAuthUrl,
         AUTH_URL: config.nextAuthUrl, // NextAuth v5 also checks AUTH_URL
       },
-      NEXT_PID_FILE
+      NEXT_PID_FILE,
+      NEXT_LOG_FILE
     );
 
     await waitForExit(mode, terminalProc, nextProc);

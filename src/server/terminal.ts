@@ -2359,8 +2359,17 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
   return wss;
 }
 
-// Graceful shutdown: destroy PTY wrappers but preserve tmux sessions for reconnection
-function cleanup() {
+// Graceful shutdown of terminal connections: destroy PTY wrappers but preserve
+// tmux sessions for reconnection. Synchronous and fast.
+//
+// IMPORTANT: this MUST NOT call process.exit() and MUST NOT register its own
+// signal handlers. The terminal server's single shutdown authority is
+// `shutdown()` in src/server/index.ts (the sole entry point that imports this
+// module); it calls this function as part of its bounded teardown, then
+// releases the instance lock and exits. If this function exited the process
+// or trapped SIGTERM itself, it would run before index.ts's shutdown and skip
+// the lock release + bounded cleanup. See remote-dev-i85i.
+export function shutdownTerminalConnections(): void {
   log.info("Shutting down terminal server (tmux sessions preserved)...");
   for (const [id, conn] of connections) {
     cleanupVoiceFifo(conn);
@@ -2372,8 +2381,4 @@ function cleanup() {
   sessionConnections.clear();
   sessionPrimaryConnection.clear();
   sessionLastPromotionAt.clear();
-  process.exit(0);
 }
-
-process.on("SIGINT", cleanup);
-process.on("SIGTERM", cleanup);
