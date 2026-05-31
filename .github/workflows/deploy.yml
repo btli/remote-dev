@@ -83,20 +83,20 @@ jobs:
               -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
               -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
               "$DEPLOY_URL/api/deploy/status?commit=$GITHUB_SHA" 2>/dev/null) || BODY=""
-            STATUS=$(printf '%s' "$BODY" | jq -r '.status // empty' 2>/dev/null)
-            RC=$(printf '%s' "$BODY" | jq -r '.requestedCommit // empty' 2>/dev/null)
+            STATUS=$(printf '%s' "$BODY" | jq -r '.status // empty' 2>/dev/null || true)
+            RC=$(printf '%s' "$BODY" | jq -r '.requestedCommit // empty' 2>/dev/null || true)
             echo "  …waiting: status='${STATUS:-none}' recorded-commit='${RC:0:7}' (want ${GITHUB_SHA:0:7})"
             if [ "$RC" != "$GITHUB_SHA" ]; then sleep 10; continue; fi
             case "$STATUS" in
               success)
-                AC=$(printf '%s' "$BODY" | jq -r '.activeCommit // empty')
+                AC=$(printf '%s' "$BODY" | jq -r '.activeCommit // empty' 2>/dev/null || true)
                 if [ "$AC" = "$GITHUB_SHA" ]; then
                   echo "✅ Deploy succeeded — ${AC:0:7} is live"; exit 0
                 fi
                 echo "::error::Deploy reported success but active commit ($AC) != pushed ($GITHUB_SHA)"; exit 1 ;;
               failed)
-                STAGE=$(printf '%s' "$BODY" | jq -r '.stage // "?"')
-                ERR=$(printf '%s' "$BODY" | jq -r '.error // "?"')
+                STAGE=$(printf '%s' "$BODY" | jq -r '.stage // "?"' 2>/dev/null || true)
+                ERR=$(printf '%s' "$BODY" | jq -r '.error // "?"' 2>/dev/null || true)
                 echo "::error::Deploy failed at stage '$STAGE': $ERR (see ~/.remote-dev/deploy/deploy.log)"; exit 1 ;;
               *) sleep 10; continue ;;
             esac
