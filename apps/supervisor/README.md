@@ -9,13 +9,12 @@ offers an operator dashboard to spin up instances, choose where their persistent
 data lives (storage targets), and manage their lifecycle. It talks to the
 Kubernetes API directly via `@kubernetes/client-node`.
 
-> **Status: scaffold — Phase 1 in progress (remote-dev-jvcx.3).**
-> This workspace currently contains the foundation only: DB schema, role-based
-> auth, the k8s client wrapper, slug validation, a dashboard shell, a health
-> route, auth-wrapped API route **stubs**, and a controller-process skeleton.
-> Provisioning (jvcx.4), storage discovery (jvcx.5), the router (jvcx.6), and
-> RBAC/Deployments (jvcx.7) are not implemented yet — those endpoints return
-> `501 { code: "PHASE1_PENDING" }`.
+> **Status: Phase 1 in progress.** Provisioning has landed (remote-dev-jvcx.4):
+> `POST`/`DELETE /api/instances` now create/terminate real instances via the
+> reconciler. Still pending: storage discovery + dropdown (jvcx.5), the router
+> (jvcx.6), and RBAC/Deployments (jvcx.7). Suspend/resume
+> (`POST /api/instances/:id/{suspend,resume}`) are defined in the state machine
+> but return `501 { code: "PHASE1_PENDING" }` until Phase 2 (jvcx.8).
 
 ## Architecture
 
@@ -40,6 +39,41 @@ Three roles gate the API (`src/lib/roles.ts`):
 
 **Instances are owner-scoped:** operators see and manage only the instances they
 created; admins see all.
+
+## Provisioning
+
+Each instance is one Kubernetes **namespace** (`rdv-<slug>`, §15 B2) containing a
+Secret `rdv-shared` (Cloudflare Access tags), a Secret `rdv-<slug>` (the
+instance's **unique `AUTH_SECRET`** + optional GitHub OAuth creds), a headless
+Service `rdv` (ports `http`=6001, `ws`=6002), and a single-replica StatefulSet
+running the slug-aware instance image under `RDV_BASE_PATH=/<slug>` with a `data`
+PVC mounted at `/var/lib/rdv`. An optional first-boot seed Job authorises the
+initial emails.
+
+Lifecycle is driven by the **controller** (not the API): the API only writes DB
+rows + audit entries. The reconciler (30s poll) advances each instance through
+`requested → provisioning → ready` (and `terminating → deleted`) off live
+cluster state:
+
+- `POST /api/instances` (operator) inserts a `requested` row and returns `202`.
+  The reconciler then **generates the `AUTH_SECRET`**, creates the k8s objects in
+  order (namespace → secrets → service → statefulset → optional seed Job), and on
+  the first error **rolls back by deleting the namespace** (atomic cascade).
+  `AUTH_SECRET` is generated in the controller process so it never reaches the
+  API response, the API process, or the database.
+- Readiness is gated on the StatefulSet's `readyReplicas ≥ 1` (which itself
+  requires the pod's `/<slug>/api/readyz` readiness probe to pass); not-ready past
+  a 120s budget → `error`.
+- `DELETE /api/instances/:id` (operator; admin **or** owner) marks the row
+  `terminating` and returns `202`; the reconciler deletes the namespace and
+  confirms it's gone before marking `deleted`.
+
+If no cluster is reachable (local dev without `KUBECONFIG`), the reconcile tick
+logs a warning and returns without erroring any instance.
+
+> Storage targets are the cluster **default** for now
+> (`SUPERVISOR_DEFAULT_STORAGE_CLASS`/`_SIZE`); live discovery + the per-instance
+> dropdown (4 backends) land in jvcx.5.
 
 ## Development
 
@@ -72,3 +106,13 @@ See [`.env.example`](./.env.example). Key variables:
 - `SUPERVISOR_CF_ACCESS_TEAM` / `SUPERVISOR_CF_ACCESS_AUD` — the Supervisor's own CF Access app
 - `KUBECONFIG` — optional, for local dev against k3d/kind (the client uses `loadFromDefault()`)
 - `LOG_LEVEL` — `error|warn|info|debug|trace`
+
+Provisioning (read by the **controller** process):
+
+- `SUPERVISOR_INSTANCE_HOST` — external host instances are served under (used for
+  each instance's `AUTH_URL` / `baseUrl`, e.g. `dev.example.com`)
+- `SUPERVISOR_INSTANCE_IMAGE` — the slug-aware GHCR `image:sha` the StatefulSet runs
+- `SUPERVISOR_DEFAULT_STORAGE_CLASS` — default PVC StorageClass (empty → cluster default)
+- `SUPERVISOR_DEFAULT_STORAGE_SIZE` — default PVC size (default `10Gi`)
+- `CF_ACCESS_TEAM` / `CF_ACCESS_AUD` — injected into each instance's `rdv-shared` Secret
+- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` — optional, injected into `rdv-<slug>` Secret

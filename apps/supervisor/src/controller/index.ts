@@ -2,16 +2,16 @@
  * Supervisor controller process (the second process in the two-process model,
  * spec §6.1). Long-running reconciler + capacity loop.
  *
- * SCAFFOLD ONLY: this is a no-op reconcile loop that ticks every
- * RECONCILE_INTERVAL_MS and logs. The real reconciler — advancing instances
- * through the state machine from live k8s state (§6.3), transactional
- * provisioning + rollback (§6.4), and the capacity loop (Phase 3) — lands in
- * jvcx.4+. It plugs in at `reconcileTick()` below.
+ * The reconciler (jvcx.4) advances instances through the state machine from live
+ * k8s state (§6.3) with transactional provisioning + rollback (§6.4). It is
+ * implemented in `reconciler.ts` and invoked from `reconcileTick()` below. The
+ * capacity loop (Phase 3) is still future work.
  *
  * Run via: `bun run dev:controller` (tsx).
  */
 
 import { createLogger } from "@/lib/logger";
+import { reconcileInstances } from "@/controller/reconciler";
 
 const log = createLogger("Controller");
 
@@ -23,22 +23,23 @@ let timer: ReturnType<typeof setInterval> | null = null;
 let shuttingDown = false;
 
 /**
- * One reconcile pass. No-op until jvcx.4.
+ * One reconcile pass: load non-terminal instances and drive each through the
+ * state machine from live k8s state (requested→provisioning→ready, terminating→
+ * deleted), recording transitions in the audit log.
  *
- * When implemented this will: load instances from the DB, query live k8s state,
- * and drive each instance's state machine (requested→provisioning→ready, etc.),
- * recording transitions in the audit log.
+ * `reconcileInstances()` is itself resilient — a missing/unreachable cluster
+ * makes it log-and-return rather than throw — but we still wrap it so an
+ * unexpected error never tears down the controller process.
  */
 async function reconcileTick(): Promise<void> {
-  // Guard against overlapping ticks if a future implementation runs long.
+  // Guard against overlapping ticks if a pass runs long.
   if (ticking) {
     log.debug("Reconcile tick skipped (previous still running)");
     return;
   }
   ticking = true;
   try {
-    log.info("reconcile tick", { intervalMs: RECONCILE_INTERVAL_MS });
-    // TODO(jvcx.4): reconcile instances against live cluster state.
+    await reconcileInstances();
   } catch (error) {
     log.error("reconcile tick failed", { error: String(error) });
   } finally {
