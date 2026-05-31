@@ -56,8 +56,11 @@ export async function proxy(request: NextRequest) {
     return tagInstance(NextResponse.next());
   }
 
-  // Allow deploy webhook (uses its own HMAC-SHA256 auth)
-  if (pathname === "/api/deploy") {
+  // Allow deploy webhook + its status endpoint (both use their own
+  // HMAC-SHA256 auth; the status poll is read-only). The bare unprefixed
+  // pathname is what Next.js exposes after stripping basePath, so this matches
+  // both `/api/deploy/status` and `/<prefix>/api/deploy/status`.
+  if (pathname === "/api/deploy" || pathname === "/api/deploy/status") {
     return tagInstance(NextResponse.next());
   }
 
