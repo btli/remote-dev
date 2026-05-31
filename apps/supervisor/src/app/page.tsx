@@ -8,8 +8,9 @@ import {
   validateAccessJWT,
   isCfAccessConfigured,
 } from "@/lib/cf-access";
+import Link from "next/link";
 import { resolveSupervisorUser } from "@/lib/auth";
-import { type Role } from "@/lib/roles";
+import { hasRole, type Role } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 import { createLogger } from "@/lib/logger";
 
@@ -121,9 +122,19 @@ export default async function DashboardPage() {
               : "Instances you own."}
           </p>
         </div>
-        <div className="text-right text-xs text-muted-foreground">
-          <div className="font-medium text-foreground">{user.email}</div>
-          <div className="uppercase tracking-wide">{user.role}</div>
+        <div className="flex items-center gap-4">
+          {hasRole(user, "operator") ? (
+            <Link
+              href="/instances/new"
+              className="inline-flex h-9 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90"
+            >
+              Create instance
+            </Link>
+          ) : null}
+          <div className="text-right text-xs text-muted-foreground">
+            <div className="font-medium text-foreground">{user.email}</div>
+            <div className="uppercase tracking-wide">{user.role}</div>
+          </div>
         </div>
       </header>
 
@@ -132,10 +143,24 @@ export default async function DashboardPage() {
           <div className="rounded-lg border border-dashed border-border px-6 py-16 text-center">
             <h2 className="text-base font-medium">No instances yet</h2>
             <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-              Provisioning lands in a later Phase&nbsp;1 task (jvcx.4). Once
-              available, operators will create instances here and reach them at{" "}
-              <code className="font-mono text-xs">/&lt;slug&gt;</code> through the
-              router.
+              {hasRole(user, "operator") ? (
+                <>
+                  Use{" "}
+                  <span className="font-medium text-foreground">
+                    Create instance
+                  </span>{" "}
+                  to provision one. It will be reachable at{" "}
+                  <code className="font-mono text-xs">/&lt;slug&gt;</code> through
+                  the router.
+                </>
+              ) : (
+                <>
+                  Instances appear here once an operator provisions them; each is
+                  reachable at{" "}
+                  <code className="font-mono text-xs">/&lt;slug&gt;</code> through
+                  the router.
+                </>
+              )}
             </p>
           </div>
         ) : (
@@ -168,7 +193,7 @@ export default async function DashboardPage() {
       </section>
 
       <footer className="mt-10 text-xs text-muted-foreground">
-        Scaffold — Phase 1 in progress (remote-dev-jvcx.3).
+        Phase 1 in progress (remote-dev-jvcx.5).
       </footer>
     </main>
   );
