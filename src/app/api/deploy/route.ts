@@ -13,12 +13,12 @@
  */
 
 import { NextResponse } from "next/server";
-import { createHmac, timingSafeEqual } from "crypto";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { spawn } from "child_process";
 import { createLogger } from "@/lib/logger";
+import { verifySignature } from "@/lib/deploy-webhook-auth";
 
 const log = createLogger("Deploy");
 
@@ -35,23 +35,6 @@ function isLockHeld(): boolean {
   } catch {
     return false; // Process dead or can't read file
   }
-}
-
-function verifySignature(
-  secret: string,
-  rawBody: Buffer,
-  signatureHeader: string
-): boolean {
-  const expected =
-    "sha256=" + createHmac("sha256", secret).update(rawBody).digest("hex");
-
-  // Always run constant-time comparison to prevent timing oracle.
-  // Pad to expected length so timingSafeEqual never throws on length mismatch.
-  const expectedBuf = Buffer.from(expected);
-  const sigBuf = Buffer.alloc(expectedBuf.length);
-  Buffer.from(signatureHeader).copy(sigBuf);
-  const match = timingSafeEqual(sigBuf, expectedBuf);
-  return match && signatureHeader.length === expected.length;
 }
 
 export async function POST(request: Request) {
@@ -154,6 +137,7 @@ export async function POST(request: Request) {
       DEPLOY_EXTERNAL_URL:
         process.env.DEPLOY_EXTERNAL_URL || "https://dev.bryanli.net",
       DEPLOY_WEBHOOK_SECRET: process.env.DEPLOY_WEBHOOK_SECRET ?? "",
+      DEPLOY_REQUESTED_COMMIT: body.after ?? "",
     };
     // Forward RDV_DATA_DIR if set
     if (process.env.RDV_DATA_DIR) {

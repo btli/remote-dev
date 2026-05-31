@@ -11,9 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     # Skip deploy for tag pushes (handled by release.yml)
     if: "!startsWith(github.ref, 'refs/tags/')"
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
       - name: Send deploy webhook
+        id: trigger
         env:
           DEPLOY_WEBHOOK_SECRET: ${{ secrets.DEPLOY_WEBHOOK_SECRET }}
           DEPLOY_URL: ${{ vars.DEPLOY_URL }}
@@ -35,7 +36,7 @@ jobs:
             --arg pusher "$GITHUB_ACTOR" \
             '{ref: $ref, after: $sha, pusher: {name: $pusher}}')
 
-          SIGNATURE="sha256=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$DEPLOY_WEBHOOK_SECRET" | awk '{print $NF}')"
+          SIGNATURE="sha256=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac "$DEPLOY_WEBHOOK_SECRET" | awk '{print $NF}')"
 
           echo "Sending deploy webhook to $DEPLOY_URL/api/deploy"
           echo "Commit: ${GITHUB_SHA:0:7}"
@@ -56,9 +57,48 @@ jobs:
 
           if [ "$HTTP_CODE" = "202" ]; then
             echo "Deploy triggered successfully"
+            echo "deploy=triggered" >> "$GITHUB_OUTPUT"
           elif [ "$HTTP_CODE" = "409" ]; then
             echo "::warning::Deploy already in progress"
+            echo "deploy=in-progress-elsewhere" >> "$GITHUB_OUTPUT"
           else
             echo "::error::Unexpected response: $HTTP_CODE"
             exit 1
           fi
+
+      - name: Wait for deploy to complete
+        if: steps.trigger.outputs.deploy == 'triggered'
+        env:
+          DEPLOY_WEBHOOK_SECRET: ${{ secrets.DEPLOY_WEBHOOK_SECRET }}
+          DEPLOY_URL: ${{ vars.DEPLOY_URL }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          SIG="sha256=$(printf '%s' "$GITHUB_SHA" | openssl dgst -sha256 -hmac "$DEPLOY_WEBHOOK_SECRET" | awk '{print $NF}')"
+          echo "Polling deploy status for ${GITHUB_SHA:0:7} ..."
+          DEADLINE=$(( $(date +%s) + 540 ))   # 9 minutes
+          while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+            BODY=$(curl -s --max-time 20 \
+              -H "X-Hub-Signature-256: $SIG" \
+              -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+              -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+              "$DEPLOY_URL/api/deploy/status?commit=$GITHUB_SHA" 2>/dev/null) || BODY=""
+            STATUS=$(printf '%s' "$BODY" | jq -r '.status // empty' 2>/dev/null)
+            RC=$(printf '%s' "$BODY" | jq -r '.requestedCommit // empty' 2>/dev/null)
+            echo "  …waiting: status='${STATUS:-none}' recorded-commit='${RC:0:7}' (want ${GITHUB_SHA:0:7})"
+            if [ "$RC" != "$GITHUB_SHA" ]; then sleep 10; continue; fi
+            case "$STATUS" in
+              success)
+                AC=$(printf '%s' "$BODY" | jq -r '.activeCommit // empty')
+                if [ "$AC" = "$GITHUB_SHA" ]; then
+                  echo "✅ Deploy succeeded — ${AC:0:7} is live"; exit 0
+                fi
+                echo "::error::Deploy reported success but active commit ($AC) != pushed ($GITHUB_SHA)"; exit 1 ;;
+              failed)
+                STAGE=$(printf '%s' "$BODY" | jq -r '.stage // "?"')
+                ERR=$(printf '%s' "$BODY" | jq -r '.error // "?"')
+                echo "::error::Deploy failed at stage '$STAGE': $ERR (see ~/.remote-dev/deploy/deploy.log)"; exit 1 ;;
+              *) sleep 10; continue ;;
+            esac
+          done
+          echo "::error::Timed out after 9m waiting for deploy of ${GITHUB_SHA:0:7} (check ~/.remote-dev/deploy/deploy.log and 'bun run deploy:status')"; exit 1

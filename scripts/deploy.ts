@@ -54,6 +54,7 @@ const SERVER_DIR = join(DATA_DIR, "server");
 const STATE_FILE = join(DEPLOY_DIR, "state.json");
 const LOCK_FILE = join(DEPLOY_DIR, "deploy.lock");
 const LOG_FILE = join(DEPLOY_DIR, "deploy.log");
+const RESULT_FILE = join(DEPLOY_DIR, "last-deploy.json");
 
 const NEXTJS_SOCKET = join(SOCKET_DIR, "nextjs.sock");
 const TERMINAL_SOCKET = join(SOCKET_DIR, "terminal.sock");
@@ -140,6 +141,27 @@ function writeDeployState(state: DeployState): void {
   writeFileSync(tmpFile, JSON.stringify(state, null, 2));
   // Atomic rename
   renameSync(tmpFile, STATE_FILE);
+}
+
+interface DeployResult {
+  status: "in_progress" | "success" | "failed";
+  requestedCommit: string;
+  activeCommit: string | null;
+  stage: string; // start | build | migration | health-local | health-external | done
+  error?: string;
+  startedAt: string;
+  finishedAt?: string;
+}
+
+function writeDeployResult(result: DeployResult): void {
+  try {
+    const tmpFile = RESULT_FILE + ".tmp";
+    writeFileSync(tmpFile, JSON.stringify(result, null, 2));
+    renameSync(tmpFile, RESULT_FILE);
+  } catch {
+    // Best-effort; a missing result record degrades to a poll timeout, which
+    // CI treats as a failed deploy — the correct fail-safe direction.
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -790,6 +812,11 @@ async function deploy(): Promise<void> {
   ensureDirs();
 
   if (!acquireLock()) {
+    // Lost a deploy-lock race (the POST /api/deploy lock check passed, then
+    // another deploy grabbed the lock first). Deliberately write NO result
+    // record here: the winner may be deploying this same commit, and a "failed"
+    // record would clobber its in_progress/success record (a false failure).
+    // CI degrades to a poll timeout instead — the safe direction.
     process.exit(1);
   }
 
@@ -799,12 +826,37 @@ async function deploy(): Promise<void> {
     const inactiveSlot: Slot = activeSlot === "blue" ? "green" : "blue";
     const previousCommit = state?.activeCommit || getGitCommitFull();
 
+    const requestedCommit = process.env.DEPLOY_REQUESTED_COMMIT || getGitCommitFull();
+    const startedAt = new Date().toISOString();
+
+    // Record a terminal "failed" result for a given stage before we roll back
+    // and exit. Each failure site differs only by stage + error message.
+    const writeFailure = (stage: string, error: string): void =>
+      writeDeployResult({
+        status: "failed",
+        requestedCommit,
+        activeCommit: previousCommit,
+        stage,
+        error,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+      });
+
+    writeDeployResult({
+      status: "in_progress",
+      requestedCommit,
+      activeCommit: previousCommit,
+      stage: "start",
+      startedAt,
+    });
+
     logDeploy(`=== Deploy started ===`);
     logDeploy(`Active slot: ${activeSlot}, building into: ${inactiveSlot}`);
 
     // Build into inactive slot
     if (!buildSlot(inactiveSlot)) {
       logError("Build failed, aborting deploy");
+      writeFailure("build", "Build failed");
       releaseLock();
       process.exit(1);
     }
@@ -821,6 +873,7 @@ async function deploy(): Promise<void> {
     // Run database migration while servers are stopped
     if (!runMigration()) {
       logError("Migration failed, restarting via rdv.ts...");
+      writeFailure("migration", "Migration failed");
       restartViaRdvAsync();
       await Bun.sleep(5000);
       releaseLock();
@@ -834,6 +887,7 @@ async function deploy(): Promise<void> {
     const localHealthy = await healthCheckLocal();
     if (!localHealthy) {
       logError("Local health check failed, rolling back...");
+      writeFailure("health-local", "Local health check failed");
       stopCurrentServers();
       await rollbackTo(activeSlot);
       releaseLock();
@@ -844,6 +898,7 @@ async function deploy(): Promise<void> {
     const externalHealthy = await healthCheckExternal();
     if (!externalHealthy) {
       logError("External health check failed, rolling back...");
+      writeFailure("health-external", "External health check failed");
       stopCurrentServers();
       await rollbackTo(activeSlot);
       releaseLock();
@@ -857,6 +912,15 @@ async function deploy(): Promise<void> {
       deployedAt: new Date().toISOString(),
       previousSlot: activeSlot,
       previousCommit: previousCommit,
+    });
+
+    writeDeployResult({
+      status: "success",
+      requestedCommit,
+      activeCommit: newCommit,
+      stage: "done",
+      startedAt,
+      finishedAt: new Date().toISOString(),
     });
 
     logDeploy(
