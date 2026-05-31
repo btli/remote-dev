@@ -24,6 +24,7 @@ import {
   isFromFolder,
 } from "@/lib/preferences";
 import { resolveEnvironmentVariables } from "@/lib/environment";
+import { apiFetch } from "@/lib/api-fetch";
 
 interface PreferencesContextValue {
   // State
@@ -107,7 +108,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
     setError(null);
     try {
       // Fetch user settings with credentials to ensure cookies are sent
-      const userRes = await fetch("/api/preferences", {
+      const userRes = await apiFetch("/api/preferences", {
         credentials: "include",
       });
       if (!userRes.ok) {
@@ -190,7 +191,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
       setUserSettings((prev) => (prev ? { ...prev, ...updates } : null));
 
       try {
-        const response = await fetch("/api/preferences", {
+        const response = await apiFetch("/api/preferences", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(updates),
@@ -243,7 +244,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         // Route through the node-keyed preferences API. The legacy
         // /api/preferences/folders/:id route no longer exists; all state is
         // keyed on project id post-migration.
-        const response = await fetch(`/api/node-preferences/project/${folderId}`, {
+        const response = await apiFetch(`/api/node-preferences/project/${folderId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(updates),
@@ -278,7 +279,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
   const deleteFolderPreferencesHandler = useCallback(
     async (folderId: string) => {
       try {
-        const response = await fetch(`/api/node-preferences/project/${folderId}`, {
+        const response = await apiFetch(`/api/node-preferences/project/${folderId}`, {
           method: "DELETE",
         });
 
@@ -365,7 +366,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
       // selection (`folderId === null`) both fields are null. Until group
       // nodes are supported in the active-node UI, any non-null folderId is
       // treated as a project id.
-      fetch("/api/preferences/active-node", {
+      apiFetch("/api/preferences/active-node", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -10,6 +10,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { apiFetch } from "@/lib/api-fetch";
+
 export type NodeType = "group" | "project";
 
 export interface GroupNode {
@@ -78,8 +80,8 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     const [groupsRes, projectsRes] = await Promise.all([
-      fetch("/api/groups").then((r) => r.json()),
-      fetch("/api/projects").then((r) => r.json()),
+      apiFetch("/api/groups").then((r) => r.json()),
+      apiFetch("/api/projects").then((r) => r.json()),
     ]);
     setGroups(groupsRes.groups ?? []);
     setProjects(projectsRes.projects ?? []);
@@ -109,7 +111,7 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
 
   const createGroup: ProjectTreeContextValue["createGroup"] = useCallback(
     async (input) => {
-      const res = await fetch("/api/groups", {
+      const res = await apiFetch("/api/groups", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -127,7 +129,7 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
   const updateGroup: ProjectTreeContextValue["updateGroup"] = useCallback(
     async (input) => {
       const { id, ...patch } = input;
-      await fetch(`/api/groups/${id}`, {
+      await apiFetch(`/api/groups/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
@@ -148,7 +150,7 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
 
   const moveGroup: ProjectTreeContextValue["moveGroup"] = useCallback(
     async (input) => {
-      await fetch(`/api/groups/${input.id}/move`, {
+      await apiFetch(`/api/groups/${input.id}/move`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ newParentGroupId: input.newParentGroupId }),
@@ -160,7 +162,7 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
 
   const createProject: ProjectTreeContextValue["createProject"] = useCallback(
     async (input) => {
-      const res = await fetch("/api/projects", {
+      const res = await apiFetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
@@ -175,7 +177,7 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
   const updateProject: ProjectTreeContextValue["updateProject"] = useCallback(
     async (input) => {
       const { id, ...patch } = input;
-      await fetch(`/api/projects/${id}`, {
+      await apiFetch(`/api/projects/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
@@ -187,7 +189,7 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
 
   const deleteProject: ProjectTreeContextValue["deleteProject"] = useCallback(
     async (id) => {
-      await fetch(`/api/projects/${id}`, { method: "DELETE" });
+      await apiFetch(`/api/projects/${id}`, { method: "DELETE" });
       await refresh();
     },
     [refresh],
@@ -195,7 +197,7 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
 
   const moveProject: ProjectTreeContextValue["moveProject"] = useCallback(
     async (input) => {
-      await fetch(`/api/projects/${input.id}/move`, {
+      await apiFetch(`/api/projects/${input.id}/move`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ newGroupId: input.newGroupId }),
@@ -207,7 +209,7 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
 
   const setActiveNode: ProjectTreeContextValue["setActiveNode"] = useCallback(async (node) => {
     setActiveNodeState(node);
-    await fetch("/api/preferences/active-node", {
+    await apiFetch("/api/preferences/active-node", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ nodeId: node.id, nodeType: node.type }),

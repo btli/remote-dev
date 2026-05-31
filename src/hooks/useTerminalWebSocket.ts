@@ -5,6 +5,7 @@ import type { ConnectionStatus } from "@/types/terminal";
 import type { SessionStatusIndicator, SessionProgress } from "@/types/terminal-type";
 import { useNotifications } from "@/hooks/useNotifications";
 
+import { apiFetch } from "@/lib/api-fetch";
 // ─── Options ───────────────────────────────────────────────────────────────────
 
 export interface UseTerminalWebSocketOptions {
@@ -196,7 +197,7 @@ export function useTerminalWebSocket({
       // Fetch auth token
       let token: string;
       try {
-        const tokenResponse = await fetch(`/api/sessions/${sessionId}/token`);
+        const tokenResponse = await apiFetch(`/api/sessions/${sessionId}/token`);
         if (!tokenResponse.ok) {
           throw new Error("Failed to get auth token");
         }

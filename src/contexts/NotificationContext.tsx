@@ -14,6 +14,8 @@ import type { NotificationEvent } from "@/types/notification";
 import { fireNotificationToast } from "@/lib/notification-toast";
 
 /** Hydrate date strings from API response into Date objects */
+
+import { apiFetch } from "@/lib/api-fetch";
 export function hydrateNotification(raw: Record<string, unknown>): NotificationEvent {
   return {
     ...raw,
@@ -122,7 +124,7 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
   const refresh = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await fetch("/api/notifications?limit=50");
+      const response = await apiFetch("/api/notifications?limit=50");
       if (!response.ok) {
         throw new Error("Failed to fetch notifications");
       }
@@ -173,7 +175,7 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
       );
 
       try {
-        const response = await fetch("/api/notifications", {
+        const response = await apiFetch("/api/notifications", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ids }),
@@ -204,7 +206,7 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
     );
 
     try {
-      const response = await fetch("/api/notifications", {
+      const response = await apiFetch("/api/notifications", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ all: true }),
@@ -234,7 +236,7 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
         return prev.filter((n) => n.id !== id);
       });
       try {
-        const response = await fetch("/api/notifications", {
+        const response = await apiFetch("/api/notifications", {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ids: [id] }),
@@ -271,7 +273,7 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
       return [];
     });
     try {
-      const response = await fetch("/api/notifications", {
+      const response = await apiFetch("/api/notifications", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ all: true }),

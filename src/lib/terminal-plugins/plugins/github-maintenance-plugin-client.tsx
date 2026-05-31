@@ -15,6 +15,7 @@
  */
 
 import { useState, useMemo } from "react";
+import { prefixApiPath } from "@/lib/api-fetch";
 import {
   Github,
   RefreshCw,
@@ -146,7 +147,7 @@ function GitHubMaintenanceTabContent({
   };
 
   const handleConnect = () => {
-    window.location.href = "/api/auth/github/link";
+    window.location.href = prefixApiPath("/api/auth/github/link");
   };
 
   if (!metadata) {

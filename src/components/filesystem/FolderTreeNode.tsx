@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import { ChevronRight, Folder, Loader2, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+import { apiFetch } from "@/lib/api-fetch";
 interface DirectoryEntry {
   name: string;
   path: string;
@@ -42,7 +43,7 @@ export function FolderTreeNode({
     setError(null);
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/directories?path=${encodeURIComponent(path)}&dirsOnly=true`
       );
 

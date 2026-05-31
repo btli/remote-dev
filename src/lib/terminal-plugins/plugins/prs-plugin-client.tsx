@@ -61,6 +61,7 @@ import {
 import type { PRsSessionMetadata } from "./prs-plugin-server";
 import { usePRBody } from "./use-pr-body";
 
+import { apiFetch } from "@/lib/api-fetch";
 type StateFilter = "all" | "open" | "merged" | "closed";
 
 export function readPRsMetadata(
@@ -422,7 +423,7 @@ function PRDetailView({
   useEffect(() => {
     let cancelled = false;
 
-    fetch(
+    apiFetch(
       `/api/github/repositories/${repositoryId}/issues/${pr.number}/comments`
     )
       .then((res) =>

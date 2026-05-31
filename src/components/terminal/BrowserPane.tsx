@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import type { TerminalSession } from "@/types/session";
 import type { BrowserSessionMetadata } from "@/types/terminal-type";
 
+import { apiFetch } from "@/lib/api-fetch";
 interface BrowserPaneProps {
   session: TerminalSession;
 }
@@ -59,7 +60,7 @@ export function BrowserPane({ session }: BrowserPaneProps) {
 
     const fetchScreenshot = async () => {
       try {
-        const res = await fetch(`/api/sessions/${session.id}/browser/screenshot`);
+        const res = await apiFetch(`/api/sessions/${session.id}/browser/screenshot`);
         if (res.ok) {
           const blob = await res.blob();
           const objectUrl = URL.createObjectURL(blob);
@@ -99,7 +100,7 @@ export function BrowserPane({ session }: BrowserPaneProps) {
 
       setLoading(true);
       try {
-        const res = await fetch(`/api/sessions/${session.id}/browser/navigate`, {
+        const res = await apiFetch(`/api/sessions/${session.id}/browser/navigate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url: navUrl }),
@@ -130,7 +131,7 @@ export function BrowserPane({ session }: BrowserPaneProps) {
       const x = Math.round((e.clientX - rect.left) * scaleX);
       const y = Math.round((e.clientY - rect.top) * scaleY);
 
-      await fetch(`/api/sessions/${session.id}/browser/click`, {
+      await apiFetch(`/api/sessions/${session.id}/browser/click`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ x, y }),
@@ -140,12 +141,12 @@ export function BrowserPane({ session }: BrowserPaneProps) {
   );
 
   const handleBack = useCallback(
-    () => fetch(`/api/sessions/${session.id}/browser/back`, { method: "POST" }),
+    () => apiFetch(`/api/sessions/${session.id}/browser/back`, { method: "POST" }),
     [session.id]
   );
 
   const handleForward = useCallback(
-    () => fetch(`/api/sessions/${session.id}/browser/forward`, { method: "POST" }),
+    () => apiFetch(`/api/sessions/${session.id}/browser/forward`, { method: "POST" }),
     [session.id]
   );
 

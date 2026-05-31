@@ -34,6 +34,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { LogLevelValue } from "@/domain/value-objects/LogLevel";
 import type { LogSource } from "@/application/ports/LogRepository";
+import { apiFetch } from "@/lib/api-fetch";
 
 interface LogEntry {
   id: number;
@@ -88,7 +89,7 @@ export function LogViewer() {
 
   const loadNamespaces = useCallback(async () => {
     try {
-      const res = await fetch("/api/system/logs/namespaces");
+      const res = await apiFetch("/api/system/logs/namespaces");
       if (res.ok) {
         const data = await res.json();
         setNamespaces(data.namespaces ?? []);
@@ -117,7 +118,7 @@ export function LogViewer() {
         if (searchQuery.trim()) params.set("search", searchQuery.trim());
         if (opts.before) params.set("before", String(opts.before));
 
-        const res = await fetch(`/api/system/logs?${params}`);
+        const res = await apiFetch(`/api/system/logs?${params}`);
         if (!res.ok) throw new Error("Failed to fetch logs");
         const data: { entries: LogEntry[]; hasMore: boolean } = await res.json();
 
@@ -157,7 +158,7 @@ export function LogViewer() {
   const handleClear = async () => {
     setShowClearDialog(false);
     try {
-      await fetch("/api/system/logs", { method: "DELETE" });
+      await apiFetch("/api/system/logs", { method: "DELETE" });
       setEntries([]);
       setHasMore(false);
       loadNamespaces();

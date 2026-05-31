@@ -17,6 +17,7 @@ import type {
 import type { AgentProviderType } from "@/types/session";
 import { getServerKey, makeServerKey } from "@/lib/mcp-utils";
 
+import { apiFetch } from "@/lib/api-fetch";
 // =============================================================================
 // Context State
 // =============================================================================
@@ -105,7 +106,7 @@ export function SessionMCPProvider({ children }: SessionMCPProviderProps) {
     }));
 
     try {
-      const response = await fetch(`/api/sessions/${sessionId}/mcp-servers`);
+      const response = await apiFetch(`/api/sessions/${sessionId}/mcp-servers`);
       if (!response.ok) {
         throw new Error("Failed to load MCP servers");
       }
@@ -160,7 +161,7 @@ export function SessionMCPProvider({ children }: SessionMCPProviderProps) {
       }));
 
       try {
-        const response = await fetch(`/api/sessions/${state.sessionId}/mcp-servers`, {
+        const response = await apiFetch(`/api/sessions/${state.sessionId}/mcp-servers`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -201,7 +202,7 @@ export function SessionMCPProvider({ children }: SessionMCPProviderProps) {
       if (!state.sessionId) return;
 
       try {
-        const response = await fetch(`/api/sessions/${state.sessionId}/mcp-servers`, {
+        const response = await apiFetch(`/api/sessions/${state.sessionId}/mcp-servers`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -245,7 +246,7 @@ export function SessionMCPProvider({ children }: SessionMCPProviderProps) {
       }));
 
       try {
-        const response = await fetch(
+        const response = await apiFetch(
           `/api/sessions/${state.sessionId}/mcp-servers/discover`,
           {
             method: "POST",
@@ -316,7 +317,7 @@ export function SessionMCPProvider({ children }: SessionMCPProviderProps) {
     }));
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/sessions/${state.sessionId}/mcp-servers/discover`,
         {
           method: "POST",

@@ -9,6 +9,144 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Multi-instance hosting (Phase 1 — plumbing core)**: new `RDV_BASE_PATH`
+  env var lets one domain host multiple isolated `remote-dev` pods under
+  path prefixes (`/alpha/`, `/beta/`, …). Phase 1 wires up the helper module
+  (`src/lib/base-path.ts`), Next.js `basePath`, terminal-server WebSocket
+  upgrade gating on `{prefix}/ws` with a strict-boundary match, the
+  client-side WS URL builder (`window.__RDV_BASE_PATH__` read by
+  `useTerminalWsUrl`), and a SSR-embedded base-path script in
+  `<head>`. Default (empty `RDV_BASE_PATH`) deployments are byte-identical
+  to current behavior. NextAuth cookie scoping, the absolute-URL audit, the
+  `/api/config` endpoint, init.sh, and docs follow in Phases 2–4.
+  **Do not set `RDV_BASE_PATH` in production multi-instance deployments
+  yet** — cookie path scoping lands in Phase 2 (see
+  `docs/plans/multi-instance-basepath.md` §7.6). Without it, sessions can
+  bleed between instances on the same host.
+- **Multi-instance hosting (Phase 2 — NextAuth cookie scoping)**: NextAuth's
+  session/state/pkce/nonce/callback/webauthn cookies are now path-scoped to
+  `RDV_BASE_PATH` and name-differentiated per instance slug
+  (`__Secure-rdv-<slug>-session-token` etc.) via the new
+  `src/lib/auth-cookies.ts` helper. The CSRF cookie keeps `Path=/` because
+  the `__Host-` prefix requires it; functional isolation between instances
+  on the same host is enforced by each pod owning its own `AUTH_SECRET`
+  (which must be unique per instance — see plan §6.1).
+  `src/auth.ts` pins AuthJS's internal `basePath` to the full external path
+  (`${RDV_BASE_PATH}/api/auth`) so the OAuth callback URL handed to GitHub
+  and the URLs in `/api/auth/providers` include the deployment prefix, and
+  `src/app/api/auth/[...nextauth]/route.ts` restores the prefix on inbound
+  requests (Next.js strips it before route handlers see them) so AuthJS's
+  action parsing matches. Together these keep GitHub OAuth working under
+  `RDV_BASE_PATH` (AC-7). `src/proxy.ts` reads the configured session cookie
+  name via the new `getSessionCookieName()` helper so the proxy and the auth
+  handler agree on which cookie carries the JWT.
+  **Caveat for upgrades**: when a live deployment flips `RDV_BASE_PATH` from
+  empty to a value (or vice versa), the NextAuth cookie names change too,
+  so every signed-in user must sign in again on the first request after the
+  rollout — no data loss, but a one-time logout is unavoidable.
+- **Multi-instance hosting (Phase 3 — URL audit + runtime config)**: new
+  `apiFetch` client-side wrapper (`src/lib/api-fetch.ts`) prefixes
+  `window.__RDV_BASE_PATH__` onto every browser-initiated request so the
+  client survives a non-empty basePath. All 108 bare `fetch("/api/...")`
+  call sites in the app code were migrated to `apiFetch` (see commit
+  `c3c56950`), and an ESLint guard (`no-restricted-syntax` on bare-
+  string-literal fetch arguments starting with `/api`) prevents the
+  pattern from creeping back. New `/api/config` endpoint behind
+  `withApiAuth` (so it accepts session cookies **and** Bearer API keys)
+  returns the deployment's `basePath`, `instanceSlug`, and package
+  version — used by ops tooling and the multi-instance smoke test to
+  prove which pod answered a request. Every response now carries an
+  `X-RDV-Instance` header echoing the slug, set in the middleware so
+  it survives 404s and static asset responses. The GitHub OAuth
+  account-linking callback (`/api/auth/github/callback`) now reads
+  `getBasePath()` when redirecting back to the app so the link flow
+  works under `RDV_BASE_PATH`. **Default (empty basePath) deployments
+  remain byte-identical**: `apiFetch` becomes a thin pass-through.
+- **k3s slug-aware image (Phase 0 — runtime basePath materialization)**:
+  one container image now serves any instance slug chosen at runtime,
+  removing the per-slug image build requirement. Next.js bakes
+  `basePath`/`assetPrefix` at build time, so the image is built once with a
+  sentinel basePath (`Dockerfile` build stage sets `RDV_BASE_PATH=/rdvslug`)
+  and the container entrypoint (`docker/entrypoint.sh`) rewrites that sentinel
+  to the real per-instance slug — or empty for root — across the FULL runtime
+  tree (`/app/server.js`, `/app/.next`, AND `/app/public`) before starting the
+  servers. The pass is idempotent (PVC done-marker keyed on the target slug)
+  and HARD-FAILS the boot if any `/rdvslug` survives anywhere, so a
+  half-rewritten app never serves. App-owned, root-absolute URLs that Next
+  never prefixes are made slug-aware: `src/app/layout.tsx` interpolates the
+  server-side `BASE_PATH` into the PWA manifest link, favicon, and
+  apple-touch-icon; `next-auth/react` `SessionProvider` is mounted with
+  `basePath={`${slug}/api/auth`}` (via the now-exported `runtimeBasePath()`
+  helper in `src/lib/api-fetch.ts`) so client session/CSRF/signout calls hit
+  the slug; the `next/image` logo in `Header.tsx` and the browser-notification
+  icon in `useNotificationPermission.ts` are runtime-prefixed; the service
+  worker is now served from a runtime-templated route handler
+  (`src/app/sw.js/route.ts`, replacing the static `public/sw.js`) whose cached
+  URLs are interpolated from the server-side `BASE_PATH`, so the PWA works both
+  at root (single-host prod) and under a slug with no build-time baking —
+  `ServiceWorkerRegistration` registers `${prefix}/sw.js` with a matching
+  `${prefix}/` scope; `public/manifest.json` uses manifest-relative
+  icon/`start_url` paths so it is correct under any slug and at root with no
+  materialization. Default (empty basePath) local/Electron builds are
+  unaffected — they build normally with `basePath` omitted and do not use this
+  image.
+- **Multi-instance hosting (Phase 5 — K8s production hardening)**: new
+  `/api/healthz` (liveness) and `/api/readyz` (readiness) probes plus the
+  full set of container hardening required to safely run multiple
+  isolated `remote-dev` instances on Kubernetes. Both probes are
+  unauthenticated and bypassed by the proxy middleware so the kubelet can
+  hit them without CF Access. `/api/readyz` probes the SQLite database,
+  the `tmux` binary, and the in-pod terminal server (`/health` on
+  `TERMINAL_PORT`) with a 1s timeout — a wedged terminal server now
+  drops the pod out of LB endpoints instead of routing failing session
+  creates to a half-dead pod. `Dockerfile` ships native modules
+  (`better-sqlite3`, `node-pty`) into `/app/node_modules` so the
+  terminal server (built with `--external node-pty`) can resolve them
+  at runtime, runs the native-module ABI smoke test post-`USER rdv`
+  switch, and is built multi-arch (`linux/amd64,linux/arm64`) via
+  `docker buildx`. `docker/entrypoint.sh` pins `TMUX_TMPDIR` onto the
+  PVC so tmux sessions survive container restarts within a pod, checks
+  both write AND execute permissions on `RDV_DATA_DIR` for a clean
+  pre-flight error when `securityContext.fsGroup` is wrong, and
+  force-kills children at t=25s to exit cleanly inside K8s's default
+  30s `terminationGracePeriodSeconds`. New advisory instance lock
+  (`src/lib/instance-lock.ts`) writes a JSON record with hostname +
+  PID + startedAt + writer nonce at `${RDV_DATA_DIR}/instance.lock`
+  and refuses to start when a *live, same-host, recent* PID owns it —
+  cross-host or aged-out same-host locks are reclaimed automatically
+  so the lock no longer crashloops K8s pods whose previous incarnation
+  crashed without cleanup (tini-as-PID-1 is always alive in a fresh
+  PID namespace). The lock release runs on `process.on('exit')` and
+  `uncaughtException` in addition to the explicit shutdown handler,
+  and defensively skips the unlink when the on-disk nonce no longer
+  matches ours. New `ENABLE_LOCAL_CREDENTIALS` env var (`true` |
+  `false` | unset) makes the localhost-credentials gate deterministic
+  in containers where `x-forwarded-for` doesn't reflect the loopback;
+  `src/auth.ts` refuses to start when `ENABLE_LOCAL_CREDENTIALS=true`
+  AND `NODE_ENV=production` AND `AUTH_URL` is a non-loopback host, so
+  a single Helm typo can't accidentally turn every authorized email
+  into a passwordless backdoor. `scripts/rdv.ts` honors `PORT`,
+  `TERMINAL_PORT`, and `AUTH_URL` env vars so process-manager starts
+  inside the container respect the K8s manifest's port/URL config.
+  New `docs/MULTI_INSTANCE.md` deployment guide covers
+  StatefulSet/Service/IngressRoute reference manifests, multi-arch
+  `docker buildx` build instructions, per-instance `AUTH_SECRET`
+  rotation, first-boot seeding, and known limitations.
+- **Multi-instance hosting (Phase 4 — init + docs + integration test)**:
+  `scripts/init.sh` accepts `--base-path` and `--instance-slug` flags,
+  validates them against the same lowercase-segment regex
+  `src/lib/base-path.ts` uses, and either seeds a fresh `.env.local`
+  with `RDV_BASE_PATH` / `RDV_INSTANCE_SLUG` / a prefixed `AUTH_URL`,
+  or upserts those keys into an existing file. Docs landed for the
+  full feature: `docs/SETUP.md` gained a "Multi-Instance Deployment"
+  section with the per-instance env-var table; `docs/ARCHITECTURE.md`
+  added a short section on the layering; `docs/API.md` documents
+  `/api/config` and `X-RDV-Instance`; `docs/openapi.yaml` got a
+  matching `/api/config` path. New opt-in integration test
+  (`src/integration/multi-instance.test.ts`, gated on
+  `RDV_INTEGRATION_URL`) re-asserts AC-2/3/5 against a real running
+  server with structured cookie parsing — kept opt-in so the unit
+  runner doesn't pay a `next build` per CI run.
 - **Mobile**: terminal search overlay reachable on both the PWA and the
   Flutter embed. PWA users get a "Search terminal" item in the session
   more-menu (`SessionMetadataSheet`). The Flutter shell drives the same

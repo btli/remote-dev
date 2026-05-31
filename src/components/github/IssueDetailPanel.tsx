@@ -21,6 +21,7 @@ import type { GitHubIssueDTO } from "@/contexts/GitHubIssuesContext";
 import { getIssueIcon } from "./issue-icons";
 import { REMARK_PLUGINS, MARKDOWN_COMPONENTS } from "./markdown-components";
 
+import { apiFetch } from "@/lib/api-fetch";
 interface IssueComment {
   id: number;
   body: string;
@@ -68,7 +69,7 @@ export function IssueDetailPanel({
 
     let cancelled = false;
 
-    fetch(`/api/github/repositories/${repositoryId}/issues/${issue.number}/comments`)
+    apiFetch(`/api/github/repositories/${repositoryId}/issues/${issue.number}/comments`)
       .then((res) => res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`)))
       .then((data) => {
         if (!cancelled) setComments(data.comments ?? []);

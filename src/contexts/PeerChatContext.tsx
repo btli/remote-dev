@@ -30,6 +30,8 @@ import { useChannelContextOptional } from "./ChannelContext";
 import type { PeerChatMessage, PeerChatAgent } from "@/types/peer-chat";
 
 /** Map from session ID → current display name, built from active peers. */
+
+import { apiFetch } from "@/lib/api-fetch";
 export type PeerNameMap = ReadonlyMap<string, string>;
 
 interface PeerChatContextValue {
@@ -88,7 +90,7 @@ export function PeerChatProvider({ children }: PeerChatProviderProps) {
 
     setLoading(true);
     try {
-      const resp = await fetch(`/api/peers/messages?folderId=${folderId}&limit=200`);
+      const resp = await apiFetch(`/api/peers/messages?folderId=${folderId}&limit=200`);
       if (resp.ok) {
         const data = await resp.json();
         setMessages(data.messages ?? []);
@@ -107,7 +109,7 @@ export function PeerChatProvider({ children }: PeerChatProviderProps) {
     }
 
     try {
-      const resp = await fetch(`/api/peers/peers?folderId=${folderId}`);
+      const resp = await apiFetch(`/api/peers/peers?folderId=${folderId}`);
       if (resp.ok) {
         const data = await resp.json();
         setPeers(data.peers ?? []);
@@ -200,7 +202,7 @@ export function PeerChatProvider({ children }: PeerChatProviderProps) {
 
       try {
         // Server handles @name → @<sid:UUID> mention resolution authoritatively
-        const resp = await fetch("/api/peers/messages", {
+        const resp = await apiFetch("/api/peers/messages", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ folderId, body: trimmedBody }),

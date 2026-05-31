@@ -4,6 +4,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import dynamicImport from "next/dynamic";
+import { BASE_PATH } from "@/lib/base-path";
 import "./globals.css";
 
 // Lazy-loaded so the /login and /m/* bundles never include NextAuth
@@ -24,7 +25,12 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Remote Dev",
   description: "Remote development terminal interface",
-  manifest: "/manifest.json",
+  // Root-absolute asset refs are NOT prefixed by Next's basePath, so make them
+  // runtime-slug-aware via the server-side BASE_PATH. The root layout renders
+  // server-side and BASE_PATH is read at process start (= the real runtime
+  // slug after the entrypoint exports RDV_BASE_PATH), so these emit correct
+  // per-instance URLs with no boot-time materialization needed.
+  manifest: `${BASE_PATH}/manifest.json`,
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
@@ -66,8 +72,32 @@ export default async function RootLayout({
     // Default to dark to prevent flash of unstyled content
     <html lang="en" className="dark" suppressHydrationWarning>
       <head>
-        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-        <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
+        {/*
+          Embed the runtime base path before any client script runs so
+          `window.__RDV_BASE_PATH__` is set when `useTerminalWsUrl` (and any
+          future basePath-aware client code) reads it. The script lives in
+          <head> rather than <body> because under React 19 concurrent
+          rendering, a client component's useEffect can fire before a
+          body-positioned inline script executes. JSON.stringify is the
+          escape boundary — never string-concatenate untrusted values into
+          a <script> tag, and never use template literals here.
+        */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `window.__RDV_BASE_PATH__=${JSON.stringify(BASE_PATH)};`,
+          }}
+        />
+        {/* Root-absolute hrefs aren't prefixed by Next's basePath; interpolate
+            the server-side BASE_PATH so icons resolve under the instance slug. */}
+        <link
+          rel="icon"
+          type="image/svg+xml"
+          href={`${BASE_PATH}/favicon.svg`}
+        />
+        <link
+          rel="apple-touch-icon"
+          href={`${BASE_PATH}/icons/icon-192x192.png`}
+        />
         <meta name="mobile-web-app-capable" content="yes" />
       </head>
       <body

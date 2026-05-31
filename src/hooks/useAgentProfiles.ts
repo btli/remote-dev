@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import type { AgentJsonConfig, AgentConfigType } from "@/types/agent-config";
 import { getDefaultConfig } from "@/types/agent-config";
+import { apiFetch } from "@/lib/api-fetch";
 
 interface AgentProfile {
   id: string;
@@ -64,7 +65,7 @@ export function useAgentProfiles(): UseAgentProfilesResult {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/agent-profiles");
+      const res = await apiFetch("/api/agent-profiles");
       if (!res.ok) throw new Error("Failed to fetch profiles");
       const data = await res.json();
       setProfiles(data.profiles || []);
@@ -78,8 +79,8 @@ export function useAgentProfiles(): UseAgentProfilesResult {
   const fetchProfile = useCallback(async (id: string): Promise<ProfileWithConfigs | null> => {
     try {
       const [profileRes, configsRes] = await Promise.all([
-        fetch(`/api/agent-profiles/${id}`),
-        fetch(`/api/agent-profiles/${id}/configs`),
+        apiFetch(`/api/agent-profiles/${id}`),
+        apiFetch(`/api/agent-profiles/${id}/configs`),
       ]);
 
       if (!profileRes.ok) return null;
@@ -118,7 +119,7 @@ export function useAgentProfiles(): UseAgentProfilesResult {
     description?: string
   ): Promise<AgentProfile | null> => {
     try {
-      const res = await fetch("/api/agent-profiles", {
+      const res = await apiFetch("/api/agent-profiles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, description }),
@@ -138,7 +139,7 @@ export function useAgentProfiles(): UseAgentProfilesResult {
     updates: Partial<AgentProfile>
   ): Promise<AgentProfile | null> => {
     try {
-      const res = await fetch(`/api/agent-profiles/${id}`, {
+      const res = await apiFetch(`/api/agent-profiles/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
@@ -157,7 +158,7 @@ export function useAgentProfiles(): UseAgentProfilesResult {
 
   const deleteProfile = useCallback(async (id: string): Promise<boolean> => {
     try {
-      const res = await fetch(`/api/agent-profiles/${id}`, {
+      const res = await apiFetch(`/api/agent-profiles/${id}`, {
         method: "DELETE",
       });
 
@@ -177,7 +178,7 @@ export function useAgentProfiles(): UseAgentProfilesResult {
     newName: string
   ): Promise<AgentProfile | null> => {
     try {
-      const res = await fetch(`/api/agent-profiles/${id}/clone`, {
+      const res = await apiFetch(`/api/agent-profiles/${id}/clone`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: newName }),
@@ -207,7 +208,7 @@ export function useAgentProfiles(): UseAgentProfilesResult {
     agentType: AgentConfigType
   ): Promise<AgentProfileConfig | null> => {
     try {
-      const res = await fetch(`/api/agent-profiles/${profileId}/configs/${agentType}`);
+      const res = await apiFetch(`/api/agent-profiles/${profileId}/configs/${agentType}`);
       if (!res.ok) return null;
       const data = await res.json();
       return {
@@ -227,7 +228,7 @@ export function useAgentProfiles(): UseAgentProfilesResult {
     configJson: AgentJsonConfig
   ): Promise<AgentProfileConfig | null> => {
     try {
-      const res = await fetch(`/api/agent-profiles/${profileId}/configs/${agentType}`, {
+      const res = await apiFetch(`/api/agent-profiles/${profileId}/configs/${agentType}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ configJson }),

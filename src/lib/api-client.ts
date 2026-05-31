@@ -5,6 +5,8 @@
  * the user to the login page when their session has expired.
  */
 
+import { prefixApiPath } from "@/lib/api-fetch";
+
 /**
  * Check if an API response indicates an authentication failure.
  * If so, redirect to the login page.
@@ -14,7 +16,9 @@
 export function checkAuthResponse(response: Response): boolean {
   if (response.status === 401) {
     if (typeof window !== "undefined") {
-      window.location.href = "/login";
+      // Under RDV_BASE_PATH=/alpha the bare /login is a 404 — prefix at
+      // runtime so the redirect lands on the correct instance.
+      window.location.href = prefixApiPath("/login");
     }
     return true;
   }

@@ -14,6 +14,8 @@ import type {
   CreateRecordingInput,
 } from "@/types/recording";
 
+import { apiFetch } from "@/lib/api-fetch";
+
 interface RecordingContextValue {
   recordings: SessionRecording[];
   loading: boolean;
@@ -47,7 +49,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
 
   const fetchRecordings = useCallback(async () => {
     try {
-      const response = await fetch("/api/recordings");
+      const response = await apiFetch("/api/recordings");
       if (response.ok) {
         const data = await response.json();
         setRecordings(data);
@@ -66,7 +68,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
 
   const createRecording = useCallback(
     async (input: CreateRecordingInput): Promise<SessionRecording> => {
-      const response = await fetch("/api/recordings", {
+      const response = await apiFetch("/api/recordings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
@@ -84,7 +86,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   );
 
   const deleteRecording = useCallback(async (recordingId: string) => {
-    const response = await fetch(`/api/recordings/${recordingId}`, {
+    const response = await apiFetch(`/api/recordings/${recordingId}`, {
       method: "DELETE",
     });
 
@@ -97,7 +99,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
 
   const getRecording = useCallback(
     async (recordingId: string): Promise<ParsedRecording | null> => {
-      const response = await fetch(`/api/recordings/${recordingId}?parsed=true`);
+      const response = await apiFetch(`/api/recordings/${recordingId}?parsed=true`);
       if (!response.ok) {
         return null;
       }

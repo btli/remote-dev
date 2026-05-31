@@ -21,6 +21,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import type { MCPServer, MCPTransport, CreateMCPServerInput } from "@/types/agent";
+import { apiFetch } from "@/lib/api-fetch";
 
 interface ProfileMcpServersTabProps {
   profileId: string;
@@ -56,7 +57,7 @@ export function ProfileMcpServersTab({ profileId }: ProfileMcpServersTabProps) {
       setError(null);
 
       try {
-        const response = await fetch(`/api/mcp-servers?profileId=${profileId}`);
+        const response = await apiFetch(`/api/mcp-servers?profileId=${profileId}`);
         if (!response.ok) {
           throw new Error("Failed to load MCP servers");
         }
@@ -104,7 +105,7 @@ export function ProfileMcpServersTab({ profileId }: ProfileMcpServersTabProps) {
         autoStart,
       };
 
-      const response = await fetch("/api/mcp-servers", {
+      const response = await apiFetch("/api/mcp-servers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...input, profileId }),
@@ -135,7 +136,7 @@ export function ProfileMcpServersTab({ profileId }: ProfileMcpServersTabProps) {
 
   const handleDeleteServer = useCallback(async (serverId: string) => {
     try {
-      const response = await fetch(`/api/mcp-servers/${serverId}`, {
+      const response = await apiFetch(`/api/mcp-servers/${serverId}`, {
         method: "DELETE",
       });
 
@@ -151,7 +152,7 @@ export function ProfileMcpServersTab({ profileId }: ProfileMcpServersTabProps) {
 
   const handleToggleEnabled = useCallback(async (serverId: string, newEnabled: boolean) => {
     try {
-      const response = await fetch(`/api/mcp-servers/${serverId}/toggle`, {
+      const response = await apiFetch(`/api/mcp-servers/${serverId}/toggle`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: newEnabled }),

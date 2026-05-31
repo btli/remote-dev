@@ -23,6 +23,8 @@ import { useSessionContext } from "./SessionContext";
 import { useProjectTree } from "./ProjectTreeContext";
 
 /** Hydrate date strings from API response into Date objects */
+
+import { apiFetch } from "@/lib/api-fetch";
 function hydrateTask(raw: Record<string, unknown>): ProjectTask {
   return {
     ...(raw as unknown as ProjectTask),
@@ -107,7 +109,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
     try {
       setLoading(true);
       setError(null);
-      const response = await fetch(`/api/tasks?${query}`, {
+      const response = await apiFetch(`/api/tasks?${query}`, {
         signal: controller.signal,
       });
       if (!response.ok) {
@@ -166,7 +168,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
   const createTask = useCallback(
     async (input: CreateTaskInput): Promise<ProjectTask | null> => {
       try {
-        const response = await fetch("/api/tasks", {
+        const response = await apiFetch("/api/tasks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -194,7 +196,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
       input: UpdateTaskInput
     ): Promise<ProjectTask | null> => {
       try {
-        const response = await fetch(`/api/tasks/${id}`, {
+        const response = await apiFetch(`/api/tasks/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(input),
@@ -215,7 +217,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
 
   const deleteTask = useCallback(async (id: string): Promise<boolean> => {
     try {
-      const response = await fetch(`/api/tasks/${id}`, {
+      const response = await apiFetch(`/api/tasks/${id}`, {
         method: "DELETE",
       });
       if (!response.ok) {
@@ -243,7 +245,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
         if (options?.sessionId) params.set("sessionId", options.sessionId);
         if (options?.completedOnly) params.set("completedOnly", "true");
 
-        const response = await fetch(`/api/tasks?${params.toString()}`, {
+        const response = await apiFetch(`/api/tasks?${params.toString()}`, {
           method: "DELETE",
         });
         if (!response.ok) {

@@ -15,6 +15,7 @@ import { AuthErrorOverlay } from "./AuthErrorOverlay";
 import { createTouchScrollHandlers } from "./touch-scroll";
 import { createTouchInteractions, createTouchModeRef } from "./useTouchInteractions";
 
+import { apiFetch } from "@/lib/api-fetch";
 const SETTLE_MIN_WIDTH = 100;
 const SETTLE_MIN_HEIGHT = 80;
 const SETTLE_MIN_COLS = 10;
@@ -731,7 +732,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         // Fetch auth token from Next.js server
         let token: string;
         try {
-          const tokenResponse = await fetch(`/api/sessions/${sessionId}/token`);
+          const tokenResponse = await apiFetch(`/api/sessions/${sessionId}/token`);
           if (!tokenResponse.ok) {
             throw new Error("Failed to get auth token");
           }

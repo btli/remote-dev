@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useMemo, useSyncExternalStore, useEffectEvent } from "react";
+import { apiFetch, prefixApiPath } from "@/lib/api-fetch";
 import { Sidebar } from "./Sidebar";
 import { NewSessionWizard } from "./NewSessionWizard";
 import { SaveTemplateModal } from "./SaveTemplateModal";
@@ -246,7 +247,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // associated with a leaf project (never a group) on the backend.
   const moveSessionToFolder = useCallback(
     async (sessionId: string, folderId: string | null) => {
-      const response = await fetch(`/api/sessions/${sessionId}/folder`, {
+      const response = await apiFetch(`/api/sessions/${sessionId}/folder`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId: folderId }),
@@ -1000,7 +1001,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     const handleOpenMaintenance = () => {
       const carrierId = resolveMaintenanceCarrierFolderId();
       if (!carrierId) {
-        window.location.href = "/api/auth/github/link";
+        window.location.href = prefixApiPath("/api/auth/github/link");
         return;
       }
       void handleViewMaintenance(carrierId);

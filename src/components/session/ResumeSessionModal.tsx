@@ -13,6 +13,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import type { ClaudeSessionSummary } from "@/types/claude-session";
 
+import { apiFetch } from "@/lib/api-fetch";
 interface ResumeSessionModalProps {
   open: boolean;
   onClose: () => void;
@@ -48,7 +49,7 @@ export function ResumeSessionModal({
         });
         if (profileId) params.set("profileId", profileId);
 
-        const res = await fetch(`/api/agent/claude-sessions?${params}`);
+        const res = await apiFetch(`/api/agent/claude-sessions?${params}`);
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           throw new Error(data.error ?? "Failed to load sessions");

@@ -5,6 +5,8 @@
  * TerminalWithKeyboard.tsx (mobile camera button).
  */
 
+import { apiFetch } from "@/lib/api-fetch";
+
 const IMAGE_EXTENSIONS: Record<string, string> = {
   "image/jpeg": ".jpg",
   "image/png": ".png",
@@ -31,7 +33,7 @@ export async function uploadImage(file: File): Promise<string> {
   const safeName = `image-${Date.now()}${extension}`;
   formData.append("image", file, safeName);
 
-  const response = await fetch("/api/images", {
+  const response = await apiFetch("/api/images", {
     method: "POST",
     body: formData,
   });

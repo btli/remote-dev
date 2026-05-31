@@ -12,6 +12,8 @@ import {
 import type { TrashItem, TrashItemWithMetadata, WorktreeTrashItem, RestoreOptions } from "@/types/trash";
 
 /** Trash items grouped by folder */
+
+import { apiFetch } from "@/lib/api-fetch";
 export interface TrashByFolder {
   folderId: string | null;
   folderName: string | null;
@@ -70,7 +72,7 @@ export function TrashProvider({ children }: TrashProviderProps) {
 
   const refreshTrash = useCallback(async () => {
     try {
-      const response = await fetch("/api/trash");
+      const response = await apiFetch("/api/trash");
       if (!response.ok) throw new Error("Failed to fetch trash");
       const data = await response.json();
 
@@ -138,7 +140,7 @@ export function TrashProvider({ children }: TrashProviderProps) {
   const getTrashItem = useCallback(
     async (trashItemId: string): Promise<TrashItemWithMetadata | null> => {
       try {
-        const response = await fetch(`/api/trash/${trashItemId}`);
+        const response = await apiFetch(`/api/trash/${trashItemId}`);
         if (!response.ok) return null;
         const data = await response.json();
 
@@ -165,7 +167,7 @@ export function TrashProvider({ children }: TrashProviderProps) {
     async (sessionId: string): Promise<TrashItem | null> => {
       try {
         // Call the session close endpoint with trash parameter
-        const response = await fetch(`/api/sessions/${sessionId}?trash=true`, {
+        const response = await apiFetch(`/api/sessions/${sessionId}?trash=true`, {
           method: "DELETE",
         });
 
@@ -207,7 +209,7 @@ export function TrashProvider({ children }: TrashProviderProps) {
       setTrashItems((prev) => prev.filter((item) => item.id !== trashItemId));
 
       try {
-        const response = await fetch(`/api/trash/${trashItemId}/restore`, {
+        const response = await apiFetch(`/api/trash/${trashItemId}/restore`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(options || {}),
@@ -240,7 +242,7 @@ export function TrashProvider({ children }: TrashProviderProps) {
       setTrashItems((prev) => prev.filter((item) => item.id !== trashItemId));
 
       try {
-        const response = await fetch(`/api/trash/${trashItemId}`, {
+        const response = await apiFetch(`/api/trash/${trashItemId}`, {
           method: "DELETE",
         });
 
@@ -261,7 +263,7 @@ export function TrashProvider({ children }: TrashProviderProps) {
 
   const cleanupExpired = useCallback(async (): Promise<number> => {
     try {
-      const response = await fetch("/api/trash", {
+      const response = await apiFetch("/api/trash", {
         method: "POST",
       });
 
@@ -287,7 +289,7 @@ export function TrashProvider({ children }: TrashProviderProps) {
       item: TrashItemWithMetadata | null;
     } | null> => {
       try {
-        const response = await fetch(`/api/trash/${trashItemId}/restore`);
+        const response = await apiFetch(`/api/trash/${trashItemId}/restore`);
         if (!response.ok) return null;
 
         const data = await response.json();

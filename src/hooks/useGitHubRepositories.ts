@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 
+import { apiFetch } from "@/lib/api-fetch";
 interface GitHubRepo {
   id: number;
   name: string;
@@ -51,7 +52,7 @@ export function useGitHubRepositories(): UseGitHubRepositoriesReturn {
     setError(null);
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/github/repositories?page=${pageNum}&perPage=50&sort=updated`
       );
 
@@ -94,7 +95,7 @@ export function useGitHubRepositories(): UseGitHubRepositoriesReturn {
 
   const cloneRepository = useCallback(
     async (repoId: string): Promise<{ localPath: string }> => {
-      const response = await fetch(`/api/github/repositories/${repoId}`, {
+      const response = await apiFetch(`/api/github/repositories/${repoId}`, {
         method: "POST",
       });
 
@@ -110,7 +111,7 @@ export function useGitHubRepositories(): UseGitHubRepositoriesReturn {
 
   const getBranches = useCallback(
     async (repoId: string): Promise<Branch[]> => {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/github/repositories/${repoId}/branches`
       );
 

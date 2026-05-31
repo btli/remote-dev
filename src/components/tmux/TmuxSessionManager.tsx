@@ -23,6 +23,8 @@ import type { TmuxSessionResponse } from "@/types/tmux";
  * Displays all tmux sessions with orphan detection and provides
  * actions to terminate individual sessions or clean up all orphans.
  */
+
+import { apiFetch } from "@/lib/api-fetch";
 export function TmuxSessionManager() {
   const [sessions, setSessions] = useState<TmuxSessionResponse[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,7 +43,7 @@ export function TmuxSessionManager() {
       }
       setError(null);
 
-      const res = await fetch("/api/tmux/sessions");
+      const res = await apiFetch("/api/tmux/sessions");
       if (!res.ok) {
         throw new Error("Failed to fetch tmux sessions");
       }
@@ -66,7 +68,7 @@ export function TmuxSessionManager() {
     async (sessionName: string) => {
       setTerminating(sessionName);
       try {
-        const res = await fetch(`/api/tmux/sessions?name=${encodeURIComponent(sessionName)}`, {
+        const res = await apiFetch(`/api/tmux/sessions?name=${encodeURIComponent(sessionName)}`, {
           method: "DELETE",
         });
 
@@ -89,7 +91,7 @@ export function TmuxSessionManager() {
   const handleCleanupAll = useCallback(async () => {
     setCleaning(true);
     try {
-      const res = await fetch("/api/tmux/sessions/orphaned", {
+      const res = await apiFetch("/api/tmux/sessions/orphaned", {
         method: "DELETE",
       });
 

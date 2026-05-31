@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { apiFetch } from "@/lib/api-fetch";
 
 interface CreateIssueFormProps {
   repositoryUrl: string;
@@ -47,7 +48,7 @@ export function CreateIssueForm({
         }
         const [, owner, repo] = match;
 
-        const response = await fetch("/api/github/issues", {
+        const response = await apiFetch("/api/github/issues", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

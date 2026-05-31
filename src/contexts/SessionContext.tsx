@@ -23,6 +23,7 @@ import { useDebouncedRefresh } from "@/hooks/useDebouncedRefresh";
 import type { AgentActivityStatus, SessionStatusIndicator, SessionProgress } from "@/types/terminal-type";
 import { isTmuxBackedTerminalType } from "@/types/terminal-type";
 import { useProjectTree } from "./ProjectTreeContext";
+import { apiFetch } from "@/lib/api-fetch";
 
 const ACTIVE_SESSION_STORAGE_KEY = "remote-dev:activeSessionId";
 const VALID_ACTIVITY_STATUSES = new Set<AgentActivityStatus>(["running", "waiting", "idle", "error", "compacting", "ended", "subagent"]);
@@ -328,7 +329,7 @@ export function SessionProvider({
 
   const refreshSessions = useCallback(async () => {
     try {
-      const response = await fetch("/api/sessions?status=active,suspended");
+      const response = await apiFetch("/api/sessions?status=active,suspended");
       if (checkAuthResponse(response)) return;
       if (!response.ok) throw new Error("Failed to fetch sessions");
       const data = await response.json();
@@ -372,7 +373,7 @@ export function SessionProvider({
         projectId: resolvedProjectId,
       };
 
-      const response = await fetch("/api/sessions", {
+      const response = await apiFetch("/api/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -448,7 +449,7 @@ export function SessionProvider({
 
       const runFetch = async (): Promise<void> => {
         try {
-          const response = await fetch(`/api/sessions/${sessionId}`, {
+          const response = await apiFetch(`/api/sessions/${sessionId}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(updates),
@@ -537,7 +538,7 @@ export function SessionProvider({
         const url = options?.deleteWorktree
           ? `/api/sessions/${sessionId}?deleteWorktree=true`
           : `/api/sessions/${sessionId}`;
-        const response = await fetch(url, {
+        const response = await apiFetch(url, {
           method: "DELETE",
         });
 
@@ -569,7 +570,7 @@ export function SessionProvider({
       });
 
       try {
-        const response = await fetch(`/api/sessions/${sessionId}/suspend`, {
+        const response = await apiFetch(`/api/sessions/${sessionId}/suspend`, {
           method: "POST",
         });
 
@@ -596,7 +597,7 @@ export function SessionProvider({
       });
 
       try {
-        const response = await fetch(`/api/sessions/${sessionId}/resume`, {
+        const response = await apiFetch(`/api/sessions/${sessionId}/resume`, {
           method: "POST",
         });
 
@@ -619,7 +620,7 @@ export function SessionProvider({
             if (tmuxBacked) {
               console.warn(`Tmux session gone for ${sessionId}, auto-closing...`);
               dispatch({ type: "DELETE", sessionId });
-              const deleteResponse = await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
+              const deleteResponse = await apiFetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
               if (checkAuthResponse(deleteResponse)) return;
               return; // Don't throw - session has been cleaned up
             }
@@ -663,7 +664,7 @@ export function SessionProvider({
       dispatch({ type: "REORDER", sessionIds });
 
       try {
-        const response = await fetch("/api/sessions/reorder", {
+        const response = await apiFetch("/api/sessions/reorder", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sessionIds }),

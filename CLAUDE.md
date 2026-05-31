@@ -763,13 +763,27 @@ AUTH_SECRET=<generate with: openssl rand -base64 32>
 PORT=6001
 TERMINAL_PORT=6002
 NEXT_PUBLIC_TERMINAL_PORT=6002  # Must match TERMINAL_PORT (client-side WebSocket)
-NEXTAUTH_URL=http://localhost:6001
+AUTH_URL=http://localhost:6001  # NextAuth v5; legacy NEXTAUTH_URL still accepted
 ```
 
 Optional (for GitHub integration):
 ```bash
 GITHUB_CLIENT_ID=<your-client-id>
 GITHUB_CLIENT_SECRET=<your-client-secret>
+```
+
+Optional (for multi-instance hosting; see `docs/SETUP.md` "Multi-Instance Deployment"):
+```bash
+RDV_BASE_PATH=/alpha          # URL prefix this instance owns; empty for single-tenant
+RDV_INSTANCE_SLUG=alpha       # Defaults to last segment of RDV_BASE_PATH
+# AUTH_URL must include the prefix when RDV_BASE_PATH is set:
+# AUTH_URL=https://dev.example.com/alpha
+# AUTH_SECRET MUST be unique per instance — see the spec for why.
+
+# Test locally (sanity-check prefixed routes without touching .env.local):
+#   RDV_BASE_PATH=/test AUTH_URL=http://localhost:6001/test bun run build && bun run rdv:prod
+#   curl -i http://localhost:6001/test/login   # 200
+#   curl -i http://localhost:6001/login        # 404 or 308
 ```
 
 For database seeding:

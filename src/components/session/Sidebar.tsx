@@ -50,6 +50,8 @@ import {
 // Lazily initialize the client plugin registry so the collapsed-rail icon
 // lookup below sees the built-in plugins. Mirrors the same idempotent guard
 // used in SessionRow.tsx — safe during SSR, only mutates an in-memory Map.
+
+import { apiFetch } from "@/lib/api-fetch";
 if (!isClientPluginsInitialized()) {
   initializeClientPlugins();
 }
@@ -314,7 +316,7 @@ export function Sidebar({
       return;
     }
     try {
-      const res = await fetch("/api/trash", { method: "DELETE" });
+      const res = await apiFetch("/api/trash", { method: "DELETE" });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         const detail = body?.error ? `: ${String(body.error)}` : "";
@@ -337,7 +339,7 @@ export function Sidebar({
         return;
       }
       try {
-        const res = await fetch(`/api/projects/${projectId}/open`, { method: "POST" });
+        const res = await apiFetch(`/api/projects/${projectId}/open`, { method: "POST" });
         if (!res.ok) {
           const data = await res.json().catch(() => null);
           console.error("Failed to open folder:", data?.error || res.statusText);

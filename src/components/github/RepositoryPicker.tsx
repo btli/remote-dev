@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import type { GitHubRepository } from "@/types/github";
+import { apiFetch } from "@/lib/api-fetch";
 
 interface RepositoryPickerProps {
   onSelect: (repo: GitHubRepository) => void;
@@ -35,7 +36,7 @@ export function RepositoryPicker({ onSelect, onBack }: RepositoryPickerProps) {
     setError(null);
 
     try {
-      const response = await fetch("/api/github/repositories");
+      const response = await apiFetch("/api/github/repositories");
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data.error || "Failed to fetch repositories");

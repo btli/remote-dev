@@ -21,10 +21,21 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLogger } from "../lib/logger.js";
 import { closeLogDatabase } from "../infrastructure/logging/LogDatabase.js";
+import { acquireInstanceLock, releaseInstanceLock } from "../lib/instance-lock.js";
 
 const log = createLogger("Server");
 
 config({ path: ".env.local" });
+
+// Acquire the data-dir instance lock before anything writes to it.
+// Two processes against the same RDV_DATA_DIR corrupts SQLite + tmux state;
+// fail fast here. See src/lib/instance-lock.ts for the sentinel scheme.
+try {
+  acquireInstanceLock();
+} catch (err) {
+  log.error("Failed to acquire instance lock — exiting", { error: String(err) });
+  process.exit(1);
+}
 
 const TERMINAL_SOCKET = process.env.TERMINAL_SOCKET;
 const TERMINAL_PORT = parseInt(process.env.TERMINAL_PORT || "6002");
@@ -121,6 +132,7 @@ async function startServer(): Promise<void> {
     } catch { /* ignore */ }
 
     closeLogDatabase();
+    releaseInstanceLock();
     process.exit(0);
   }
 

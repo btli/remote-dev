@@ -19,6 +19,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { apiFetch } from "@/lib/api-fetch";
+
 export type SshAuthType = "key" | "agent" | "password" | "system";
 export type SshKnownHostsPolicy = "strict" | "accept-new" | "no";
 
@@ -99,7 +101,7 @@ export function SshConnectionProvider({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/ssh-connections");
+      const res = await apiFetch("/api/ssh-connections");
       if (!res.ok) throw new Error("Failed to fetch SSH connections");
       const data = await res.json();
       setConnections(data.connections ?? []);
@@ -118,7 +120,7 @@ export function SshConnectionProvider({
 
   const create = useCallback(
     async (payload: CreateSshConnectionPayload) => {
-      const res = await fetch("/api/ssh-connections", {
+      const res = await apiFetch("/api/ssh-connections", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -136,7 +138,7 @@ export function SshConnectionProvider({
 
   const update = useCallback(
     async (id: string, payload: UpdateSshConnectionPayload) => {
-      const res = await fetch(`/api/ssh-connections/${id}`, {
+      const res = await apiFetch(`/api/ssh-connections/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -153,7 +155,7 @@ export function SshConnectionProvider({
   );
 
   const remove = useCallback(async (id: string) => {
-    const res = await fetch(`/api/ssh-connections/${id}`, { method: "DELETE" });
+    const res = await apiFetch(`/api/ssh-connections/${id}`, { method: "DELETE" });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || "Failed to delete SSH connection");
@@ -162,7 +164,7 @@ export function SshConnectionProvider({
   }, []);
 
   const test = useCallback(async (id: string) => {
-    const res = await fetch(`/api/ssh-connections/${id}/test`, { method: "POST" });
+    const res = await apiFetch(`/api/ssh-connections/${id}/test`, { method: "POST" });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       throw new Error(data.error || "Failed to test SSH connection");
@@ -176,7 +178,7 @@ export function SshConnectionProvider({
   }, []);
 
   const fetchPublicKey = useCallback(async (id: string) => {
-    const res = await fetch(`/api/ssh-connections/${id}/public-key`);
+    const res = await apiFetch(`/api/ssh-connections/${id}/public-key`);
     if (res.status === 404) return null;
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));

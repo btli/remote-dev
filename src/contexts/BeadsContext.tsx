@@ -14,6 +14,7 @@ import type { BeadsIssue, BeadsStats } from "@/types/beads";
 import type { BeadsSectionExpandDefaults } from "@/types/preferences";
 import { usePreferencesContext } from "./PreferencesContext";
 
+import { apiFetch } from "@/lib/api-fetch";
 /** Hydrate date strings from API response into Date objects */
 function hydrateIssue(raw: Record<string, unknown>): BeadsIssue {
   return {
@@ -140,7 +141,7 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
 
       const encodedPath = encodeURIComponent(projectPath);
 
-      const issuesRes = await fetch(`/api/beads?projectPath=${encodedPath}&retentionDays=${beadsClosedRetentionDays}`, {
+      const issuesRes = await apiFetch(`/api/beads?projectPath=${encodedPath}&retentionDays=${beadsClosedRetentionDays}`, {
         signal: controller.signal,
       });
 

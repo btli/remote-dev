@@ -28,7 +28,7 @@ describe("resolveTerminalWsUrlFromHost", () => {
 
   const cases: Array<{
     name: string;
-    input: { host: string; protocol: string };
+    input: { host: string; protocol: string; basePath?: string };
     expected: string;
   }> = [
     {
@@ -42,10 +42,12 @@ describe("resolveTerminalWsUrlFromHost", () => {
     {
       // Local dev: the Next.js host (port 6001) and terminal server
       // (NEXT_PUBLIC_TERMINAL_PORT) live on different ports, so the
-      // resolver must swap to the terminal port, not preserve 6001.
-      name: "local dev with host port collapses to NEXT_PUBLIC_TERMINAL_PORT",
+      // resolver must swap to the terminal port. The path is still `/ws`
+      // because the terminal server's upgrade gate matches `WS_PATH_PREFIX`
+      // even on localhost.
+      name: "local dev with host port collapses to NEXT_PUBLIC_TERMINAL_PORT + /ws",
       input: { host: "localhost:6001", protocol: "http" },
-      expected: "ws://localhost:6002",
+      expected: "ws://localhost:6002/ws",
     },
     {
       // LAN / direct-IP access: no CF tunnel in front, but the path is
@@ -56,12 +58,11 @@ describe("resolveTerminalWsUrlFromHost", () => {
       expected: "ws://192.168.1.5:6001/ws",
     },
     {
-      // Regression guard: an explicit port on localhost must NOT cause
-      // the resolver to fall through to the `/ws` branch — localhost is
-      // always direct to the terminal port.
-      name: "localhost:6001 stays on terminal port, not /ws",
+      // Regression guard: an explicit port on localhost must still hit
+      // the terminal port — not the request port — and must include /ws.
+      name: "localhost:6001 stays on terminal port AND uses /ws",
       input: { host: "localhost:6001", protocol: "http" },
-      expected: "ws://localhost:6002",
+      expected: "ws://localhost:6002/ws",
     },
     {
       // happy-path: trailing colon accepted (some frameworks pass the
@@ -76,7 +77,23 @@ describe("resolveTerminalWsUrlFromHost", () => {
       // the caller resolves.
       name: "127.0.0.1 is treated as localhost",
       input: { host: "127.0.0.1:6001", protocol: "http" },
-      expected: "ws://localhost:6002",
+      expected: "ws://localhost:6002/ws",
+    },
+    {
+      // Multi-instance: with a basePath set, the localhost branch must
+      // also include the prefix because the upgrade gate enforces
+      // `{BASE_PATH}/ws`. Without this the dev terminal server returns
+      // 404 on the WS upgrade.
+      name: "localhost with basePath → ws://localhost:port{basePath}/ws",
+      input: { host: "localhost:6001", protocol: "http", basePath: "/alpha" },
+      expected: "ws://localhost:6002/alpha/ws",
+    },
+    {
+      // Multi-instance remote: prefix is appended before /ws on the
+      // remote branch too.
+      name: "remote with basePath → wss://host{basePath}/ws",
+      input: { host: "dev.bryanli.net", protocol: "https", basePath: "/alpha" },
+      expected: "wss://dev.bryanli.net/alpha/ws",
     },
   ];
 
@@ -93,6 +110,6 @@ describe("resolveTerminalWsUrlFromHost", () => {
         host: "localhost:6001",
         protocol: "http",
       }),
-    ).toBe("ws://localhost:3001");
+    ).toBe("ws://localhost:3001/ws");
   });
 });

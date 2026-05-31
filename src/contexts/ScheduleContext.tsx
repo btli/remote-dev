@@ -25,6 +25,8 @@ import { useSessionContext } from "@/contexts/SessionContext";
 // Context State
 // =============================================================================
 
+import { apiFetch } from "@/lib/api-fetch";
+
 const initialState: ScheduleState = {
   schedules: [],
   loading: false,
@@ -112,7 +114,7 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
   const refreshSchedules = useCallback(async () => {
     dispatch({ type: "LOAD_START" });
     try {
-      const response = await fetch("/api/schedules");
+      const response = await apiFetch("/api/schedules");
       if (!response.ok) {
         throw new Error("Failed to load schedules");
       }
@@ -134,7 +136,7 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
   // Create a new schedule
   const createSchedule = useCallback(
     async (input: CreateScheduleInput): Promise<SessionScheduleWithCommands> => {
-      const response = await fetch("/api/schedules", {
+      const response = await apiFetch("/api/schedules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
@@ -162,7 +164,7 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
       updates: UpdateScheduleInput,
       commands?: ScheduleCommandInput[]
     ): Promise<SessionScheduleWithCommands> => {
-      const response = await fetch(`/api/schedules/${scheduleId}`, {
+      const response = await apiFetch(`/api/schedules/${scheduleId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...updates, commands }),
@@ -202,7 +204,7 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
 
   // Delete a schedule
   const deleteSchedule = useCallback(async (scheduleId: string): Promise<void> => {
-    const response = await fetch(`/api/schedules/${scheduleId}`, {
+    const response = await apiFetch(`/api/schedules/${scheduleId}`, {
       method: "DELETE",
     });
 
@@ -217,7 +219,7 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
   // Toggle enabled state
   const toggleEnabled = useCallback(
     async (scheduleId: string, enabled: boolean): Promise<void> => {
-      const response = await fetch(`/api/schedules/${scheduleId}`, {
+      const response = await apiFetch(`/api/schedules/${scheduleId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled }),
@@ -236,7 +238,7 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
   // Execute schedule immediately
   const executeNow = useCallback(
     async (scheduleId: string): Promise<ScheduleExecution> => {
-      const response = await fetch(`/api/schedules/${scheduleId}/execute`, {
+      const response = await apiFetch(`/api/schedules/${scheduleId}/execute`, {
         method: "POST",
       });
 
@@ -258,7 +260,7 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
   // Get execution history
   const getExecutionHistory = useCallback(
     async (scheduleId: string, limit = 50): Promise<ScheduleExecution[]> => {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/schedules/${scheduleId}/executions?limit=${limit}`
       );
 
@@ -275,7 +277,7 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
   // Get schedule with commands
   const getScheduleWithCommands = useCallback(
     async (scheduleId: string): Promise<SessionScheduleWithCommands | null> => {
-      const response = await fetch(`/api/schedules/${scheduleId}`);
+      const response = await apiFetch(`/api/schedules/${scheduleId}`);
 
       if (!response.ok) {
         if (response.status === 404) return null;

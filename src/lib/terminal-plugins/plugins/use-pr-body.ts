@@ -10,6 +10,7 @@
  */
 import { useEffect, useState } from "react";
 
+import { apiFetch } from "@/lib/api-fetch";
 export interface PRBodyState {
   /** The PR number the currently-stored body is keyed to, or null before first load. */
   prNumber: number | null;
@@ -45,7 +46,7 @@ export function usePRBody(
   useEffect(() => {
     let cancelled = false;
 
-    fetch(`/api/github/repositories/${repositoryId}/issues/${prNumber}`)
+    apiFetch(`/api/github/repositories/${repositoryId}/issues/${prNumber}`)
       .then((res) =>
         res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))
       )

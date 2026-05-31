@@ -75,12 +75,16 @@ AUTH_SECRET=<your-generated-secret>
 PORT=6001
 TERMINAL_PORT=6002
 NEXT_PUBLIC_TERMINAL_PORT=6002  # Must match TERMINAL_PORT (client-side WebSocket)
-NEXTAUTH_URL=http://localhost:6001
+AUTH_URL=http://localhost:6001
 
 # Optional: GitHub OAuth (see GitHub Setup below)
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
 ```
+
+> **NextAuth v5 note:** `AUTH_URL` is the canonical env var. Legacy
+> `NEXTAUTH_URL` is still read for backward compatibility but new
+> configs should prefer `AUTH_URL`.
 
 Or use the init script for guided setup (recommended):
 
@@ -151,6 +155,78 @@ The script will:
 
 # Custom ports
 ./scripts/init.sh --port 6001 --terminal-port 6002
+
+# Multi-instance: write RDV_BASE_PATH + RDV_INSTANCE_SLUG to .env.local
+./scripts/init.sh --base-path /alpha --instance-slug alpha
+```
+
+## Multi-Instance Deployment
+
+Remote Dev can run multiple isolated instances behind a single domain by
+giving each one a URL prefix — for example `https://dev.example.com/alpha/`
+and `https://dev.example.com/beta/`. One Cloudflare tunnel, one TLS cert,
+one CF Access policy fronts the entire fleet. Each instance keeps its
+own SQLite DB, its own tmux namespace, and its own NextAuth identity;
+this is a **routing-layer** feature, not multi-tenancy inside a single
+process.
+
+For the full spec see
+[`docs/plans/multi-instance-basepath.md`](./plans/multi-instance-basepath.md).
+
+### Per-instance env vars
+
+| Variable | Required | Example | Notes |
+|----------|----------|---------|-------|
+| `RDV_BASE_PATH` | yes (per instance) | `/alpha` | Must start with `/`, must not end with `/`, lowercase + digits + `-` only. Empty string disables the prefix and reverts to single-instance behavior. |
+| `RDV_INSTANCE_SLUG` | optional | `alpha` | Defaults to the last segment of `RDV_BASE_PATH`. Used in the `X-RDV-Instance` response header and as a cookie-name suffix. |
+| `AUTH_URL` | yes | `https://dev.example.com/alpha` | **Must include the basePath.** NextAuth uses this to build OAuth callback URLs and reachable routes. |
+| `AUTH_SECRET` | yes | `<openssl rand -base64 32>` | **MUST be unique per instance.** Two pods sharing a secret can decrypt each other's JWTs, defeating the path-scoped cookies. Provision separately and rotate independently — same rule for `AUTH_SECRET_1` / `_2` / `_3` rotation keys. |
+| `RDV_DATA_DIR` | recommended | `/var/lib/rdv-alpha` | Per-instance SQLite + tmux namespace. Two pods sharing a data dir will corrupt each other. |
+
+### GitHub OAuth per instance
+
+GitHub OAuth callbacks are path-scoped, so each instance needs its own
+OAuth app (or its own callback URLs registered against a shared app).
+
+**Two callbacks must be registered per instance**:
+
+```
+# Sign-in flow (NextAuth handler)
+https://dev.example.com/alpha/api/auth/callback/github
+
+# Account-linking flow (custom handler, used for adding extra GitHub
+# accounts to an already-signed-in user)
+https://dev.example.com/alpha/api/auth/github/callback
+```
+
+NextAuth uses the first; the multi-GitHub-account link flow
+(`src/app/api/auth/github/callback/route.ts`) uses the second. Both
+are required even if you do not use account linking — GitHub OAuth
+apps reject requests whose `redirect_uri` is not in the registered
+list, so missing the second callback breaks the link flow with a
+hard 400.
+
+Add both URLs (per instance) in the OAuth app settings on
+[GitHub Developer Settings](https://github.com/settings/developers).
+
+### Same image, different basePath at deploy time
+
+Per NF-4 in the spec, the `.next/standalone/` build artifact does **not**
+bake `RDV_BASE_PATH` into the image — `next.config.ts` reads it at
+process startup. The build itself, however, applies the basePath to the
+client bundle, so the same Docker image needs to be re-built when the
+basePath changes. In practice this means one image per slug, not one
+image per fleet.
+
+API-only paths (e.g. `/api/config`, `/api/health`) are served by the
+same image fine; it's the **client-side router** that needs the prefix
+baked in to emit the correct `<Link>` hrefs and asset URLs.
+
+### Quick init
+
+```bash
+./scripts/init.sh --base-path /alpha --instance-slug alpha
+# then in the same .env.local, set AUTH_URL=http://localhost:6001/alpha
 ```
 
 ## GitHub Integration Setup
@@ -304,9 +380,13 @@ AUTH_SECRET=<strong-random-secret>
 PORT=6001
 TERMINAL_PORT=6002
 NEXT_PUBLIC_TERMINAL_PORT=6002
-NEXTAUTH_URL=http://localhost:6001  # Should match $PORT
+AUTH_URL=http://localhost:6001  # Should match $PORT (+ basePath if RDV_BASE_PATH is set)
 GITHUB_CLIENT_ID=<if-using-github>
 GITHUB_CLIENT_SECRET=<if-using-github>
+
+# Multi-instance hosting (optional, see "Multi-Instance Deployment" above)
+RDV_BASE_PATH=
+RDV_INSTANCE_SLUG=
 ```
 
 ## Troubleshooting

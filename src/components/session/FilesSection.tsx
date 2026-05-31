@@ -18,6 +18,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
+import { apiFetch } from "@/lib/api-fetch";
+
 const DEFAULT_FILE_NAMES = [".env", ".env.local", "CLAUDE.md", "README.md"];
 
 interface FilesSectionProps {
@@ -32,7 +34,7 @@ async function checkFilesExist(
   paths: string[]
 ): Promise<Record<string, boolean>> {
   try {
-    const res = await fetch("/api/files/exists", {
+    const res = await apiFetch("/api/files/exists", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ paths }),

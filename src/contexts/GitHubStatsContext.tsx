@@ -24,6 +24,8 @@ import {
 // State Types
 // =============================================================================
 
+import { apiFetch } from "@/lib/api-fetch";
+
 interface GitHubStatsState {
   repositories: EnrichedRepository[];
   isLoading: boolean;
@@ -165,7 +167,7 @@ export function GitHubStatsProvider({
     dispatch({ type: "SET_REFRESHING", isRefreshing: true });
 
     try {
-      const response = await fetch("/api/github/stats", {
+      const response = await apiFetch("/api/github/stats", {
         method: "POST",
         cache: "no-store", // Prevent browser caching in production
       });
@@ -198,7 +200,7 @@ export function GitHubStatsProvider({
     dispatch({ type: "SET_LOADING", isLoading: true });
 
     try {
-      const response = await fetch("/api/github/stats", {
+      const response = await apiFetch("/api/github/stats", {
         cache: "no-store", // Prevent browser caching in production
       });
       if (!response.ok) {
@@ -230,7 +232,7 @@ export function GitHubStatsProvider({
   // Mark changes as seen
   const markChangesSeen = useCallback(async (repositoryId?: string) => {
     try {
-      await fetch("/api/github/stats/mark-seen", {
+      await apiFetch("/api/github/stats/mark-seen", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repositoryId }),

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 
+import { apiFetch } from "@/lib/api-fetch";
 interface Props {
   groupId: string;
   groupName?: string;
@@ -54,7 +55,7 @@ export function GroupPreferencesView({ groupId, groupName, onClose, showHeader =
     setError(null);
     void (async () => {
       try {
-        const res = await fetch(`/api/node-preferences/group/${groupId}`);
+        const res = await apiFetch(`/api/node-preferences/group/${groupId}`);
         const body = await res.json();
         if (cancelled) return;
         setPrefs(body.preferences ?? EMPTY);
@@ -73,7 +74,7 @@ export function GroupPreferencesView({ groupId, groupName, onClose, showHeader =
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`/api/node-preferences/group/${groupId}`, {
+      const res = await apiFetch(`/api/node-preferences/group/${groupId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(prefs),
@@ -94,7 +95,7 @@ export function GroupPreferencesView({ groupId, groupName, onClose, showHeader =
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`/api/node-preferences/group/${groupId}`, {
+      const res = await apiFetch(`/api/node-preferences/group/${groupId}`, {
         method: "DELETE",
       });
       if (!res.ok) {

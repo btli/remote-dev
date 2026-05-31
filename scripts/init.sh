@@ -19,6 +19,8 @@ USE_DEFAULTS=false
 EMAIL=""
 PORT=""
 TERMINAL_PORT=""
+BASE_PATH=""
+INSTANCE_SLUG=""
 SKIP_START=false
 
 # Parse arguments
@@ -40,6 +42,14 @@ while [[ $# -gt 0 ]]; do
             TERMINAL_PORT="$2"
             shift 2
             ;;
+        --base-path)
+            BASE_PATH="$2"
+            shift 2
+            ;;
+        --instance-slug)
+            INSTANCE_SLUG="$2"
+            shift 2
+            ;;
         --skip-start)
             SKIP_START=true
             shift
@@ -48,12 +58,15 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [options]"
             echo ""
             echo "Options:"
-            echo "  --defaults        Use default values, skip prompts"
-            echo "  --email EMAIL     Set authorized user email"
-            echo "  --port PORT       Set Next.js port (default: 6001)"
-            echo "  --terminal-port   Set terminal server port (default: 6002)"
-            echo "  --skip-start      Skip starting dev server at the end"
-            echo "  -h, --help        Show this help message"
+            echo "  --defaults             Use default values, skip prompts"
+            echo "  --email EMAIL          Set authorized user email"
+            echo "  --port PORT            Set Next.js port (default: 6001)"
+            echo "  --terminal-port PORT   Set terminal server port (default: 6002)"
+            echo "  --base-path PATH       Set RDV_BASE_PATH for multi-instance hosting"
+            echo "                         (e.g. /alpha). Must start with / and not end with /."
+            echo "  --instance-slug SLUG   Set RDV_INSTANCE_SLUG (defaults to last basePath segment)."
+            echo "  --skip-start           Skip starting dev server at the end"
+            echo "  -h, --help             Show this help message"
             exit 0
             ;;
         *)
@@ -62,6 +75,25 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Validate --base-path early so we fail before touching anything.
+if [ -n "$BASE_PATH" ]; then
+    if ! [[ "$BASE_PATH" =~ ^(/[a-z0-9][a-z0-9-]*)+$ ]]; then
+        echo -e "${RED}Invalid --base-path: '$BASE_PATH'${NC}"
+        echo "Must match /[a-z0-9][a-z0-9-]*(/[a-z0-9][a-z0-9-]*)* (e.g. /alpha or /team/alpha)."
+        exit 1
+    fi
+    # Derive slug from last segment if not explicitly set.
+    if [ -z "$INSTANCE_SLUG" ]; then
+        INSTANCE_SLUG="${BASE_PATH##*/}"
+    fi
+fi
+
+if [ -n "$INSTANCE_SLUG" ] && ! [[ "$INSTANCE_SLUG" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+    echo -e "${RED}Invalid --instance-slug: '$INSTANCE_SLUG'${NC}"
+    echo "Must match [a-z0-9][a-z0-9-]* (e.g. alpha, team-1)."
+    exit 1
+fi
 
 echo -e "${BLUE}"
 echo "╔══════════════════════════════════════════╗"
@@ -155,6 +187,26 @@ if [ -f "$ENV_FILE" ]; then
     fi
 fi
 
+# Upsert helper: set KEY=VALUE in $ENV_FILE, replacing in-place if present.
+# Use a delimiter unlikely to appear in values to keep sed quoting sane.
+upsert_env() {
+    local key="$1" value="$2"
+    if [ ! -f "$ENV_FILE" ]; then
+        echo "${key}=${value}" >> "$ENV_FILE"
+        return
+    fi
+    if grep -qE "^${key}=" "$ENV_FILE"; then
+        # Use a temp file for portability across BSD/GNU sed.
+        local tmp
+        tmp=$(mktemp)
+        # shellcheck disable=SC2016
+        awk -v k="$key" -v v="$value" 'BEGIN{FS=OFS="="} $1==k{print k"="v; next} {print}' "$ENV_FILE" > "$tmp"
+        mv "$tmp" "$ENV_FILE"
+    else
+        echo "${key}=${value}" >> "$ENV_FILE"
+    fi
+}
+
 if [ ! -f "$ENV_FILE" ]; then
     # Generate AUTH_SECRET
     AUTH_SECRET=$(openssl rand -base64 32)
@@ -171,7 +223,18 @@ if [ ! -f "$ENV_FILE" ]; then
         echo ""
         echo -e "${BLUE}GitHub OAuth Setup (optional - press Enter to skip)${NC}"
         echo "Create an OAuth app at: https://github.com/settings/developers"
-        echo "Callback URL: http://localhost:$PORT/api/auth/github/callback"
+        # Register BOTH callbacks: NextAuth uses /api/auth/callback/github
+        # (sign-in), and the multi-account link flow uses
+        # /api/auth/github/callback. Missing the second breaks "Link
+        # another GitHub account" with a redirect_uri mismatch.
+        echo "Register BOTH callback URLs in your GitHub OAuth app:"
+        if [ -n "$BASE_PATH" ]; then
+            echo "  Sign-in (NextAuth):    http://localhost:$PORT$BASE_PATH/api/auth/callback/github"
+            echo "  Account-linking:       http://localhost:$PORT$BASE_PATH/api/auth/github/callback"
+        else
+            echo "  Sign-in (NextAuth):    http://localhost:$PORT/api/auth/callback/github"
+            echo "  Account-linking:       http://localhost:$PORT/api/auth/github/callback"
+        fi
         echo ""
         read -p "GitHub Client ID: " GITHUB_CLIENT_ID
         if [ -n "$GITHUB_CLIENT_ID" ]; then
@@ -179,7 +242,11 @@ if [ ! -f "$ENV_FILE" ]; then
         fi
     fi
 
-    # Write .env.local
+    # Write .env.local. AUTH_URL replaces the legacy NEXTAUTH_URL — NextAuth v5
+    # reads AUTH_URL natively. When RDV_BASE_PATH is set, AUTH_URL must
+    # include the prefix so OAuth callbacks resolve under the instance.
+    AUTH_URL_VALUE="http://localhost:$PORT${BASE_PATH}"
+
     cat > "$ENV_FILE" << EOF
 # Generated by init.sh on $(date)
 AUTH_SECRET=$AUTH_SECRET
@@ -188,7 +255,11 @@ AUTH_SECRET=$AUTH_SECRET
 PORT=$PORT
 TERMINAL_PORT=$TERMINAL_PORT
 NEXT_PUBLIC_TERMINAL_PORT=$TERMINAL_PORT
-NEXTAUTH_URL=http://localhost:$PORT
+AUTH_URL=$AUTH_URL_VALUE
+
+# Multi-instance hosting (optional — see docs/SETUP.md "Multi-Instance Deployment")
+RDV_BASE_PATH=$BASE_PATH
+RDV_INSTANCE_SLUG=$INSTANCE_SLUG
 
 # GitHub OAuth (optional)
 GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID
@@ -196,6 +267,30 @@ GITHUB_CLIENT_SECRET=$GITHUB_CLIENT_SECRET
 EOF
 
     echo -e "${GREEN}✓${NC} Created .env.local"
+else
+    # Existing file: just upsert basePath/slug if the user passed flags.
+    if [ -n "$BASE_PATH" ]; then
+        upsert_env "RDV_BASE_PATH" "$BASE_PATH"
+        echo -e "${GREEN}✓${NC} Set RDV_BASE_PATH=$BASE_PATH in .env.local"
+
+        # Multi-instance deployments MUST use a unique AUTH_SECRET per
+        # pod — two instances sharing a secret can decrypt each other's
+        # JWTs, defeating the path-scoped cookies. We don't auto-rotate
+        # (destructive — would log everyone out), but we WARN loudly
+        # when the user is configuring a basePath against an existing
+        # AUTH_SECRET that may have been carried over from a baseline
+        # single-instance setup.
+        if grep -qE "^AUTH_SECRET=" "$ENV_FILE"; then
+            echo -e "${YELLOW}WARNING:${NC} --base-path is set but AUTH_SECRET in $ENV_FILE appears unchanged."
+            echo "  For multi-instance deployments, AUTH_SECRET MUST be unique per instance."
+            echo "  Generate fresh: openssl rand -base64 32"
+            echo "  Then update AUTH_SECRET in $ENV_FILE manually."
+        fi
+    fi
+    if [ -n "$INSTANCE_SLUG" ]; then
+        upsert_env "RDV_INSTANCE_SLUG" "$INSTANCE_SLUG"
+        echo -e "${GREEN}✓${NC} Set RDV_INSTANCE_SLUG=$INSTANCE_SLUG in .env.local"
+    fi
 fi
 
 # Step 4: Initialize database

@@ -17,6 +17,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { apiFetch } from "@/lib/api-fetch";
 
 interface ApiKeyInfo {
   id: string;
@@ -40,14 +41,29 @@ export function MobileSetupPanel() {
   const [deleteKeyId, setDeleteKeyId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const serverUrl = typeof window !== "undefined" ? window.location.origin : "";
+  // Server URL for the QR payload.
+  //
+  // TODO: thread basePath into mobile client (Dio baseUrl handling) —
+  // currently the Flutter app dials origin only and is single-tenant.
+  // We deliberately do NOT append `window.__RDV_BASE_PATH__` here: the
+  // Dio client (`mobile/lib/infrastructure/api/remote_dev_client.dart`)
+  // calls every endpoint with a leading-slash path (`/api/sessions`),
+  // and Dio's `Uri.resolve` will strip the baseUrl's path under those
+  // semantics. So a QR of `https://host/alpha` would mislead operators
+  // into thinking the mobile app works under basePath when in practice
+  // it would still dial `https://host/api/...` and miss the instance.
+  // Mobile multi-instance support is a separate phase — see follow-up
+  // bd issue.
+  const serverUrl = typeof window !== "undefined"
+    ? window.location.origin
+    : "";
   const terminalPort = typeof window !== "undefined"
     ? (process.env.NEXT_PUBLIC_TERMINAL_PORT || "6002")
     : "6002";
 
   const fetchKeys = useCallback(async () => {
     try {
-      const res = await fetch("/api/keys");
+      const res = await apiFetch("/api/keys");
       if (!res.ok) return;
       const data = await res.json();
       setKeys(data.keys ?? []);
@@ -64,7 +80,7 @@ export function MobileSetupPanel() {
     if (!newKeyName.trim()) return;
     setCreating(true);
     try {
-      const res = await fetch("/api/keys", {
+      const res = await apiFetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: newKeyName.trim() }),
@@ -88,7 +104,7 @@ export function MobileSetupPanel() {
   const handleDelete = async (id: string) => {
     setDeleting(true);
     try {
-      await fetch(`/api/keys/${id}`, { method: "DELETE" });
+      await apiFetch(`/api/keys/${id}`, { method: "DELETE" });
       await fetchKeys();
       setDeleteKeyId(null);
     } finally {

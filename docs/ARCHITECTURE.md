@@ -58,6 +58,32 @@ Remote Dev is a web-based terminal interface that provides:
 └──────────────────┘  └──────────────────┘
 ```
 
+### Multi-instance URL prefixing (`RDV_BASE_PATH`)
+
+When `RDV_BASE_PATH=/alpha` is set, every layer above is prefixed
+without changing the storage model:
+
+- **Next.js** reads it in `next.config.ts` and applies it as `basePath`,
+  so pages, `_next/*` assets, and API routes resolve under `/alpha/...`.
+- **Terminal server** rejects WebSocket upgrades whose path does not
+  start with `/alpha/ws` (see `src/server/terminal.ts`).
+- **NextAuth** issues `__Secure-rdv-{slug}-session-token` cookies with
+  `Path=/alpha` so a request to `/beta/...` carries no `/alpha` cookies.
+  Footnote: the `__Secure-` and `__Host-` prefixes are HTTPS-only per
+  RFC 6265bis. HTTP development setups (e.g. `http://localhost:6001/alpha`)
+  fall back to unprefixed cookie names (`rdv-{slug}-session-token`,
+  `rdv-{slug}-csrf-token`) — `src/lib/auth-cookies.ts` picks the right
+  prefix based on the `AUTH_URL` scheme. Path scoping still applies.
+- **Client code** reads `window.__RDV_BASE_PATH__` (injected by
+  `src/app/layout.tsx`) via `src/lib/api-fetch.ts` and
+  `src/lib/terminal-ws-url.ts` so all browser-initiated URLs include
+  the prefix.
+
+The basePath is **routing only** — SQLite, tmux, and `RDV_DATA_DIR`
+remain single-tenant per instance. See
+[`docs/plans/multi-instance-basepath.md`](./plans/multi-instance-basepath.md)
+for the full RFC.
+
 ## Two-Server Model
 
 ### Why Two Servers?

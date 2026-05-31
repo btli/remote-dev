@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { RotateCcw, Trash2, AlertTriangle, Loader2 } from "lucide-react";
 import type { TerminalSession } from "@/types/session";
+import { apiFetch } from "@/lib/api-fetch";
 
 interface SessionEndedOverlayProps {
   session: TerminalSession;
@@ -53,7 +54,7 @@ export function SessionEndedOverlay({
       // Check for uncommitted changes before showing confirmation
       setCheckingWorktree(true);
       try {
-        const response = await fetch("/api/github/worktrees/check", {
+        const response = await apiFetch("/api/github/worktrees/check", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

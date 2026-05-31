@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import type { SessionTemplate, CreateTemplateInput, UpdateTemplateInput } from "@/types/template";
+import { apiFetch } from "@/lib/api-fetch";
 
 interface TemplateContextValue {
   templates: SessionTemplate[];
@@ -44,7 +45,7 @@ export function TemplateProvider({ children }: TemplateProviderProps) {
     try {
       setLoading(true);
       setError(null);
-      const response = await fetch("/api/templates");
+      const response = await apiFetch("/api/templates");
       if (!response.ok) {
         throw new Error("Failed to fetch templates");
       }
@@ -65,7 +66,7 @@ export function TemplateProvider({ children }: TemplateProviderProps) {
   const createTemplate = useCallback(
     async (input: CreateTemplateInput): Promise<SessionTemplate | null> => {
       try {
-        const response = await fetch("/api/templates", {
+        const response = await apiFetch("/api/templates", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(input),
@@ -87,7 +88,7 @@ export function TemplateProvider({ children }: TemplateProviderProps) {
   const updateTemplate = useCallback(
     async (id: string, input: UpdateTemplateInput): Promise<SessionTemplate | null> => {
       try {
-        const response = await fetch(`/api/templates/${id}`, {
+        const response = await apiFetch(`/api/templates/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(input),
@@ -110,7 +111,7 @@ export function TemplateProvider({ children }: TemplateProviderProps) {
 
   const deleteTemplate = useCallback(async (id: string): Promise<boolean> => {
     try {
-      const response = await fetch(`/api/templates/${id}`, {
+      const response = await apiFetch(`/api/templates/${id}`, {
         method: "DELETE",
       });
       if (!response.ok) {
@@ -126,7 +127,7 @@ export function TemplateProvider({ children }: TemplateProviderProps) {
 
   const recordUsage = useCallback(async (id: string): Promise<void> => {
     try {
-      await fetch(`/api/templates/${id}`, {
+      await apiFetch(`/api/templates/${id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "use" }),

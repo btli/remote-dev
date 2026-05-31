@@ -26,6 +26,7 @@ import type { ProfileAppearanceSettings, AgentProfile } from "@/types/agent";
 import type { AppearanceMode, ColorSchemeId } from "@/types/appearance";
 import { COLOR_SCHEMES, oklchToHex } from "@/lib/color-schemes";
 
+import { apiFetch } from "@/lib/api-fetch";
 interface AgentProfileAppearanceSettingsProps {
   profile: AgentProfile;
   onSave?: (settings: ProfileAppearanceSettings) => void;
@@ -66,7 +67,7 @@ export function AgentProfileAppearanceSettings({
     const fetchSettings = async () => {
       setLoading(true);
       try {
-        const response = await fetch(`/api/profiles/${profile.id}/appearance`);
+        const response = await apiFetch(`/api/profiles/${profile.id}/appearance`);
         if (response.ok) {
           const data = await response.json();
           if (data) {
@@ -98,7 +99,7 @@ export function AgentProfileAppearanceSettings({
   const handleSave = async () => {
     setSaving(true);
     try {
-      const response = await fetch(`/api/profiles/${profile.id}/appearance`, {
+      const response = await apiFetch(`/api/profiles/${profile.id}/appearance`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(settings),
@@ -121,7 +122,7 @@ export function AgentProfileAppearanceSettings({
 
   const handleReset = async () => {
     try {
-      const response = await fetch(`/api/profiles/${profile.id}/appearance`, {
+      const response = await apiFetch(`/api/profiles/${profile.id}/appearance`, {
         method: "DELETE",
       });
 

@@ -32,6 +32,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+import { apiFetch } from "@/lib/api-fetch";
+
 interface NewSessionWizardProps {
   open: boolean;
   onClose: () => void;
@@ -168,7 +170,7 @@ export function NewSessionWizard({
     if (featureCreateWorktree && featureProjectPath) {
       const validateGitRepo = async () => {
         try {
-          const response = await fetch(
+          const response = await apiFetch(
             `/api/git/validate?path=${encodeURIComponent(featureProjectPath)}`
           );
           const data = await response.json();
@@ -251,7 +253,7 @@ export function NewSessionWizard({
       // Lazy-load connection list when entering the SSH step.
       if (sshConnections === null && !sshLoading) {
         setSshLoading(true);
-        fetch("/api/ssh-connections")
+        apiFetch("/api/ssh-connections")
           .then((r) => (r.ok ? r.json() : { connections: [] }))
           .then((data) => {
             setSshConnections(
@@ -370,7 +372,7 @@ export function NewSessionWizard({
     try {
       // Step 1: Clone or check if repo exists
       setCloningStatus("Checking repository...");
-      const cloneResponse = await fetch(`/api/github/repositories/${selectedRepo.id}`, {
+      const cloneResponse = await apiFetch(`/api/github/repositories/${selectedRepo.id}`, {
         method: "POST",
       });
 
@@ -394,7 +396,7 @@ export function NewSessionWizard({
       if (createWorktree && (selectedBranch || newBranchName)) {
         setCloningStatus("Creating worktree...");
 
-        const worktreeResponse = await fetch("/api/github/worktrees", {
+        const worktreeResponse = await apiFetch("/api/github/worktrees", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

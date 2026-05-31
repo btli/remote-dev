@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
+import { apiFetch } from "@/lib/api-fetch";
 interface DirectoryEntry {
   name: string;
   path: string;
@@ -57,7 +58,7 @@ export function FolderBrowserModal({
 
     try {
       const queryPath = path ? `?path=${encodeURIComponent(path)}&dirsOnly=true` : "?dirsOnly=true";
-      const response = await fetch(`/api/directories${queryPath}`);
+      const response = await apiFetch(`/api/directories${queryPath}`);
 
       if (!response.ok) {
         const data = await response.json();

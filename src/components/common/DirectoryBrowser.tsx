@@ -22,6 +22,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { prefixApiPath } from "@/lib/api-fetch";
 
 interface DirectoryEntry {
   name: string;
@@ -72,7 +73,7 @@ export function DirectoryBrowser({
     setSelectedFile(null);
 
     try {
-      const url = new URL("/api/directories", window.location.origin);
+      const url = new URL(prefixApiPath("/api/directories"), window.location.origin);
       if (path) {
         url.searchParams.set("path", path);
       }

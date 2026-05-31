@@ -27,6 +27,7 @@ import { useSessionContext } from "@/contexts/SessionContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 
 import { BottomSheet } from "../common/BottomSheet";
+import { apiFetch } from "@/lib/api-fetch";
 
 export interface DmPickerSheetProps {
   open: boolean;
@@ -92,7 +93,7 @@ export function DmPickerSheet({ open, onOpenChange, onOpenDm }: DmPickerSheetPro
       controllerRef.current = controller;
       setPendingTargetId(targetSessionId);
       try {
-        const resp = await fetch("/api/channels/dm", {
+        const resp = await apiFetch("/api/channels/dm", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
