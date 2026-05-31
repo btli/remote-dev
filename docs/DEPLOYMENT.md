@@ -148,7 +148,7 @@ SIGNATURE="sha256=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$DEPLOY_WEB
 
 | Code | Meaning |
 |------|---------|
-| `202` | Deploy triggered (CI treats this as success) |
+| `202` | Deploy triggered (CI then **polls for the outcome** — see [Deploy-outcome feedback](#deploy-outcome-feedback-ci-polling)) |
 | `409` | Deploy already in progress (CI logs a warning, non-fatal) |
 | `401` | Invalid signature |
 | `410` | Webhook deprecated because auto-update is enabled |
@@ -170,6 +170,57 @@ Run [`scripts/deploy-setup.sh`](../scripts/deploy-setup.sh) once on the producti
 host to generate the secret, initialize deploy state, and install the watchdog (see
 [§4](#4-npm-scripts)). It prints the exact `gh secret set` / `gh variable set`
 commands to register CI.
+
+### Deploy-outcome feedback (CI polling)
+
+The `202` from `POST /api/deploy` only means the deploy was **triggered** — the
+actual build/swap runs **detached** (`stdio: "ignore"`), so historically CI went
+green the instant it got the `202`, with **zero visibility** into whether the
+server-side deploy actually landed. A failed deploy (build error, failed
+migration, failed health check) calls `process.exit(1)` **without** advancing the
+live-slot pointer, leaving the old commit serving traffic while the workflow
+showed a green check (remote-dev-6pbo). The classic trap: a stray untracked file
+or dirty tracked file in `PROJECT_ROOT` aborts the deploy (see the dirty-tree
+fix above) while CI stays green — trust `bun run deploy:status`, not the workflow.
+
+To close that gap, the workflow now **polls the deploy outcome** after triggering:
+
+1. **`deploy.ts` records every attempt.** Each run writes
+   `~/.remote-dev/deploy/last-deploy.json` (atomic rename) with
+   `{ status, requestedCommit, activeCommit, stage, error?, startedAt, finishedAt? }`.
+   It is set to `in_progress` at start, `failed` (with the failing `stage` — one of
+   `build` / `migration` / `health-local` / `health-external` — and an `error`)
+   immediately before each abort, and `success` once the live-slot pointer
+   (`state.json`) advances. A failed deploy never advances `activeCommit`.
+2. **A new authenticated status endpoint exposes it.**
+   [`GET /api/deploy/status?commit=<full-sha>`](../src/app/api/deploy/status/route.ts)
+   returns that record. It is **read-only** and authenticated with the **same
+   `DEPLOY_WEBHOOK_SECRET`** as the webhook, but because a GET has no body the
+   `X-Hub-Signature-256` HMAC is computed over the `commit` query value. If no
+   attempt record matches the requested commit but `state.json`'s `activeCommit`
+   equals it, the endpoint reports `success` with `source: "state-fallback"` (this
+   covers a server bootstrapped by an older `deploy.ts` that never wrote a record);
+   otherwise it reports `in_progress` with `source: "no-record"`.
+3. **The workflow polls until terminal.** After the `202`, the
+   `Wait for deploy to complete` step polls `…/api/deploy/status` for up to **9
+   minutes**. It **fails the workflow** if the deploy reports `failed`, if it
+   reports `success` but `activeCommit` ≠ the pushed SHA, or if it times out (a
+   missing/unreachable record degrades to a timeout — the correct fail-safe
+   direction). The job `timeout-minutes` is `12` to leave headroom over the 9-minute
+   poll deadline.
+
+**Net effect: a green "Deploy to Production" run now means the pushed commit is
+actually live**, not merely that the webhook was accepted. On failure the step
+prints the failing stage/error and points at `~/.remote-dev/deploy/deploy.log`.
+
+**Known behavior — superseded pushes.** The deploy always ships `origin/master`
+HEAD (`git fetch` + `git reset --hard origin/master`), not a pinned SHA. If
+`origin/master` advances between an earlier push's webhook and that deploy's
+`git fetch`, the deploy ships the **newer** HEAD. The superseded (older) push's
+workflow run will then fail its poll with "reported success but active commit
+(`<newer>`) != pushed (`<older>`)" — because a newer commit went live — while the
+**newest** push's run goes green. This is expected: the live commit legitimately
+moved past the older push.
 
 ---
 
