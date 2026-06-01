@@ -4,6 +4,7 @@ import {
   buildNamespace,
   buildSharedSecret,
   buildAuthSecret,
+  buildImagePullSecret,
   buildService,
   buildStatefulSet,
   buildSeedJob,
@@ -69,6 +70,23 @@ describe("buildAuthSecret", () => {
     });
     expect(s.stringData?.GITHUB_CLIENT_ID).toBe("gh-id");
     expect(s.stringData?.GITHUB_CLIENT_SECRET).toBe("gh-secret");
+  });
+});
+
+describe("buildImagePullSecret", () => {
+  it("is a dockerconfigjson Secret named opts.name in the instance namespace (remote-dev-2xhg)", () => {
+    const s = buildImagePullSecret(SLUG, {
+      name: "harbor-registry",
+      dockerConfigJson: '{"auths":{"harbor.example.com":{"auth":"xxx"}}}',
+    });
+    expect(s.type).toBe("kubernetes.io/dockerconfigjson");
+    expect(s.metadata?.name).toBe("harbor-registry");
+    expect(s.metadata?.namespace).toBe("rdv-alpha");
+    expect(s.metadata?.labels?.["managed-by"]).toBe(MANAGED_BY);
+    expect(s.metadata?.labels?.["rdv.io/slug"]).toBe(SLUG);
+    expect(s.stringData?.[".dockerconfigjson"]).toBe(
+      '{"auths":{"harbor.example.com":{"auth":"xxx"}}}',
+    );
   });
 });
 
@@ -214,6 +232,45 @@ describe("buildStatefulSet", () => {
     });
     expect(withRes.spec?.template.spec?.containers[0].resources?.requests?.cpu).toBe("250m");
   });
+
+  it("references imagePullSecrets only when imagePullSecretName is set (remote-dev-2xhg)", () => {
+    // Default options (the top-of-describe `sts`) carry no pull secret.
+    expect(sts.spec?.template.spec?.imagePullSecrets).toBeUndefined();
+
+    const withPull = buildStatefulSet(SLUG, {
+      image: "img",
+      env: {},
+      volumeClaimTemplate: PVC,
+      imagePullSecretName: "harbor-registry",
+    });
+    expect(withPull.spec?.template.spec?.imagePullSecrets).toEqual([
+      { name: "harbor-registry" },
+    ]);
+  });
+
+  it("sets nodeSelector only when non-empty (remote-dev-389c)", () => {
+    // Default options carry no nodeSelector.
+    expect(sts.spec?.template.spec?.nodeSelector).toBeUndefined();
+
+    const withSelector = buildStatefulSet(SLUG, {
+      image: "img",
+      env: {},
+      volumeClaimTemplate: PVC,
+      nodeSelector: { "kubernetes.io/arch": "amd64" },
+    });
+    expect(withSelector.spec?.template.spec?.nodeSelector).toEqual({
+      "kubernetes.io/arch": "amd64",
+    });
+
+    // An empty selector is treated as "no pinning" (output unchanged).
+    const withEmpty = buildStatefulSet(SLUG, {
+      image: "img",
+      env: {},
+      volumeClaimTemplate: PVC,
+      nodeSelector: {},
+    });
+    expect(withEmpty.spec?.template.spec?.nodeSelector).toBeUndefined();
+  });
 });
 
 describe("buildSeedJob", () => {
@@ -229,5 +286,25 @@ describe("buildSeedJob", () => {
     const authd = c?.env?.find((e) => e.name === "AUTHORIZED_USERS");
     expect(authd?.value).toBe("a@example.com,b@example.com");
     expect(job.spec?.template.spec?.restartPolicy).toBe("Never");
+  });
+
+  it("applies imagePullSecrets + nodeSelector identically to the StatefulSet (remote-dev-2xhg/389c)", () => {
+    const job = buildSeedJob(SLUG, {
+      authorizedEmails: ["a@example.com"],
+      image: "img",
+      imagePullSecretName: "harbor-registry",
+      nodeSelector: { "kubernetes.io/arch": "amd64" },
+    });
+    expect(job.spec?.template.spec?.imagePullSecrets).toEqual([
+      { name: "harbor-registry" },
+    ]);
+    expect(job.spec?.template.spec?.nodeSelector).toEqual({
+      "kubernetes.io/arch": "amd64",
+    });
+
+    // Omitted when unset (output unchanged for existing callers).
+    const plain = buildSeedJob(SLUG, { authorizedEmails: ["a@example.com"], image: "img" });
+    expect(plain.spec?.template.spec?.imagePullSecrets).toBeUndefined();
+    expect(plain.spec?.template.spec?.nodeSelector).toBeUndefined();
   });
 });
