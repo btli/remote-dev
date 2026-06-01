@@ -138,7 +138,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Bun for any scripts that need it at runtime (rdv process manager, migrations)
-COPY --from=oven/bun:${BUN_VERSION} /usr/local/bin/bun /usr/local/bin/bun
+COPY --from=build-deps /usr/local/bin/bun /usr/local/bin/bun
 
 # Create app user + state directory
 RUN useradd --create-home --shell /bin/bash --uid 10001 rdv \
