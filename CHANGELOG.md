@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Startup commands no longer lose their first character when oh-my-zsh's periodic auto-update prompt appears during shell init. `createSession` now suppresses shell-init update prompts (`DISABLE_AUTO_UPDATE`/`DISABLE_UPDATE_PROMPT`) and waits for the shell to settle before typing. (remote-dev-w75y)
+
 ### Added
 
 - k3s deployment manifests for the Supervisor platform (deploy/k8s/supervisor/): least-privilege ServiceAccount/ClusterRole, the Supervisor Deployment (web + controller, replicated-PVC SQLite) and the replicas≥2 router Deployment in rdv-system, plus per-app Dockerfiles and a deploy runbook (docs/SUPERVISOR_DEPLOY.md) — completes Phase 1 of the k3s supervisor epic (remote-dev-jvcx.7).

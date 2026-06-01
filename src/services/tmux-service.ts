@@ -7,6 +7,55 @@ import { TmuxServiceError } from "@/lib/errors";
 // Re-export for backwards compatibility
 export { TmuxServiceError };
 
+/**
+ * Resolve the environment to inject when creating a session. When a startup
+ * command will be typed into the new shell via send-keys, prepend env that
+ * suppresses interactive shell-init prompts — notably oh-my-zsh's periodic
+ * auto-update prompt ("[oh-my-zsh] Would you like to update? [Y/n]"), whose
+ * [Y/n] read would otherwise swallow the FIRST typed character (e.g.
+ * "claude" -> "laude"). Caller-supplied env overrides these defaults.
+ */
+export function resolveStartupEnv(
+  startupCommand: string | undefined,
+  env: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  const willType = Boolean(startupCommand && startupCommand.trim());
+  if (!willType) return env;
+  return {
+    DISABLE_AUTO_UPDATE: "true",
+    DISABLE_UPDATE_PROMPT: "true",
+    ...(env ?? {}),
+  };
+}
+
+/**
+ * Best-effort wait until a freshly-created pane stops emitting output (the
+ * shell finished sourcing rc files and is sitting at a prompt), so rc-time
+ * output can't race the keystrokes we type. Polls capture-pane and returns
+ * when two consecutive snapshots match or the timeout elapses. Never throws —
+ * readiness is an optimization, so any capture error just ends the wait.
+ */
+async function waitForPaneQuiescent(
+  sessionName: string,
+  intervalMs = 75,
+  timeoutMs = 1500,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let previous: string | null = null;
+  while (Date.now() < deadline) {
+    let snapshot: string;
+    try {
+      const { stdout } = await execFile("tmux", ["capture-pane", "-t", sessionName, "-p"]);
+      snapshot = stdout.replace(/\s+$/, "");
+    } catch {
+      return;
+    }
+    if (previous !== null && snapshot === previous) return;
+    previous = snapshot;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
 export interface TmuxSessionInfo {
   name: string;
   windowCount: number;
@@ -70,7 +119,11 @@ export async function listSessions(): Promise<TmuxSessionInfo[]> {
  * Create a new tmux session.
  *
  * This function creates the tmux session with basic configuration (mouse mode,
- * history-limit) and optionally runs a startup command.
+ * history-limit) and optionally runs a startup command. When a startup command
+ * is provided, shell-init update prompts are suppressed via env
+ * (DISABLE_AUTO_UPDATE / DISABLE_UPDATE_PROMPT) and the function waits for the
+ * pane to settle before typing — preventing oh-my-zsh's [Y/n] prompt from
+ * consuming the first character of the typed command.
  *
  * ## Two-Layer Environment Model
  *
@@ -108,6 +161,8 @@ export async function createSession(
     );
   }
 
+  const willTypeStartup = Boolean(startupCommand && startupCommand.trim());
+
   const args = [
     "new-session",
     "-d", // Detached
@@ -125,8 +180,12 @@ export async function createSession(
   // The previous approach of setting process env on execFile does NOT work
   // because the tmux server is already running and the shell inherits from
   // the server's environment, not the client's.
-  if (env) {
-    for (const [key, value] of Object.entries(env)) {
+  // resolveStartupEnv prepends prompt-suppression vars when a startup command
+  // will be typed so that oh-my-zsh's [Y/n] update prompt cannot consume the
+  // first character of the typed command.
+  const resolvedEnv = resolveStartupEnv(startupCommand, env);
+  if (resolvedEnv) {
+    for (const [key, value] of Object.entries(resolvedEnv)) {
       args.push("-e", `${key}=${value}`);
     }
   }
@@ -158,10 +217,13 @@ export async function createSession(
     // setSessionEnvironment() after createSession() returns. This provides
     // persistent environment that survives shell exits.
 
-    // Execute startup command if provided
-    // Using sendKeys allows aliases and shell functions to work
-    if (startupCommand && startupCommand.trim()) {
-      await sendKeys(sessionName, startupCommand.trim());
+    // Execute startup command if provided.
+    // Wait for the pane to settle first so rc-file output cannot race the
+    // keystrokes; DISABLE_AUTO_UPDATE/DISABLE_UPDATE_PROMPT (set above) stop
+    // oh-my-zsh's update prompt from consuming the first typed character.
+    if (willTypeStartup) {
+      await waitForPaneQuiescent(sessionName);
+      await sendKeys(sessionName, startupCommand!.trim());
     }
   } catch (error) {
     throw new TmuxServiceError(
