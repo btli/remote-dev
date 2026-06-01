@@ -5,6 +5,14 @@ import {
   terminateInstance,
   checkInstanceReady,
   namespaceExists,
+  getStatefulSet,
+  setStatefulSetReplicas,
+  setStatefulSetImage,
+  getPvc,
+  resizePvc,
+  getPodLogs,
+  listInstanceEvents,
+  parseQuantityToBytes,
   ProvisioningError,
   type K8sClients,
   type ProvisionOptions,
@@ -226,5 +234,294 @@ describe("namespaceExists", () => {
       apiError(404),
     );
     expect(await namespaceExists("alpha", clients)).toBe(false);
+  });
+});
+
+// ── Phase 2 lifecycle helpers ────────────────────────────────────────────────
+
+/** A spying mock client set for the read/patch lifecycle helpers. */
+function makeLifecycleClients(): K8sClients {
+  return {
+    core: {
+      listNamespacedPod: vi.fn(async () => ({
+        items: [{ metadata: { name: "rdv-0" } }],
+      })),
+      readNamespacedPodLog: vi.fn(async () => "line1\nline2\n"),
+      listNamespacedEvent: vi.fn(async () => ({ items: [] })),
+      readNamespacedPersistentVolumeClaim: vi.fn(async () => ({
+        spec: { resources: { requests: { storage: "10Gi" } } },
+        status: { capacity: { storage: "10Gi" } },
+      })),
+      patchNamespacedPersistentVolumeClaim: vi.fn(async () => ({})),
+    },
+    apps: {
+      readNamespacedStatefulSet: vi.fn(async () => ({
+        spec: {
+          replicas: 1,
+          template: { spec: { containers: [{ image: "ghcr.io/x@sha256:abc" }] } },
+        },
+        status: { readyReplicas: 1 },
+      })),
+      patchNamespacedStatefulSetScale: vi.fn(async () => ({})),
+      patchNamespacedStatefulSet: vi.fn(async () => ({})),
+    },
+    batch: {},
+  } as unknown as K8sClients;
+}
+
+describe("getStatefulSet", () => {
+  it("returns replicas/readyReplicas/image when present", async () => {
+    const clients = makeLifecycleClients();
+    const sts = await getStatefulSet("alpha", clients);
+    expect(sts).toEqual({
+      found: true,
+      replicas: 1,
+      readyReplicas: 1,
+      image: "ghcr.io/x@sha256:abc",
+    });
+    expect(clients.apps.readNamespacedStatefulSet).toHaveBeenCalledWith({
+      name: "rdv",
+      namespace: "rdv-alpha",
+    });
+  });
+
+  it("returns found:false on 404 (not an error)", async () => {
+    const clients = makeLifecycleClients();
+    (clients.apps.readNamespacedStatefulSet as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      apiError(404),
+    );
+    expect(await getStatefulSet("alpha", clients)).toEqual({
+      found: false,
+      replicas: 0,
+      readyReplicas: 0,
+    });
+  });
+
+  it("propagates non-404 read errors", async () => {
+    const clients = makeLifecycleClients();
+    (clients.apps.readNamespacedStatefulSet as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      apiError(500),
+    );
+    await expect(getStatefulSet("alpha", clients)).rejects.toBeInstanceOf(ApiException);
+  });
+});
+
+describe("setStatefulSetReplicas — exact JSON Patch body", () => {
+  it("issues a json-patch replace on /spec/replicas via the scale subresource", async () => {
+    const clients = makeLifecycleClients();
+    await setStatefulSetReplicas("alpha", 0, clients);
+    expect(clients.apps.patchNamespacedStatefulSetScale).toHaveBeenCalledWith({
+      name: "rdv",
+      namespace: "rdv-alpha",
+      body: [{ op: "replace", path: "/spec/replicas", value: 0 }],
+    });
+  });
+});
+
+describe("setStatefulSetImage — exact JSON Patch body", () => {
+  it("issues a json-patch replace on container[0] image", async () => {
+    const clients = makeLifecycleClients();
+    await setStatefulSetImage("alpha", "ghcr.io/x@sha256:new", clients);
+    expect(clients.apps.patchNamespacedStatefulSet).toHaveBeenCalledWith({
+      name: "rdv",
+      namespace: "rdv-alpha",
+      body: [
+        {
+          op: "replace",
+          path: "/spec/template/spec/containers/0/image",
+          value: "ghcr.io/x@sha256:new",
+        },
+      ],
+    });
+  });
+});
+
+describe("getPvc / resizePvc", () => {
+  it("getPvc reads the bound data-rdv-0 and returns requested + capacity", async () => {
+    const clients = makeLifecycleClients();
+    const pvc = await getPvc("alpha", clients);
+    expect(pvc).toEqual({
+      found: true,
+      requestedStorage: "10Gi",
+      capacityStorage: "10Gi",
+    });
+    expect(clients.core.readNamespacedPersistentVolumeClaim).toHaveBeenCalledWith({
+      name: "data-rdv-0",
+      namespace: "rdv-alpha",
+    });
+  });
+
+  it("getPvc returns found:false on 404", async () => {
+    const clients = makeLifecycleClients();
+    (
+      clients.core.readNamespacedPersistentVolumeClaim as ReturnType<typeof vi.fn>
+    ).mockRejectedValueOnce(apiError(404));
+    expect(await getPvc("alpha", clients)).toEqual({ found: false });
+  });
+
+  it("resizePvc issues a json-patch replace on the storage request", async () => {
+    const clients = makeLifecycleClients();
+    await resizePvc("alpha", "20Gi", clients);
+    expect(clients.core.patchNamespacedPersistentVolumeClaim).toHaveBeenCalledWith({
+      name: "data-rdv-0",
+      namespace: "rdv-alpha",
+      body: [
+        {
+          op: "replace",
+          path: "/spec/resources/requests/storage",
+          value: "20Gi",
+        },
+      ],
+    });
+  });
+});
+
+describe("getPodLogs", () => {
+  it("resolves the pod by label then tails the rdv container log", async () => {
+    const clients = makeLifecycleClients();
+    const result = await getPodLogs("alpha", { tailLines: 50, previous: false }, clients);
+    expect(result).toEqual({ pod: "rdv-0", logs: "line1\nline2\n" });
+    expect(clients.core.listNamespacedPod).toHaveBeenCalledWith({
+      namespace: "rdv-alpha",
+      labelSelector: "rdv.io/slug=alpha",
+    });
+    expect(clients.core.readNamespacedPodLog).toHaveBeenCalledWith({
+      name: "rdv-0",
+      namespace: "rdv-alpha",
+      container: "rdv",
+      tailLines: 50,
+      previous: false,
+      timestamps: true,
+    });
+  });
+
+  it("falls back to rdv-0 when the label list is empty", async () => {
+    const clients = makeLifecycleClients();
+    (clients.core.listNamespacedPod as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      items: [],
+    });
+    const result = await getPodLogs("alpha", {}, clients);
+    expect(result.pod).toBe("rdv-0");
+    expect(clients.core.readNamespacedPodLog).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "rdv-0", namespace: "rdv-alpha" }),
+    );
+  });
+
+  it("falls back to rdv-0 when listNamespacedPod throws (transient list error)", async () => {
+    const clients = makeLifecycleClients();
+    (clients.core.listNamespacedPod as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      apiError(500),
+    );
+    const result = await getPodLogs("alpha", {}, clients);
+    expect(result.pod).toBe("rdv-0");
+    expect(clients.core.readNamespacedPodLog).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "rdv-0", namespace: "rdv-alpha" }),
+    );
+  });
+
+  it("returns { pod:null, logs:'' } when the pod log read 404s (no pod running)", async () => {
+    const clients = makeLifecycleClients();
+    (clients.core.listNamespacedPod as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      items: [],
+    });
+    (clients.core.readNamespacedPodLog as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      apiError(404),
+    );
+    const result = await getPodLogs("alpha", {}, clients);
+    expect(result).toEqual({ pod: null, logs: "" });
+  });
+
+  it("propagates a non-404 pod log read error", async () => {
+    const clients = makeLifecycleClients();
+    (clients.core.readNamespacedPodLog as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      apiError(500),
+    );
+    await expect(getPodLogs("alpha", {}, clients)).rejects.toBeInstanceOf(ApiException);
+  });
+});
+
+describe("listInstanceEvents", () => {
+  it("maps events to the DTO and sorts newest first", async () => {
+    const clients = makeLifecycleClients();
+    (clients.core.listNamespacedEvent as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      items: [
+        {
+          type: "Normal",
+          reason: "Scheduled",
+          message: "older",
+          count: 1,
+          lastTimestamp: new Date("2026-05-31T00:00:00Z"),
+          involvedObject: { kind: "Pod", name: "rdv-0" },
+        },
+        {
+          type: "Warning",
+          reason: "BackOff",
+          message: "newer",
+          count: 3,
+          lastTimestamp: new Date("2026-05-31T01:00:00Z"),
+          involvedObject: { kind: "Pod", name: "rdv-0" },
+        },
+      ],
+    });
+    const events = await listInstanceEvents("alpha", clients);
+    expect(events[0]).toMatchObject({
+      type: "Warning",
+      reason: "BackOff",
+      message: "newer",
+      count: 3,
+      involvedObject: "Pod/rdv-0",
+    });
+    expect(events[1]?.message).toBe("older");
+    expect(clients.core.listNamespacedEvent).toHaveBeenCalledWith({
+      namespace: "rdv-alpha",
+      limit: 100,
+    });
+  });
+
+  it("returns an empty array when there are no events", async () => {
+    const clients = makeLifecycleClients();
+    expect(await listInstanceEvents("alpha", clients)).toEqual([]);
+  });
+});
+
+describe("parseQuantityToBytes", () => {
+  it("parses binary IEC suffixes", () => {
+    expect(parseQuantityToBytes("1Ki")).toBe(1024);
+    expect(parseQuantityToBytes("1Mi")).toBe(1024 ** 2);
+    expect(parseQuantityToBytes("10Gi")).toBe(10 * 1024 ** 3);
+    expect(parseQuantityToBytes("2Ti")).toBe(2 * 1024 ** 4);
+  });
+
+  it("parses a plain byte count (no suffix)", () => {
+    expect(parseQuantityToBytes("1024")).toBe(1024);
+  });
+
+  it("parses fractional quantities", () => {
+    expect(parseQuantityToBytes("1.5Gi")).toBe(Math.round(1.5 * 1024 ** 3));
+  });
+
+  it("orders grow-only comparisons correctly (20Gi > 10Gi)", () => {
+    const a = parseQuantityToBytes("20Gi")!;
+    const b = parseQuantityToBytes("10Gi")!;
+    expect(a).toBeGreaterThan(b);
+  });
+
+  it("treats equal sizes as equal", () => {
+    expect(parseQuantityToBytes("10Gi")).toBe(parseQuantityToBytes("10Gi"));
+  });
+
+  it("returns null for zero (a zero-size PVC request is meaningless)", () => {
+    expect(parseQuantityToBytes("0")).toBeNull();
+    expect(parseQuantityToBytes("0Gi")).toBeNull();
+    expect(parseQuantityToBytes("0.0Mi")).toBeNull();
+  });
+
+  it("returns null for malformed / unsupported / negative values", () => {
+    expect(parseQuantityToBytes("")).toBeNull();
+    expect(parseQuantityToBytes("abc")).toBeNull();
+    expect(parseQuantityToBytes("10GB")).toBeNull(); // decimal SI not supported
+    expect(parseQuantityToBytes("10 Gi")).toBeNull();
+    expect(parseQuantityToBytes(null)).toBeNull();
+    expect(parseQuantityToBytes(undefined)).toBeNull();
   });
 });

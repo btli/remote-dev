@@ -11,7 +11,7 @@ import {
 import Link from "next/link";
 import { resolveSupervisorUser } from "@/lib/auth";
 import { hasRole, type Role } from "@/lib/roles";
-import { cn } from "@/lib/utils";
+import { StatusBadge } from "@/components/status-badge";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("Dashboard");
@@ -63,29 +63,6 @@ async function listVisibleInstances(user: CurrentUser): Promise<InstanceRow[]> {
     .from(instance)
     .where(eq(instance.ownerId, user.id))
     .orderBy(desc(instance.createdAt));
-}
-
-const STATUS_STYLES: Record<string, string> = {
-  ready: "bg-emerald-500/15 text-emerald-400",
-  provisioning: "bg-amber-500/15 text-amber-400",
-  requested: "bg-sky-500/15 text-sky-400",
-  suspended: "bg-zinc-500/15 text-zinc-400",
-  terminating: "bg-orange-500/15 text-orange-400",
-  deleted: "bg-zinc-500/15 text-zinc-500",
-  error: "bg-red-500/15 text-red-400",
-};
-
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
-        STATUS_STYLES[status] ?? "bg-muted text-muted-foreground",
-      )}
-    >
-      {status}
-    </span>
-  );
 }
 
 export default async function DashboardPage() {
@@ -166,26 +143,28 @@ export default async function DashboardPage() {
         ) : (
           <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border">
             {instances.map((inst) => (
-              <li
-                key={inst.id}
-                className="flex items-center justify-between gap-4 px-5 py-4"
-              >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate font-medium">
-                      {inst.displayName}
+              <li key={inst.id}>
+                <Link
+                  href={`/instances/${inst.id}`}
+                  className="flex items-center justify-between gap-4 px-5 py-4 transition-colors hover:bg-muted/50"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate font-medium">
+                        {inst.displayName}
+                      </span>
+                      <StatusBadge status={inst.status} />
+                    </div>
+                    <div className="mt-1 truncate font-mono text-xs text-muted-foreground">
+                      /{inst.slug} · {inst.namespace}
+                    </div>
+                  </div>
+                  {inst.baseUrl ? (
+                    <span className="shrink-0 truncate font-mono text-xs text-muted-foreground">
+                      {inst.baseUrl}
                     </span>
-                    <StatusBadge status={inst.status} />
-                  </div>
-                  <div className="mt-1 truncate font-mono text-xs text-muted-foreground">
-                    /{inst.slug} · {inst.namespace}
-                  </div>
-                </div>
-                {inst.baseUrl ? (
-                  <span className="shrink-0 truncate font-mono text-xs text-muted-foreground">
-                    {inst.baseUrl}
-                  </span>
-                ) : null}
+                  ) : null}
+                </Link>
               </li>
             ))}
           </ul>
@@ -193,7 +172,7 @@ export default async function DashboardPage() {
       </section>
 
       <footer className="mt-10 text-xs text-muted-foreground">
-        Phase 1 in progress (remote-dev-jvcx.5).
+        Phase 2 — instance lifecycle (remote-dev-jvcx.8).
       </footer>
     </main>
   );

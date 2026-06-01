@@ -101,6 +101,18 @@ function baseDeps(over: Partial<ReconcilerDeps>): ReconcilerDeps {
     checkInstanceReady: vi.fn(async () => ({ ready: true })),
     terminateInstance: vi.fn(async () => undefined),
     namespaceExists: vi.fn(async () => false),
+    // Phase 2 steady-state deps — default to "nothing to converge" so existing
+    // requested/provisioning/terminating tests are unaffected.
+    getStatefulSet: vi.fn(async () => ({
+      found: true,
+      replicas: 1,
+      readyReplicas: 1,
+      image: undefined,
+    })),
+    setStatefulSetReplicas: vi.fn(async () => undefined),
+    setStatefulSetImage: vi.fn(async () => undefined),
+    getPvc: vi.fn(async () => ({ found: true, requestedStorage: "10Gi" })),
+    resizePvc: vi.fn(async () => undefined),
     getClients: () => fakeClients,
     now: () => new Date("2026-05-31T00:00:00Z"),
     ...over,
@@ -338,6 +350,241 @@ describe("reconcileInstances — resilience", () => {
     ).resolves.toBeUndefined();
     // Unexpected error is treated as error transition (deterministic).
     expect(updates.some((u) => u.set.status === "error")).toBe(true);
+  });
+});
+
+describe("reconcileInstances — steady-state convergence (Phase 2)", () => {
+  it("suspended + replicas=1 → scales to 0 (no status change)", async () => {
+    const { db, updates, inserts } = makeDb([row("suspended")]);
+    const setStatefulSetReplicas = vi.fn(async () => undefined);
+    await reconcileInstances(
+      baseDeps({
+        db,
+        setStatefulSetReplicas,
+        getStatefulSet: vi.fn(async () => ({
+          found: true,
+          replicas: 1,
+          readyReplicas: 1,
+          image: undefined,
+        })),
+      }),
+    );
+    expect(setStatefulSetReplicas).toHaveBeenCalledWith("alpha", 0, fakeClients);
+    // No status write (steady-state never transitions); audit row recorded.
+    expect(updates.length).toBe(0);
+    expect(inserts.some((i) => i.values.action === "scale")).toBe(true);
+  });
+
+  it("suspended + already replicas=0 → no scale, NO row write (pure no-op tick)", async () => {
+    const { db, updates, inserts } = makeDb([row("suspended")]);
+    const setStatefulSetReplicas = vi.fn(async () => undefined);
+    await reconcileInstances(
+      baseDeps({
+        db,
+        setStatefulSetReplicas,
+        getStatefulSet: vi.fn(async () => ({
+          found: true,
+          replicas: 0,
+          readyReplicas: 0,
+          image: undefined,
+        })),
+        getPvc: vi.fn(async () => ({ found: true, requestedStorage: "10Gi" })),
+      }),
+    );
+    expect(setStatefulSetReplicas).not.toHaveBeenCalled();
+    expect(updates.length).toBe(0);
+    expect(inserts.length).toBe(0);
+  });
+
+  it("ready + replicas=0 → scales to 1", async () => {
+    const { db, inserts } = makeDb([row("ready")]);
+    const setStatefulSetReplicas = vi.fn(async () => undefined);
+    await reconcileInstances(
+      baseDeps({
+        db,
+        setStatefulSetReplicas,
+        getStatefulSet: vi.fn(async () => ({
+          found: true,
+          replicas: 0,
+          readyReplicas: 0,
+          image: undefined,
+        })),
+      }),
+    );
+    expect(setStatefulSetReplicas).toHaveBeenCalledWith("alpha", 1, fakeClients);
+    expect(inserts.some((i) => i.values.action === "scale")).toBe(true);
+  });
+
+  it("ready + already replicas=1 → no scale", async () => {
+    const { db } = makeDb([row("ready")]);
+    const setStatefulSetReplicas = vi.fn(async () => undefined);
+    await reconcileInstances(
+      baseDeps({
+        db,
+        setStatefulSetReplicas,
+        getStatefulSet: vi.fn(async () => ({
+          found: true,
+          replicas: 1,
+          readyReplicas: 1,
+          image: undefined,
+        })),
+      }),
+    );
+    expect(setStatefulSetReplicas).not.toHaveBeenCalled();
+  });
+
+  it("image patched only on mismatch (audit image:rollout)", async () => {
+    const { db, inserts } = makeDb([
+      row("ready", { imageTag: "ghcr.io/x@sha256:new" }),
+    ]);
+    const setStatefulSetImage = vi.fn(async () => undefined);
+    await reconcileInstances(
+      baseDeps({
+        db,
+        setStatefulSetImage,
+        getStatefulSet: vi.fn(async () => ({
+          found: true,
+          replicas: 1,
+          readyReplicas: 1,
+          image: "ghcr.io/x@sha256:old",
+        })),
+      }),
+    );
+    expect(setStatefulSetImage).toHaveBeenCalledWith(
+      "alpha",
+      "ghcr.io/x@sha256:new",
+      fakeClients,
+    );
+    expect(inserts.some((i) => i.values.action === "image:rollout")).toBe(true);
+  });
+
+  it("image NOT patched when it already matches the desired tag", async () => {
+    const { db } = makeDb([row("ready", { imageTag: "ghcr.io/x@sha256:same" })]);
+    const setStatefulSetImage = vi.fn(async () => undefined);
+    await reconcileInstances(
+      baseDeps({
+        db,
+        setStatefulSetImage,
+        getStatefulSet: vi.fn(async () => ({
+          found: true,
+          replicas: 1,
+          readyReplicas: 1,
+          image: "ghcr.io/x@sha256:same",
+        })),
+      }),
+    );
+    expect(setStatefulSetImage).not.toHaveBeenCalled();
+  });
+
+  it("image NOT patched when the live image is undefined (no spurious rollout)", async () => {
+    const { db, inserts } = makeDb([
+      row("ready", { imageTag: "ghcr.io/x@sha256:new" }),
+    ]);
+    const setStatefulSetImage = vi.fn(async () => undefined);
+    await reconcileInstances(
+      baseDeps({
+        db,
+        setStatefulSetImage,
+        getStatefulSet: vi.fn(async () => ({
+          found: true,
+          replicas: 1,
+          readyReplicas: 1,
+          image: undefined,
+        })),
+      }),
+    );
+    expect(setStatefulSetImage).not.toHaveBeenCalled();
+    expect(inserts.some((i) => i.values.action === "image:rollout")).toBe(false);
+  });
+
+  it("resize only when desired is STRICTLY larger than the PVC's current request", async () => {
+    const { db, inserts } = makeDb([row("ready", { storageRequest: "20Gi" })]);
+    const resizePvc = vi.fn(async () => undefined);
+    await reconcileInstances(
+      baseDeps({
+        db,
+        resizePvc,
+        getPvc: vi.fn(async () => ({ found: true, requestedStorage: "10Gi" })),
+      }),
+    );
+    expect(resizePvc).toHaveBeenCalledWith("alpha", "20Gi", fakeClients);
+    expect(inserts.some((i) => i.values.action === "resize")).toBe(true);
+  });
+
+  it("does NOT resize when desired equals current", async () => {
+    const { db } = makeDb([row("ready", { storageRequest: "10Gi" })]);
+    const resizePvc = vi.fn(async () => undefined);
+    await reconcileInstances(
+      baseDeps({
+        db,
+        resizePvc,
+        getPvc: vi.fn(async () => ({ found: true, requestedStorage: "10Gi" })),
+      }),
+    );
+    expect(resizePvc).not.toHaveBeenCalled();
+  });
+
+  it("a resize patch rejection is audited resize:failed and does NOT throw / error", async () => {
+    const { db, updates, inserts } = makeDb([
+      row("ready", { storageRequest: "20Gi" }),
+    ]);
+    const resizePvc = vi.fn(async () => {
+      throw new Error("StorageClass does not allow volume expansion");
+    });
+    await expect(
+      reconcileInstances(
+        baseDeps({
+          db,
+          resizePvc,
+          getPvc: vi.fn(async () => ({ found: true, requestedStorage: "10Gi" })),
+        }),
+      ),
+    ).resolves.toBeUndefined();
+    expect(inserts.some((i) => i.values.action === "resize:failed")).toBe(true);
+    // No status change to error.
+    expect(updates.some((u) => u.set.status === "error")).toBe(false);
+  });
+
+  it("transient getStatefulSet failure → NO error, NO delete, NO write", async () => {
+    const { db, updates, inserts } = makeDb([row("ready")]);
+    const terminateInstance = vi.fn(async () => undefined);
+    const setStatefulSetReplicas = vi.fn(async () => undefined);
+    await expect(
+      reconcileInstances(
+        baseDeps({
+          db,
+          terminateInstance,
+          setStatefulSetReplicas,
+          getStatefulSet: vi.fn(async () => {
+            throw new Error("transient read error");
+          }),
+        }),
+      ),
+    ).resolves.toBeUndefined();
+    expect(terminateInstance).not.toHaveBeenCalled();
+    expect(setStatefulSetReplicas).not.toHaveBeenCalled();
+    expect(updates.length).toBe(0);
+    expect(inserts.length).toBe(0);
+  });
+
+  it("StatefulSet not found → nothing to converge (no scale, no write)", async () => {
+    const { db, updates, inserts } = makeDb([row("ready")]);
+    const setStatefulSetReplicas = vi.fn(async () => undefined);
+    await reconcileInstances(
+      baseDeps({
+        db,
+        setStatefulSetReplicas,
+        getStatefulSet: vi.fn(async () => ({
+          found: false,
+          replicas: 0,
+          readyReplicas: 0,
+          image: undefined,
+        })),
+      }),
+    );
+    expect(setStatefulSetReplicas).not.toHaveBeenCalled();
+    expect(updates.length).toBe(0);
+    expect(inserts.length).toBe(0);
   });
 });
 

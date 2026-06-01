@@ -33,6 +33,7 @@ import {
   buildInstanceEnv,
   SERVICE_NAME,
 } from "@/lib/provisioner-builders";
+import { DATA_VOLUME_NAME } from "@/lib/storage";
 import {
   toVolumeClaimTemplate,
   type ResolvedStorageTarget,
@@ -296,4 +297,303 @@ export async function namespaceExists(
     if (isNotFound(err)) return false;
     throw err;
   }
+}
+
+// ── Phase 2 lifecycle helpers (suspend/resume, image rollout, resize, logs,
+//    events) — spec §6.3/§6.7/§9. All k8s WRITES here are issued ONLY from the
+//    reconciler (the single writer); the read-only helpers (getPodLogs,
+//    listInstanceEvents, getStatefulSet, getPvc) are also called live from the
+//    API process for the logs/events surfaces. ───────────────────────────────
+
+/**
+ * The pod ordinal name a single-replica StatefulSet `rdv` produces: `rdv-0`.
+ * Used only as a FALLBACK; {@link getPodLogs} prefers resolving the pod by the
+ * `rdv.io/slug` label so a recreated pod (different ordinal is impossible for a
+ * 1-replica STS, but a label lookup is more robust) is still found.
+ */
+const POD_NAME = `${SERVICE_NAME}-0`;
+
+/**
+ * The PVC name the StatefulSet's `volumeClaimTemplate` binds for the sole
+ * replica: `<volume>-<statefulset>-<ordinal>` == `data-rdv-0`. The template
+ * itself is immutable, so a resize patches THIS bound PVC directly (§15 B3).
+ */
+const PVC_NAME = `${DATA_VOLUME_NAME}-${SERVICE_NAME}-0`;
+
+/** Label selector that matches an instance's pods (set by the StatefulSet). */
+function slugSelector(slug: string): string {
+  return `rdv.io/slug=${slug}`;
+}
+
+/** Read-only StatefulSet snapshot the reconciler converges against. */
+export interface StatefulSetState {
+  /** False when the StatefulSet (or namespace) is not present yet (404). */
+  found: boolean;
+  /** Desired replicas per `.spec.replicas` (defaults to 0 when unset). */
+  replicas: number;
+  /** Currently-ready replicas per `.status.readyReplicas`. */
+  readyReplicas: number;
+  /** The container[0] image currently running, or undefined when unknown. */
+  image?: string;
+}
+
+/**
+ * Read the instance's StatefulSet. A 404 (namespace/STS not yet visible) is
+ * reported as `{ found: false }` — NOT an error — so the reconciler can treat a
+ * missing STS as "nothing to converge" without tearing anything down.
+ */
+export async function getStatefulSet(
+  slug: string,
+  clients: K8sClients = defaultClients(),
+): Promise<StatefulSetState> {
+  const namespace = namespaceForSlug(slug);
+  try {
+    const sts = await clients.apps.readNamespacedStatefulSet({
+      name: SERVICE_NAME,
+      namespace,
+    });
+    return {
+      found: true,
+      replicas: sts.spec?.replicas ?? 0,
+      readyReplicas: sts.status?.readyReplicas ?? 0,
+      image: sts.spec?.template?.spec?.containers?.[0]?.image,
+    };
+  } catch (err) {
+    if (isNotFound(err)) return { found: false, replicas: 0, readyReplicas: 0 };
+    throw err;
+  }
+}
+
+/**
+ * Scale the StatefulSet to `replicas` via the scale subresource.
+ *
+ * The body MUST be a JSON Patch array (`[{op,path,value}]`): the installed
+ * `@kubernetes/client-node@1.4.0` object-param API negotiates the patch
+ * Content-Type to the FIRST entry of its accept list
+ * (`application/json-patch+json`), so a merge object would be sent as
+ * json-patch and rejected. `/spec/replicas` always exists on a Scale, so
+ * `replace` is correct and content-type-safe.
+ */
+export async function setStatefulSetReplicas(
+  slug: string,
+  replicas: number,
+  clients: K8sClients = defaultClients(),
+): Promise<void> {
+  const namespace = namespaceForSlug(slug);
+  await clients.apps.patchNamespacedStatefulSetScale({
+    name: SERVICE_NAME,
+    namespace,
+    body: [{ op: "replace", path: "/spec/replicas", value: replicas }],
+  });
+  log.info("statefulset scale patched", { slug, namespace, replicas });
+}
+
+/**
+ * Roll the StatefulSet's container[0] image to `image` (rolling update, §9).
+ * JSON Patch array for the same content-type reason as
+ * {@link setStatefulSetReplicas}; `/spec/template/spec/containers/0/image`
+ * always exists.
+ */
+export async function setStatefulSetImage(
+  slug: string,
+  image: string,
+  clients: K8sClients = defaultClients(),
+): Promise<void> {
+  const namespace = namespaceForSlug(slug);
+  await clients.apps.patchNamespacedStatefulSet({
+    name: SERVICE_NAME,
+    namespace,
+    body: [
+      {
+        op: "replace",
+        path: "/spec/template/spec/containers/0/image",
+        value: image,
+      },
+    ],
+  });
+  log.info("statefulset image patched", { slug, namespace, image });
+}
+
+/** A PVC capacity snapshot (the bound `data-rdv-0`). */
+export interface PvcState {
+  /** False when the PVC is not present yet (404). */
+  found: boolean;
+  /** `.spec.resources.requests.storage` (the requested size). */
+  requestedStorage?: string;
+  /** `.status.capacity.storage` (the actually-provisioned size). */
+  capacityStorage?: string;
+}
+
+/**
+ * Read the instance's bound data PVC (`data-rdv-0`). A 404 → `{ found: false }`.
+ */
+export async function getPvc(
+  slug: string,
+  clients: K8sClients = defaultClients(),
+): Promise<PvcState> {
+  const namespace = namespaceForSlug(slug);
+  try {
+    const pvc = await clients.core.readNamespacedPersistentVolumeClaim({
+      name: PVC_NAME,
+      namespace,
+    });
+    return {
+      found: true,
+      requestedStorage: pvc.spec?.resources?.requests?.storage,
+      capacityStorage: pvc.status?.capacity?.storage,
+    };
+  } catch (err) {
+    if (isNotFound(err)) return { found: false };
+    throw err;
+  }
+}
+
+/**
+ * Resize (grow-only) the bound data PVC to `size`. JSON Patch array (same
+ * content-type reason as above); `/spec/resources/requests/storage` always
+ * exists. k8s forbids shrinking and a StorageClass without
+ * `allowVolumeExpansion` rejects the patch — callers (the reconciler) catch
+ * such rejections and audit `resize:failed` WITHOUT failing the instance.
+ */
+export async function resizePvc(
+  slug: string,
+  size: string,
+  clients: K8sClients = defaultClients(),
+): Promise<void> {
+  const namespace = namespaceForSlug(slug);
+  await clients.core.patchNamespacedPersistentVolumeClaim({
+    name: PVC_NAME,
+    namespace,
+    body: [
+      { op: "replace", path: "/spec/resources/requests/storage", value: size },
+    ],
+  });
+  log.info("pvc resize patched", { slug, namespace, size });
+}
+
+/** Pod logs (tail) for the instance's sole pod. */
+export interface PodLogsResult {
+  /** The resolved pod name, or null when no pod is running. */
+  pod: string | null;
+  /** The tail of the container log (empty string when no pod). */
+  logs: string;
+}
+
+/**
+ * Tail the instance pod's `rdv` container log. Resolves the pod by the
+ * `rdv.io/slug` label (robust); falls back to the conventional `rdv-0` name
+ * when the list returns nothing but a pod may still exist. No pod at all (e.g.
+ * a suspended instance scaled to 0) → `{ pod: null, logs: "" }`.
+ */
+export async function getPodLogs(
+  slug: string,
+  opts: { tailLines?: number; previous?: boolean },
+  clients: K8sClients = defaultClients(),
+): Promise<PodLogsResult> {
+  const namespace = namespaceForSlug(slug);
+  // Prefer resolving the pod by label (robust); fall back to the conventional
+  // `rdv-0` ordinal name when the list returns nothing (e.g. a stale label
+  // cache) OR the list call itself fails transiently, so a running pod is still
+  // found. The subsequent log read is guarded (404 → no pod).
+  let podName = POD_NAME;
+  try {
+    const pods = await clients.core.listNamespacedPod({
+      namespace,
+      labelSelector: slugSelector(slug),
+    });
+    podName = pods.items[0]?.metadata?.name ?? POD_NAME;
+  } catch (err) {
+    log.debug("listNamespacedPod failed; falling back to conventional pod name", {
+      slug,
+      pod: POD_NAME,
+      error: String(err),
+    });
+  }
+
+  try {
+    const logs = await clients.core.readNamespacedPodLog({
+      name: podName,
+      namespace,
+      container: SERVICE_NAME,
+      tailLines: opts.tailLines,
+      previous: opts.previous,
+      timestamps: true,
+    });
+    return { pod: podName, logs: logs ?? "" };
+  } catch (err) {
+    // No pod running (suspended / between rollouts) → degrade gracefully.
+    if (isNotFound(err)) return { pod: null, logs: "" };
+    throw err;
+  }
+}
+
+/** A small, UI-facing projection of a k8s Event. */
+export interface InstanceEventDTO {
+  type: string;
+  reason: string;
+  message: string;
+  count: number;
+  /** The most recent occurrence time as an ISO string, or null. */
+  lastSeen: string | null;
+  /** `Kind/name` of the object the event is about (e.g. `Pod/rdv-0`). */
+  involvedObject: string;
+}
+
+/**
+ * List the instance namespace's events, newest first, mapped to a small DTO.
+ * Used by the read-only events surface (`GET /api/instances/:id/events`).
+ */
+export async function listInstanceEvents(
+  slug: string,
+  clients: K8sClients = defaultClients(),
+  limit = 100,
+): Promise<InstanceEventDTO[]> {
+  const namespace = namespaceForSlug(slug);
+  const list = await clients.core.listNamespacedEvent({ namespace, limit });
+  const events = list.items.map((e): InstanceEventDTO => {
+    const last = e.lastTimestamp ?? e.eventTime ?? e.firstTimestamp ?? null;
+    const obj = e.involvedObject;
+    const involvedObject =
+      obj?.kind && obj?.name ? `${obj.kind}/${obj.name}` : (obj?.name ?? "");
+    return {
+      type: e.type ?? "Normal",
+      reason: e.reason ?? "",
+      message: e.message ?? "",
+      count: e.count ?? 1,
+      lastSeen: last ? new Date(last).toISOString() : null,
+      involvedObject,
+    };
+  });
+  // Newest first (descending by lastSeen; nulls sort last).
+  events.sort((a, b) => (b.lastSeen ?? "").localeCompare(a.lastSeen ?? ""));
+  return events;
+}
+
+/**
+ * Parse a k8s storage quantity (`Ki`/`Mi`/`Gi`/`Ti` binary suffixes, or a plain
+ * byte count) to an integer number of bytes. Returns null for an unparseable /
+ * non-positive / non-finite value so callers can reject it (HTTP 400) rather
+ * than mis-compare. A PVC request of zero is meaningless, so `"0"`/`"0Gi"` are
+ * rejected too.
+ *
+ * Scope: only the binary IEC suffixes a PVC request realistically uses. Decimal
+ * SI suffixes (K/M/G/T) and milli-quantities are intentionally NOT accepted —
+ * the create form + resize UI only ever emit `<n>Gi`.
+ */
+const QUANTITY_PATTERN = /^(\d+(?:\.\d+)?)(Ki|Mi|Gi|Ti)?$/;
+const QUANTITY_MULTIPLIERS: Record<string, number> = {
+  Ki: 1024,
+  Mi: 1024 ** 2,
+  Gi: 1024 ** 3,
+  Ti: 1024 ** 4,
+};
+
+export function parseQuantityToBytes(value: string | null | undefined): number | null {
+  if (typeof value !== "string") return null;
+  const match = QUANTITY_PATTERN.exec(value.trim());
+  if (!match) return null;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const multiplier = match[2] ? QUANTITY_MULTIPLIERS[match[2]] : 1;
+  return Math.round(amount * multiplier);
 }
