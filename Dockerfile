@@ -59,6 +59,14 @@ ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo PATH=/usr/local/ca
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
 
 COPY package.json bun.lockb* bun.lock* ./
+# Workspace members (root package.json declares workspaces: packages/*, apps/*).
+# `bun install --frozen-lockfile` validates the unified lockfile against ALL
+# members, so each member's package.json must be present before install.
+# NOTE: add a line here when a new apps/* or packages/* workspace is created.
+COPY apps/supervisor/package.json ./apps/supervisor/package.json
+COPY apps/supervisor-router/package.json ./apps/supervisor-router/package.json
+COPY packages/domain/package.json ./packages/domain/package.json
+COPY packages/mobile/package.json ./packages/mobile/package.json
 RUN bun install --frozen-lockfile
 
 # ──────────────────────────────────────────────────────────────────────────────
