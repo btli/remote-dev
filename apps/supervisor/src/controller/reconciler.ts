@@ -51,6 +51,12 @@ import {
   checkInstanceReady as defaultCheckInstanceReady,
   terminateInstance as defaultTerminateInstance,
   namespaceExists as defaultNamespaceExists,
+  getStatefulSet as defaultGetStatefulSet,
+  setStatefulSetReplicas as defaultSetStatefulSetReplicas,
+  setStatefulSetImage as defaultSetStatefulSetImage,
+  getPvc as defaultGetPvc,
+  resizePvc as defaultResizePvc,
+  parseQuantityToBytes,
   defaultClients,
   ProvisioningError,
   type K8sClients,
@@ -63,13 +69,13 @@ const log = createLogger("Reconciler");
 /** Readiness budget: provisioning → error if not ready within this window (§6.3). */
 export const READINESS_BUDGET_MS = 120_000;
 
-/** Statuses the reconciler never acts on (terminal / passive this PR). */
-const INACTIVE_STATUSES: InstanceStatus[] = [
-  "ready",
-  "suspended",
-  "error",
-  "deleted",
-];
+/**
+ * Statuses the reconciler never acts on. `error` and `deleted` are terminal /
+ * passive — they need no convergence. `ready` and `suspended` are NOT inactive
+ * anymore (Phase 2): the reconciler now converges their StatefulSet to the
+ * desired replica count + image + PVC size via {@link reconcileSteadyState}.
+ */
+const INACTIVE_STATUSES: InstanceStatus[] = ["error", "deleted"];
 
 /**
  * Injectable dependencies — defaulted to the real implementations, overridden in
@@ -81,6 +87,12 @@ export interface ReconcilerDeps {
   checkInstanceReady: typeof defaultCheckInstanceReady;
   terminateInstance: typeof defaultTerminateInstance;
   namespaceExists: typeof defaultNamespaceExists;
+  // Phase 2 steady-state convergence helpers (injected for unit tests).
+  getStatefulSet: typeof defaultGetStatefulSet;
+  setStatefulSetReplicas: typeof defaultSetStatefulSetReplicas;
+  setStatefulSetImage: typeof defaultSetStatefulSetImage;
+  getPvc: typeof defaultGetPvc;
+  resizePvc: typeof defaultResizePvc;
   /** Returns the injected k8s clients; THROWS when no cluster is available. */
   getClients: () => K8sClients;
   now: () => Date;
@@ -93,6 +105,11 @@ function defaultDeps(): ReconcilerDeps {
     checkInstanceReady: defaultCheckInstanceReady,
     terminateInstance: defaultTerminateInstance,
     namespaceExists: defaultNamespaceExists,
+    getStatefulSet: defaultGetStatefulSet,
+    setStatefulSetReplicas: defaultSetStatefulSetReplicas,
+    setStatefulSetImage: defaultSetStatefulSetImage,
+    getPvc: defaultGetPvc,
+    resizePvc: defaultResizePvc,
     getClients: defaultClients,
     now: () => new Date(),
   };
@@ -180,6 +197,36 @@ async function transition(
     slug: row.slug,
     from: row.status,
     to,
+    action,
+  });
+}
+
+/**
+ * Record an audit row for a steady-state action that does NOT change the
+ * instance status (scale / image rollout / resize). Status stays put, so
+ * previousStatus === newStatus === row.status. Crucially this does NOT touch
+ * the `instance` row (no `lastReconciledAt` write) so the convergence loop never
+ * mutates the row on a pure no-op tick — only when an action was actually
+ * issued does this audit row get written.
+ */
+async function auditAction(
+  deps: ReconcilerDeps,
+  row: InstanceRow,
+  action: string,
+  metadata?: Record<string, unknown>,
+): Promise<void> {
+  await deps.db.insert(instanceAuditLog).values({
+    instanceId: row.id,
+    actorId: null,
+    actorEmail: "reconciler",
+    action,
+    previousStatus: row.status,
+    newStatus: row.status,
+    metadata: metadata ? JSON.stringify(metadata) : null,
+  });
+  log.info("instance steady-state action", {
+    slug: row.slug,
+    status: row.status,
     action,
   });
 }
@@ -389,6 +436,131 @@ async function reconcileTerminating(
 }
 
 /**
+ * Steady-state convergence for `ready` (desiredReplicas=1) and `suspended`
+ * (desiredReplicas=0) — spec §6.3/§9/§15 B3.
+ *
+ * Converges the LIVE StatefulSet toward the row's desired spec:
+ *   1. replicas → desiredReplicas (scale subresource patch). A `suspended`
+ *      instance is scaled to 0 (PVC retained); a `ready` one to 1. Because
+ *      `/api/internal/routes` only serves `status === "ready"`, suspending an
+ *      instance also drops it from the router allowlist with no allowlist code
+ *      change. On resume the slug re-appears in the allowlist immediately while
+ *      the pod takes ~10–30 s to pass its readiness probe → a brief 502/503
+ *      window through the router. This blip is ACCEPTED (same class as the §9
+ *      image-rollout blip); the future mitigation is router-side Endpoints
+ *      readiness (§15 M4), out of scope here.
+ *   2. image → row.imageTag when set and the running image differs (rolling
+ *      update; audit `image:rollout`).
+ *   3. storage → grow-only resize when row.storageRequest parses STRICTLY
+ *      larger than the bound PVC's current request (audit `resize`). A patch
+ *      rejection (e.g. a StorageClass without allowVolumeExpansion) is caught,
+ *      logged, and audited `resize:failed` — it MUST NOT throw or kill the
+ *      instance.
+ *
+ * This NEVER changes the instance status, NEVER deletes the namespace, and
+ * NEVER writes the `instance` row on a pure no-op tick (only audit rows are
+ * written, and only when an action was actually issued — mirroring
+ * reconcileProvisioning's "must not write on a non-transition tick"). A
+ * transient `getStatefulSet` read failure → log + return (no error/no delete).
+ */
+export async function reconcileSteadyState(
+  deps: ReconcilerDeps,
+  row: InstanceRow,
+  clients: K8sClients,
+  desiredReplicas: number,
+): Promise<void> {
+  let sts;
+  try {
+    sts = await deps.getStatefulSet(row.slug, clients);
+  } catch (err) {
+    // Transient read failure — do NOT error or delete; converge next tick.
+    log.warn("steady-state getStatefulSet failed; will retry next tick", {
+      slug: row.slug,
+      status: row.status,
+      error: String(err),
+    });
+    return;
+  }
+
+  if (!sts.found) {
+    // Nothing to converge (namespace/STS not present). Don't error/delete — a
+    // terminating/just-deleted instance can legitimately have no STS.
+    log.debug("steady-state: statefulset not found; nothing to converge", {
+      slug: row.slug,
+      status: row.status,
+    });
+    return;
+  }
+
+  // 1. Replicas convergence (only when they actually differ).
+  if (sts.replicas !== desiredReplicas) {
+    await deps.setStatefulSetReplicas(row.slug, desiredReplicas, clients);
+    await auditAction(deps, row, "scale", {
+      from: sts.replicas,
+      to: desiredReplicas,
+    });
+  }
+
+  // 2. Image rollout (only when a desired image is set AND the live image is
+  //    known AND it differs). When the API response omits container[0].image
+  //    (sts.image === undefined) we cannot tell whether it differs, so we do
+  //    NOT patch — otherwise a missing-image read would trigger a spurious
+  //    rollout + audit on every tick.
+  if (row.imageTag && sts.image !== undefined && sts.image !== row.imageTag) {
+    await deps.setStatefulSetImage(row.slug, row.imageTag, clients);
+    await auditAction(deps, row, "image:rollout", {
+      from: sts.image,
+      to: row.imageTag,
+    });
+  }
+
+  // 3. Grow-only PVC resize (only when the desired request is STRICTLY larger
+  //    than the bound PVC's current request).
+  if (row.storageRequest) {
+    const desiredBytes = parseQuantityToBytes(row.storageRequest);
+    if (desiredBytes !== null) {
+      let pvc;
+      try {
+        pvc = await deps.getPvc(row.slug, clients);
+      } catch (err) {
+        // Transient PVC read failure — skip resize this tick; retry later.
+        log.warn("steady-state getPvc failed; skipping resize this tick", {
+          slug: row.slug,
+          error: String(err),
+        });
+        pvc = undefined;
+      }
+      if (pvc?.found) {
+        const currentBytes = parseQuantityToBytes(pvc.requestedStorage);
+        if (currentBytes !== null && desiredBytes > currentBytes) {
+          try {
+            await deps.resizePvc(row.slug, row.storageRequest, clients);
+            await auditAction(deps, row, "resize", {
+              from: pvc.requestedStorage ?? null,
+              to: row.storageRequest,
+            });
+          } catch (err) {
+            // A SC without allowVolumeExpansion (or any expansion rejection)
+            // must NOT kill the instance — audit the failure and move on.
+            log.error("pvc resize rejected; instance left running", {
+              slug: row.slug,
+              from: pvc.requestedStorage ?? null,
+              to: row.storageRequest,
+              error: String(err),
+            });
+            await auditAction(deps, row, "resize:failed", {
+              from: pvc.requestedStorage ?? null,
+              to: row.storageRequest,
+              error: String(err),
+            });
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
  * Run one reconcile pass. Loads non-terminal instances and advances each.
  *
  * If the k8s client is unavailable, logs a warning and returns early WITHOUT
@@ -438,9 +610,17 @@ export async function reconcileInstances(
         case "terminating":
           await reconcileTerminating(deps, row, clients);
           break;
+        case "ready":
+          // Converge the StatefulSet toward 1 replica + desired image/size.
+          await reconcileSteadyState(deps, row, clients, 1);
+          break;
+        case "suspended":
+          // Converge the StatefulSet toward 0 replicas (PVC retained).
+          await reconcileSteadyState(deps, row, clients, 0);
+          break;
         default:
-          // ready/suspended/error/deleted handled by INACTIVE_STATUSES filter;
-          // anything else is a no-op this PR.
+          // error/deleted are filtered out by INACTIVE_STATUSES; anything else
+          // is a no-op.
           break;
       }
     } catch (err) {

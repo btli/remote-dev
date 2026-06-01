@@ -11,10 +11,6 @@
 # needs `watch` anywhere.
 #
 # ── Deferred to later phases (intentionally NOT granted here) ─────────────────
-#   Phase 2 (lifecycle depth):
-#     • persistentvolumeclaims: patch/update — PVC resize. §15 B3 explicitly
-#       defers resize to Phase 2 and drops it from the Phase-1 PATCH contract,
-#       so the StatefulSet owns PVC creation and we grant only get/list now.
 #   Phase 3 (capacity + machines):
 #     • pods/eviction: create        — node drain during scale-down.
 #     • nodes: patch/delete          — cordon + remove worker machines.
@@ -54,12 +50,13 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces", "services", "secrets"]
     verbs: ["get", "list", "create", "delete"]
-  # PVCs: read-only. The StatefulSet's volumeClaimTemplate OWNS PVC creation, so
-  # the Supervisor only lists/gets them (e.g. for status). NO patch/update:
-  # resize is deferred to Phase 2 (§15 B3).
+  # PVCs: the StatefulSet's volumeClaimTemplate OWNS PVC creation (the template
+  # is immutable), so the Supervisor never creates/deletes PVCs directly — but it
+  # now patches the bound PVC (`data-rdv-0`) for grow-only resize (Phase 2, §15
+  # B3). get/list for status; patch/update for resize. Still NO create/delete.
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "patch", "update"]
   # Pod status + logs (read-only): readiness checks and the logs/events API
   # surface (§6.7). NO pods/exec (seed runs via a Job, §6.4).
   - apiGroups: [""]
