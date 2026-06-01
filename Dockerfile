@@ -78,10 +78,10 @@ WORKDIR /app
 
 COPY . .
 
-# Rebuild native modules (better-sqlite3, node-pty) for the target arch.
-# If this fails, the resulting image would crash at runtime with cryptic NAPI
-# errors — fail the build loudly here instead.
-RUN bun rebuild better-sqlite3 node-pty
+# Native modules (better-sqlite3, node-pty) are compiled during the
+# `bun install --frozen-lockfile` in the build-deps stage because they are
+# listed in the root package.json `trustedDependencies`, with the build-essential
+# + python3 toolchain present there. No separate rebuild step is needed.
 
 # Slug-aware image: build ONCE with a sentinel basePath, then rewrite the
 # sentinel to the real per-instance slug at container start (docker/entrypoint.sh).
