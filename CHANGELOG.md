@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Instance image Dockerfile: removed the invalid `RUN bun rebuild better-sqlite3 node-pty` line from the build stage — `bun` has no `rebuild` subcommand (the build failed with `error: Script not found "rebuild"`), and the step was redundant: the native modules are already compiled during `bun install --frozen-lockfile` because they are listed in the root `package.json` `trustedDependencies`.
 - Instance image Dockerfile: copy the workspace `package.json` files (apps/*, packages/*) before `bun install --frozen-lockfile` — the root manifest declares workspaces, so a frozen install needs every member's manifest present (build failed with "lockfile had changes, but lockfile is frozen").
 - Instance image Dockerfile: copy `bun` from the `build-deps` stage instead of an unexpanded `${BUN_VERSION}` image ref in the `runtime` stage (the global ARG is out of scope there) — this broke the k8s instance image build (`invalid reference format`).
 - Startup commands no longer lose their first character when oh-my-zsh's periodic auto-update prompt appears during shell init. `createSession` now suppresses shell-init update prompts (`DISABLE_AUTO_UPDATE`/`DISABLE_UPDATE_PROMPT`) and waits for the shell to settle before typing. (remote-dev-w75y)
