@@ -134,6 +134,33 @@ export function buildAuthSecret(
 }
 
 /**
+ * V1Secret of `type: kubernetes.io/dockerconfigjson` — a per-instance image-pull
+ * credential for PRIVATE instance images (spec §15 B2; remote-dev-2xhg). Created
+ * in the instance namespace and referenced from the pod's `imagePullSecrets` so a
+ * private-registry instance image can be pulled. `opts.name` is the Secret name
+ * the StatefulSet references (e.g. `harbor-registry`); `opts.dockerConfigJson` is
+ * the raw `.dockerconfigjson` (a `{ "auths": { … } }` JSON string).
+ *
+ * SECURITY: callers MUST NOT log the returned object or `opts.dockerConfigJson`.
+ */
+export function buildImagePullSecret(
+  slug: string,
+  opts: { name: string; dockerConfigJson: string },
+): V1Secret {
+  return {
+    metadata: {
+      name: opts.name,
+      namespace: namespaceForSlug(slug),
+      labels: instanceLabels(slug),
+    },
+    type: "kubernetes.io/dockerconfigjson",
+    stringData: {
+      ".dockerconfigjson": opts.dockerConfigJson,
+    },
+  };
+}
+
+/**
  * V1Service named `rdv` — the StatefulSet's governing service.
  *
  * Headless (`clusterIP: None`) is the conventional choice for a StatefulSet's
@@ -217,6 +244,18 @@ export interface BuildStatefulSetOptions {
   resources?: V1ResourceRequirements;
   /** Wire GITHUB_* secretKeyRefs (optional) when the instance has GitHub creds. */
   withGithub?: boolean;
+  /**
+   * Name of an image-pull Secret in the instance namespace, referenced in the
+   * pod's `imagePullSecrets` (private-registry instance images; remote-dev-2xhg).
+   * Omitted when unset, preserving current output for public-registry instances.
+   */
+  imagePullSecretName?: string;
+  /**
+   * Pod nodeSelector pinning the instance to compatible nodes (e.g.
+   * `{ "kubernetes.io/arch": "amd64" }` for amd64-only images on a mixed-arch
+   * cluster; remote-dev-389c). Omitted when unset/empty.
+   */
+  nodeSelector?: Record<string, string>;
 }
 
 /**
@@ -274,6 +313,15 @@ export function buildStatefulSet(
             runAsNonRoot: true,
           },
           terminationGracePeriodSeconds: TERMINATION_GRACE_SECONDS,
+          // Private-registry pull (remote-dev-2xhg) + mixed-arch pinning
+          // (remote-dev-389c). Both are spread in ONLY when set so existing
+          // public-registry/any-arch callers get byte-identical output.
+          ...(opts.imagePullSecretName
+            ? { imagePullSecrets: [{ name: opts.imagePullSecretName }] }
+            : {}),
+          ...(opts.nodeSelector && Object.keys(opts.nodeSelector).length > 0
+            ? { nodeSelector: opts.nodeSelector }
+            : {}),
           containers: [
             {
               name: SERVICE_NAME,
@@ -321,7 +369,17 @@ export function buildStatefulSet(
  */
 export function buildSeedJob(
   slug: string,
-  opts: { authorizedEmails: string[]; image: string },
+  opts: {
+    authorizedEmails: string[];
+    image: string;
+    /**
+     * Same private-registry pull (remote-dev-2xhg) + mixed-arch pinning
+     * (remote-dev-389c) as the StatefulSet: the seed Job runs the SAME instance
+     * image on the SAME arch, so it must pull/pin identically if ever dispatched.
+     */
+    imagePullSecretName?: string;
+    nodeSelector?: Record<string, string>;
+  },
 ): V1Job {
   const ns = namespaceForSlug(slug);
   return {
@@ -343,6 +401,14 @@ export function buildSeedJob(
             runAsUser: RUN_AS_ID,
             runAsNonRoot: true,
           },
+          // Spread in ONLY when set (see buildStatefulSet) so an undispatched /
+          // public-registry seed Job's output is unchanged.
+          ...(opts.imagePullSecretName
+            ? { imagePullSecrets: [{ name: opts.imagePullSecretName }] }
+            : {}),
+          ...(opts.nodeSelector && Object.keys(opts.nodeSelector).length > 0
+            ? { nodeSelector: opts.nodeSelector }
+            : {}),
           containers: [
             {
               name: "seed",

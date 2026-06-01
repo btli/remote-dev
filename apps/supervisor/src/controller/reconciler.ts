@@ -119,6 +119,36 @@ function defaultDeps(): ReconcilerDeps {
 let warnedMissingCfAccess = false;
 
 /**
+ * Parse `SUPERVISOR_INSTANCE_NODE_SELECTOR` — a comma-separated list of
+ * `key=value` pairs (e.g. `kubernetes.io/arch=amd64,disktype=ssd`) — into the
+ * `Record<string, string>` a pod `nodeSelector` takes (remote-dev-389c).
+ *
+ * undefined/empty/whitespace → undefined (no pinning). A trailing comma (empty
+ * entry) is tolerated. A malformed entry (no `=`, or an empty key) THROWS so a
+ * typo surfaces loudly as a per-instance `error` rather than silently skipping
+ * the arch pin and letting the pod crashloop on the wrong node.
+ */
+export function parseNodeSelector(
+  raw: string | undefined,
+): Record<string, string> | undefined {
+  if (!raw || raw.trim() === "") return undefined;
+  const selector: Record<string, string> = {};
+  for (const entry of raw.split(",")) {
+    const trimmed = entry.trim();
+    if (trimmed === "") continue; // tolerate a trailing comma
+    const eq = trimmed.indexOf("=");
+    const key = eq === -1 ? "" : trimmed.slice(0, eq).trim();
+    if (eq === -1 || key === "") {
+      throw new Error(
+        `SUPERVISOR_INSTANCE_NODE_SELECTOR is malformed (expected key=value,...): ${raw}`,
+      );
+    }
+    selector[key] = trimmed.slice(eq + 1).trim();
+  }
+  return Object.keys(selector).length > 0 ? selector : undefined;
+}
+
+/**
  * Read the instance image/host/CF-Access config from env (validated lazily).
  *
  * SUPERVISOR_INSTANCE_IMAGE / SUPERVISOR_INSTANCE_HOST are always required.
@@ -135,6 +165,8 @@ export function readProvisionEnv(): {
   host: string;
   cfAccess: { team: string; aud: string };
   github?: { clientId: string; clientSecret: string };
+  imagePullSecret?: { name: string; dockerConfigJson?: string };
+  nodeSelector?: Record<string, string>;
 } {
   const image = process.env.SUPERVISOR_INSTANCE_IMAGE;
   const host = process.env.SUPERVISOR_INSTANCE_HOST;
@@ -166,7 +198,36 @@ export function readProvisionEnv(): {
         }
       : undefined;
 
-  return { image, host, cfAccess: { team, aud }, github };
+  // Optional image-pull credential for PRIVATE instance images (remote-dev-2xhg).
+  // The dockerconfigjson is a SECRET — never logged. A dockerconfigjson with no
+  // name can be neither created nor referenced, so that combination throws loud.
+  const pullSecretName = process.env.SUPERVISOR_INSTANCE_IMAGE_PULL_SECRET_NAME;
+  const pullDockerConfigJson =
+    process.env.SUPERVISOR_INSTANCE_IMAGE_PULL_DOCKERCONFIGJSON;
+  if (pullDockerConfigJson && !pullSecretName) {
+    throw new Error(
+      "SUPERVISOR_INSTANCE_IMAGE_PULL_DOCKERCONFIGJSON is set but " +
+        "SUPERVISOR_INSTANCE_IMAGE_PULL_SECRET_NAME is not",
+    );
+  }
+  const imagePullSecret = pullSecretName
+    ? { name: pullSecretName, dockerConfigJson: pullDockerConfigJson || undefined }
+    : undefined;
+
+  // Optional pod nodeSelector pinning instance pods to compatible nodes on a
+  // mixed-arch cluster (remote-dev-389c). Malformed → throws (caught upstream).
+  const nodeSelector = parseNodeSelector(
+    process.env.SUPERVISOR_INSTANCE_NODE_SELECTOR,
+  );
+
+  return {
+    image,
+    host,
+    cfAccess: { team, aud },
+    github,
+    imagePullSecret,
+    nodeSelector,
+  };
 }
 
 /** Record an audit-log row + apply the status change (asserting legality). */
@@ -278,6 +339,8 @@ function buildProvisionOptions(row: InstanceRow): ProvisionOptions {
     authSecret: crypto.randomBytes(32).toString("base64"),
     cfAccess: env.cfAccess,
     github: env.github,
+    imagePullSecret: env.imagePullSecret,
+    nodeSelector: env.nodeSelector,
   };
 }
 

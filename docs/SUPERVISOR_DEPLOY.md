@@ -86,7 +86,14 @@ fields).
 
 > If GHCR is private, create an image-pull Secret in `rdv-system` and add it to
 > the Deployments' `imagePullSecrets` (and the provisioner config for instance
-> pulls).
+> pulls). For the **instance** images specifically, set
+> `SUPERVISOR_INSTANCE_IMAGE_PULL_SECRET_NAME` (+
+> `SUPERVISOR_INSTANCE_IMAGE_PULL_DOCKERCONFIGJSON`) in the config Secret — the
+> provisioner then AUTO-creates the per-instance dockerconfigjson pull Secret in
+> each `rdv-<slug>` namespace and references it from the instance pod (set just
+> the NAME if you provision that Secret out-of-band). On a **mixed-arch** cluster
+> set `SUPERVISOR_INSTANCE_NODE_SELECTOR` (e.g. `kubernetes.io/arch=amd64`) to
+> pin instance pods to nodes matching the instance image's architecture.
 
 ---
 
@@ -138,6 +145,11 @@ kubectl -n rdv-system create secret generic rdv-supervisor-config \
   --from-literal=SUPERVISOR_DEFAULT_STORAGE_SIZE=10Gi \
   --from-literal=CF_ACCESS_TEAM=my-team \
   --from-literal=CF_ACCESS_AUD=<instances-app-aud>
+# Optional — for a PRIVATE registry / mixed-arch instances, append these flags to
+# the command above (add a trailing `\` to its CF_ACCESS_AUD line first):
+#   --from-literal=SUPERVISOR_INSTANCE_IMAGE_PULL_SECRET_NAME=harbor-registry
+#   --from-literal=SUPERVISOR_INSTANCE_IMAGE_PULL_DOCKERCONFIGJSON="$(cat ~/.docker/config.json)"
+#   --from-literal=SUPERVISOR_INSTANCE_NODE_SELECTOR=kubernetes.io/arch=amd64
 
 # 3c. RBAC (ServiceAccount + ClusterRole + ClusterRoleBinding)
 kubectl apply -f deploy/k8s/supervisor/rbac.yaml

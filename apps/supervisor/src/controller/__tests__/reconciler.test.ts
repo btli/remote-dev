@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   reconcileInstances,
   readProvisionEnv,
+  parseNodeSelector,
   type ReconcilerDeps,
 } from "@/controller/reconciler";
 import { ProvisioningError } from "@/lib/provisioner-service";
@@ -129,6 +130,9 @@ afterEach(() => {
   delete process.env.SUPERVISOR_INSTANCE_HOST;
   delete process.env.CF_ACCESS_TEAM;
   delete process.env.CF_ACCESS_AUD;
+  delete process.env.SUPERVISOR_INSTANCE_IMAGE_PULL_SECRET_NAME;
+  delete process.env.SUPERVISOR_INSTANCE_IMAGE_PULL_DOCKERCONFIGJSON;
+  delete process.env.SUPERVISOR_INSTANCE_NODE_SELECTOR;
   setNodeEnv(ORIGINAL_NODE_ENV);
   vi.clearAllMocks();
 });
@@ -628,5 +632,96 @@ describe("readProvisionEnv — CF Access required in prod (Fix 6)", () => {
     setNodeEnv("development");
     delete process.env.SUPERVISOR_INSTANCE_IMAGE;
     expect(() => readProvisionEnv()).toThrow(/SUPERVISOR_INSTANCE_IMAGE/);
+  });
+});
+
+describe("parseNodeSelector (remote-dev-389c)", () => {
+  it("undefined/empty/whitespace → undefined", () => {
+    expect(parseNodeSelector(undefined)).toBeUndefined();
+    expect(parseNodeSelector("")).toBeUndefined();
+    expect(parseNodeSelector("   ")).toBeUndefined();
+  });
+
+  it("parses a single key=value pair", () => {
+    expect(parseNodeSelector("kubernetes.io/arch=amd64")).toEqual({
+      "kubernetes.io/arch": "amd64",
+    });
+  });
+
+  it("parses multiple comma-separated pairs (trimming whitespace)", () => {
+    expect(parseNodeSelector(" kubernetes.io/arch=amd64 , disktype=ssd ")).toEqual({
+      "kubernetes.io/arch": "amd64",
+      disktype: "ssd",
+    });
+  });
+
+  it("tolerates a trailing comma (skips the empty entry)", () => {
+    expect(parseNodeSelector("kubernetes.io/arch=amd64,")).toEqual({
+      "kubernetes.io/arch": "amd64",
+    });
+  });
+
+  it("throws on a malformed entry (no '=' or empty key)", () => {
+    expect(() => parseNodeSelector("kubernetes.io/arch")).toThrow(
+      /SUPERVISOR_INSTANCE_NODE_SELECTOR is malformed/,
+    );
+    expect(() => parseNodeSelector("=amd64")).toThrow(
+      /SUPERVISOR_INSTANCE_NODE_SELECTOR is malformed/,
+    );
+  });
+});
+
+describe("readProvisionEnv — image-pull secret + nodeSelector (remote-dev-2xhg/389c)", () => {
+  beforeEach(() => {
+    process.env.SUPERVISOR_INSTANCE_IMAGE = "ghcr.io/x@sha256:abc";
+    process.env.SUPERVISOR_INSTANCE_HOST = "dev.example.com";
+    setNodeEnv("development");
+  });
+
+  it("reads name + dockerconfigjson into imagePullSecret", () => {
+    process.env.SUPERVISOR_INSTANCE_IMAGE_PULL_SECRET_NAME = "harbor-registry";
+    process.env.SUPERVISOR_INSTANCE_IMAGE_PULL_DOCKERCONFIGJSON =
+      '{"auths":{"harbor.example.com":{"auth":"xxx"}}}';
+    const env = readProvisionEnv();
+    expect(env.imagePullSecret).toEqual({
+      name: "harbor-registry",
+      dockerConfigJson: '{"auths":{"harbor.example.com":{"auth":"xxx"}}}',
+    });
+  });
+
+  it("name only → dockerConfigJson undefined (operator pre-provisioned the secret)", () => {
+    process.env.SUPERVISOR_INSTANCE_IMAGE_PULL_SECRET_NAME = "harbor-registry";
+    const env = readProvisionEnv();
+    expect(env.imagePullSecret).toEqual({
+      name: "harbor-registry",
+      dockerConfigJson: undefined,
+    });
+  });
+
+  it("dockerconfigjson without a name throws (a nameless secret can't be created/referenced)", () => {
+    process.env.SUPERVISOR_INSTANCE_IMAGE_PULL_DOCKERCONFIGJSON =
+      '{"auths":{}}';
+    delete process.env.SUPERVISOR_INSTANCE_IMAGE_PULL_SECRET_NAME;
+    expect(() => readProvisionEnv()).toThrow(
+      /SUPERVISOR_INSTANCE_IMAGE_PULL_DOCKERCONFIGJSON is set but SUPERVISOR_INSTANCE_IMAGE_PULL_SECRET_NAME is not/,
+    );
+  });
+
+  it("neither set → imagePullSecret undefined", () => {
+    delete process.env.SUPERVISOR_INSTANCE_IMAGE_PULL_SECRET_NAME;
+    delete process.env.SUPERVISOR_INSTANCE_IMAGE_PULL_DOCKERCONFIGJSON;
+    expect(readProvisionEnv().imagePullSecret).toBeUndefined();
+  });
+
+  it("parses SUPERVISOR_INSTANCE_NODE_SELECTOR into nodeSelector", () => {
+    process.env.SUPERVISOR_INSTANCE_NODE_SELECTOR = "kubernetes.io/arch=amd64";
+    expect(readProvisionEnv().nodeSelector).toEqual({
+      "kubernetes.io/arch": "amd64",
+    });
+  });
+
+  it("nodeSelector undefined when the env var is unset", () => {
+    delete process.env.SUPERVISOR_INSTANCE_NODE_SELECTOR;
+    expect(readProvisionEnv().nodeSelector).toBeUndefined();
   });
 });

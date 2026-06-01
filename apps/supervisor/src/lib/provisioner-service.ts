@@ -28,6 +28,7 @@ import {
   buildNamespace,
   buildSharedSecret,
   buildAuthSecret,
+  buildImagePullSecret,
   buildService,
   buildStatefulSet,
   buildInstanceEnv,
@@ -61,6 +62,7 @@ export function defaultClients(): K8sClients {
 /** The stage at which provisioning failed (for the audit log / error message). */
 export type ProvisioningStage =
   | "namespace"
+  | "image-pull-secret"
   | "shared-secret"
   | "auth-secret"
   | "service"
@@ -123,6 +125,20 @@ export interface ProvisionOptions {
   cfAccess: { team: string; aud: string };
   /** Optional GitHub OAuth creds for the instance. */
   github?: { clientId: string; clientSecret: string };
+  /**
+   * Optional image-pull credential for PRIVATE instance images (remote-dev-2xhg).
+   * When `name` is set it is referenced in the StatefulSet's `imagePullSecrets`;
+   * when `dockerConfigJson` is ALSO set, the provisioner materializes the
+   * dockerconfigjson Secret of that name into the instance namespace.
+   *
+   * SECURITY: `dockerConfigJson` is a SECRET — never log it or the built Secret.
+   */
+  imagePullSecret?: { name: string; dockerConfigJson?: string };
+  /**
+   * Optional pod nodeSelector (e.g. `{ "kubernetes.io/arch": "amd64" }`) pinning
+   * instance pods to compatible nodes on a mixed-arch cluster (remote-dev-389c).
+   */
+  nodeSelector?: Record<string, string>;
   // NOTE: first-boot seed emails are intentionally NOT a provisioning input in
   // Phase 1 — the seed Job dispatch is deferred to Phase 2 (jvcx.8). See the
   // comment at the end of provisionInstance.
@@ -142,13 +158,36 @@ export async function provisionInstance(
   const namespace = namespaceForSlug(slug);
   const { core, apps } = clients;
 
-  log.info("provisioning instance", { slug, namespace, image: opts.image });
+  log.info("provisioning instance", {
+    slug,
+    namespace,
+    image: opts.image,
+    // Non-secret observability only — NEVER the dockerConfigJson.
+    imagePullSecretName: opts.imagePullSecret?.name,
+    nodeSelector: opts.nodeSelector,
+  });
 
   try {
     // 1. Namespace.
     await createStep("namespace", () =>
       core.createNamespace({ body: buildNamespace(slug) }),
     );
+
+    // 1b. Image-pull Secret (private instance images, remote-dev-2xhg) — ONLY
+    //     when a dockerconfigjson value was provided. When only the NAME is set
+    //     (operator pre-provisioned the secret another way) we skip creation but
+    //     still reference it in the StatefulSet below.
+    if (opts.imagePullSecret?.dockerConfigJson) {
+      await createStep("image-pull-secret", () =>
+        core.createNamespacedSecret({
+          namespace,
+          body: buildImagePullSecret(slug, {
+            name: opts.imagePullSecret!.name,
+            dockerConfigJson: opts.imagePullSecret!.dockerConfigJson!,
+          }),
+        }),
+      );
+    }
 
     // 2. Shared (CF Access) secret.
     await createStep("shared-secret", () =>
@@ -187,6 +226,10 @@ export async function provisionInstance(
           env,
           volumeClaimTemplate: toVolumeClaimTemplate(opts.storage),
           withGithub: Boolean(opts.github),
+          // Referenced whenever the name is set — even without a dockerConfigJson
+          // (operator-provisioned pull Secret); the nodeSelector pins arch.
+          imagePullSecretName: opts.imagePullSecret?.name,
+          nodeSelector: opts.nodeSelector,
         }),
       }),
     );

@@ -123,6 +123,91 @@ describe("provisionInstance — happy path", () => {
     expect(order).not.toContain("job");
     expect(clients.batch.createNamespacedJob).not.toHaveBeenCalled();
   });
+
+  it("back-compat: no imagePullSecret/nodeSelector → no pull Secret, STS has neither field", async () => {
+    const { clients, order } = makeClients();
+    await provisionInstance(row(), OPTS, clients);
+    // Order is exactly the base §6.4 order (no extra image-pull secret).
+    expect(order).toEqual([
+      "namespace",
+      "secret:rdv-shared",
+      "secret:rdv-alpha",
+      "service",
+      "statefulset",
+    ]);
+    const stsBody = (clients.apps.createNamespacedStatefulSet as ReturnType<typeof vi.fn>)
+      .mock.calls[0][0].body;
+    expect(stsBody.spec.template.spec.imagePullSecrets).toBeUndefined();
+    expect(stsBody.spec.template.spec.nodeSelector).toBeUndefined();
+  });
+});
+
+describe("provisionInstance — image-pull secret + nodeSelector (remote-dev-2xhg/389c)", () => {
+  it("with { name, dockerConfigJson } creates the dockerconfigjson Secret (after ns) AND the STS references it", async () => {
+    const { clients, order } = makeClients();
+    await provisionInstance(
+      row(),
+      {
+        ...OPTS,
+        imagePullSecret: {
+          name: "harbor-registry",
+          dockerConfigJson: '{"auths":{"harbor.example.com":{"auth":"xxx"}}}',
+        },
+        nodeSelector: { "kubernetes.io/arch": "amd64" },
+      },
+      clients,
+    );
+    // The pull Secret is created right AFTER the namespace, BEFORE rdv-shared.
+    expect(order).toEqual([
+      "namespace",
+      "secret:harbor-registry",
+      "secret:rdv-shared",
+      "secret:rdv-alpha",
+      "service",
+      "statefulset",
+    ]);
+    // The created pull Secret carries the dockerconfigjson body.
+    const pullCall = (clients.core.createNamespacedSecret as ReturnType<typeof vi.fn>).mock
+      .calls.map((c) => c[0].body)
+      .find((b: { metadata?: { name?: string } }) => b.metadata?.name === "harbor-registry");
+    expect(pullCall.type).toBe("kubernetes.io/dockerconfigjson");
+    expect(pullCall.stringData[".dockerconfigjson"]).toBe(
+      '{"auths":{"harbor.example.com":{"auth":"xxx"}}}',
+    );
+    // The STS references the pull Secret and pins the arch.
+    const stsBody = (clients.apps.createNamespacedStatefulSet as ReturnType<typeof vi.fn>)
+      .mock.calls[0][0].body;
+    expect(stsBody.spec.template.spec.imagePullSecrets).toEqual([
+      { name: "harbor-registry" },
+    ]);
+    expect(stsBody.spec.template.spec.nodeSelector).toEqual({
+      "kubernetes.io/arch": "amd64",
+    });
+  });
+
+  it("with { name } only (no dockerConfigJson) does NOT create a pull Secret but STS still references it", async () => {
+    const { clients, order } = makeClients();
+    await provisionInstance(
+      row(),
+      { ...OPTS, imagePullSecret: { name: "harbor-registry" } },
+      clients,
+    );
+    // No image-pull Secret created (operator pre-provisioned it another way).
+    expect(order).toEqual([
+      "namespace",
+      "secret:rdv-shared",
+      "secret:rdv-alpha",
+      "service",
+      "statefulset",
+    ]);
+    expect(order).not.toContain("secret:harbor-registry");
+    // The STS still references imagePullSecrets.
+    const stsBody = (clients.apps.createNamespacedStatefulSet as ReturnType<typeof vi.fn>)
+      .mock.calls[0][0].body;
+    expect(stsBody.spec.template.spec.imagePullSecrets).toEqual([
+      { name: "harbor-registry" },
+    ]);
+  });
 });
 
 describe("provisionInstance — rollback on failure", () => {
