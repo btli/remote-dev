@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Startup commands no longer lose their first character when oh-my-zsh's periodic auto-update prompt appears during shell init. `createSession` now suppresses shell-init update prompts (`DISABLE_AUTO_UPDATE`/`DISABLE_UPDATE_PROMPT`) and waits for the shell to settle before typing. (remote-dev-w75y)
+
 ### Added
 
 - Supervisor instance lifecycle depth (apps/supervisor): suspend/resume (StatefulSet scale 0↔1, PVC retained), pod-log tail and namespace-events read-only APIs (degrade gracefully with no cluster), rolling image rollout and grow-only PVC resize via PATCH /api/instances/:id, a steady-state reconciler that converges `ready`/`suspended` instances toward their desired replicas/image/size, an instance detail page with the audit log + metadata + live logs/events + a lifecycle action panel, and the persistentvolumeclaims patch/update RBAC grant for resize (remote-dev-jvcx.8).
