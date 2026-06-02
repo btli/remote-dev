@@ -162,22 +162,24 @@ npm install -g @anthropic-ai/claude-code
 bun install -g @anthropic-ai/claude-code`,
 
     codex: `# Install OpenAI Codex CLI
-npm install -g @openai/codex-cli
+npm install -g @openai/codex
 # Or with bun
-bun install -g @openai/codex-cli`,
+bun install -g @openai/codex`,
 
     gemini: `# Install Gemini CLI
 npm install -g @google/gemini-cli
 # Or with bun
 bun install -g @google/gemini-cli`,
 
-    antigravity: `# Install Antigravity CLI
-curl -sSL https://google.dev/antigravity/install | sh`,
+    antigravity: `# Install Antigravity CLI (command: agy)
+# NOTE: the documented installer URL is currently unavailable (404); CLI install is TBD.
+# Track https://antigravity.google/docs/cli-overview for an updated method.
+curl -fsSL https://google.dev/antigravity/install | sh`,
 
     opencode: `# Install OpenCode CLI
-npm install -g opencode
+npm install -g opencode-ai
 # Or with bun
-bun install -g opencode`,
+bun install -g opencode-ai`,
   };
 
   return instructions[provider];

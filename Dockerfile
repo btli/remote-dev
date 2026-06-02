@@ -198,42 +198,44 @@ RUN echo 'rdv ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/rdv \
     && grep -Eq '^[@#]include(dir)?[[:space:]]+/etc/sudoers\.d' /etc/sudoers \
     && visudo -cf /etc/sudoers.d/rdv
 
-# Bake the 5 agent CLIs onto the SYSTEM PATH (/usr/local/bin). Agents are
+# Bake the agent CLIs onto the SYSTEM PATH (/usr/local/bin). Agents are
 # spawned as the PTY shell command on the system PATH, so the CLIs MUST be
-# global/system-wide (a per-user/non-root install would not be found). These are
-# the project's DOCUMENTED install methods (docs/AGENTS.md §1 / getInstall-
-# Instructions): the four npm CLIs + the antigravity curl installer. Installing
+# global/system-wide (a per-user/non-root install would not be found). Installing
 # third-party agent CLIs this way is NOT project dependency management, so the
 # bun-only rule for project deps does not apply. node provides npm here and the
-# global prefix is /usr/local, so binaries land in /usr/local/bin.
+# global prefix is /usr/local, so binaries land in /usr/local/bin. The published
+# package names differ from the binary names: `@openai/codex` ships `codex` and
+# `opencode-ai` ships `opencode` (the bare `@openai/codex-cli`/`opencode` names
+# are 404 on npm — verified against the registry).
 RUN npm install -g \
         @anthropic-ai/claude-code \
-        @openai/codex-cli \
+        @openai/codex \
         @google/gemini-cli \
-        opencode
+        opencode-ai
 
-# Antigravity CLI (`agy`) via its documented curl installer. The installer's
-# drop location is not contractually fixed, so after running it we locate the
-# `agy` binary wherever it landed (common spots: /usr/local/bin, /root/.local/
-# bin, /root/.antigravity/bin, ~/.local/bin) and symlink it into /usr/local/bin
-# so it resolves on the system PATH for the `rdv` user. Best-effort: if the
-# installer is non-scriptable or the network is unavailable at build time, log
-# and continue — the hard `command -v` gate below still fails the build if `agy`
-# is genuinely absent, and the entrypoint auto-update retries it on a live box.
-RUN set -eux; \
-    (curl -sSL https://google.dev/antigravity/install | sh) || \
-      echo "WARN: antigravity installer returned non-zero; will try to locate agy anyway"; \
-    if ! command -v agy >/dev/null 2>&1; then \
-      agy_path="$(find /usr/local/bin /usr/bin /root /opt -type f -name agy 2>/dev/null | head -1 || true)"; \
-      if [ -n "$agy_path" ]; then ln -sf "$agy_path" /usr/local/bin/agy; fi; \
-    fi
+# Antigravity CLI (`agy`) — BEST-EFFORT only, and deliberately NOT hard-gated.
+# The documented installer URL (https://google.dev/antigravity/install) is
+# currently unverified/404 (it redirects to a non-script HTML page), so `agy`
+# cannot be reliably installed at build time. We still attempt it and, if the
+# binary lands somewhere, symlink it onto the system PATH — but ALL failure is
+# swallowed so it never fails the build. The entrypoint auto-update retries on a
+# live box, and the smoke gate below intentionally omits `agy`.
+RUN set -eu; \
+    ( (curl -fsSL https://google.dev/antigravity/install | sh) \
+        && if ! command -v agy >/dev/null 2>&1; then \
+             agy_path="$(find /usr/local/bin /usr/bin /root /opt -type f -name agy 2>/dev/null | head -1 || true)"; \
+             [ -n "$agy_path" ] && ln -sf "$agy_path" /usr/local/bin/agy; \
+           fi \
+    ) || echo "WARN: antigravity 'agy' install unavailable (installer URL 404); skipping — entrypoint auto-update will retry on a live box"
 
 # Build-time smoke check: fail the build if an agent CLI is missing from PATH so
 # a broken install surfaces here, not when an agent session can't find its CLI.
 # We check resolvability only (`command -v`) — NOT `<agent> --version`, which can
-# require auth/network and would make the build flaky.
+# require auth/network and would make the build flaky. `agy` is intentionally
+# EXCLUDED: its installer is currently unavailable (see above), so gating on it
+# would fail every build.
 RUN command -v claude && command -v codex && command -v gemini \
-    && command -v opencode && command -v agy
+    && command -v opencode
 
 WORKDIR /app
 

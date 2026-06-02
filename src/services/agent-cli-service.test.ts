@@ -34,7 +34,7 @@ describe("AgentCLIService", () => {
     it("returns installation instructions for codex", () => {
       const instructions = getInstallInstructions("codex");
       expect(instructions).toContain("npm install -g");
-      expect(instructions).toContain("codex-cli");
+      expect(instructions).toContain("@openai/codex");
     });
 
     it("returns installation instructions for gemini", () => {
@@ -52,7 +52,7 @@ describe("AgentCLIService", () => {
     it("returns installation instructions for opencode", () => {
       const instructions = getInstallInstructions("opencode");
       expect(instructions).toContain("npm install -g");
-      expect(instructions).toContain("opencode");
+      expect(instructions).toContain("opencode-ai");
     });
   });
 

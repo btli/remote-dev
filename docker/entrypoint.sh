@@ -152,14 +152,16 @@ echo "[entrypoint] kicking off background agent-CLI auto-update (non-blocking)"
     {
         sudo npm update -g \
             @anthropic-ai/claude-code \
-            @openai/codex-cli \
+            @openai/codex \
             @google/gemini-cli \
-            opencode
-        # Antigravity: use its own updater if present, else re-run the installer.
+            opencode-ai
+        # Antigravity: best-effort. Use its own updater if present, else try the
+        # installer (whose URL is currently 404 — this will simply no-op until it
+        # is restored). All errors are swallowed by the enclosing `set +e`.
         if command -v agy >/dev/null 2>&1 && agy update --help >/dev/null 2>&1; then
             agy update
         else
-            curl -sSL https://google.dev/antigravity/install | sh
+            curl -fsSL https://google.dev/antigravity/install | sh
         fi
     } >/tmp/agent-update.log 2>&1
 ) &
