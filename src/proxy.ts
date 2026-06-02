@@ -94,45 +94,65 @@ export async function proxy(request: NextRequest) {
 
   // No CF Access token - fall back to NextAuth.
   //
-  // We branch on whether the proxy can see the signing secret:
+  // We branch on whether we're running SCOPED (a standalone instance pod under
+  // `RDV_BASE_PATH`) or UNSCOPED (single-server / local dev / single-host prod).
+  // The discriminator is `INSTANCE_SLUG` (derived from the build-inlined
+  // BASE_PATH, so it IS reliable in the proxy realm). This matches
+  // `isUnscopedMode()` in src/lib/auth-cookies.ts: unscoped ⇔ INSTANCE_SLUG === "".
   //
-  // 1. SECRET PRESENT (single-server, local dev, single-host prod — and any
-  //    context where the proxy shares the main server's process.env): do the
-  //    full cryptographic validation. `getToken()` reads its cookie by name;
-  //    under `RDV_BASE_PATH` we rename the session cookie (see
-  //    src/lib/auth-cookies.ts) so the default name is no longer present and
-  //    `getToken()` would silently return null — every API call would 401.
-  //    Always pass the configured name. This path is byte-identical to before
-  //    (AC-1). (Gemini review: critical.)
+  // 1. UNSCOPED (single-server): do the full cryptographic validation via
+  //    `getToken()`. It reads its cookie by name; we always pass the configured
+  //    name. The main Node server captured `process.env.AUTH_SECRET`/`AUTH_URL`,
+  //    so the secret and the cookie-name prefix are both correct here and crypto
+  //    validation works. This path is byte-identical to before (AC-1).
   //
-  // 2. SECRET ABSENT (the Next standalone *instance proxy* realm): the proxy
-  //    runs in a separate realm that has neither the container's runtime
-  //    `process.env.AUTH_SECRET` nor a shared `globalThis` with the Node server
-  //    that captured it (proven in-pod). Without the secret it cannot decrypt
-  //    ANY valid session cookie, so `getToken()` always returns null and OIDC
-  //    login loops. It also can't read `AUTH_URL`, so it can't tell whether the
-  //    real cookie carries the `__Secure-` prefix. Fall back to a PRESENCE gate:
-  //    treat the request as logged-in if EITHER candidate scoped cookie name is
-  //    present. Real authorization is still enforced server-side (route handlers
-  //    / server components via `getCurrentUser()`), which DO have the secret —
-  //    the edge only needs to gate on session-cookie presence here.
-  const secret = process.env.AUTH_SECRET;
+  // 2. SCOPED (the Next standalone *instance proxy* realm): the middleware realm
+  //    cannot reliably run `getToken()`. It has neither the container's runtime
+  //    `process.env.AUTH_SECRET` (it is absent — or, worse, spuriously truthy —
+  //    and not the value the Node server actually signed with) nor a usable
+  //    `process.env.AUTH_URL` (empty → it would compute the UNPREFIXED cookie
+  //    name while the real cookie is `__Secure-`-prefixed). Either way
+  //    `getToken()` returns null for a valid session and OIDC login loops
+  //    (proven in-pod). So gate on session-cookie PRESENCE instead: treat the
+  //    request as logged-in if EITHER candidate scoped cookie name is present.
+  //    Real authorization is still enforced server-side (route handlers / server
+  //    components via `getCurrentUser()`), which DO have the secret — the edge
+  //    only needs a presence gate here.
+  const scoped = INSTANCE_SLUG.length > 0;
   let isLoggedIn: boolean;
-  if (secret) {
-    const token = await getToken({
-      req: request,
-      secret,
-      cookieName: getSessionCookieName(),
-    });
-    isLoggedIn = !!token;
-  } else {
+  if (scoped) {
     const candidates = getSessionCookieNameCandidates();
     isLoggedIn = candidates.some((name) => request.cookies.has(name));
     log.debug(
-      "AUTH_SECRET unavailable in proxy realm; using session-cookie presence gate",
+      "scoped instance proxy realm; using session-cookie presence gate (getToken is unreliable here)",
       { isLoggedIn, candidateCount: candidates.length, pathname },
     );
+  } else {
+    const token = await getToken({
+      req: request,
+      secret: process.env.AUTH_SECRET,
+      cookieName: getSessionCookieName(),
+    });
+    isLoggedIn = !!token;
   }
+
+  // TEMP DEBUG (remove): surface what the proxy realm actually sees so a single
+  // in-pod probe of /dev (with and without a session cookie) can confirm the
+  // gate decision. NAMES + booleans only — never cookie/secret VALUES.
+  const dbgHeaders: Record<string, string> = {
+    "x-rdv-dbg-mode": scoped ? "scoped" : "unscoped",
+    "x-rdv-dbg-loggedin": String(isLoggedIn),
+    "x-rdv-dbg-secret": process.env.AUTH_SECRET ? "present" : "absent",
+    "x-rdv-dbg-cookies": request.cookies
+      .getAll()
+      .map((c) => c.name)
+      .join(","),
+    "x-rdv-dbg-candidates": getSessionCookieNameCandidates().join(","),
+  };
+  const tagDebug = (response: NextResponse): NextResponse => {
+    for (const [k, v] of Object.entries(dbgHeaders)) response.headers.set(k, v);
+    return response;
+  };
 
   const isLoginPage = pathname === "/login";
   const isApiRoute = pathname.startsWith("/api");
@@ -144,11 +164,13 @@ export async function proxy(request: NextRequest) {
       .get("authorization")
       ?.startsWith("Bearer ");
     if (!isLoggedIn && !hasApiKeyHeader) {
-      return tagInstance(
-        NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+      return tagDebug(
+        tagInstance(
+          NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+        )
       );
     }
-    return tagInstance(NextResponse.next());
+    return tagDebug(tagInstance(NextResponse.next()));
   }
 
   // Protect pages.
@@ -158,14 +180,18 @@ export async function proxy(request: NextRequest) {
   // `https://host/login` — which 404s under `RDV_BASE_PATH=/alpha`. Use
   // `prefixPath()` to put the prefix back on every Location header.
   if (!isLoggedIn && !isLoginPage) {
-    return tagInstance(
-      NextResponse.redirect(new URL(prefixPath("/login"), request.url))
+    return tagDebug(
+      tagInstance(
+        NextResponse.redirect(new URL(prefixPath("/login"), request.url))
+      )
     );
   }
 
   if (isLoggedIn && isLoginPage) {
-    return tagInstance(
-      NextResponse.redirect(new URL(prefixPath("/"), request.url))
+    return tagDebug(
+      tagInstance(
+        NextResponse.redirect(new URL(prefixPath("/"), request.url))
+      )
     );
   }
 
@@ -173,7 +199,9 @@ export async function proxy(request: NextRequest) {
   // heavy providers on /login. See src/app/layout.tsx.
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-pathname", pathname);
-  return tagInstance(NextResponse.next({ request: { headers: requestHeaders } }));
+  return tagDebug(
+    tagInstance(NextResponse.next({ request: { headers: requestHeaders } }))
+  );
 }
 
 export const config = {
