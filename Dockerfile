@@ -98,6 +98,18 @@ ENV NODE_ENV=production \
 RUN bun run build
 RUN bun run terminal:build
 
+# Generate the instance DB bootstrap schema (remote-dev-fmcq). drizzle-kit
+# (a devDep) is available in this build stage but NOT in the slim runtime, and
+# the base app has no full migration baseline (only incremental 0013+). Export
+# the complete schema ONCE here as idempotent `CREATE ... IF NOT EXISTS` so the
+# entrypoint can apply it via @libsql/client on a fresh per-instance PVC. Without
+# this a fresh instance has no tables → the scheduler can't start → readyz fails.
+RUN bunx drizzle-kit export --config drizzle.config.ts \
+      | sed -E 's/^CREATE TABLE /CREATE TABLE IF NOT EXISTS /; s/^CREATE INDEX /CREATE INDEX IF NOT EXISTS /; s/^CREATE UNIQUE INDEX /CREATE UNIQUE INDEX IF NOT EXISTS /' \
+      > /app/instance-bootstrap-schema.sql \
+    && test -s /app/instance-bootstrap-schema.sql \
+    && grep -q 'CREATE TABLE IF NOT EXISTS' /app/instance-bootstrap-schema.sql
+
 # Stage the native modules at a known path. The terminal server bundle is
 # built with `--external node-pty` (see scripts/build-terminal.ts), so the
 # Next.js standalone output ships better-sqlite3 in `.next/standalone/node_modules`
@@ -178,6 +190,9 @@ COPY --from=build --chown=rdv:rdv /app/.next/static ./.next/static
 COPY --from=build --chown=rdv:rdv /app/public ./public
 COPY --from=build --chown=rdv:rdv /app/dist-terminal ./dist-terminal
 COPY --from=build --chown=rdv:rdv /app/scripts ./scripts
+# Baked instance DB bootstrap schema (remote-dev-fmcq) — applied by the
+# entrypoint via scripts/instance-bootstrap-db.mjs before the servers start.
+COPY --from=build --chown=rdv:rdv /app/instance-bootstrap-schema.sql ./instance-bootstrap-schema.sql
 COPY --from=build --chown=rdv:rdv /app/drizzle ./drizzle
 COPY --from=build --chown=rdv:rdv /app/package.json ./package.json
 # src + tsconfig are needed so `bun run db:seed` can resolve @/lib/paths

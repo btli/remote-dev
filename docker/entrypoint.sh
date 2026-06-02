@@ -117,6 +117,17 @@ echo "[entrypoint] basePath materialization complete"
 # We deliberately do not run it from the entrypoint because the seed script
 # lives at src/db/seed.ts and is not shipped in the standalone runtime image.
 
+# Bootstrap the instance DB schema (remote-dev-fmcq) on a fresh per-instance PVC.
+# Idempotent (CREATE ... IF NOT EXISTS) so it is a no-op on an existing DB. MUST
+# use node, not bun (bun crashes loading the @libsql native binding). Fail the
+# boot loudly on error rather than serving a schemaless instance that never
+# reaches readyz.
+echo "[entrypoint] bootstrapping instance DB schema"
+if ! node /app/scripts/instance-bootstrap-db.mjs; then
+  echo "[entrypoint] FATAL: instance DB schema bootstrap failed" >&2
+  exit 1
+fi
+
 # Start the terminal server in the background.
 echo "[entrypoint] starting terminal server on port ${TERMINAL_PORT}"
 node ./dist-terminal/index.js &
