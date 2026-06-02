@@ -62,6 +62,14 @@ function buildOidcProvider(): Provider | undefined {
     // default-denies any sign-in that arrives without an email, so without
     // this scope a correctly-allowlisted user would be locked out.
     authorization: { params: { scope: "openid email profile" } },
+    // Link an OIDC login to a pre-existing user with the same (IdP-verified)
+    // email instead of erroring with OAuthAccountNotLinked. Safe in this
+    // deployment: a single trusted self-hosted Authentik issues all identities,
+    // emails are verified by the IdP, and the `signIn` callback already
+    // default-denies any email not in the `authorized_user` allow-list. Without
+    // this, seeded/pre-existing user rows (e.g. created by db seeding or the
+    // getAuthSession auto-create path) block the user's first OIDC login.
+    allowDangerousEmailAccountLinking: true,
   };
 }
 
