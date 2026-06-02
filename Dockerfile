@@ -156,6 +156,11 @@ FROM node:${NODE_VERSION} AS runtime
 #   ca-certificates — TLS
 #   tini         — PID 1 / zombie reaper
 #   curl, jq     — diagnostic + entrypoint use
+#   sudo         — instances are real dev environments: agents must be able to
+#                  `sudo apt-get install …` their own toolchains. apt is kept
+#                  fully functional (keyring + sources intact); the package
+#                  index is pruned (`rm -rf /var/lib/apt/lists/*`) to keep the
+#                  image small — agents run `sudo apt-get update` first.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         tmux \
         git \
@@ -165,6 +170,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         jq \
         less \
+        sudo \
     && (curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
           | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
         && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
@@ -179,6 +185,55 @@ COPY --from=build-deps /usr/local/bin/bun /usr/local/bin/bun
 RUN useradd --create-home --shell /bin/bash --uid 10001 rdv \
     && mkdir -p /var/lib/rdv \
     && chown -R rdv:rdv /var/lib/rdv
+
+# Passwordless sudo for the non-root runtime user. DELIBERATE dev-environment
+# choice: provisioned instances are single-tenant homelab dev boxes whose whole
+# purpose is to let an agent (running as `rdv`) install its own system tooling
+# via `sudo apt-get install …`. The drop-in keeps /etc/sudoers untouched; we
+# also assert /etc/sudoers actually includes /etc/sudoers.d (Debian's default
+# `@includedir /etc/sudoers.d`) so the grant can't silently no-op on a base-
+# image change.
+RUN echo 'rdv ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/rdv \
+    && chmod 0440 /etc/sudoers.d/rdv \
+    && grep -Eq '^[@#]include(dir)?[[:space:]]+/etc/sudoers\.d' /etc/sudoers \
+    && visudo -cf /etc/sudoers.d/rdv
+
+# Bake the 5 agent CLIs onto the SYSTEM PATH (/usr/local/bin). Agents are
+# spawned as the PTY shell command on the system PATH, so the CLIs MUST be
+# global/system-wide (a per-user/non-root install would not be found). These are
+# the project's DOCUMENTED install methods (docs/AGENTS.md §1 / getInstall-
+# Instructions): the four npm CLIs + the antigravity curl installer. Installing
+# third-party agent CLIs this way is NOT project dependency management, so the
+# bun-only rule for project deps does not apply. node provides npm here and the
+# global prefix is /usr/local, so binaries land in /usr/local/bin.
+RUN npm install -g \
+        @anthropic-ai/claude-code \
+        @openai/codex-cli \
+        @google/gemini-cli \
+        opencode
+
+# Antigravity CLI (`agy`) via its documented curl installer. The installer's
+# drop location is not contractually fixed, so after running it we locate the
+# `agy` binary wherever it landed (common spots: /usr/local/bin, /root/.local/
+# bin, /root/.antigravity/bin, ~/.local/bin) and symlink it into /usr/local/bin
+# so it resolves on the system PATH for the `rdv` user. Best-effort: if the
+# installer is non-scriptable or the network is unavailable at build time, log
+# and continue — the hard `command -v` gate below still fails the build if `agy`
+# is genuinely absent, and the entrypoint auto-update retries it on a live box.
+RUN set -eux; \
+    (curl -sSL https://google.dev/antigravity/install | sh) || \
+      echo "WARN: antigravity installer returned non-zero; will try to locate agy anyway"; \
+    if ! command -v agy >/dev/null 2>&1; then \
+      agy_path="$(find /usr/local/bin /usr/bin /root /opt -type f -name agy 2>/dev/null | head -1 || true)"; \
+      if [ -n "$agy_path" ]; then ln -sf "$agy_path" /usr/local/bin/agy; fi; \
+    fi
+
+# Build-time smoke check: fail the build if an agent CLI is missing from PATH so
+# a broken install surfaces here, not when an agent session can't find its CLI.
+# We check resolvability only (`command -v`) — NOT `<agent> --version`, which can
+# require auth/network and would make the build flaky.
+RUN command -v claude && command -v codex && command -v gemini \
+    && command -v opencode && command -v agy
 
 WORKDIR /app
 

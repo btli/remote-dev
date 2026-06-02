@@ -138,6 +138,33 @@ echo "[entrypoint] starting next.js on port ${PORT}"
 node ./server.js &
 NEXT_PID=$!
 
+# Best-effort, NON-BLOCKING agent-CLI auto-update. The user wants provisioned
+# instances to keep their agents current; the CLIs are baked at build time, but
+# a long-lived instance should pick up new releases. We do this AFTER the servers
+# are up so it never delays readiness, fully backgrounded, with every error
+# swallowed — a registry hiccup or offline box must NEVER fail or stall the boot.
+# Output goes to /tmp/agent-update.log for debugging. Runs in a backgrounded,
+# `set +e` subshell so nothing inside it can trip the script's `set -euo
+# pipefail` or affect the foreground boot path.
+echo "[entrypoint] kicking off background agent-CLI auto-update (non-blocking)"
+(
+    set +e
+    {
+        sudo npm update -g \
+            @anthropic-ai/claude-code \
+            @openai/codex-cli \
+            @google/gemini-cli \
+            opencode
+        # Antigravity: use its own updater if present, else re-run the installer.
+        if command -v agy >/dev/null 2>&1 && agy update --help >/dev/null 2>&1; then
+            agy update
+        else
+            curl -sSL https://google.dev/antigravity/install | sh
+        fi
+    } >/tmp/agent-update.log 2>&1
+) &
+disown 2>/dev/null || true
+
 # Propagate signals to both children with a hard timeout. K8s default
 # terminationGracePeriodSeconds=30 sends SIGTERM, waits, then SIGKILLs at
 # t=30s. We force-kill at t=25s so we exit cleanly under our own control
