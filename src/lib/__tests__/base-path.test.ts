@@ -87,26 +87,10 @@ describe("base-path module", () => {
     expect(mod.INSTANCE_SLUG).toBe("custom-slug");
   });
 
-  it("falls back to globalThis snapshot for RDV_INSTANCE_SLUG when absent from process.env (standalone proxy)", async () => {
-    // In the Next standalone proxy, process.env.RDV_INSTANCE_SLUG can be empty
-    // even though basePath is inlined. INSTANCE_SLUG reads it via runtimeEnv,
-    // which falls back to the instrumentation snapshot. Here the explicit slug
-    // ("custom") differs from BASE_PATH's last segment ("alpha"), so the global
-    // fallback is observable (without it we'd get "alpha").
-    globalThis.__RDV_RUNTIME_ENV = { RDV_INSTANCE_SLUG: "custom" };
-    try {
-      const mod = await loadBasePath({
-        RDV_BASE_PATH: "/alpha",
-        RDV_INSTANCE_SLUG: undefined,
-      });
-      expect(mod.INSTANCE_SLUG).toBe("custom");
-    } finally {
-      delete globalThis.__RDV_RUNTIME_ENV;
-    }
-  });
-
-  it("falls back to BASE_PATH last segment when slug absent from BOTH process.env and global", async () => {
-    delete globalThis.__RDV_RUNTIME_ENV;
+  it("derives slug from BASE_PATH last segment when RDV_INSTANCE_SLUG is absent (standalone proxy)", async () => {
+    // The Next standalone proxy realm has no runtime process.env.RDV_INSTANCE_SLUG
+    // but DOES have BASE_PATH (build-inlined via the /rdvslug sentinel), so the
+    // derive below covers it.
     const mod = await loadBasePath({
       RDV_BASE_PATH: "/alpha",
       RDV_INSTANCE_SLUG: undefined,
@@ -114,17 +98,14 @@ describe("base-path module", () => {
     expect(mod.INSTANCE_SLUG).toBe("alpha");
   });
 
-  it("live process.env.RDV_INSTANCE_SLUG wins over the global (single-server unaffected)", async () => {
-    globalThis.__RDV_RUNTIME_ENV = { RDV_INSTANCE_SLUG: "stale" };
-    try {
-      const mod = await loadBasePath({
-        RDV_BASE_PATH: "/alpha",
-        RDV_INSTANCE_SLUG: "live",
-      });
-      expect(mod.INSTANCE_SLUG).toBe("live");
-    } finally {
-      delete globalThis.__RDV_RUNTIME_ENV;
-    }
+  it("falls through to the derive when RDV_INSTANCE_SLUG is an empty string (|| guard)", async () => {
+    // We use `||` not `??` so an explicitly-empty slug doesn't pin INSTANCE_SLUG
+    // to "" — it falls back to the BASE_PATH last-segment derive.
+    const mod = await loadBasePath({
+      RDV_BASE_PATH: "/alpha",
+      RDV_INSTANCE_SLUG: "",
+    });
+    expect(mod.INSTANCE_SLUG).toBe("alpha");
   });
 
   it("rejects malformed prefix missing leading slash", async () => {

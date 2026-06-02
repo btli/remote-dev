@@ -11,8 +11,6 @@
  * `await import("../base-path")` (see `src/lib/__tests__/base-path.test.ts`).
  */
 
-import { runtimeEnv } from "@/lib/runtime-env";
-
 const RAW = process.env.RDV_BASE_PATH ?? "";
 
 function validateBasePath(input: string): string {
@@ -46,18 +44,16 @@ export const BASE_PATH: string = validateBasePath(RAW);
  * Human-readable instance name. Used in cookie names, response headers,
  * and (eventually) UI titles. Defaults to the last segment of BASE_PATH.
  *
- * `RDV_INSTANCE_SLUG` is read via `runtimeEnv()` (not bare `process.env`): this
- * module is evaluated inside the Next standalone proxy too, where
- * `process.env.RDV_INSTANCE_SLUG` is not reliably populated. An empty read there
- * would change the derived slug used in `getSessionCookieName()` (the cookie
- * salt), breaking the proxy's `getToken()`. The fallback to the startup snapshot
- * (see src/lib/runtime-env.ts) keeps it correct; `BASE_PATH` remains a direct
- * read because it is build-time inlined via the `/rdvslug` sentinel. The
- * last-segment-of-BASE_PATH default still applies when the slug is unset in
- * BOTH sources. Single-server is unaffected (process.env is live there).
+ * `RDV_INSTANCE_SLUG` is read directly from `process.env`. In the Next
+ * standalone proxy realm `process.env.RDV_INSTANCE_SLUG` is not reliably
+ * populated, but `BASE_PATH` IS available there (build-time inlined via the
+ * `/rdvslug` sentinel — see `next.config.ts`), so the last-segment-of-BASE_PATH
+ * derive below still yields the correct slug in the proxy. We use `||` (not
+ * `??`) so an explicitly-empty `RDV_INSTANCE_SLUG=""` also falls through to the
+ * derive rather than pinning the slug to "".
  */
 export const INSTANCE_SLUG: string =
-  runtimeEnv("RDV_INSTANCE_SLUG") ??
+  process.env.RDV_INSTANCE_SLUG ||
   (BASE_PATH ? (BASE_PATH.split("/").filter(Boolean).at(-1) ?? "") : "");
 
 /** Cookie path: must be "/" when no prefix, else the prefix itself. */

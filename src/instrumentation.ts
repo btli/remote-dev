@@ -6,16 +6,6 @@
 export async function register() {
   // Only run on server (not edge runtime)
   if (process.env.NEXT_RUNTIME === "nodejs") {
-    // Snapshot runtime-only env (AUTH_SECRET / AUTH_URL / RDV_INSTANCE_SLUG)
-    // into globalThis BEFORE anything else. In Next standalone the proxy (Node
-    // middleware) can't reliably read these from process.env; it falls back to
-    // this snapshot via @/lib/runtime-env. Runs in the same process + globalThis
-    // that later loads the proxy bundle, and before any request is served.
-    // See src/lib/runtime-env.ts for the full rationale. No-op effect on
-    // single-server (the proxy shares process.env there).
-    const { captureRuntimeEnv } = await import("@/lib/runtime-env");
-    captureRuntimeEnv();
-
     const { createLogger } = await import("@/lib/logger");
     const log = createLogger("Startup");
 

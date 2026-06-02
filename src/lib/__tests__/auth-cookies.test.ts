@@ -317,66 +317,78 @@ describe("getSessionCookieName", () => {
   });
 });
 
-describe("getSessionCookieName — standalone proxy runtime-env fallback", () => {
-  // Reproduces the Next standalone middleware bug: the proxy computes the
-  // session-cookie name (the getToken salt) but its process.env lacks AUTH_URL /
-  // RDV_INSTANCE_SLUG. Without the runtime-env fallback it derives the WRONG
-  // name (unprefixed, and possibly the wrong slug), so getToken() rejects the
-  // valid scoped cookie and OIDC login loops. With the fallback to the
-  // instrumentation snapshot in globalThis.__RDV_RUNTIME_ENV, it derives the
-  // SAME name the auth handler wrote.
-  //
-  // RDV_BASE_PATH stays set here: it is build-time inlined via the /rdvslug
-  // sentinel, so the proxy always sees the real basePath literal — only
-  // AUTH_URL / RDV_INSTANCE_SLUG go missing from the proxy's process.env.
+describe("getSessionCookieNameCandidates", () => {
+  // The proxy realm has neither the secret nor AUTH_URL, so it can't pick the
+  // single right cookie name. getSessionCookieNameCandidates() returns BOTH the
+  // __Secure- and bare scoped names so the proxy can presence-gate on whichever
+  // the auth handler actually set. (For the unscoped/single-server case it
+  // returns just the one default name, preserving AC-1.)
   afterEach(() => {
     restoreEnv("RDV_BASE_PATH", ORIGINAL_BASE_PATH);
     restoreEnv("RDV_INSTANCE_SLUG", ORIGINAL_INSTANCE_SLUG);
     restoreEnv("AUTH_URL", ORIGINAL_AUTH_URL);
     restoreEnv("NEXTAUTH_URL", ORIGINAL_NEXTAUTH_URL);
-    delete globalThis.__RDV_RUNTIME_ENV;
     vi.resetModules();
   });
 
-  it("derives the correct __Secure- scoped name from the global when AUTH_URL + slug are absent from process.env", async () => {
-    globalThis.__RDV_RUNTIME_ENV = {
-      AUTH_URL: "https://example.com/dev",
-      RDV_INSTANCE_SLUG: "dev",
-    };
-    // basePath is inlined (present); AUTH_URL/slug are NOT in process.env.
+  it("returns BOTH the __Secure- and bare scoped names when scoped", async () => {
+    // AUTH_URL is intentionally absent (the proxy realm has no AUTH_URL); the
+    // candidate list must NOT depend on it — both prefixes are returned.
     const mod = await loadCookies({
       RDV_BASE_PATH: "/dev",
       RDV_INSTANCE_SLUG: undefined,
       AUTH_URL: undefined,
       NEXTAUTH_URL: undefined,
     });
-    expect(mod.getSessionCookieName()).toBe("__Secure-rdv-dev-session-token");
+    expect(mod.getSessionCookieNameCandidates()).toEqual([
+      "__Secure-rdv-dev-session-token",
+      "rdv-dev-session-token",
+    ]);
   });
 
-  it("without the global it regresses to the WRONG (unprefixed) name — proving the fallback is load-bearing", async () => {
-    // No global, AUTH_URL absent from process.env → isSecureScheme()=false →
-    // unprefixed name. This is exactly the bug state.
-    delete globalThis.__RDV_RUNTIME_ENV;
-    const mod = await loadCookies({
-      RDV_BASE_PATH: "/dev",
-      RDV_INSTANCE_SLUG: undefined,
-      AUTH_URL: undefined,
-      NEXTAUTH_URL: undefined,
-    });
-    // slug still derives from BASE_PATH's last segment, but the prefix is wrong.
-    expect(mod.getSessionCookieName()).toBe("rdv-dev-session-token");
-  });
-
-  it("a live process.env.AUTH_URL still wins over the global (single-server unaffected)", async () => {
-    globalThis.__RDV_RUNTIME_ENV = { AUTH_URL: "https://stale.example/dev" };
+  it("returns both scoped names regardless of scheme (https env present)", async () => {
     const mod = await loadCookies({
       RDV_BASE_PATH: "/dev",
       RDV_INSTANCE_SLUG: undefined,
       AUTH_URL: "https://example.com/dev",
-      NEXTAUTH_URL: undefined,
     });
-    // https from the LIVE env → secure prefix; value differs from global but
-    // both are https so the assertion is on the prefix presence.
-    expect(mod.getSessionCookieName()).toBe("__Secure-rdv-dev-session-token");
+    expect(mod.getSessionCookieNameCandidates()).toEqual([
+      "__Secure-rdv-dev-session-token",
+      "rdv-dev-session-token",
+    ]);
+  });
+
+  it("honors an explicit RDV_INSTANCE_SLUG override in both candidates", async () => {
+    const mod = await loadCookies({
+      RDV_BASE_PATH: "/alpha",
+      RDV_INSTANCE_SLUG: "custom",
+      AUTH_URL: undefined,
+    });
+    expect(mod.getSessionCookieNameCandidates()).toEqual([
+      "__Secure-rdv-custom-session-token",
+      "rdv-custom-session-token",
+    ]);
+  });
+
+  it("returns a single AuthJS https default when unscoped (single-server, AC-1)", async () => {
+    const mod = await loadCookies({
+      RDV_BASE_PATH: "",
+      RDV_INSTANCE_SLUG: undefined,
+      AUTH_URL: "https://example.com",
+    });
+    expect(mod.getSessionCookieNameCandidates()).toEqual([
+      "__Secure-authjs.session-token",
+    ]);
+  });
+
+  it("returns a single AuthJS http default when unscoped under http", async () => {
+    const mod = await loadCookies({
+      RDV_BASE_PATH: "",
+      RDV_INSTANCE_SLUG: undefined,
+      AUTH_URL: "http://localhost:6001",
+    });
+    expect(mod.getSessionCookieNameCandidates()).toEqual([
+      "authjs.session-token",
+    ]);
   });
 });

@@ -41,7 +41,6 @@
 
 import type { NextAuthConfig } from "next-auth";
 import { COOKIE_PATH, INSTANCE_SLUG } from "@/lib/base-path";
-import { runtimeEnv } from "@/lib/runtime-env";
 
 // Derive CookiesOptions from NextAuthConfig so we stay independent of
 // @auth/core peer-dep version drift. NextAuthConfig["cookies"] is the
@@ -55,17 +54,16 @@ type CookiesOptions = Required<NonNullable<NextAuthConfig["cookies"]>>;
  * True when `AUTH_URL` (or legacy `NEXTAUTH_URL`) advertises https. Drives both
  * the `secure` flag on every cookie and the `__Secure-` / `__Host-` name prefix.
  *
- * Read via `runtimeEnv()` (not bare `process.env`): `getSessionCookieName()` is
- * called from the Next standalone proxy, where `process.env.AUTH_URL` is not
- * reliably populated. If it read empty there, the proxy would compute the
- * UNPREFIXED cookie name (`rdv-<slug>-…`) while the https auth handler wrote the
- * `__Secure-` one — a name (hence salt) mismatch that makes `getToken()` reject
- * the valid cookie. The fallback to the instrumentation snapshot keeps the proxy
- * and the auth handler in agreement. Single-server is unaffected (process.env is
- * live there). See src/lib/runtime-env.ts.
+ * Note: this reads `process.env` directly and is therefore only reliable in the
+ * main Node server (where `src/auth.ts` runs and writes the cookies). In the
+ * Next standalone proxy realm `process.env.AUTH_URL` is empty, so the proxy must
+ * NOT use this to pick a single cookie name — it cannot tell secure from bare.
+ * That is why the proxy uses {@link getSessionCookieNameCandidates} (which
+ * returns BOTH the `__Secure-`-prefixed and the bare scoped names) for its
+ * presence check instead of {@link getSessionCookieName}.
  */
 function isSecureScheme(): boolean {
-  const url = runtimeEnv("AUTH_URL") ?? runtimeEnv("NEXTAUTH_URL") ?? "";
+  const url = process.env.AUTH_URL ?? process.env.NEXTAUTH_URL ?? "";
   return url.startsWith("https://");
 }
 
@@ -113,6 +111,41 @@ export function getSessionCookieName(): string {
     return secure ? "__Secure-authjs.session-token" : "authjs.session-token";
   }
   return scopedName(INSTANCE_SLUG, "session-token", "__Secure-", secure);
+}
+
+/**
+ * Candidate session-cookie names to check for *presence* when the caller cannot
+ * rely on `isSecureScheme()` to pick the right one.
+ *
+ * The Next standalone **proxy** realm has neither the container's runtime
+ * `process.env.AUTH_URL` nor the secret, so it cannot (a) cryptographically
+ * validate the session via `getToken()`, nor (b) tell whether the real cookie
+ * carries the `__Secure-` prefix. `INSTANCE_SLUG` IS available there (derived
+ * from the build-inlined `BASE_PATH`), so the cookie *name minus the prefix* is
+ * known — we just don't know the prefix. This helper therefore returns BOTH the
+ * `__Secure-`-prefixed and the bare scoped names when scoped, so the proxy can
+ * presence-gate by checking whichever the auth handler actually set:
+ *
+ *   scoped:    ["__Secure-rdv-<slug>-session-token", "rdv-<slug>-session-token"]
+ *   unscoped:  ["__Secure-authjs.session-token"]  (https)
+ *              ["authjs.session-token"]           (http)
+ *
+ * In the unscoped (single-server) case `isSecureScheme()` IS reliable (the main
+ * server reads the live `process.env.AUTH_URL`), so a single default name is
+ * returned — preserving byte-identical behavior (AC-1).
+ *
+ * This is a PRESENCE check only; real authorization is still enforced
+ * server-side (route handlers / server components via `getCurrentUser()`).
+ */
+export function getSessionCookieNameCandidates(): string[] {
+  if (isUnscopedMode()) {
+    return [getSessionCookieName()];
+  }
+  // Scoped: prefix can't be reliably detected in the proxy realm, so offer both.
+  return [
+    `__Secure-rdv-${INSTANCE_SLUG}-session-token`,
+    `rdv-${INSTANCE_SLUG}-session-token`,
+  ];
 }
 
 /**

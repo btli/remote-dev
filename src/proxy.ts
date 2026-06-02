@@ -5,9 +5,14 @@ import {
   validateAccessJWT,
   getAccessToken,
 } from "@/lib/cloudflare-access";
-import { getSessionCookieName } from "@/lib/auth-cookies";
+import {
+  getSessionCookieName,
+  getSessionCookieNameCandidates,
+} from "@/lib/auth-cookies";
 import { INSTANCE_SLUG, prefixPath } from "@/lib/base-path";
-import { runtimeEnv } from "@/lib/runtime-env";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("proxy");
 
 /**
  * Proxy handler for authentication at the network boundary.
@@ -87,29 +92,48 @@ export async function proxy(request: NextRequest) {
     );
   }
 
-  // No CF Access token - fall back to NextAuth for local development.
+  // No CF Access token - fall back to NextAuth.
   //
-  // `getToken()` reads its cookie by name; under `RDV_BASE_PATH` we rename the
-  // session cookie (see src/lib/auth-cookies.ts) so the default name
-  // `__Secure-authjs.session-token` is no longer present and `getToken()` would
-  // silently return null — every API call would 401. Always pass the configured
-  // name so this path keeps working in both single-server and multi-instance
-  // deployments. (Gemini review: critical.)
+  // We branch on whether the proxy can see the signing secret:
   //
-  // `secret` is read via `runtimeEnv()` (not bare `process.env.AUTH_SECRET`):
-  // in Next standalone the proxy (Node middleware) does not reliably receive the
-  // container's runtime AUTH_SECRET, so getToken() would derive the wrong key and
-  // reject the valid scoped cookie — bouncing OIDC login in a loop. `runtimeEnv`
-  // prefers `process.env` and falls back to the startup snapshot that
-  // instrumentation captured (see src/lib/runtime-env.ts). Single-server behavior
-  // is unchanged: there the proxy shares process.env so the fallback is inert.
-  const token = await getToken({
-    req: request,
-    secret: runtimeEnv("AUTH_SECRET"),
-    cookieName: getSessionCookieName(),
-  });
+  // 1. SECRET PRESENT (single-server, local dev, single-host prod — and any
+  //    context where the proxy shares the main server's process.env): do the
+  //    full cryptographic validation. `getToken()` reads its cookie by name;
+  //    under `RDV_BASE_PATH` we rename the session cookie (see
+  //    src/lib/auth-cookies.ts) so the default name is no longer present and
+  //    `getToken()` would silently return null — every API call would 401.
+  //    Always pass the configured name. This path is byte-identical to before
+  //    (AC-1). (Gemini review: critical.)
+  //
+  // 2. SECRET ABSENT (the Next standalone *instance proxy* realm): the proxy
+  //    runs in a separate realm that has neither the container's runtime
+  //    `process.env.AUTH_SECRET` nor a shared `globalThis` with the Node server
+  //    that captured it (proven in-pod). Without the secret it cannot decrypt
+  //    ANY valid session cookie, so `getToken()` always returns null and OIDC
+  //    login loops. It also can't read `AUTH_URL`, so it can't tell whether the
+  //    real cookie carries the `__Secure-` prefix. Fall back to a PRESENCE gate:
+  //    treat the request as logged-in if EITHER candidate scoped cookie name is
+  //    present. Real authorization is still enforced server-side (route handlers
+  //    / server components via `getCurrentUser()`), which DO have the secret —
+  //    the edge only needs to gate on session-cookie presence here.
+  const secret = process.env.AUTH_SECRET;
+  let isLoggedIn: boolean;
+  if (secret) {
+    const token = await getToken({
+      req: request,
+      secret,
+      cookieName: getSessionCookieName(),
+    });
+    isLoggedIn = !!token;
+  } else {
+    const candidates = getSessionCookieNameCandidates();
+    isLoggedIn = candidates.some((name) => request.cookies.has(name));
+    log.debug(
+      "AUTH_SECRET unavailable in proxy realm; using session-cookie presence gate",
+      { isLoggedIn, candidateCount: candidates.length, pathname },
+    );
+  }
 
-  const isLoggedIn = !!token;
   const isLoginPage = pathname === "/login";
   const isApiRoute = pathname.startsWith("/api");
 
