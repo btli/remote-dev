@@ -12,8 +12,58 @@ import { GITHUB_SCOPE_STRING } from "@/lib/github-scopes";
 import { buildScopedCookies } from "@/lib/auth-cookies";
 import { BASE_PATH } from "@/lib/base-path";
 import type { Adapter, AdapterAccount } from "next-auth/adapters";
+import type { Provider } from "next-auth/providers";
 
 const log = createLogger("Auth");
+
+/**
+ * Stable provider id for the generic OIDC provider. Referenced everywhere the
+ * id matters: the provider object, the `signIn` allowlist gate, the login
+ * button (`signIn("oidc")`), and the OAuth callback URL
+ * (`/api/auth/callback/oidc`).
+ */
+const OIDC_PROVIDER_ID = "oidc";
+
+/**
+ * Generic, env-driven OpenID Connect provider.
+ *
+ * Enabled only when `OIDC_ISSUER`, `OIDC_CLIENT_ID`, and `OIDC_CLIENT_SECRET`
+ * are all set. Endpoints are auto-discovered from
+ * `{OIDC_ISSUER}/.well-known/openid-configuration`. The display label
+ * (`OIDC_NAME`, default "OIDC") is also surfaced to the client login button
+ * via `NEXT_PUBLIC_OIDC_NAME`.
+ *
+ * Security: like GitHub, an OIDC sign-in is default-denied — the `signIn`
+ * callback rejects it unless the user's email is present in `authorizedUsers`.
+ * Returns `undefined` when not configured so the provider is simply omitted
+ * from the list (no everyone-allowed branch is ever registered).
+ */
+function buildOidcProvider(): Provider | undefined {
+  const issuer = process.env.OIDC_ISSUER;
+  const clientId = process.env.OIDC_CLIENT_ID;
+  const clientSecret = process.env.OIDC_CLIENT_SECRET;
+
+  if (!issuer || !clientId || !clientSecret) {
+    return undefined;
+  }
+
+  const name = process.env.OIDC_NAME || "OIDC";
+  log.info("Generic OIDC provider enabled", { issuer, name });
+
+  return {
+    id: OIDC_PROVIDER_ID,
+    name,
+    type: "oidc",
+    issuer,
+    clientId,
+    clientSecret,
+    // Explicitly request the `email` claim. Many OIDC servers omit `email`
+    // unless the scope is asked for — and the `signIn` allowlist gate
+    // default-denies any sign-in that arrives without an email, so without
+    // this scope a correctly-allowlisted user would be locked out.
+    authorization: { params: { scope: "openid email profile" } },
+  };
+}
 
 /**
  * Startup-time refusal: `ENABLE_LOCAL_CREDENTIALS=true` makes the Credentials
@@ -165,91 +215,105 @@ const scopedCookies = buildScopedCookies();
 // wrapper is the corresponding inbound side. (Opus C-2 / AC-7.)
 const AUTH_BASE_PATH = `${BASE_PATH}/api/auth`;
 
+// Provider list is assembled before the NextAuth() call so the generic OIDC
+// provider can be conditionally appended only when fully configured. The
+// `signIn` callback below independently default-denies it against the
+// allowlist, so its mere presence never grants access by itself.
+const oidcProvider = buildOidcProvider();
+
+const providers: Provider[] = [
+  GitHub({
+    clientId: process.env.GITHUB_CLIENT_ID,
+    clientSecret: process.env.GITHUB_CLIENT_SECRET,
+    authorization: {
+      params: {
+        scope: GITHUB_SCOPE_STRING,
+      },
+    },
+  }),
+  Credentials({
+    name: "credentials",
+    credentials: {
+      email: { label: "Email", type: "email" },
+    },
+    async authorize(credentials) {
+      // Security: Only allow credentials auth from localhost.
+      // Remote access must use Cloudflare Access (JWT validated in getAuthSession).
+      //
+      // The `ENABLE_LOCAL_CREDENTIALS` env var makes the gate deterministic
+      // in containers, where the `x-forwarded-for` header reflects the
+      // pod's loopback or the LB's IP rather than 127.0.0.1:
+      //
+      //   ENABLE_LOCAL_CREDENTIALS=true   → always allow (do NOT set in prod!)
+      //   ENABLE_LOCAL_CREDENTIALS=false  → always deny (recommended for K8s)
+      //   unset                           → fall back to 127.0.0.1 detection
+      //
+      // Default behavior (unset) preserves the existing local-dev flow.
+      const explicit = process.env.ENABLE_LOCAL_CREDENTIALS;
+      let credentialsAllowed: boolean;
+      if (explicit === "true") {
+        credentialsAllowed = true;
+      } else if (explicit === "false") {
+        credentialsAllowed = false;
+      } else {
+        credentialsAllowed = await isLocalhostRequest();
+      }
+
+      if (!credentialsAllowed) {
+        log.warn("Credentials auth attempted from non-localhost or disabled via ENABLE_LOCAL_CREDENTIALS, rejecting");
+        return null;
+      }
+
+      if (!credentials?.email) {
+        return null;
+      }
+
+      const email = credentials.email as string;
+
+      const authorized = await db.query.authorizedUsers.findFirst({
+        where: eq(authorizedUsers.email, email),
+      });
+
+      if (!authorized) {
+        return null;
+      }
+
+      let user = await db.query.users.findFirst({
+        where: eq(users.email, email),
+      });
+
+      if (!user) {
+        const [newUser] = await db
+          .insert(users)
+          .values({
+            email,
+            name: email.split("@")[0],
+          })
+          .returning();
+        user = newUser;
+      }
+
+      return {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+      };
+    },
+  }),
+];
+
+// Generic OIDC is opt-in: append it only when env-configured. The allowlist
+// gate in the `signIn` callback below is what actually authorizes users.
+if (oidcProvider) {
+  providers.push(oidcProvider);
+}
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: createEncryptedAdapter(),
   session: { strategy: "jwt" },
   basePath: AUTH_BASE_PATH,
   ...(scopedCookies ? { cookies: scopedCookies } : {}),
-  providers: [
-    GitHub({
-      clientId: process.env.GITHUB_CLIENT_ID,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET,
-      authorization: {
-        params: {
-          scope: GITHUB_SCOPE_STRING,
-        },
-      },
-    }),
-    Credentials({
-      name: "credentials",
-      credentials: {
-        email: { label: "Email", type: "email" },
-      },
-      async authorize(credentials) {
-        // Security: Only allow credentials auth from localhost.
-        // Remote access must use Cloudflare Access (JWT validated in getAuthSession).
-        //
-        // The `ENABLE_LOCAL_CREDENTIALS` env var makes the gate deterministic
-        // in containers, where the `x-forwarded-for` header reflects the
-        // pod's loopback or the LB's IP rather than 127.0.0.1:
-        //
-        //   ENABLE_LOCAL_CREDENTIALS=true   → always allow (do NOT set in prod!)
-        //   ENABLE_LOCAL_CREDENTIALS=false  → always deny (recommended for K8s)
-        //   unset                           → fall back to 127.0.0.1 detection
-        //
-        // Default behavior (unset) preserves the existing local-dev flow.
-        const explicit = process.env.ENABLE_LOCAL_CREDENTIALS;
-        let credentialsAllowed: boolean;
-        if (explicit === "true") {
-          credentialsAllowed = true;
-        } else if (explicit === "false") {
-          credentialsAllowed = false;
-        } else {
-          credentialsAllowed = await isLocalhostRequest();
-        }
-
-        if (!credentialsAllowed) {
-          log.warn("Credentials auth attempted from non-localhost or disabled via ENABLE_LOCAL_CREDENTIALS, rejecting");
-          return null;
-        }
-
-        if (!credentials?.email) {
-          return null;
-        }
-
-        const email = credentials.email as string;
-
-        const authorized = await db.query.authorizedUsers.findFirst({
-          where: eq(authorizedUsers.email, email),
-        });
-
-        if (!authorized) {
-          return null;
-        }
-
-        let user = await db.query.users.findFirst({
-          where: eq(users.email, email),
-        });
-
-        if (!user) {
-          const [newUser] = await db
-            .insert(users)
-            .values({
-              email,
-              name: email.split("@")[0],
-            })
-            .returning();
-          user = newUser;
-        }
-
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-        };
-      },
-    }),
-  ],
+  providers,
   callbacks: {
     async jwt({ token, user, account }) {
       if (user) {
@@ -268,14 +332,20 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       return session;
     },
     async signIn({ user, account }) {
-      // For GitHub OAuth sign-in, check if user's email is authorized
-      if (account?.provider === "github" && user.email) {
+      // Default-deny gate for OAuth/OIDC sign-in: only emails present in
+      // `authorizedUsers` may sign in via GitHub or the generic OIDC provider.
+      // (Credentials is gated separately inside its own `authorize()`.)
+      if (account?.provider === "github" || account?.provider === OIDC_PROVIDER_ID) {
+        // No email means we cannot check the allowlist — deny. Some OIDC
+        // servers omit `email` unless its scope is requested; failing open
+        // here would admit anyone whose IdP returns no email claim.
+        if (!user.email) {
+          return false;
+        }
         const authorized = await db.query.authorizedUsers.findFirst({
           where: eq(authorizedUsers.email, user.email),
         });
-        if (!authorized) {
-          return false; // Block unauthorized users
-        }
+        return !!authorized; // Allow only allowlisted emails
       }
       return true;
     },
