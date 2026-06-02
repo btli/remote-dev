@@ -1,13 +1,16 @@
 /**
  * Supervisor router — entrypoint (spec §5).
  *
- * A stateless Bun HTTP/WebSocket reverse proxy: the single front door behind the
- * Cloudflare tunnel for the instance host. It routes `/<slug>/*` to the matching
- * instance Service with NO prefix stripping (the instance image is slug-aware
- * and genuinely serves under `/<slug>`), proxies the `/<slug>/ws` terminal
- * WebSocket, and decides routes from a last-known-good allowlist polled from the
- * Supervisor's `/api/internal/routes` (fails open from cache when the Supervisor
- * is unreachable — see §15 M4).
+ * A stateless Bun HTTP/WebSocket reverse proxy: the SINGLE front door behind the
+ * Cloudflare tunnel for the instance host (e.g. `dev.example.com`). It routes
+ * `/<slug>/*` to the matching instance Service with NO prefix stripping (the
+ * instance image is slug-aware and genuinely serves under `/<slug>`), proxies
+ * the `/<slug>/ws` terminal WebSocket, and proxies everything else — root `/`,
+ * `/login`, `/api/*`, assets — to the **Supervisor dashboard** on the same host
+ * (Option C: one external hostname, one Cloudflare Access app). Routes are
+ * decided from a last-known-good allowlist polled from the Supervisor's
+ * `/api/internal/routes` (fails open from cache when the Supervisor is
+ * unreachable — see §15 M4).
  *
  * Run with `bun run src/index.ts` (or `bun run --watch` in dev). Bun loads `.env`
  * automatically.
@@ -54,19 +57,9 @@ function loadConfig(): RouterConfig {
   return { port, supervisorUrl, internalSecret, pollIntervalMs };
 }
 
-const LANDING_BODY =
-  "Remote Dev — specify an instance: /<slug>/\n" +
-  "(The operator dashboard is on its own hostname.)\n";
-
-function landingResponse(): Response {
-  return new Response(LANDING_BODY, {
-    status: 200,
-    headers: { "content-type": "text/plain; charset=utf-8" },
-  });
-}
-
-function notFoundResponse(): Response {
-  return new Response("Not Found — unknown or not-ready instance.\n", {
+/** `/api/internal/*` is blocked at the front door — answered 404 locally, never proxied. */
+function blockedResponse(): Response {
+  return new Response("Not Found\n", {
     status: 404,
     headers: { "content-type": "text/plain; charset=utf-8" },
   });
@@ -85,6 +78,12 @@ function isWebSocketUpgrade(req: Request): boolean {
 function main(): void {
   const config = loadConfig();
 
+  // The Supervisor is the DEFAULT proxy upstream (Option C): non-instance
+  // traffic is fronted to its dashboard on the same host. Derive its HTTP base
+  // (no trailing slash) + matching WS base (http→ws, https→wss) once at boot.
+  const supervisorHttpBase = config.supervisorUrl.replace(/\/$/, "");
+  const supervisorWsBase = supervisorHttpBase.replace(/^http/, "ws");
+
   const allowlist = new AllowlistCache({
     supervisorUrl: config.supervisorUrl,
     internalSecret: config.internalSecret,
@@ -99,15 +98,16 @@ function main(): void {
     async fetch(req, server): Promise<Response | undefined> {
       const url = new URL(req.url);
       const upgrade = isWebSocketUpgrade(req);
-      const decision = decideRoute(url.pathname, upgrade, allowlist);
+      const decision = decideRoute(url.pathname, upgrade, allowlist, {
+        httpBase: supervisorHttpBase,
+        wsBase: supervisorWsBase,
+      });
 
       switch (decision.kind) {
         case "health":
           return healthResponse();
-        case "landing":
-          return landingResponse();
-        case "not-found":
-          return notFoundResponse();
+        case "blocked":
+          return blockedResponse();
         case "proxy-ws": {
           const upstreamWsUrl = `${decision.upstreamWsBase}${decision.path}${url.search}`;
           const upgraded = server.upgrade(req, {

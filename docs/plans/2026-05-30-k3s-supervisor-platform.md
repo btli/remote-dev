@@ -53,6 +53,20 @@ Phases 3–4 add machine autoscaling.
 - Replacing the Electron/local single-host path (it stays `RDV_BASE_PATH=""`, no materialization).
 - A general-purpose PaaS. This provisions `remote-dev` instances only.
 
+### 1.1 Deployment shapes
+
+Remote Dev runs in one of **two** shapes; this spec is about Shape B.
+
+- **Shape A — single-instance ("routerless").** The original product: the base `remote-dev` app
+  served at root (`RDV_BASE_PATH=""`), with **no Supervisor and no router**. This is local dev,
+  Electron, and self-hosted single-tenant prod. Nothing here changes it.
+- **Shape B — multi-instance (Supervisor + router).** N independent single-tenant instances on
+  k3s, provisioned by the **Supervisor** and fronted by the **router** as the **single external
+  front door** (Option C): one hostname, one Cloudflare Access app. The router proxies `/` (and
+  every non-instance path) to the **Supervisor dashboard** and `/<slug>/*` to the matching
+  instance — both UNCHANGED (no prefix stripping). There is no second hostname / second CF Access
+  app for the dashboard (this reverses the original §15 M3 — see its revision).
+
 ---
 
 ## 2. Why this design (resolving the routing fork)
@@ -173,12 +187,17 @@ A small, **stateless** reverse proxy (own Deployment, can scale `replicas>1`) th
 front door behind the Cloudflare tunnel.
 
 - **Routing (convention-based):** first path segment `/<slug>` → `rdv-<slug>.rdv-instances.svc.cluster.local`.
-  HTTP → port 6001; `/<slug>/ws` → port 6002 with WebSocket upgrade. Root `/` → Supervisor UI
-  (or a landing/instance-picker). No prefix stripping (instance is slug-aware).
-- **Allowlist:** the router refuses unknown slugs (404) using an allowlist of `ready` instances
-  refreshed from the Supervisor (`GET /internal/routes`, poll ~10s or push on change). Avoids
-  proxying to nonexistent Services and leaking cluster DNS errors.
-- **Health:** if the target instance is not `ready`, return a friendly 503/landing page.
+  HTTP → port 6001; `/<slug>/ws` → port 6002 with WebSocket upgrade. Root `/` **→ the Supervisor
+  dashboard**: every non-instance path (`/`, `/login`, `/api/*`, assets) is proxied to the
+  Supervisor on the SAME host (Option C single front door — see the §15 M3 revision). No prefix
+  stripping (the instance is slug-aware; the Supervisor serves at root).
+- **Allowlist:** the router resolves instances from an allowlist of `ready` instances refreshed
+  from the Supervisor (`GET /api/internal/routes`, poll ~10s or push on change). Avoids proxying
+  to nonexistent Services and leaking cluster DNS errors. `/api/internal/*` itself is **blocked**
+  at the front door (404, never proxied) so the allowlist endpoint is not externally reachable.
+- **Unknown / not-ready slugs:** a valid-but-not-ready slug (or an unknown one) falls through to
+  the Supervisor dashboard rather than the router emitting a bare 404/503 — the dashboard surfaces
+  the instance's real state.
 - **Why not Traefik per-instance IngressRoutes:** the operator wants the Supervisor to own
   routing programmatically; convention routing means **provisioning creates no Ingress object**
   at all — just StatefulSet + Service + Secret + PVC. Simpler and fully dynamic.
@@ -277,10 +296,14 @@ parameterized by slug + storage target; unit-testable with injected client mocks
 - No `watch` (poll model); no `pods/exec` (seed via Job).
 
 ### 6.6 Supervisor auth
-Separate Cloudflare Access application/policy for the Supervisor UI (distinct `CF_ACCESS_AUD`);
-access to the Supervisor does not grant access to any instance. `withSupervisorAuth(requiredRole)`
-wraps routes (mirrors `withApiAuth`, adds role gate). Role matrix: viewer (read), operator
-(create/suspend/resume), admin (delete, register storage, manage users).
+**Revised (single front door — supersedes the original "separate CF Access app" text).** A
+**single** Cloudflare Access application fronts the one external host; the router proxies the
+Supervisor dashboard at `/` and instances at `/<slug>/*` behind it. `SUPERVISOR_CF_ACCESS_AUD` and
+the instances' `CF_ACCESS_AUD` therefore **may be the same value** (one app, one AUD). Isolation
+between the dashboard and instances is by **policy within that one app** (and the Supervisor's own
+role gate), not by a distinct AUD. `withSupervisorAuth(requiredRole)` wraps routes (mirrors
+`withApiAuth`, adds the role gate). Role matrix: viewer (read), operator (create/suspend/resume),
+admin (delete, register storage, manage users).
 
 ### 6.7 REST API surface
 ```
@@ -506,8 +529,11 @@ bd create --title "Phase 4: cloud-VM + Proxmox MachineProviders, auto scale-up/d
 
 1. **Host + tunnel:** confirm the single external host (e.g. `dev.example.com`) and that the
    existing Cloudflare tunnel can be pointed at the router Service.
-2. **Cloudflare Access:** one app covering `dev.example.com/*` for instances + a separate app for
-   the Supervisor UI — confirm team/AUD provisioning is operator-managed.
+2. **Cloudflare Access:** **RESOLVED — a single app** covering the one external host
+   (`dev.example.com/*`) fronts both the Supervisor dashboard (at `/`) and instances (at
+   `/<slug>/*`). The original "+ a separate app for the Supervisor UI" is dropped (see the §15 M3
+   revision): one app, one AUD; `SUPERVISOR_CF_ACCESS_AUD` may equal the instances' `CF_ACCESS_AUD`.
+   Confirm team/AUD provisioning is operator-managed.
 3. **GitHub OAuth at scale:** one GitHub App with callback `https://dev.example.com/<slug>/api/auth/callback/github`
    per instance, vs a shared wildcard-capable GitHub App. Decide before enabling GitHub features
    on provisioned instances.
@@ -592,10 +618,25 @@ Required Phase-0 fixes:
 - Consider disabling the PWA/SW for path-mode instances in Phase 1 and re-enabling once the
   slug-scoped SW is verified.
 
-**M3 — Put the Supervisor on its own hostname (corrects §5, §6.6, §14.2).** Two Cloudflare Access
-apps with distinct AUDs on one host risk `CF_Authorization` cookie/AUD ambiguity and re-auth
-loops. Use a **separate hostname** for the Supervisor UI (e.g. `sup.example.com`) with its own
-Access policy; instances stay on `dev.example.com/<slug>`. Still no wildcard DNS.
+**M3 — ~~Put the Supervisor on its own hostname~~ → SINGLE front door (Option C; SUPERSEDED by the
+2026-06-01 router revision; corrects §5, §6.6, §14.2).**
+
+> **Superseded.** The original M3 below mandated a *second* hostname + a *second* Cloudflare Access
+> app for the Supervisor UI. It is **reversed** by the single-front-door model: the **router**
+> proxies `/` (and every non-instance path) to the Supervisor dashboard on the **same** host
+> (e.g. `dev.example.com/`), and `/<slug>/*` to instances. This **eliminates the second hostname
+> and the second CF Access app**. The `CF_Authorization` cookie/AUD ambiguity the original M3
+> worried about does not arise, because there is now exactly **one** CF Access app (one AUD) for
+> the host — `SUPERVISOR_CF_ACCESS_AUD` and the instances' `CF_ACCESS_AUD` may be the same value.
+> Auth isolation between the dashboard and instances is enforced **by policy within that one app**
+> (and the Supervisor's own role gate), not by a distinct AUD on a distinct host. The router never
+> terminates auth — it forwards `CF_Authorization` untouched to whichever upstream (dashboard or
+> instance) it selects. Still no wildcard DNS. See the two **Deployment shapes** in §1.1.
+
+_Original (historical) M3:_ ~~Two Cloudflare Access apps with distinct AUDs on one host risk
+`CF_Authorization` cookie/AUD ambiguity and re-auth loops. Use a separate hostname for the
+Supervisor UI (e.g. `sup.example.com`) with its own Access policy; instances stay on
+`dev.example.com/<slug>`.~~
 
 **M4 — Router fail semantics + liveness (corrects §5).** The router is on the data path; define
 behavior explicitly: run `replicas ≥ 2` (stateless); on Supervisor unreachable, **fail-open from

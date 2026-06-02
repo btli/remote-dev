@@ -25,8 +25,12 @@ Mirrors the main app's two-process model:
 2. **Controller** (`dev:controller`) — a long-running reconciler/capacity loop
    that drives instances toward their desired state from live cluster state.
 
-The Supervisor runs on its **own hostname** (e.g. `sup.example.com`) with its own
-Cloudflare Access application — it is not slug-pathed (`basePath` is always `""`).
+The Supervisor dashboard is **served through the router at `/`** (the single
+front door) on the same host as instances and behind the same Cloudflare Access
+app — there is no separate hostname or second CF Access app. Its Service is
+internal (ClusterIP), reached only via the router. It is not slug-pathed
+(`basePath` is always `""`; the router proxies non-instance traffic to it
+unchanged).
 
 ## Roles & ownership
 
@@ -149,7 +153,7 @@ See [`.env.example`](./.env.example). Key variables:
 - `PORT` — UI/API port (default 6003)
 - `SUPERVISOR_DATA_DIR` — SQLite location (default `~/.remote-dev-supervisor`)
 - `SUPERVISOR_ADMIN_EMAIL` — seeded first admin; local-dev identity when no CF Access
-- `SUPERVISOR_CF_ACCESS_TEAM` / `SUPERVISOR_CF_ACCESS_AUD` — the Supervisor's own CF Access app
+- `SUPERVISOR_CF_ACCESS_TEAM` / `SUPERVISOR_CF_ACCESS_AUD` — the CF Access team/AUD the Supervisor validates. Under the single-front-door model this is the **one** CF Access app fronting the host, so these equal the instances' `CF_ACCESS_TEAM` / `CF_ACCESS_AUD`.
 - `KUBECONFIG` — optional, for local dev against k3d/kind (the client uses `loadFromDefault()`)
 - `LOG_LEVEL` — `error|warn|info|debug|trace`
 

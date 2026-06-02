@@ -9,8 +9,10 @@
 # replica with a bound PVC is sufficient and simpler; the router is the
 # stateless/scalable tier).
 #
-# The CF tunnel for the SUPERVISOR hostname (e.g. sup.example.com, §15 M3) points
-# at the `supervisor` Service below.
+# Single front door (§15 M3 revision): there is NO supervisor hostname/tunnel of
+# its own. The `supervisor` Service below is INTERNAL (ClusterIP) — the router
+# proxies `/` (and all non-instance paths) to it on the one external host. The CF
+# tunnel points at the `router` Service, not this one.
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -181,9 +183,10 @@ spec:
   selector:
     app.kubernetes.io/name: rdv-supervisor
   ports:
-    # The CF tunnel for the supervisor host targets this. The router also reaches
-    # GET /api/internal/routes here via
-    # http://supervisor.rdv-system.svc.cluster.local:6003.
+    # Internal-only (ClusterIP). The router reaches BOTH the dashboard (proxying
+    # `/` and all non-instance paths) AND GET /api/internal/routes here via
+    # http://supervisor.rdv-system.svc.cluster.local:6003. No external tunnel
+    # targets this Service — the tunnel points at the `router` Service.
     - name: http
       port: 6003
       targetPort: http

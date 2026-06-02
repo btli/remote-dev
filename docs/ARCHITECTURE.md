@@ -638,9 +638,25 @@ and `AUTH_SECRET`. URL prefixing is driven by **`RDV_BASE_PATH`**, and
 `src/lib/base-path.ts` is the **enforced single source of truth** for that env var
 (ESLint-guarded; only it and `next.config.ts` may read the variable). It exports
 `BASE_PATH`, `INSTANCE_SLUG`, `COOKIE_PATH`, `WS_PATH_PREFIX`, and `prefixPath()`.
-See [`docs/MULTI_INSTANCE.md`](./MULTI_INSTANCE.md) (a newer k3s "supervisor
-platform" approach is in draft —
-[`docs/plans/2026-05-30-k3s-supervisor-platform.md`](./plans/2026-05-30-k3s-supervisor-platform.md)).
+
+There are **two deployment shapes**:
+
+- **Shape A — single-instance ("routerless").** The base app at root
+  (`RDV_BASE_PATH=""`), no Supervisor/router — local dev, Electron, self-hosted
+  single-tenant prod (the original product).
+- **Shape B — multi-instance (Supervisor + router).** The k3s **supervisor
+  platform**: a standalone Supervisor (`apps/supervisor`) provisions N
+  single-tenant instances, and a stateless **router** (`apps/supervisor-router`)
+  is the **single external front door** — one hostname, one Cloudflare Access app.
+  The router proxies `/` (and every non-instance path) to the **Supervisor
+  dashboard** and `/<slug>/*` to the matching instance, both UNCHANGED (no prefix
+  stripping). **Phase 1 + 2 have shipped** (provisioning, storage targets, the
+  router, RBAC + Deployments, and lifecycle depth). See
+  [`docs/SUPERVISOR_DEPLOY.md`](./SUPERVISOR_DEPLOY.md) and the design in
+  [`docs/plans/2026-05-30-k3s-supervisor-platform.md`](./plans/2026-05-30-k3s-supervisor-platform.md).
+
+See [`docs/MULTI_INSTANCE.md`](./MULTI_INSTANCE.md) for both shapes (plus the
+hand-rolled Traefik path).
 
 ### Multi-agent CLIs & profiles
 

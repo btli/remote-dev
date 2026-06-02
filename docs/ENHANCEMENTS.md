@@ -140,26 +140,34 @@ A pluggable terminal-type system powers several session kinds beyond a plain she
 
 ## In progress / Planned
 
-These items are **not shipped**. They are forward-looking; consult beads for current status.
+These items are **in progress or planned** (the k3s supervisor platform below has shipped Phases
+0–2; everything else here is forward-looking). Consult beads for current status.
 
-### k3s "supervisor platform" (design draft)
+### k3s "supervisor platform" (Phase 0–2 shipped; Phase 3–4 planned)
 
-The largest planned initiative is a multi-tenant **control plane** that provisions and manages many
-single-tenant Remote Dev instances from one slug-aware image.
+The largest platform initiative is a multi-tenant **control plane** that provisions and manages many
+single-tenant Remote Dev instances from one slug-aware image. This is **Shape B** of the two
+deployment shapes (Shape A is the original single-instance / "routerless" app at root).
 
-- **Status:** design **DRAFT / plan only** — no code written. The standalone control-plane service
-  (`apps/supervisor`) does not exist yet. See
+- **Status:** **Phase 0 + 1 + 2 have shipped.** The standalone control-plane service
+  (`apps/supervisor`) and the stateless data-plane **router** (`apps/supervisor-router`) exist:
+  slug-aware image materialization, instance provisioning, live storage-target discovery, RBAC +
+  Deployments, and lifecycle depth (suspend/resume, logs/events, image rollout, PVC resize, audit
+  UI). Deploy it with [`docs/SUPERVISOR_DEPLOY.md`](./SUPERVISOR_DEPLOY.md); design in
   [`docs/plans/2026-05-30-k3s-supervisor-platform.md`](./plans/2026-05-30-k3s-supervisor-platform.md).
-- **Shape:** deploy Remote Dev on **k3s** as N independent single-tenant instances behind a
-  supervisor-owned router that routes `dev.example.com/<slug>/…` to the right instance with **no**
-  prefix stripping — the image materializes its base path at runtime. A **Supervisor** service
-  (its own auth, roles, and DB) talks to the Kubernetes API to provision, suspend, and delete
-  instances, with an operator dashboard and a storage-target selector populated from live cluster
-  discovery.
-- **Phasing:** Phase 0 + 1 deliver the core (one-image multi-instance + a supervisor that
-  provisions instances and picks per-instance storage). Phases 3–4 add on-demand k3s worker
-  **machines** with a capacity controller. The runtime base-path materialization this builds on
-  (Phase 0) is the foundation already described under multi-instance hosting above.
+  Phases **3–4** (on-demand k3s worker **machines** + a capacity controller) remain planned.
+- **Shape:** deploy Remote Dev on **k3s** as N independent single-tenant instances. The
+  supervisor-owned router is the **single external front door** (Option C): **one hostname, one
+  Cloudflare Access app**. It routes `dev.example.com/<slug>/…` to the matching instance with **no**
+  prefix stripping (the image materializes its base path at runtime), and proxies every
+  **non-instance** path — `/`, `/login`, `/api/*`, assets — to the **Supervisor dashboard** on the
+  same host (so the dashboard needs no separate hostname or second CF Access app). A **Supervisor**
+  service (its own auth, roles, and DB) talks to the Kubernetes API to provision, suspend, and
+  delete instances, with an operator dashboard and a storage-target selector populated from live
+  cluster discovery.
+- **Remaining phasing:** Phases 3–4 add on-demand k3s worker **machines** with a capacity
+  controller. The runtime base-path materialization this builds on (Phase 0) is the foundation
+  described under multi-instance hosting above.
 
 ### Other forward-looking ideas
 

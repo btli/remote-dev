@@ -16,9 +16,9 @@
 export const SLUG_PATTERN = /^[a-z][a-z0-9-]{0,14}$/;
 
 /**
- * Slugs that would collide with the root public paths an instance serves, the
- * Supervisor UI prefix, or k8s/router internals (spec §15 m2). Disallowed as
- * instance slugs.
+ * Slugs that would collide with the root public paths an instance serves or
+ * k8s/router internals (spec §15 m2), plus a defensive `supervisor` guard.
+ * Disallowed as instance slugs.
  */
 export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   "api",
@@ -32,7 +32,9 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   "favicon.svg",
   "favicon.ico",
   "icons",
-  // Supervisor UI prefix — reserved so an instance can never shadow it.
+  // The Supervisor dashboard is served at `/` (root) through the router, NOT at
+  // `/supervisor` — but keep this reserved as a defensive collision guard so an
+  // instance can never claim the slug `supervisor`.
   "supervisor",
 ]);
 

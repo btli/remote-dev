@@ -5,21 +5,31 @@ instances behind a shared Cloudflare tunnel + Access policy. Each instance
 is a single-replica StatefulSet with its own PVC, SQLite database, tmux
 namespace, and `AUTH_SECRET`.
 
-> **Status — superseded approach.** The Traefik/Ingress prefix-stripping model
-> documented here (the per-instance `IngressRoute` in "Ingress (Traefik
-> example)" below) is **superseded** by the k3s **"supervisor platform"**: a
-> supervisor-owned **router** that routes `/<slug>/*` to a slug-aware data-plane
-> image by convention — **no per-instance Ingress object at all**. The Phase-1
-> control plane (`apps/supervisor` + `apps/supervisor-router`) now exists; deploy
-> it with the runbook **[`docs/SUPERVISOR_DEPLOY.md`](./SUPERVISOR_DEPLOY.md)**
-> (manifests in [`deploy/k8s/supervisor/`](../deploy/k8s/supervisor/)). Design:
-> [`docs/plans/2026-05-30-k3s-supervisor-platform.md`](./plans/2026-05-30-k3s-supervisor-platform.md).
-> The hand-rolled manifests below remain valid for static multi-instance hosting
-> without the Supervisor.
+> **Two deployment shapes.** Remote Dev runs in one of two shapes:
 >
-> Regardless of orchestration approach, **`src/lib/base-path.ts` is the runtime
-> single source of truth for `RDV_BASE_PATH`** URL prefixing (ESLint-guarded;
-> only it and `next.config.ts` may read the env var). See
+> - **Shape A — single-instance ("routerless").** The original product: the base
+>   `remote-dev` app at root (`RDV_BASE_PATH=""`), with **no Supervisor and no
+>   router** (local dev, Electron, self-hosted single-tenant prod). See
+>   [`docs/SETUP.md`](./SETUP.md).
+> - **Shape B — multi-instance (Supervisor + router).** N independent
+>   single-tenant instances on k3s, provisioned by the **Supervisor** and fronted
+>   by the **router** as the **single external front door**: one hostname, one
+>   Cloudflare Access app — `/` → the Supervisor dashboard, `/<slug>/*` → the
+>   matching instance, both with **no prefix stripping** and **no per-instance
+>   Ingress object**. The Phase 1+2 control plane (`apps/supervisor` +
+>   `apps/supervisor-router`) exists; deploy it with the runbook
+>   **[`docs/SUPERVISOR_DEPLOY.md`](./SUPERVISOR_DEPLOY.md)** (manifests in
+>   [`deploy/k8s/supervisor/`](../deploy/k8s/supervisor/)). Design:
+>   [`docs/plans/2026-05-30-k3s-supervisor-platform.md`](./plans/2026-05-30-k3s-supervisor-platform.md).
+>
+> The hand-rolled Traefik/`IngressRoute` manifests below are a **third, manual**
+> path: static multi-instance hosting **without** the Supervisor (path-prefixed
+> instances behind your own Ingress). They remain valid, but Shape B supersedes
+> the per-instance `IngressRoute` for any dynamic multi-instance deployment.
+>
+> Regardless of shape, **`src/lib/base-path.ts` is the runtime single source of
+> truth for `RDV_BASE_PATH`** URL prefixing (ESLint-guarded; only it and
+> `next.config.ts` may read the env var). See
 > [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) → "Multi-instance / multi-tenant
 > hosting".
 
