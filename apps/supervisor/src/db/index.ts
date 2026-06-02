@@ -35,9 +35,10 @@ if (!existsSync(dataDir)) {
 export const client = createClient({ url: getDatabaseUrl() });
 
 // WAL + busy_timeout to avoid SQLITE_BUSY under concurrent writes (the Next.js
-// API process and the controller process both write).
+// API process and the controller process both write). 10s (not 5s) gives slow
+// PVC-backed storage headroom when BOTH processes run migrate-on-boot at once.
 client.execute("PRAGMA journal_mode = WAL").catch(() => {});
 client.execute("PRAGMA synchronous = NORMAL").catch(() => {});
-client.execute("PRAGMA busy_timeout = 5000").catch(() => {});
+client.execute("PRAGMA busy_timeout = 10000").catch(() => {});
 
 export const db = drizzle(client, { schema });

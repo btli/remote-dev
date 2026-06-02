@@ -102,10 +102,19 @@ COPY --from=build --chown=rdv:rdv /app/packages ./packages
 # standalone server.js (which serves static from <its dir>/.next/static) can't
 # find client chunks until we place them there. Mirror the main app's Dockerfile:
 # copy .next/static into the standalone app dir. (The supervisor has no public/
-# dir, so there is nothing else to stage alongside server.js.)
+# dir.)
 COPY --from=build --chown=rdv:rdv \
     /app/apps/supervisor/.next/static \
     ./apps/supervisor/.next/standalone/apps/supervisor/.next/static
+
+# Migrate-on-boot needs the committed Drizzle migrations at runtime. The whole
+# app dir COPY above already lands them at /app/apps/supervisor/drizzle (resolved
+# via process.cwd() — WORKDIR is /app/apps/supervisor), but ALSO place them right
+# next to the standalone server.js so the migrations folder resolves regardless
+# of how cwd is set. `src/db/migrate.ts` probes both locations.
+COPY --from=build --chown=rdv:rdv \
+    /app/apps/supervisor/drizzle \
+    ./apps/supervisor/.next/standalone/apps/supervisor/drizzle
 
 # libsql standalone fix: provide the missing `web.*` files for the `@libsql`
 # isomorphic shims so libsql resolves under the bun runtime.

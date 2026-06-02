@@ -11,9 +11,12 @@ next-env.d.ts
 # Build output
 /dist/
 
-# Local data (SQLite) + drizzle generated migrations
+# Local data (SQLite)
 /.data/
-/drizzle/
+
+# NOTE: `/drizzle/` (the generated migrations) IS committed — migrate-on-boot
+# applies it at startup and the Dockerfile bundles it into the standalone image
+# so a fresh PVC gets all tables. Do NOT ignore it.
 
 # Env
 .env

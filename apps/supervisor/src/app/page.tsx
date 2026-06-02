@@ -1,57 +1,12 @@
 export const dynamic = "force-dynamic";
 
-import { headers } from "next/headers";
 import { eq, desc } from "drizzle-orm";
 import { db } from "@/db";
 import { instance, type InstanceRow } from "@/db/schema";
-import {
-  validateAccessJWT,
-  isCfAccessConfigured,
-} from "@/lib/cf-access";
 import Link from "next/link";
-import { resolveSupervisorUser } from "@/lib/auth";
-import { hasRole, type Role } from "@/lib/roles";
+import { hasRole } from "@/lib/roles";
+import { getCurrentUser, type CurrentUser } from "@/lib/session";
 import { StatusBadge } from "@/components/status-badge";
-import { createLogger } from "@/lib/logger";
-
-const log = createLogger("Dashboard");
-
-interface CurrentUser {
-  id: string;
-  email: string;
-  role: Role;
-}
-
-/**
- * Resolve the current operator for a server-rendered page. Same precedence as
- * `withSupervisorAuth` (CF Access in prod, SUPERVISOR_ADMIN_EMAIL in local dev),
- * but reads headers via next/headers instead of a Request.
- */
-async function getCurrentUser(): Promise<CurrentUser | null> {
-  let email: string | null = null;
-
-  if (isCfAccessConfigured()) {
-    const hdrs = await headers();
-    const headerToken = hdrs.get("cf-access-jwt-assertion");
-    const cookie = hdrs.get("cookie");
-    const cookieToken = cookie?.match(/CF_Authorization=([^;]+)/)?.[1] ?? null;
-    const cfUser = await validateAccessJWT(headerToken ?? cookieToken);
-    email = cfUser?.email ?? null;
-  } else {
-    const adminEmail = process.env.SUPERVISOR_ADMIN_EMAIL;
-    email = adminEmail && adminEmail.length > 0 ? adminEmail : null;
-  }
-
-  if (!email) return null;
-
-  try {
-    const user = await resolveSupervisorUser(email);
-    return { id: user.id, email: user.email, role: user.role };
-  } catch (error) {
-    log.error("Failed to resolve current user", { error: String(error) });
-    return null;
-  }
-}
 
 /** Owner-scoped instance list: admins see all; others see only their own. */
 async function listVisibleInstances(user: CurrentUser): Promise<InstanceRow[]> {

@@ -15,7 +15,9 @@ import {
   text,
   integer,
   index,
+  primaryKey,
 } from "drizzle-orm/sqlite-core";
+import type { AdapterAccountType } from "next-auth/adapters";
 
 /** Supervisor RBAC role. Mirrors the union in src/lib/roles.ts. */
 export type SupervisorRole = "admin" | "operator" | "viewer";
@@ -177,6 +179,69 @@ export const instanceSeed = sqliteTable("instance_seed", {
   jobName: text("job_name"),
   completedAt: integer("completed_at", { mode: "timestamp_ms" }),
 });
+
+// --- NextAuth (Auth.js) identity tables -------------------------------------
+// Standard NextAuth Drizzle schema for sqlite (table names `user` / `account`
+// / `session` / `verificationToken`), mirroring the root app's src/db/schema.ts
+// so `@auth/drizzle-adapter` works identically. These store the OIDC *identity*
+// only. AUTHORIZATION is unchanged: it lives in `supervisor_user` (the role
+// table), linked to this identity BY EMAIL, never by id. `instance.ownerId`
+// keeps referencing `supervisor_user.id` (NOT `user.id`).
+
+export const users = sqliteTable("user", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  name: text("name"),
+  email: text("email").unique(),
+  emailVerified: integer("emailVerified", { mode: "timestamp_ms" }),
+  image: text("image"),
+});
+
+export const accounts = sqliteTable(
+  "account",
+  {
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    type: text("type").$type<AdapterAccountType>().notNull(),
+    provider: text("provider").notNull(),
+    providerAccountId: text("providerAccountId").notNull(),
+    refresh_token: text("refresh_token"),
+    access_token: text("access_token"),
+    expires_at: integer("expires_at"),
+    token_type: text("token_type"),
+    scope: text("scope"),
+    id_token: text("id_token"),
+    session_state: text("session_state"),
+  },
+  (account) => [
+    primaryKey({ columns: [account.provider, account.providerAccountId] }),
+    index("account_user_idx").on(account.userId),
+  ],
+);
+
+export const sessions = sqliteTable("session", {
+  sessionToken: text("sessionToken").primaryKey(),
+  userId: text("userId")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  expires: integer("expires", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const verificationTokens = sqliteTable(
+  "verificationToken",
+  {
+    identifier: text("identifier").notNull(),
+    token: text("token").notNull(),
+    expires: integer("expires", { mode: "timestamp_ms" }).notNull(),
+  },
+  (verificationToken) => [
+    primaryKey({
+      columns: [verificationToken.identifier, verificationToken.token],
+    }),
+  ],
+);
 
 // --- Phase 3 (NOT in this scaffold) -----------------------------------------
 // `machine(machineId, providerId, providerType, displayName, nodeName, arch,

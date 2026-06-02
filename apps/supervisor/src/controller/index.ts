@@ -12,6 +12,7 @@
 
 import { createLogger } from "@/lib/logger";
 import { reconcileInstances } from "@/controller/reconciler";
+import { runMigrations } from "@/db/migrate";
 
 const log = createLogger("Controller");
 
@@ -47,10 +48,16 @@ async function reconcileTick(): Promise<void> {
   }
 }
 
-function start(): void {
+async function start(): Promise<void> {
   log.info("Supervisor controller starting", {
     intervalMs: RECONCILE_INTERVAL_MS,
   });
+  // Migrate-on-boot (remote-dev-bqgo): the controller shares the PVC SQLite with
+  // the web process and may start first, so it applies the same committed
+  // migrations before its first query rather than spamming SQLITE_ERROR on a
+  // fresh PVC. Idempotent (drizzle tracks applied migrations); a hard failure
+  // rethrows so the container restarts rather than reconciling against no tables.
+  await runMigrations();
   // Kick an immediate tick, then poll on the interval.
   void reconcileTick();
   timer = setInterval(() => void reconcileTick(), RECONCILE_INTERVAL_MS);
@@ -81,4 +88,9 @@ process.on("SIGINT", () => {
   void shutdown("SIGINT");
 });
 
-start();
+start().catch((error) => {
+  // A failed migrate-on-boot (or other startup error) must crash the process so
+  // the container is restarted rather than running tickless against no tables.
+  log.error("Controller failed to start", { error: String(error) });
+  process.exit(1);
+});
