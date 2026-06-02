@@ -1,3 +1,5 @@
+import { redirect } from "next/navigation";
+import { getAuthSession } from "@/lib/auth-utils";
 import LoginClient from "./login-client";
 
 /**
@@ -11,7 +13,21 @@ import LoginClient from "./login-client";
  * If the secret is missing, `src/auth.ts` simply won't register the provider
  * and the OIDC callback returns an error, but no secret is read here.
  */
-export default function LoginPage() {
+export default async function LoginPage() {
+  // Authoritative "already logged in → go home" redirect. In scoped instance
+  // mode the edge proxy runs in a separate Next-standalone realm without
+  // AUTH_SECRET/AUTH_URL, so it cannot validate the session and deliberately
+  // lets /login render (see the `!scoped` guard in src/proxy.ts). This server
+  // component DOES have the correct env + crypto, so it makes the real call
+  // here — otherwise a user returning from the OIDC round-trip would land back
+  // on /login with a valid session and appear stuck in a login loop. Mirrors
+  // the inverse check on the Home page (src/app/page.tsx). redirect("/") is
+  // basePath-aware via next.config.ts, so it resolves to "/<slug>".
+  const session = await getAuthSession();
+  if (session?.user?.id) {
+    redirect("/");
+  }
+
   const oidcEnabled = Boolean(process.env.OIDC_ISSUER && process.env.OIDC_CLIENT_ID);
   // Prefer the public alias (also available client-side) but fall back to the
   // server-only label, defaulting to a neutral "OIDC".

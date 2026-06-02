@@ -359,6 +359,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
   },
   pages: {
-    signIn: "/login",
+    // Must be the FULL external path (BASE_PATH-prefixed): Next.js basePath is
+    // NOT auto-applied to NextAuth's own redirect Location headers, so a bare
+    // "/login" would resolve to the cluster root (the supervisor) instead of
+    // this instance's "/<slug>/login" — which is what caused auth errors (e.g.
+    // OAuthAccountNotLinked) to bounce to the wrong app. Mirrors AUTH_BASE_PATH
+    // above. BASE_PATH is "" for single-server, leaving "/login" unchanged.
+    signIn: `${BASE_PATH}/login`,
   },
 });

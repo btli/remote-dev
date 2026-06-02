@@ -3,6 +3,7 @@
 import { useState, useSyncExternalStore } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { prefixPath } from "@/lib/base-path";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -91,7 +92,7 @@ export default function LoginClient({ oidcEnabled, oidcName }: LoginClientProps)
                 type="button"
                 variant="outline"
                 className="w-full"
-                onClick={() => signIn("oidc")}
+                onClick={() => signIn("oidc", { callbackUrl: prefixPath("/") })}
               >
                 Sign in with {oidcName}
               </Button>
