@@ -80,6 +80,14 @@ AUTH_URL=http://localhost:6001
 # Optional: GitHub OAuth (see GitHub Setup below)
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
+
+# Optional: Generic OIDC SSO (see "OIDC Single Sign-On" below)
+# All three must be set for the provider + login button to appear.
+OIDC_ISSUER=
+OIDC_CLIENT_ID=
+OIDC_CLIENT_SECRET=
+OIDC_NAME=OIDC                  # Server-side display label
+NEXT_PUBLIC_OIDC_NAME=OIDC      # Same label, exposed to the login button
 ```
 
 > **NextAuth v5 note:** `AUTH_URL` is the canonical env var. Legacy
@@ -269,6 +277,58 @@ GITHUB_CLIENT_SECRET=your_client_secret_here
 3. Click **"Connect GitHub"** in the header
 4. Authorize the application
 5. You should be redirected back with "GitHub Connected" status
+
+## OIDC Single Sign-On
+
+A generic, env-driven **OpenID Connect** provider lets you sign in through any
+standards-compliant identity provider (Okta, Authentik, Keycloak, Auth0, Azure
+AD/Entra, Google Workspace, …) instead of — or alongside — the GitHub and
+localhost-email login methods.
+
+### Configure
+
+Set all three of the following in `.env.local` (the provider is registered
+**only** when issuer + client id + client secret are all present):
+
+```bash
+OIDC_ISSUER=https://idp.example.com        # OIDC issuer (no trailing slash)
+OIDC_CLIENT_ID=your_client_id
+OIDC_CLIENT_SECRET=your_client_secret
+OIDC_NAME=Okta                             # Button label, e.g. "Okta"
+NEXT_PUBLIC_OIDC_NAME=Okta                 # Same label, surfaced to the client button
+```
+
+Endpoints are auto-discovered from
+`${OIDC_ISSUER}/.well-known/openid-configuration`, so no individual
+authorization/token/userinfo URLs are required.
+
+Register this **callback (redirect) URL** with your identity provider:
+
+```
+https://<your-host>/api/auth/callback/oidc
+```
+
+For multi-instance hosting the callback is path-scoped like GitHub's, e.g.
+`https://dev.example.com/alpha/api/auth/callback/oidc`.
+
+### Security: default-deny allowlist
+
+OIDC sign-in is **default-denied**: exactly like GitHub, a successful login at
+the identity provider is rejected unless the user's email is present in the
+`authorizedUsers` allowlist (seed it as described in *Add Authorized Users*
+above). A new IdP account that is not on the allowlist cannot get in.
+
+This provider works **alongside Cloudflare Access** — it adds an in-app login
+method and does not change the Cloudflare Access / API-key / localhost-email
+paths. Remote/LAN access still validates the Cloudflare Access JWT as before.
+
+### Test
+
+1. Set the env vars and restart the app.
+2. Open `/login` — a **"Sign in with {OIDC_NAME}"** button appears below the
+   email form.
+3. Click it, authenticate at your IdP, and you are redirected back signed in
+   (only if your email is on the allowlist).
 
 ## Database Management
 
