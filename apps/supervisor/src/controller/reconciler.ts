@@ -165,6 +165,7 @@ export function readProvisionEnv(): {
   host: string;
   cfAccess: { team: string; aud: string };
   github?: { clientId: string; clientSecret: string };
+  oidc?: { issuer: string; clientId: string; clientSecret: string; name: string };
   imagePullSecret?: { name: string; dockerConfigJson?: string };
   nodeSelector?: Record<string, string>;
 } {
@@ -198,6 +199,23 @@ export function readProvisionEnv(): {
         }
       : undefined;
 
+  // Optional OIDC (e.g. Authentik) injected into every provisioned instance so
+  // instances are loginable via the IdP on the LAN (the base app's src/auth.ts
+  // reads OIDC_ISSUER/OIDC_CLIENT_ID/OIDC_CLIENT_SECRET, label OIDC_NAME). Present
+  // ONLY when issuer + clientId + clientSecret are all set; NAME defaults to
+  // "Authentik". The clientSecret is a SECRET — never logged.
+  const oidc =
+    process.env.SUPERVISOR_INSTANCE_OIDC_ISSUER &&
+    process.env.SUPERVISOR_INSTANCE_OIDC_CLIENT_ID &&
+    process.env.SUPERVISOR_INSTANCE_OIDC_CLIENT_SECRET
+      ? {
+          issuer: process.env.SUPERVISOR_INSTANCE_OIDC_ISSUER,
+          clientId: process.env.SUPERVISOR_INSTANCE_OIDC_CLIENT_ID,
+          clientSecret: process.env.SUPERVISOR_INSTANCE_OIDC_CLIENT_SECRET,
+          name: process.env.SUPERVISOR_INSTANCE_OIDC_NAME || "Authentik",
+        }
+      : undefined;
+
   // Optional image-pull credential for PRIVATE instance images (remote-dev-2xhg).
   // The dockerconfigjson is a SECRET — never logged. A dockerconfigjson with no
   // name can be neither created nor referenced, so that combination throws loud.
@@ -225,6 +243,7 @@ export function readProvisionEnv(): {
     host,
     cfAccess: { team, aud },
     github,
+    oidc,
     imagePullSecret,
     nodeSelector,
   };
@@ -339,6 +358,7 @@ function buildProvisionOptions(row: InstanceRow): ProvisionOptions {
     authSecret: crypto.randomBytes(32).toString("base64"),
     cfAccess: env.cfAccess,
     github: env.github,
+    oidc: env.oidc,
     imagePullSecret: env.imagePullSecret,
     nodeSelector: env.nodeSelector,
   };

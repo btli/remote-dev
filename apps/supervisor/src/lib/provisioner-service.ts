@@ -126,6 +126,12 @@ export interface ProvisionOptions {
   /** Optional GitHub OAuth creds for the instance. */
   github?: { clientId: string; clientSecret: string };
   /**
+   * Optional OIDC (e.g. Authentik) creds injected so the instance is loginable
+   * via the IdP on the LAN. issuer/clientId/name ride in the non-secret env;
+   * clientSecret is secret-backed. SECURITY: never log `clientSecret`.
+   */
+  oidc?: { issuer: string; clientId: string; clientSecret: string; name: string };
+  /**
    * Optional image-pull credential for PRIVATE instance images (remote-dev-2xhg).
    * When `name` is set it is referenced in the StatefulSet's `imagePullSecrets`;
    * when `dockerConfigJson` is ALSO set, the provisioner materializes the
@@ -207,6 +213,7 @@ export async function provisionInstance(
         body: buildAuthSecret(slug, {
           authSecret: opts.authSecret,
           github: opts.github,
+          oidc: opts.oidc ? { clientSecret: opts.oidc.clientSecret } : undefined,
         }),
       }),
     );
@@ -217,7 +224,12 @@ export async function provisionInstance(
     );
 
     // 5. StatefulSet.
-    const env = buildInstanceEnv(slug, { host: opts.host });
+    const env = buildInstanceEnv(slug, {
+      host: opts.host,
+      oidc: opts.oidc
+        ? { issuer: opts.oidc.issuer, clientId: opts.oidc.clientId, name: opts.oidc.name }
+        : undefined,
+    });
     await createStep("statefulset", () =>
       apps.createNamespacedStatefulSet({
         namespace,
@@ -226,6 +238,7 @@ export async function provisionInstance(
           env,
           volumeClaimTemplate: toVolumeClaimTemplate(opts.storage),
           withGithub: Boolean(opts.github),
+          withOidc: Boolean(opts.oidc),
           // Referenced whenever the name is set — even without a dockerConfigJson
           // (operator-provisioned pull Secret); the nodeSelector pins arch.
           imagePullSecretName: opts.imagePullSecret?.name,
