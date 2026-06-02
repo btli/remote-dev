@@ -136,24 +136,6 @@ export async function proxy(request: NextRequest) {
     isLoggedIn = !!token;
   }
 
-  // TEMP DEBUG (remove): surface what the proxy realm actually sees so a single
-  // in-pod probe of /dev (with and without a session cookie) can confirm the
-  // gate decision. NAMES + booleans only — never cookie/secret VALUES.
-  const dbgHeaders: Record<string, string> = {
-    "x-rdv-dbg-mode": scoped ? "scoped" : "unscoped",
-    "x-rdv-dbg-loggedin": String(isLoggedIn),
-    "x-rdv-dbg-secret": process.env.AUTH_SECRET ? "present" : "absent",
-    "x-rdv-dbg-cookies": request.cookies
-      .getAll()
-      .map((c) => c.name)
-      .join(","),
-    "x-rdv-dbg-candidates": getSessionCookieNameCandidates().join(","),
-  };
-  const tagDebug = (response: NextResponse): NextResponse => {
-    for (const [k, v] of Object.entries(dbgHeaders)) response.headers.set(k, v);
-    return response;
-  };
-
   const isLoginPage = pathname === "/login";
   const isApiRoute = pathname.startsWith("/api");
 
@@ -164,13 +146,11 @@ export async function proxy(request: NextRequest) {
       .get("authorization")
       ?.startsWith("Bearer ");
     if (!isLoggedIn && !hasApiKeyHeader) {
-      return tagDebug(
-        tagInstance(
-          NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-        )
+      return tagInstance(
+        NextResponse.json({ error: "Unauthorized" }, { status: 401 })
       );
     }
-    return tagDebug(tagInstance(NextResponse.next()));
+    return tagInstance(NextResponse.next());
   }
 
   // Protect pages.
@@ -180,18 +160,14 @@ export async function proxy(request: NextRequest) {
   // `https://host/login` — which 404s under `RDV_BASE_PATH=/alpha`. Use
   // `prefixPath()` to put the prefix back on every Location header.
   if (!isLoggedIn && !isLoginPage) {
-    return tagDebug(
-      tagInstance(
-        NextResponse.redirect(new URL(prefixPath("/login"), request.url))
-      )
+    return tagInstance(
+      NextResponse.redirect(new URL(prefixPath("/login"), request.url))
     );
   }
 
   if (isLoggedIn && isLoginPage) {
-    return tagDebug(
-      tagInstance(
-        NextResponse.redirect(new URL(prefixPath("/"), request.url))
-      )
+    return tagInstance(
+      NextResponse.redirect(new URL(prefixPath("/"), request.url))
     );
   }
 
@@ -199,8 +175,8 @@ export async function proxy(request: NextRequest) {
   // heavy providers on /login. See src/app/layout.tsx.
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-pathname", pathname);
-  return tagDebug(
-    tagInstance(NextResponse.next({ request: { headers: requestHeaders } }))
+  return tagInstance(
+    NextResponse.next({ request: { headers: requestHeaders } })
   );
 }
 

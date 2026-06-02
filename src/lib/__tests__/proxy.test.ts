@@ -15,15 +15,11 @@
  *     server has the real secret + AUTH_URL). This path must stay byte-identical
  *     (AC-1) — `getToken` is still called with the same args.
  *
- * Both paths now also emit TEMPORARY `x-rdv-dbg-*` debug headers (NAMES +
- * booleans only) on every auth-decision return path so an in-pod probe can
- * confirm what the proxy realm sees.
- *
  * The proxy only touches a small surface of `NextRequest` (`nextUrl.pathname`,
- * `headers.get`, `cookies.has`, `cookies.getAll`, `url`), so we build a light
- * fake rather than a real NextRequest. `getToken` and the Cloudflare-Access
- * helpers are mocked; `base-path`/`auth-cookies` are mocked so the candidate
- * names, prefix, and INSTANCE_SLUG are deterministic regardless of env.
+ * `headers.get`, `cookies.has`, `url`), so we build a light fake rather than a
+ * real NextRequest. `getToken` and the Cloudflare-Access helpers are mocked;
+ * `base-path`/`auth-cookies` are mocked so the candidate names, prefix, and
+ * INSTANCE_SLUG are deterministic regardless of env.
  */
 
 import {
@@ -103,8 +99,6 @@ function makeRequest(
     headers,
     cookies: {
       has: (name: string) => cookieSet.has(name),
-      // The proxy reads cookie NAMES (never values) for the debug header.
-      getAll: () => cookieNames.map((name) => ({ name, value: "x" })),
     },
   } as unknown as NextRequest;
 }
@@ -277,71 +271,6 @@ describe("proxy — unscoped single-server (getToken path / AC-1)", () => {
     const res = await proxy(req);
 
     expect(res.status).toBe(401);
-  });
-});
-
-describe("proxy — TEMP debug headers (remove in follow-up)", () => {
-  it("scoped: mode=scoped, loggedin reflects presence, secret=present, cookies are NAMES", async () => {
-    slugHolder.value = "dev";
-    vi.stubEnv("AUTH_SECRET", "x");
-    const req = makeRequest("/dashboard", {
-      cookies: ["__Secure-rdv-dev-session-token"],
-    });
-
-    const res = await proxy(req);
-
-    expect(res.headers.get("x-rdv-dbg-mode")).toBe("scoped");
-    expect(res.headers.get("x-rdv-dbg-loggedin")).toBe("true");
-    expect(res.headers.get("x-rdv-dbg-secret")).toBe("present");
-    expect(res.headers.get("x-rdv-dbg-cookies")).toBe(
-      "__Secure-rdv-dev-session-token",
-    );
-    expect(res.headers.get("x-rdv-dbg-candidates")).toBe(
-      "__Secure-rdv-dev-session-token,rdv-dev-session-token",
-    );
-  });
-
-  it("scoped: secret=absent and loggedin=false surface on the /login redirect", async () => {
-    slugHolder.value = "dev";
-    vi.stubEnv("AUTH_SECRET", "");
-    const req = makeRequest("/dashboard", { cookies: [] });
-
-    const res = await proxy(req);
-
-    expect(res.status).toBe(307);
-    expect(res.headers.get("x-rdv-dbg-mode")).toBe("scoped");
-    expect(res.headers.get("x-rdv-dbg-loggedin")).toBe("false");
-    expect(res.headers.get("x-rdv-dbg-secret")).toBe("absent");
-    expect(res.headers.get("x-rdv-dbg-cookies")).toBe("");
-  });
-
-  it("unscoped: mode=unscoped on the API 401 path", async () => {
-    slugHolder.value = "";
-    vi.stubEnv("AUTH_SECRET", "a-real-secret");
-    getTokenMock.mockResolvedValue(null);
-    const req = makeRequest("/api/sessions");
-
-    const res = await proxy(req);
-
-    expect(res.status).toBe(401);
-    expect(res.headers.get("x-rdv-dbg-mode")).toBe("unscoped");
-    expect(res.headers.get("x-rdv-dbg-loggedin")).toBe("false");
-    expect(res.headers.get("x-rdv-dbg-secret")).toBe("present");
-  });
-
-  it("does NOT set debug headers on the Cloudflare Access early-return path", async () => {
-    slugHolder.value = "dev";
-    getAccessTokenMock.mockReturnValue("cf-jwt");
-    validateAccessJWTMock.mockResolvedValue({
-      email: "u@example.com",
-      sub: "cf-sub",
-    });
-    const req = makeRequest("/dashboard");
-
-    const res = await proxy(req);
-
-    expect(res.headers.get("x-cf-user-email")).toBe("u@example.com");
-    expect(res.headers.get("x-rdv-dbg-mode")).toBeNull();
   });
 });
 
