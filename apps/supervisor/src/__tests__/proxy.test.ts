@@ -122,11 +122,12 @@ describe("supervisor proxy — login + nextauth always reachable", () => {
   });
 });
 
-describe("supervisor proxy — dual auth (NextAuth session)", () => {
+describe("supervisor proxy — dual auth (CF Access + NextAuth/OIDC)", () => {
   beforeEach(() => {
     process.env.SUPERVISOR_CF_ACCESS_AUD = "aud-123";
     process.env.SUPERVISOR_CF_ACCESS_TEAM = "team-x";
     process.env.AUTH_SECRET = "test-secret";
+    process.env.AUTH_URL = "https://sup.example.com";
   });
 
   it("allows a page route when a valid NextAuth session exists (no CF token)", async () => {
@@ -135,10 +136,23 @@ describe("supervisor proxy — dual auth (NextAuth session)", () => {
     expect(res.status).toBe(200);
   });
 
-  it("401s a page route when neither CF token nor session exists", async () => {
+  it("allows a page route when a CF assertion is present (no session)", async () => {
     tokenState.value = null;
-    const res = await proxy(makeReq("/"));
-    expect(res.status).toBe(401);
+    const res = await proxy(
+      makeReq("/", { cookie: `CF_Authorization=${PLAUSIBLE_JWT}` }),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("redirects a page route to /login when neither CF token nor session exists (OIDC reachable)", async () => {
+    // DUAL MODE: CF + OIDC both configured. With no CF assertion and no session,
+    // the user must reach the OIDC login page — NOT a raw 401.
+    tokenState.value = null;
+    const res = await proxy(makeReq("/instances/new"));
+    expect(res.status).toBe(307); // NextResponse.redirect default
+    const location = res.headers.get("location") ?? "";
+    expect(location).toContain("/login");
+    expect(location).toContain("callbackUrl=%2Finstances%2Fnew");
   });
 
   it("passes the SECURE cookieName + secureCookie to getToken on HTTPS (Fix #4)", async () => {
@@ -156,6 +170,32 @@ describe("supervisor proxy — dual auth (NextAuth session)", () => {
     await proxy(makeReq("/", {}, "http://localhost:6003"));
     expect(tokenState.lastArgs?.cookieName).toBe("authjs.session-token");
     expect(tokenState.lastArgs?.secureCookie).toBe(false);
+  });
+});
+
+describe("supervisor proxy — CF-only edge gate (CF configured, OIDC NOT configured)", () => {
+  beforeEach(() => {
+    process.env.SUPERVISOR_CF_ACCESS_AUD = "aud-123";
+    process.env.SUPERVISOR_CF_ACCESS_TEAM = "team-x";
+    delete process.env.AUTH_SECRET; // no OIDC => no usable /login to redirect to
+  });
+
+  it("401s a page route when no CF assertion is present (no redirect — regression guard)", async () => {
+    const res = await proxy(makeReq("/"));
+    expect(res.status).toBe(401);
+    expect(res.headers.get("location")).toBeNull();
+  });
+
+  it("allows a page route with a structurally-plausible CF assertion", async () => {
+    const res = await proxy(
+      makeReq("/", { cookie: `CF_Authorization=${PLAUSIBLE_JWT}` }),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("still passes /login and /api/auth/* without auth", async () => {
+    expect((await proxy(makeReq("/login"))).status).toBe(200);
+    expect((await proxy(makeReq("/api/auth/signin"))).status).toBe(200);
   });
 });
 
