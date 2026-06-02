@@ -1,9 +1,11 @@
 # @remote-dev/supervisor-router
 
 The **Supervisor data-plane router** — a small, **stateless** Bun reverse proxy
-that is the single front door behind the Cloudflare tunnel for the instance host
-(e.g. `dev.example.com`). It routes `/<slug>/*` to the matching Remote Dev
-instance and proxies the `/<slug>/ws` terminal WebSocket.
+that is the **single front door** behind the Cloudflare tunnel for the instance
+host (e.g. `dev.example.com`). It routes `/<slug>/*` to the matching Remote Dev
+instance (proxying the `/<slug>/ws` terminal WebSocket), and proxies every
+non-instance path — root `/`, `/login`, `/api/*`, assets — to the **Supervisor
+dashboard** on the same host. One external hostname, one Cloudflare Access app.
 
 > **Status: Phase 1 (remote-dev-jvcx.6).** Convention routing, the last-known-good
 > allowlist poller, and HTTP + WebSocket proxying. The live end-to-end tunnel +
@@ -13,18 +15,22 @@ instance and proxies the `/<slug>/ws` terminal WebSocket.
 ## What it does (spec §5)
 
 - **Convention routing, NO prefix stripping.** The instance image is slug-aware
-  and genuinely serves under `/<slug>`, so the router forwards the **full path
-  and query unchanged**:
-  - `GET /healthz` → `{ "status": "ok" }` (router liveness; never proxied).
+  and genuinely serves under `/<slug>`, and the Supervisor serves at root, so the
+  router forwards the **full path and query unchanged** in both cases:
+  - `GET /healthz` → `{ "status": "ok" }` (router liveness; answered locally,
+    never proxied).
+  - `/api/internal/*` → **404** (answered locally, never proxied — the
+    Supervisor's allowlist endpoint is not exposed at the front door).
   - `/<slug>/ws` **with** a WebSocket upgrade → bridge to
     `ws://rdv.rdv-<slug>.svc.cluster.local:6002` + the same path.
-  - any other `/<slug>/…` → `http://rdv.rdv-<slug>.svc.cluster.local:6001` +
-    the same path + query.
-  - root `/` or a **reserved** first segment (`api`, `_next`, `login`,
-    `healthz`, …) → a minimal landing/instance-picker (200, not proxied). The
-    operator dashboard lives on its **own** hostname (§15 M3); the router does
-    not serve it.
-  - a **malformed** slug, or a valid slug **not in the allowlist** → **404**.
+  - any other `/<slug>/…` for a **ready** instance →
+    `http://rdv.rdv-<slug>.svc.cluster.local:6001` + the same path + query.
+  - **everything else** — root `/`, `/login`, `/api/*`, assets, a reserved first
+    segment (`api`, `_next`, `login`, `icons`, …), a **malformed** slug, or a
+    valid slug **not in the allowlist** — is proxied **unchanged** to the
+    **Supervisor dashboard** (a WS upgrade goes to the Supervisor's ws base).
+    The router is the single front door; it serves the dashboard at `/`, not a
+    separate hostname.
 - **Fail-open allowlist (§15 M4).** Every `ROUTER_ALLOWLIST_POLL_MS` (default
   10 s) the router polls the Supervisor's
   `GET /api/internal/routes` (with the `x-supervisor-internal-secret` header) and
@@ -34,7 +40,8 @@ instance and proxies the `/<slug>/ws` terminal WebSocket.
   (it is stateless).
 - **Auth pass-through.** The router does **not** terminate auth: the `Cookie`
   (carrying `CF_Authorization`) and `Cf-Access-Jwt-Assertion` headers are
-  forwarded unchanged — each instance validates Cloudflare Access itself. For
+  forwarded unchanged to whichever upstream it selects — each upstream (the
+  Supervisor dashboard or an instance) validates Cloudflare Access itself. For
   WebSockets the `Upgrade`/`Connection`/`Sec-WebSocket-*` headers are forwarded.
   Hop-by-hop headers are stripped on the HTTP path. Auth tokens are never logged.
 
@@ -71,7 +78,9 @@ bun run build      # bun build src/index.ts --target bun --outdir dist
 See [`.env.example`](./.env.example). Bun loads `.env` automatically.
 
 - `ROUTER_PORT` — listen port (default **6004**)
-- `ROUTER_SUPERVISOR_URL` — Supervisor base URL
+- `ROUTER_SUPERVISOR_URL` — Supervisor base URL: BOTH the allowlist-poll source
+  AND the default proxy upstream (the dashboard the router fronts at `/`); its WS
+  base is derived from it (http→ws, https→wss)
   (default `http://supervisor.rdv-system.svc.cluster.local:6003`)
 - `SUPERVISOR_INTERNAL_SECRET` — shared secret presented to the Supervisor's
   `/api/internal/routes` (must match the Supervisor's value; may be blank in dev)

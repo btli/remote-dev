@@ -13,29 +13,49 @@ per-instance manifests** to apply.
 > `namespace.yaml`, `rbac.yaml`, `secrets.example.yaml` (template),
 > `supervisor.yaml`, `router.yaml`.
 
+> **Deployment shapes.** Remote Dev runs in one of two shapes. **Shape A**
+> (single-instance / "routerless") is the base app at root with **no Supervisor
+> and no router** (local dev, Electron, self-hosted single-tenant prod) — that is
+> [`docs/SETUP.md`](./SETUP.md), not this runbook. **Shape B** (multi-instance) is
+> this runbook: the Supervisor + the router as the **single external front door**
+> — one hostname, one Cloudflare Access app, `/` → the dashboard and `/<slug>/*`
+> → instances.
+
 ## Topology
 
+A **single front door** (Option C): the router is the only external entry. One
+hostname, one Cloudflare Access app. The router proxies `/` (and every
+non-instance path — `/login`, `/api/*`, assets) to the Supervisor dashboard
+**internally**, and `/<slug>/*` to the matching instance — both with no prefix
+stripping. The Supervisor Service is internal (ClusterIP), reached only via the
+router; it has **no** public hostname of its own.
+
 ```
-  Cloudflare Access app "supervisor"        Cloudflare Access app "instances"
-  (sup.example.com, its own AUD)            (dev.example.com/*, its own AUD)
-              │                                          │
-        CF tunnel ───────────────┐         ┌──────── CF tunnel
-              ▼                   │         │              ▼
-   Service supervisor:6003        │         │     Service router:6004
-   (rdv-system)                   │         │     (rdv-system, ≥2 replicas)
-              │                   │         │              │  /<slug>/* (no strip)
-   ┌──────────┴───────────┐       │         │              ▼
-   │ Deployment rdv-supervisor    │         │   StatefulSet rdv per instance ns
-   │  • web container (6003)      │         │   (rdv-<slug>, created at RUNTIME
-   │  • controller container      │         │    by the Supervisor — NOT here)
-   │  • shared PVC (SQLite)       │         │
-   └──────────────────────────────┘         └─────────────────────────────────
+            Cloudflare Access app "remote-dev"  (single host: dev.example.com/*, one AUD)
+                                    │
+                              CF tunnel
+                                    ▼
+                         Service router:6004
+                         (rdv-system, ≥2 replicas)
+                          │                        │
+            non-instance  │  /  /login  /api/*     │  /<slug>/*  (no strip)
+            (no strip)    ▼                        ▼
+                 Service supervisor:6003     StatefulSet rdv per instance ns
+                 (rdv-system, ClusterIP)     (rdv-<slug>, created at RUNTIME
+                          │                   by the Supervisor — NOT here)
+            ┌─────────────┴────────────┐
+            │ Deployment rdv-supervisor │
+            │  • web container (6003)   │
+            │  • controller container   │
+            │  • shared PVC (SQLite)    │
+            └───────────────────────────┘
 ```
 
-Two **separate hostnames**, two **separate Cloudflare Access apps** with
-**distinct AUDs** (spec §15 M3): putting the Supervisor on its own host avoids
-`CF_Authorization` cookie/AUD ambiguity and re-auth loops. No wildcard DNS is
-needed (path routing).
+One **hostname**, one **Cloudflare Access app** (one AUD). The router forwards
+`CF_Authorization` untouched to whichever upstream it selects (dashboard or
+instance) — it never terminates auth. Auth isolation between the dashboard and
+instances is by **policy within that one app** plus the Supervisor's own role
+gate (spec §15 M3 revision). No wildcard DNS is needed (path routing).
 
 ---
 
@@ -46,8 +66,8 @@ needed (path routing).
   NFS dynamic provisioner, or a cloud CSI). `local-path` is **not** acceptable
   for the Supervisor PVC — its SQLite is the source of truth for every instance
   and must survive node loss (spec §6.1).
-- A Cloudflare account with the existing tunnel, and permission to create
-  Cloudflare Access apps.
+- A Cloudflare account with the existing tunnel, and permission to create a
+  Cloudflare Access app (one app fronts the single host).
 - A GHCR push token (or another registry) for the three images.
 - `docker buildx` configured for multi-arch (a `docker-container` builder).
 
@@ -97,31 +117,33 @@ fields).
 
 ---
 
-## 2. Create the two Cloudflare Access apps + point the tunnel
+## 2. Create the single Cloudflare Access app + point the tunnel
 
-Operator-managed (spec §14.1/§14.2/§15 M3). In the Cloudflare Zero Trust
-dashboard:
+Operator-managed (spec §14.1/§14.2/§15 M3 revision). One app fronts the one
+external host; the router serves both the dashboard (at `/`) and instances (at
+`/<slug>/*`) behind it. In the Cloudflare Zero Trust dashboard:
 
-1. **Instances app** — application covering `dev.example.com/*` (the host the
-   router serves). Note its **AUD** → this is `CF_ACCESS_AUD` (the *instances'*
-   app) in the Secret.
-2. **Supervisor app** — a **separate** application for `sup.example.com` (a
-   distinct hostname). Note its **AUD** → this is `SUPERVISOR_CF_ACCESS_AUD`.
-   Restrict its policy to operators/admins only — Supervisor access never grants
-   instance access.
+1. **Remote Dev app** — a **single** application covering `dev.example.com/*`
+   (the host the router serves). Note its **AUD**: use it for **both**
+   `CF_ACCESS_AUD` (the value injected into each instance) and
+   `SUPERVISOR_CF_ACCESS_AUD` (the Supervisor's own validation) — under one app
+   these are the **same value**. Scope its policy to your operators/users;
+   instance-vs-dashboard access is then differentiated by the Supervisor's own
+   role gate, not by a second app.
 
-Both apps share the same Cloudflare **team** subdomain (`CF_ACCESS_TEAM` /
-`SUPERVISOR_CF_ACCESS_TEAM`).
+`CF_ACCESS_TEAM` and `SUPERVISOR_CF_ACCESS_TEAM` are likewise the same team
+subdomain.
 
-Point the Cloudflare **tunnel** (public hostnames → in-cluster Services):
+Point the Cloudflare **tunnel** (one public hostname → the router Service):
 
 | Public hostname | Service | Notes |
 |---|---|---|
-| `dev.example.com` | `http://router.rdv-system.svc.cluster.local:6004` | instances front door (WebSockets included) |
-| `sup.example.com` | `http://supervisor.rdv-system.svc.cluster.local:6003` | operator dashboard |
+| `dev.example.com` | `http://router.rdv-system.svc.cluster.local:6004` | single front door — dashboard at `/`, instances at `/<slug>/*` (WebSockets included) |
 
-The router and instances forward `CF_Authorization` untouched; each instance
-validates the CF Access JWT itself (the router does not terminate auth).
+The router forwards `CF_Authorization` untouched to whichever upstream it
+selects (the Supervisor dashboard or an instance); each validates the CF Access
+JWT itself (the router does not terminate auth). The `supervisor` Service is
+**internal** (ClusterIP) — it is **not** a tunnel target.
 
 ---
 
@@ -134,9 +156,12 @@ kubectl apply -f deploy/k8s/supervisor/namespace.yaml
 # 3b. Config Secret — REAL values, out-of-band (do NOT commit). Use the
 #     secrets.example.yaml keys as the checklist. Either kubectl create secret
 #     (see the header of secrets.example.yaml) or sealed-secrets/SOPS.
+#     Under the single-front-door model there is ONE CF Access app, so
+#     SUPERVISOR_CF_ACCESS_AUD == CF_ACCESS_AUD and
+#     SUPERVISOR_CF_ACCESS_TEAM == CF_ACCESS_TEAM (same values below).
 kubectl -n rdv-system create secret generic rdv-supervisor-config \
   --from-literal=SUPERVISOR_CF_ACCESS_TEAM=my-team \
-  --from-literal=SUPERVISOR_CF_ACCESS_AUD=<supervisor-app-aud> \
+  --from-literal=SUPERVISOR_CF_ACCESS_AUD=<remote-dev-app-aud> \
   --from-literal=SUPERVISOR_INTERNAL_SECRET="$(openssl rand -base64 32)" \
   --from-literal=SUPERVISOR_ADMIN_EMAIL=admin@example.com \
   --from-literal=SUPERVISOR_INSTANCE_HOST=dev.example.com \
@@ -144,7 +169,7 @@ kubectl -n rdv-system create secret generic rdv-supervisor-config \
   --from-literal=SUPERVISOR_DEFAULT_STORAGE_CLASS=longhorn \
   --from-literal=SUPERVISOR_DEFAULT_STORAGE_SIZE=10Gi \
   --from-literal=CF_ACCESS_TEAM=my-team \
-  --from-literal=CF_ACCESS_AUD=<instances-app-aud>
+  --from-literal=CF_ACCESS_AUD=<remote-dev-app-aud>   # same AUD as SUPERVISOR_CF_ACCESS_AUD
 # Optional — for a PRIVATE registry / mixed-arch instances, append these flags to
 # the command above (add a trailing `\` to its CF_ACCESS_AUD line first):
 #   --from-literal=SUPERVISOR_INSTANCE_IMAGE_PULL_SECRET_NAME=harbor-registry
@@ -183,11 +208,11 @@ kubectl -n rdv-system exec deploy/rdv-router -- \
   curl -sf http://localhost:6004/healthz            # → {"status":"ok"}
 ```
 
-External (through the tunnel + Cloudflare Access):
+External (through the tunnel + Cloudflare Access — one app):
 
-1. Browse to `https://sup.example.com` → authenticate via the **Supervisor**
-   Access app → the operator dashboard loads (you are the `SUPERVISOR_ADMIN_EMAIL`
-   admin).
+1. Browse to `https://<host>/` (e.g. `https://dev.example.com/`) → authenticate
+   via the **single** Access app → the router proxies `/` to the Supervisor
+   dashboard, which loads (you are the `SUPERVISOR_ADMIN_EMAIL` admin).
 2. Create a test instance (e.g. slug `alpha`) with a storage target. Watch it
    go `requested → provisioning → ready`:
    ```bash
@@ -195,7 +220,7 @@ External (through the tunnel + Cloudflare Access):
    kubectl -n rdv-alpha get statefulset,pod,svc
    ```
 3. Reach the instance through the router at `https://dev.example.com/alpha`
-   (authenticate via the **instances** Access app). Confirm assets load, login
+   (the **same** Access app — no second login). Confirm assets load, login
    round-trips, and a terminal attaches over
    `wss://dev.example.com/alpha/ws` (the end-to-end tunnel + Access WebSocket
    path is the jvcx.11 smoke criterion, spec §15 M5).

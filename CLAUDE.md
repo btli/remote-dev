@@ -113,7 +113,7 @@ Full architecture: `docs/ARCHITECTURE.md`.
 | Agent CLIs & profiles | 5 providers, profile isolation, appearance, CLI verification | `docs/AGENTS.md` |
 | `rdv` CLI | Rust CLI agents use via Bash (sessions, agents, peers, hooks, browser…) | `docs/RDV_CLI.md` |
 | Production deploy | Blue/green slot swap + HMAC auto-deploy webhook, rollback | `docs/DEPLOYMENT.md` |
-| Multi-instance hosting | Many isolated pods under `RDV_BASE_PATH` prefixes (k8s) | `docs/MULTI_INSTANCE.md` |
+| Multi-instance hosting | Two shapes — Shape A routerless (`RDV_BASE_PATH` at root) and Shape B supervisor + router single front door (k3s) | `docs/MULTI_INSTANCE.md`, `docs/SUPERVISOR_DEPLOY.md` |
 | Mobile & PWA | Flutter `mobile/`, Expo `packages/mobile/`, PWA architecture | `docs/MOBILE_ARCHITECTURE.md` |
 | Services / DB schema / plugins / peer comms | 54 services, 59 tables, terminal-type plugins, inter-agent messaging | `docs/ARCHITECTURE.md` |
 | Setup & environment | Install, env vars, GitHub OAuth, multi-instance env | `docs/SETUP.md` |

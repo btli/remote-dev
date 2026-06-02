@@ -1,15 +1,18 @@
-# Supervisor data-plane router (spec §5 + §15 M4): a stateless Bun reverse proxy.
+# Supervisor data-plane router (spec §5 + §15 M4): a stateless Bun reverse proxy
+# — the SINGLE front door (§15 M3 revision).
 #
 # Routes /<slug>/* → the instance Service rdv.rdv-<slug>.svc.cluster.local
 # (HTTP :6001, WS /<slug>/ws :6002) with NO prefix stripping (the instance image
-# is slug-aware). It polls the Supervisor's GET /api/internal/routes for the
-# ready-instance allowlist and FAILS OPEN from a last-known-good cache when the
-# Supervisor is briefly unreachable.
+# is slug-aware), and proxies every NON-instance path — `/`, `/login`, `/api/*`,
+# assets — to the Supervisor dashboard (ROUTER_SUPERVISOR_URL) on the same host.
+# It polls the Supervisor's GET /api/internal/routes for the ready-instance
+# allowlist and FAILS OPEN from a last-known-good cache when the Supervisor is
+# briefly unreachable. (/api/internal/* is blocked at the front door.)
 #
 # replicas: 2 — stateless, so run ≥2 for availability on the data path (§15 M4).
 #
-# The CF tunnel for the INSTANCES hostname (e.g. dev.example.com, §15 M3) points
-# at the `router` Service below.
+# The CF tunnel for the single external host (e.g. dev.example.com, §15 M3
+# revision) points at the `router` Service below — the ONE public entry.
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -76,7 +79,9 @@ spec:
           env:
             - name: ROUTER_PORT
               value: "6004"
-            # In-cluster Supervisor Service DNS (where /api/internal/routes lives).
+            # In-cluster Supervisor Service DNS — BOTH the allowlist-poll source
+            # (/api/internal/routes) AND the default proxy upstream (the dashboard
+            # the router fronts at `/`). WS base is derived (http→ws).
             - name: ROUTER_SUPERVISOR_URL
               value: http://supervisor.rdv-system.svc.cluster.local:6003
             # Allowlist poll cadence (ms). Matches the router default.
