@@ -243,7 +243,7 @@ USER rdv
 # request time). `@libsql/client/node` is included so a future packaging
 # regression (the platform-native binding missing from /app/node_modules/@libsql)
 # fails the build instead of CrashLooping the terminal server at startup.
-RUN node -e "require('@libsql/client/node'); require('better-sqlite3'); require('node-pty'); console.log('native modules OK')"
+RUN node -e "require('@libsql/linux-x64-gnu'); require('@libsql/client/node'); require('better-sqlite3'); require('node-pty'); console.log('native modules OK')"
 
 # NOTE: RDV_BASE_PATH is intentionally NOT set here. The build stage baked the
 # `/rdvslug` sentinel into the static output; the entrypoint rewrites it to the
