@@ -147,6 +147,55 @@ JWT itself (the router does not terminate auth). The `supervisor` Service is
 
 ---
 
+## 2b. OIDC (optional native login)
+
+The dashboard can authenticate operators with a **generic OIDC** identity
+provider (Authentik, Keycloak, Okta, Entra ID, Google, …) **in addition to or
+instead of** Cloudflare Access. This is the "native login" path — a `/login`
+page with a **Sign in with `<SUPERVISOR_OIDC_NAME>`** button.
+
+**Dual auth.** A request is authenticated if it carries a valid **CF Access JWT
+OR** a valid **NextAuth OIDC session** (resolution order: CF first when
+configured, then the OIDC session, then — dev only — `SUPERVISOR_ADMIN_EMAIL`).
+The two coexist: behind CF Access, the OIDC session is what a browser uses once
+the user signs in; both resolve to an email that maps to a `supervisor_user`
+(the role mapping is unchanged). The fail-closed startup guard accepts **either**
+CF Access **or** OIDC — configuring OIDC alone is enough to boot in production.
+
+**Closed allowlist (the security rule).** An OIDC login is accepted **only if
+the email is already a known `supervisor_user` row OR equals
+`SUPERVISOR_ADMIN_EMAIL`** (the seeded admin). Unknown emails the IdP
+authenticates are **denied** — provisioning access is an explicit admin action
+(create the `supervisor_user` first), not an automatic consequence of the IdP
+trusting someone. (The CF Access path keeps its existing auto-`viewer` behavior.)
+The same allowlist is **re-checked on every request**, so **deleting a user's
+`supervisor_user` row revokes their access on the next request** even though
+sessions are stateless JWTs — no session-table cleanup or cookie expiry needed.
+
+**Configure.** Set these keys in the `rdv-supervisor-config` Secret (all four
+required to enable OIDC; omit them all for a CF-Access-only deploy):
+
+| Key | Value |
+|---|---|
+| `SUPERVISOR_OIDC_ISSUER` | Issuer URL; discovery is `{issuer}/.well-known/openid-configuration` |
+| `SUPERVISOR_OIDC_CLIENT_ID` | OAuth client id from the IdP |
+| `SUPERVISOR_OIDC_CLIENT_SECRET` | OAuth client secret (a secret — never commit/log) |
+| `SUPERVISOR_OIDC_NAME` | Display label for the button (e.g. `Authentik`); default `SSO` |
+| `AUTH_SECRET` | Signs the NextAuth JWT session cookie — `openssl rand -base64 32` |
+
+**Register the callback URL** with the IdP (the provider id is the fixed string
+`oidc`):
+
+```
+https://<host>/api/auth/callback/oidc
+```
+
+where `<host>` is the single external host the router fronts (e.g.
+`https://dev.example.com/api/auth/callback/oidc`). The login flow (`/login` and
+`/api/auth/*`) is reachable without a CF assertion so users can sign in.
+
+---
+
 ## 3. Apply the control-plane manifests
 
 ```bash

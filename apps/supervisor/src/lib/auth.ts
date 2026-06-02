@@ -47,23 +47,44 @@ type Handler = (
 
 /**
  * Resolve the authenticated email for this request, or null.
+ *
+ * DUAL-AUTH precedence (LOCKED): Cloudflare Access first (if configured), then a
+ * valid NextAuth OIDC session, then the dev SUPERVISOR_ADMIN_EMAIL fallback.
+ * Both CF and OIDC yield an email that maps to a `supervisor_user` via
+ * `resolveSupervisorUser` (role logic unchanged). The OIDC session is itself
+ * cryptographically validated by `auth()`, and an OIDC login only exists at all
+ * if it passed the closed-allowlist `signIn` gate in `src/auth.ts`.
+ *
  * Exported for unit testing the precedence rules.
  */
 export async function resolveAuthenticatedEmail(
   request: Request,
 ): Promise<string | null> {
-  // Production path: a valid CF Access JWT for the Supervisor's own app.
+  // (1) Production path: a valid CF Access JWT for the Supervisor's own app.
+  // If CF is configured AND yields an email, use it. If CF is configured but the
+  // token is absent/invalid, do NOT short-circuit to null — fall through to the
+  // OIDC session (a user signed in via OIDC has no CF token).
   if (isCfAccessConfigured()) {
     const token = getAccessToken(request);
     const cfUser = await validateAccessJWT(token);
-    return cfUser?.email ?? null;
+    if (cfUser?.email) return cfUser.email;
   }
+
+  // (2) Native OIDC: a valid NextAuth session (JWT cookie). `auth()` verifies
+  // the session; we only trust an email it returns. This works in production
+  // (it's the whole point of native login) and is independent of CF config.
+  // The session email is re-checked against the SAME closed allowlist used by
+  // `signIn` (see resolveOidcSessionEmail) so deleting a user's supervisor_user
+  // row revokes their existing JWT session on the next request.
+  const sessionEmail = await resolveOidcSessionEmail();
+  if (sessionEmail) return sessionEmail;
 
   // Belt-and-suspenders: NEVER trust the admin-email fallback in production.
   // The startup guard in src/instrumentation.ts already refuses to boot prod
-  // without CF Access, but defend here too in case that guard is bypassed (or
-  // a future entry point skips instrumentation). The explicit escape hatch
-  // SUPERVISOR_ALLOW_INSECURE_AUTH=1 re-enables the fallback for testing only.
+  // without CF Access OR OIDC, but defend here too in case that guard is
+  // bypassed (or a future entry point skips instrumentation). The explicit
+  // escape hatch SUPERVISOR_ALLOW_INSECURE_AUTH=1 re-enables the fallback for
+  // testing only.
   if (
     process.env.NODE_ENV === "production" &&
     process.env.SUPERVISOR_ALLOW_INSECURE_AUTH !== "1"
@@ -71,10 +92,42 @@ export async function resolveAuthenticatedEmail(
     return null;
   }
 
-  // Local-dev path: no CF Access configured → trust SUPERVISOR_ADMIN_EMAIL as
-  // the operator identity (mirrors the main app's localhost credentials path).
+  // (3) Local-dev path: no CF Access / OIDC session → trust SUPERVISOR_ADMIN_EMAIL
+  // as the operator identity (mirrors the main app's localhost credentials path).
   const adminEmail = process.env.SUPERVISOR_ADMIN_EMAIL;
   return adminEmail && adminEmail.length > 0 ? adminEmail : null;
+}
+
+/**
+ * Read the email from a valid NextAuth OIDC session, or null. Isolated so the
+ * `auth()` import is lazy (it pulls the NextAuth config, which references the
+ * DB) and so unit tests can mock just this seam. Never throws.
+ *
+ * REVOCATION (closed allowlist, per-request): sessions are JWT, and
+ * `resolveSupervisorUser` auto-creates a `viewer` on first sight — so a session
+ * email that is no longer authorized would otherwise be silently re-admitted.
+ * We therefore re-apply the SAME closed-allowlist predicate `signIn` uses
+ * (`isOidcSignInAllowed`: known `supervisor_user` OR `=== SUPERVISOR_ADMIN_EMAIL`,
+ * WITHOUT auto-creating). If the email is no longer allowed, return null so the
+ * caller treats the request as unauthenticated — deleting a user's row revokes
+ * their existing session on the next request. (The CF path's auto-`viewer`
+ * behavior is intentionally NOT subject to this gate.)
+ */
+async function resolveOidcSessionEmail(): Promise<string | null> {
+  try {
+    const { auth, isOidcSignInAllowed } = await import("@/auth");
+    const session = await auth();
+    const email = session?.user?.email ?? null;
+    if (!email) return null;
+    if (!(await isOidcSignInAllowed(email))) {
+      log.warn("OIDC session email no longer in allowlist; treating as unauthenticated");
+      return null;
+    }
+    return email;
+  } catch (error) {
+    log.error("Failed to resolve OIDC session", { error: String(error) });
+    return null;
+  }
 }
 
 /**

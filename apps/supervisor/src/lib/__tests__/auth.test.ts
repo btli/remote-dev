@@ -17,6 +17,24 @@ vi.mock("@/lib/cf-access", () => ({
     cfState.email ? { email: cfState.email, sub: "sub-1" } : null,
 }));
 
+// OIDC seam: `resolveAuthenticatedEmail` lazily imports `@/auth` and calls
+// `auth()` + `isOidcSignInAllowed()`. The full `@/auth` module pulls NextAuth +
+// the DB, so we mock it wholesale.
+//   - `oidcState.email`   = the email a valid NextAuth session yields (null = no session).
+//   - `oidcState.allowed` = what the closed-allowlist re-check returns for that
+//     email. Defaults true; set false to model an email whose supervisor_user
+//     row was deleted (revocation-on-next-request).
+const oidcState: { email: string | null; allowed: boolean } = {
+  email: null,
+  allowed: true,
+};
+
+vi.mock("@/auth", () => ({
+  auth: async () =>
+    oidcState.email ? { user: { email: oidcState.email } } : null,
+  isOidcSignInAllowed: async () => oidcState.allowed,
+}));
+
 // DB seam: `existingUser` models a row already present in the table.
 //   - findFirst returns it (or undefined for first-sight).
 //   - the upsert (insert ... onConflictDoUpdate) is modelled faithfully: if a
@@ -90,6 +108,8 @@ function setNodeEnv(value: string | undefined): void {
 beforeEach(() => {
   cfState.configured = false;
   cfState.email = null;
+  oidcState.email = null;
+  oidcState.allowed = true;
   dbState.existingUser = undefined;
   dbState.inserted = null;
   dbState.returningEmpty = false;
@@ -225,6 +245,87 @@ describe("resolveAuthenticatedEmail — production fail-closed (C1)", () => {
     cfState.email = "cf@example.com";
 
     expect(await resolveAuthenticatedEmail(req())).toBe("cf@example.com");
+  });
+});
+
+describe("resolveAuthenticatedEmail — dual auth (CF + OIDC)", () => {
+  it("returns the OIDC session email when CF is not configured and CF yields nothing", async () => {
+    cfState.configured = false;
+    oidcState.email = "oidc@example.com";
+
+    expect(await resolveAuthenticatedEmail(req())).toBe("oidc@example.com");
+  });
+
+  it("returns the OIDC session email in PRODUCTION even without CF (native login)", async () => {
+    setNodeEnv("production");
+    cfState.configured = false;
+    oidcState.email = "oidc@example.com";
+
+    expect(await resolveAuthenticatedEmail(req())).toBe("oidc@example.com");
+  });
+
+  it("falls through from a configured-but-tokenless CF to the OIDC session", async () => {
+    // CF app is configured, but THIS request has no valid CF token (cfState.email
+    // null). A user signed in via OIDC has no CF token — must still authenticate.
+    cfState.configured = true;
+    cfState.email = null;
+    oidcState.email = "oidc@example.com";
+
+    expect(await resolveAuthenticatedEmail(req())).toBe("oidc@example.com");
+  });
+
+  it("prefers the CF email over the OIDC session when both are present", async () => {
+    cfState.configured = true;
+    cfState.email = "cf@example.com";
+    oidcState.email = "oidc@example.com";
+
+    expect(await resolveAuthenticatedEmail(req())).toBe("cf@example.com");
+  });
+
+  it("an OIDC-authenticated email flows through withSupervisorAuth to a role gate", async () => {
+    cfState.configured = false;
+    oidcState.email = "op@example.com";
+    dbState.existingUser = {
+      id: "id-op",
+      email: "op@example.com",
+      role: "operator",
+    };
+
+    const handler = withSupervisorAuth(
+      "operator",
+      async (_r, { user }) => Response.json({ email: user.email }) as never,
+    );
+    const res = await handler(req());
+    expect(res.status).toBe(200);
+    expect((await res.json()).email).toBe("op@example.com");
+  });
+
+  it("returns null for an OIDC session whose email is NO LONGER allowed (revocation)", async () => {
+    // The session is valid (auth() yields an email) but the closed-allowlist
+    // re-check fails — e.g. the supervisor_user row was deleted. Must be treated
+    // as unauthenticated, NOT auto-recreated as a viewer.
+    cfState.configured = false;
+    oidcState.email = "removed@example.com";
+    oidcState.allowed = false; // not a known supervisor_user, not the admin
+
+    expect(await resolveAuthenticatedEmail(req())).toBeNull();
+  });
+
+  it("a revoked OIDC session yields 401 through withSupervisorAuth (no auto-viewer)", async () => {
+    cfState.configured = false;
+    oidcState.email = "removed@example.com";
+    oidcState.allowed = false;
+    // Even if findFirst would later create a viewer, the allowlist gate stops us
+    // before resolveSupervisorUser runs.
+    dbState.existingUser = undefined;
+
+    const handler = withSupervisorAuth(
+      "viewer",
+      async () => Response.json({ ok: true }) as never,
+    );
+    const res = await handler(req());
+    expect(res.status).toBe(401);
+    expect(dbState.inserted).toBeNull(); // never auto-created a row
   });
 });
 
