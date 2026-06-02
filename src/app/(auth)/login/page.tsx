@@ -1,112 +1,21 @@
-"use client";
+import LoginClient from "./login-client";
 
-import { useState, useSyncExternalStore } from "react";
-import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Smartphone } from "lucide-react";
-
+/**
+ * Server component: resolves whether the generic OIDC provider is configured
+ * and its display label, then hands them to the client login form. Reading
+ * the gate on the server keeps the "Sign in with {OIDC_NAME}" button in step
+ * with the provider registered in `src/auth.ts`.
+ *
+ * The button gate is derived from the two non-secret vars (issuer + client id)
+ * only — never `OIDC_CLIENT_SECRET` — so the UI is not coupled to the secret.
+ * If the secret is missing, `src/auth.ts` simply won't register the provider
+ * and the OIDC callback returns an error, but no secret is read here.
+ */
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const router = useRouter();
+  const oidcEnabled = Boolean(process.env.OIDC_ISSUER && process.env.OIDC_CLIENT_ID);
+  // Prefer the public alias (also available client-side) but fall back to the
+  // server-only label, defaulting to a neutral "OIDC".
+  const oidcName = process.env.NEXT_PUBLIC_OIDC_NAME || process.env.OIDC_NAME || "OIDC";
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    setError("");
-
-    const result = await signIn("credentials", {
-      email,
-      redirect: false,
-    });
-
-    if (result?.error) {
-      setError("Unauthorized email or login not allowed from this location");
-      setLoading(false);
-    } else {
-      router.push("/");
-      router.refresh();
-    }
-  }
-
-  return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>Remote Dev</CardTitle>
-          <CardDescription>
-            Sign in with your authorized email (localhost only)
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="you@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                autoFocus
-              />
-            </div>
-            {error && (
-              <p className="text-sm text-destructive" role="alert">{error}</p>
-            )}
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Signing in..." : "Sign in"}
-            </Button>
-            <p className="text-xs text-muted-foreground text-center">
-              Remote access requires Cloudflare Access authentication
-            </p>
-          </form>
-        </CardContent>
-      </Card>
-      <MobileAppBanner />
-    </div>
-  );
-}
-
-const APK_DOWNLOAD_URL =
-  "https://github.com/btli/remote-dev/releases/latest";
-
-const subscribe = () => () => {};
-const getIsMobile = () =>
-  /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-const getServerSnapshot = () => false;
-
-function MobileAppBanner() {
-  const isMobile = useSyncExternalStore(subscribe, getIsMobile, getServerSnapshot);
-
-  if (!isMobile) return null;
-
-  return (
-    <Card className="w-full max-w-md border-primary/20 bg-primary/5">
-      <CardContent className="flex items-center gap-3 p-4">
-        <Smartphone className="h-8 w-8 shrink-0 text-primary" />
-        <div className="flex-1">
-          <p className="text-sm font-medium">Remote Dev Mobile</p>
-          <p className="text-xs text-muted-foreground">
-            Native terminal app for Android
-          </p>
-        </div>
-        <Button size="sm" variant="outline" asChild>
-          <a href={APK_DOWNLOAD_URL}>Get Latest</a>
-        </Button>
-      </CardContent>
-    </Card>
-  );
+  return <LoginClient oidcEnabled={oidcEnabled} oidcName={oidcName} />;
 }
