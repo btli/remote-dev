@@ -15,7 +15,7 @@
 # One image runs BOTH supervisor processes (the Deployment picks which via the
 # container `command`):
 #   • web        — `bun run start`      → next start -p 6003   (default CMD)
-#   • controller — `bun run controller` → tsx src/controller/index.ts
+#   • controller — `bun run controller` → bun src/controller/index.ts
 # Both run from /app/apps/supervisor and share the same SQLite DB on the PVC.
 #
 # Non-root runtime (uid 10001, matching the Deployment securityContext).
@@ -64,10 +64,11 @@ RUN cd apps/supervisor && bun run build
 #                  is self-contained (its relative symlinks resolve within
 #                  .next/standalone/node_modules/.bun), so the web server needs no
 #                  outside node_modules.
-#   • controller — `bun run controller` (tsx src/controller/index.ts). tsx +
-#                  @kubernetes/client-node + drizzle + @libsql are devDeps/runtime
-#                  deps that are NOT in the Next standalone trace, so we ALSO ship
-#                  the workspace node_modules for this process.
+#   • controller — `bun run controller` (bun src/controller/index.ts — bun runs
+#                  the TypeScript entry natively; tsx is a Node loader that does
+#                  not work under bun). @kubernetes/client-node + drizzle + @libsql
+#                  are runtime deps that are NOT in the Next standalone trace, so
+#                  we ALSO ship the workspace node_modules for this process.
 # Hence we copy BOTH the built app (incl. .next/standalone + .next/static) and the
 # repo-root node_modules.
 # ──────────────────────────────────────────────────────────────────────────────
@@ -105,6 +106,40 @@ COPY --from=build --chown=rdv:rdv /app/packages ./packages
 COPY --from=build --chown=rdv:rdv \
     /app/apps/supervisor/.next/static \
     ./apps/supervisor/.next/standalone/apps/supervisor/.next/static
+
+# libsql standalone fix: provide the missing `web.*` files for the `@libsql`
+# isomorphic shims so libsql resolves under the bun runtime.
+#
+# `@libsql/client` (a hrana/libsql stack) is `serverExternalPackages`, so the web
+# process `await import()`s it at runtime. Its transitive `@libsql/hrana-client`
+# imports `@libsql/isomorphic-ws` + `@libsql/isomorphic-fetch`, whose package.json
+# `exports` select a file by RUNTIME CONDITION:
+#     "import": { "bun": "./web.mjs", "node": "./node.mjs", "default": "./web.mjs" }
+# The runtime image is `oven/bun`, where `node` is a bun shim — so the resolver
+# matches the `bun` condition and looks for `./web.mjs` / `./web.cjs` (fetch:
+# `./web.js`). But these two packages are PUBLISHED WITHOUT their `web.*` files
+# (only the `node.*` variants ship), so the bun condition resolves to a missing
+# file and the whole DB layer (drizzle/libsql in src/db/index.ts) dies at startup
+# with:  Cannot find module '@libsql/isomorphic-ws' from '.../@libsql/hrana-client'.
+# (Real Node.js dodges this by matching the `node` condition, which DOES exist —
+# which is why it was never seen until the image was actually run under bun.)
+#
+# Fix: materialize the missing `web.*` from the working `node.*` siblings (both
+# are trivial — they just re-export `WebSocket`/`fetch` from `ws`/`node-fetch`,
+# which ARE installed). Patch the canonical package in the standalone `.bun`
+# store; every bun-isolated symlink points back to it, so one copy covers all
+# resolution paths. The path is globbed (not version-pinned) so a libsql bump
+# can't silently un-fix it — the `test -f` guard fails the build instead.
+RUN set -eux; \
+    SR="apps/supervisor/.next/standalone/node_modules/.bun"; \
+    WS="$(readlink -f "$SR"/@libsql+isomorphic-ws@*/node_modules/@libsql/isomorphic-ws)"; \
+    FT="$(readlink -f "$SR"/@libsql+isomorphic-fetch@*/node_modules/@libsql/isomorphic-fetch)"; \
+    cp -n "$WS/node.mjs" "$WS/web.mjs"; \
+    cp -n "$WS/node.cjs" "$WS/web.cjs"; \
+    cp -n "$FT/node.js"  "$FT/web.js";  \
+    cp -n "$FT/node.cjs" "$FT/web.cjs"; \
+    chown rdv:rdv "$WS"/web.* "$FT"/web.*; \
+    test -f "$WS/web.mjs" && test -f "$WS/web.cjs" && test -f "$FT/web.js" && test -f "$FT/web.cjs"
 
 # The Supervisor's own SQLite database lives here (a PVC is mounted at this path
 # in the Deployment).
