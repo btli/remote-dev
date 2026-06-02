@@ -195,6 +195,16 @@ COPY --from=build --chown=rdv:rdv /tmp/rdv-binary /usr/local/bin/rdv
 COPY --chown=rdv:rdv docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
+# The non-root runtime user (uid 10001 `rdv`) must OWN the /app directory itself,
+# not just its contents: the entrypoint's basePath materialization runs `sed -i`
+# over /app/server.js (and /app/.next, /app/public) for per-instance
+# RDV_BASE_PATH, and `sed -i` must create a temp file in the target's directory.
+# `WORKDIR /app` creates /app as root and the `COPY --chown=rdv:rdv` lines only
+# chown the copied *contents*, leaving /app root-owned → `sed -i` fails with
+# "couldn't open temporary file /app/sedXXXX: Permission denied" and provisioned
+# instances CrashLoop. (Single-instance / RDV_BASE_PATH="" skips materialization.)
+RUN chown -R rdv:rdv /app
+
 USER rdv
 
 # Native ABI smoke test: native modules (better-sqlite3, node-pty) were
