@@ -105,12 +105,23 @@ RUN bun run terminal:build
 # both into `/app/node_modules` in the runtime stage to keep `require('node-pty')`
 # and `require('better-sqlite3')` resolvable from there.
 #
+# We ALSO stage the whole `@libsql` scope: the DB layer (src/db/index.ts) uses
+# `@libsql/client/node`, which conditionally `require`s a platform-native binding
+# at runtime (on this linux-x64 build runner that's `@libsql/linux-x64-gnu`).
+# That conditional require is invisible to the Next.js standalone trace, so the
+# binding is absent from the standalone tree and the Node-run terminal server
+# (CWD=/app) crashes with `Cannot find module '@libsql/linux-x64-gnu'`. Staging
+# the full scope here (client/core/isomorphic-* + the native binding) lets the
+# runtime stage overlay it into /app/node_modules/@libsql. Path avoids `@` to
+# sidestep any shell/COPY quirks.
+#
 # `cp -RL` dereferences symlinks (bun's isolated layout uses internal symlinks);
 # this gives the runtime stage a self-contained tree that doesn't depend on
 # anything else under /app/node_modules.
 RUN mkdir -p /opt/native && \
     cp -RL node_modules/node-pty /opt/native/node-pty && \
-    cp -RL node_modules/better-sqlite3 /opt/native/better-sqlite3
+    cp -RL node_modules/better-sqlite3 /opt/native/better-sqlite3 && \
+    cp -RL node_modules/@libsql /opt/native/libsql-scope
 
 # Build the rdv Rust CLI (statically linkable so it runs in the slim runtime)
 RUN cd crates/rdv && cargo build --release --locked && \
@@ -180,6 +191,13 @@ COPY --from=build --chown=rdv:rdv /app/tsconfig.json ./tsconfig.json
 # it here too so `require('better-sqlite3')` resolves from CWD=/app.
 COPY --from=build --chown=rdv:rdv /opt/native/node-pty ./node_modules/node-pty
 COPY --from=build --chown=rdv:rdv /opt/native/better-sqlite3 ./node_modules/better-sqlite3
+# Overlay the full @libsql scope (incl. the linux-x64-gnu native binding) into
+# /app/node_modules. `@libsql/client` conditionally `require`s the host's native
+# binding at runtime, which the Next.js standalone trace does not capture — so it
+# is absent from the standalone tree and the Node-run terminal server crashes with
+# `Cannot find module '@libsql/linux-x64-gnu'`. This makes @libsql resolvable from
+# CWD=/app for BOTH the standalone Next.js app and dist-terminal.
+COPY --from=build --chown=rdv:rdv /opt/native/libsql-scope ./node_modules/@libsql
 
 # rdv Rust CLI
 COPY --from=build --chown=rdv:rdv /tmp/rdv-binary /usr/local/bin/rdv
@@ -213,8 +231,10 @@ USER rdv
 # doesn't, instead of crashing at the first runtime request with a cryptic
 # NAPI error. Run AFTER `USER rdv` so we verify the runtime user can also
 # load them (catches permission/path issues that would only manifest at
-# request time).
-RUN node -e "require('better-sqlite3'); require('node-pty'); console.log('native modules OK')"
+# request time). `@libsql/client/node` is included so a future packaging
+# regression (the platform-native binding missing from /app/node_modules/@libsql)
+# fails the build instead of CrashLooping the terminal server at startup.
+RUN node -e "require('@libsql/client/node'); require('better-sqlite3'); require('node-pty'); console.log('native modules OK')"
 
 # NOTE: RDV_BASE_PATH is intentionally NOT set here. The build stage baked the
 # `/rdvslug` sentinel into the static output; the entrypoint rewrites it to the
