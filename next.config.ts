@@ -17,6 +17,24 @@ const nextConfig: NextConfig = {
   // basePath must be omitted entirely or a non-empty `/foo` — the empty
   // string is not a legal value, hence the spread-only-when-truthy pattern.
   ...(basePath ? { basePath } : {}),
+  // INLINE `process.env.RDV_BASE_PATH` into ALL bundles at build time so the
+  // baked `/rdvslug` sentinel is a materializable LITERAL everywhere — most
+  // importantly inside the Node-runtime **proxy** bundle (`src/proxy.ts` →
+  // `src/lib/base-path.ts`). Without this, Turbopack leaves a RUNTIME
+  // `process.env.RDV_BASE_PATH ?? ""` read in the proxy chunk; that read is NOT
+  // reliably populated when the standalone server evaluates the proxy module
+  // graph, so the proxy computed `BASE_PATH=""` and `getSessionCookieName()`
+  // returned the UNSCOPED default cookie name (`__Secure-authjs.session-token`)
+  // while the Node server set the SCOPED name (`__Secure-rdv-<slug>-...`) for an
+  // instance — the mismatch made `getToken()` null and bounced OIDC/credentials
+  // login back to /login. As a literal `/rdvslug`, the entrypoint's existing
+  // `sed` materialization (`docker/entrypoint.sh`, over `/app/.next`) rewrites it
+  // to the real `/<slug>` in the proxy chunk too, so the proxy resolves the same
+  // basePath as the server. (Next 16 runs the proxy on Node.js and FORBIDS a
+  // `runtime` export in the proxy file, so build-time inlining — not a runtime
+  // switch — is the fix.) `env` values are baked at BUILD time: with
+  // `RDV_BASE_PATH=""` (single-server) it inlines `""`, byte-identical behavior.
+  env: { RDV_BASE_PATH: basePath },
   output: "standalone",
   serverExternalPackages: ["@libsql/client", "mysql2"],
   outputFileTracingExcludes: {
