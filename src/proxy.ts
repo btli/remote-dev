@@ -165,7 +165,13 @@ export async function proxy(request: NextRequest) {
     );
   }
 
-  if (isLoggedIn && isLoginPage) {
+  // Only auto-redirect away from /login when isLoggedIn is a REAL validation
+  // signal (unscoped/single-server getToken). In scoped instance mode isLoggedIn
+  // is mere cookie-PRESENCE, so a stale/invalid session cookie would bounce
+  // /login→/ while the Home page's real getAuthSession() bounces /→/login → an
+  // infinite loop. Let /login render instead; re-authenticating overwrites the
+  // stale cookie. (Unauthenticated /dev→/login redirect above is unaffected.)
+  if (isLoggedIn && isLoginPage && !scoped) {
     return tagInstance(
       NextResponse.redirect(new URL(prefixPath("/"), request.url))
     );

@@ -193,7 +193,11 @@ describe("proxy — scoped instance realm (presence gate, regardless of AUTH_SEC
     expect(res.status).toBe(200);
   });
 
-  it("redirects an authenticated user away from /login to the prefixed root", async () => {
+  it("does NOT redirect a present-cookie request away from /login (renders it, avoiding the stale-cookie loop)", async () => {
+    // Scoped isLoggedIn is mere cookie-PRESENCE. If a stale/invalid cookie were
+    // bounced /login→/, the Home page's real getAuthSession() would bounce
+    // /→/login, looping forever. So in scoped mode /login must render even when
+    // a candidate cookie is present; re-authenticating overwrites the stale one.
     vi.stubEnv("AUTH_SECRET", "");
     const req = makeRequest("/login", {
       cookies: ["__Secure-rdv-dev-session-token"],
@@ -201,8 +205,10 @@ describe("proxy — scoped instance realm (presence gate, regardless of AUTH_SEC
 
     const res = await proxy(req);
 
-    expect(res.status).toBe(307);
-    expect(res.headers.get("location")).toBe("https://host/dev");
+    expect(getTokenMock).not.toHaveBeenCalled();
+    // No redirect — the login page passes through.
+    expect(res.headers.get("location")).toBeNull();
+    expect(res.status).toBe(200);
   });
 });
 
@@ -271,6 +277,21 @@ describe("proxy — unscoped single-server (getToken path / AC-1)", () => {
     const res = await proxy(req);
 
     expect(res.status).toBe(401);
+  });
+
+  it("STILL redirects a getToken-validated user away from /login to root (real signal → safe, no loop)", async () => {
+    // Unscoped isLoggedIn is a REAL crypto signal (a valid token), so the Home
+    // page's getAuthSession() would also succeed — bouncing /login→/ is correct
+    // here and cannot loop. The guard only suppresses this in scoped mode.
+    getTokenMock.mockResolvedValue({ sub: "user-1" });
+    const req = makeRequest("/login");
+
+    const res = await proxy(req);
+
+    expect(getTokenMock).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(307);
+    // Unscoped → no prefix on the Location.
+    expect(res.headers.get("location")).toBe("https://host/");
   });
 });
 
