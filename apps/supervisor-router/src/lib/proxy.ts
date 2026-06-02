@@ -3,7 +3,9 @@
  *
  * - HTTP: `fetch` the upstream with the SAME method/headers/body/path/query,
  *   `redirect: "manual"` (the router never follows redirects on the client's
- *   behalf), and return the upstream Response unchanged.
+ *   behalf), and return the upstream Response — stripping `Content-Encoding`
+ *   and `Content-Length` when the upstream compressed, because the fetch impl
+ *   auto-decompresses the body so those framing headers no longer describe it.
  * - WebSocket: bridge a Bun `ServerWebSocket` (client side) to an upstream
  *   `new WebSocket(url, { headers })` (instance side). Client→upstream messages
  *   are buffered until the upstream socket opens; both directions are then piped
@@ -102,7 +104,10 @@ function forwardHttpHeaders(req: Request, clientIp: string | null): Headers {
 /**
  * Proxy an HTTP request to `upstreamBase` + `path` + the original query string.
  * Returns the upstream Response (streamed through), or a 502 if the upstream is
- * unreachable.
+ * unreachable. When the upstream response carries a `Content-Encoding`, that
+ * header and `Content-Length` are stripped before returning: the fetch impl
+ * already decompressed the body, so the originals would mislead the client into
+ * decoding plaintext (ZlibError / corruption).
  *
  * `server` (the Bun.serve instance) is threaded through only to resolve the
  * peer IP for `X-Forwarded-For`; it's optional so unit tests can omit it.
@@ -131,7 +136,25 @@ export async function proxyHttp(
   }
 
   try {
-    return await fetchImpl(target, init);
+    const upstream = await fetchImpl(target, init);
+    // Bun's fetch auto-decompresses the body but leaves the upstream
+    // Content-Encoding (and a now-stale Content-Length) on the headers.
+    // Returning that unchanged makes the client try to decode an
+    // already-decoded body (ZlibError / corruption). When an encoding is
+    // present, strip both framing headers and re-stream the identity body;
+    // Bun re-frames it (chunked). Uncompressed responses are returned as-is so
+    // their accurate Content-Length is preserved.
+    if (upstream.headers.has("content-encoding")) {
+      const headers = new Headers(upstream.headers);
+      headers.delete("content-encoding");
+      headers.delete("content-length");
+      return new Response(upstream.body, {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        headers,
+      });
+    }
+    return upstream;
   } catch (error) {
     log.warn("Upstream HTTP request failed", {
       error: String(error),
