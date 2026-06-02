@@ -7,6 +7,7 @@ import {
 } from "@/lib/cloudflare-access";
 import { getSessionCookieName } from "@/lib/auth-cookies";
 import { INSTANCE_SLUG, prefixPath } from "@/lib/base-path";
+import { runtimeEnv } from "@/lib/runtime-env";
 
 /**
  * Proxy handler for authentication at the network boundary.
@@ -94,9 +95,17 @@ export async function proxy(request: NextRequest) {
   // silently return null — every API call would 401. Always pass the configured
   // name so this path keeps working in both single-server and multi-instance
   // deployments. (Gemini review: critical.)
+  //
+  // `secret` is read via `runtimeEnv()` (not bare `process.env.AUTH_SECRET`):
+  // in Next standalone the proxy (Node middleware) does not reliably receive the
+  // container's runtime AUTH_SECRET, so getToken() would derive the wrong key and
+  // reject the valid scoped cookie — bouncing OIDC login in a loop. `runtimeEnv`
+  // prefers `process.env` and falls back to the startup snapshot that
+  // instrumentation captured (see src/lib/runtime-env.ts). Single-server behavior
+  // is unchanged: there the proxy shares process.env so the fallback is inert.
   const token = await getToken({
     req: request,
-    secret: process.env.AUTH_SECRET,
+    secret: runtimeEnv("AUTH_SECRET"),
     cookieName: getSessionCookieName(),
   });
 

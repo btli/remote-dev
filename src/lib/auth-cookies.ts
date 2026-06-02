@@ -41,6 +41,7 @@
 
 import type { NextAuthConfig } from "next-auth";
 import { COOKIE_PATH, INSTANCE_SLUG } from "@/lib/base-path";
+import { runtimeEnv } from "@/lib/runtime-env";
 
 // Derive CookiesOptions from NextAuthConfig so we stay independent of
 // @auth/core peer-dep version drift. NextAuthConfig["cookies"] is the
@@ -53,9 +54,18 @@ type CookiesOptions = Required<NonNullable<NextAuthConfig["cookies"]>>;
 /**
  * True when `AUTH_URL` (or legacy `NEXTAUTH_URL`) advertises https. Drives both
  * the `secure` flag on every cookie and the `__Secure-` / `__Host-` name prefix.
+ *
+ * Read via `runtimeEnv()` (not bare `process.env`): `getSessionCookieName()` is
+ * called from the Next standalone proxy, where `process.env.AUTH_URL` is not
+ * reliably populated. If it read empty there, the proxy would compute the
+ * UNPREFIXED cookie name (`rdv-<slug>-…`) while the https auth handler wrote the
+ * `__Secure-` one — a name (hence salt) mismatch that makes `getToken()` reject
+ * the valid cookie. The fallback to the instrumentation snapshot keeps the proxy
+ * and the auth handler in agreement. Single-server is unaffected (process.env is
+ * live there). See src/lib/runtime-env.ts.
  */
 function isSecureScheme(): boolean {
-  const url = process.env.AUTH_URL ?? process.env.NEXTAUTH_URL ?? "";
+  const url = runtimeEnv("AUTH_URL") ?? runtimeEnv("NEXTAUTH_URL") ?? "";
   return url.startsWith("https://");
 }
 
