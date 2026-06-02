@@ -21,8 +21,12 @@ import { getSessionCookieName, isSecureAuthScheme } from "@/lib/session-cookie";
  *     JWT is present (header/cookie) OR a valid NextAuth session cookie exists
  *     (DUAL AUTH). `getToken` is DB-free and proxy-safe (it only verifies the
  *     JWT cookie with AUTH_SECRET);
- *   - when OIDC is configured but CF is not, REDIRECT unauthenticated page
- *     routes to `/login` (the OIDC-only edge gate);
+ *   - when neither is present and OIDC is configured — whether alone (OIDC-only)
+ *     OR alongside CF (dual mode) — REDIRECT the page route to `/login` so the
+ *     user reaches the OIDC sign-in flow rather than a raw 401. Both modes share
+ *     the same redirect, so they behave identically;
+ *   - when neither is present and OIDC is NOT configured (a CF-only deploy, with
+ *     no usable login page), return JSON 401;
  *   - in local dev (neither CF Access nor OIDC configured), allow through —
  *     `withSupervisorAuth` / `getCurrentUser` use SUPERVISOR_ADMIN_EMAIL.
  *
@@ -111,23 +115,29 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
     process.env.SUPERVISOR_CF_ACCESS_AUD &&
       process.env.SUPERVISOR_CF_ACCESS_TEAM,
   );
+  const oidcConfigured = Boolean(process.env.AUTH_SECRET);
 
+  // A CF assertion is only meaningful when CF is configured — gating the check on
+  // `cfConfigured` keeps the OIDC-only path session-only (a stray CF cookie can't
+  // bypass OIDC sign-in), matching the prior branch's behavior exactly.
+  if (cfConfigured && hasCfAssertion(request)) return NextResponse.next();
+  if (await hasNextAuthSession(request)) return NextResponse.next();
+
+  // No valid auth. If OIDC is configured — whether alone (OIDC-only) or
+  // alongside CF (DUAL AUTH) — give page routes a real edge gate by redirecting
+  // to `/login` so the user reaches the OIDC sign-in flow, rather than leaking a
+  // raw 401. Both modes share this exact redirect so they behave identically.
+  if (oidcConfigured) {
+    return redirectToLogin(request);
+  }
+
+  // OIDC not configured. If CF is configured this is a CF-only deploy: there is
+  // no usable login page to redirect to, so return JSON 401.
   if (cfConfigured) {
-    if (hasCfAssertion(request)) return NextResponse.next();
-    if (await hasNextAuthSession(request)) return NextResponse.next();
     return NextResponse.json(
       { error: "Unauthorized", code: "UNAUTHORIZED" },
       { status: 401 },
     );
-  }
-
-  // CF not configured. If OIDC IS configured, this is an OIDC-only deploy — give
-  // page routes a real edge gate: pass with a valid session, else redirect to
-  // /login (rather than leaking the page to an anonymous user).
-  const oidcConfigured = Boolean(process.env.AUTH_SECRET);
-  if (oidcConfigured) {
-    if (await hasNextAuthSession(request)) return NextResponse.next();
-    return redirectToLogin(request);
   }
 
   // Neither CF nor OIDC (local dev). Allow through — server-side resolves the
