@@ -195,6 +195,140 @@ describe("proxyHttp — upstream failure", () => {
   });
 });
 
+/**
+ * Bun's `fetch` (undici) auto-decompresses gzip/br/deflate bodies but leaves the
+ * upstream `Content-Encoding` (and a now-stale `Content-Length`) on the returned
+ * Response. Forwarding those verbatim makes the client try to decode an
+ * already-decoded body (ZlibError / corruption). `proxyHttp` must strip both
+ * framing headers when an encoding is present, and leave uncompressed responses
+ * (with their accurate `Content-Length`) untouched.
+ */
+describe("proxyHttp — Content-Encoding stripping (Bun fetch auto-decompresses)", () => {
+  /** A fetch stub that returns a fixed upstream Response. */
+  function fetchReturning(response: Response): typeof fetch {
+    return vi.fn(async () => response) as unknown as typeof fetch;
+  }
+
+  it("strips Content-Encoding AND Content-Length, preserving status + body bytes", async () => {
+    // Mimics what Bun hands back: the body is ALREADY plaintext, yet the
+    // headers still advertise gzip and the (pre-decompression) length.
+    const body = JSON.stringify({ ok: true, instances: ["alpha", "beta"] });
+    const upstream = new Response(body, {
+      status: 200,
+      headers: {
+        "content-encoding": "gzip",
+        "content-length": "42",
+        "content-type": "application/json",
+      },
+    });
+    const req = new Request("https://dev.example.com/alpha/api/instances");
+    const res = await proxyHttp(
+      req,
+      BASE,
+      "/alpha/api/instances",
+      fetchReturning(upstream),
+    );
+
+    expect(res.status).toBe(200);
+    // The misleading framing headers are gone…
+    expect(res.headers.get("content-encoding")).toBeNull();
+    expect(res.headers.get("content-length")).toBeNull();
+    // …other headers survive…
+    expect(res.headers.get("content-type")).toBe("application/json");
+    // …and the (already-decompressed) body is forwarded byte-for-byte.
+    expect(await res.text()).toBe(body);
+  });
+
+  it("strips a non-gzip encoding (br) too and preserves the body", async () => {
+    const body = "<!doctype html><title>dashboard</title>";
+    const upstream = new Response(body, {
+      status: 200,
+      headers: {
+        "content-encoding": "br",
+        "content-length": "999",
+        "content-type": "text/html; charset=utf-8",
+      },
+    });
+    const req = new Request("https://dev.example.com/alpha/");
+    const res = await proxyHttp(req, BASE, "/alpha/", fetchReturning(upstream));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-encoding")).toBeNull();
+    expect(res.headers.get("content-length")).toBeNull();
+    expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(await res.text()).toBe(body);
+  });
+
+  it("preserves statusText and other headers on an encoded response", async () => {
+    const body = "compressed-then-decoded";
+    const upstream = new Response(body, {
+      status: 503,
+      statusText: "Service Unavailable",
+      headers: {
+        "content-encoding": "deflate",
+        "content-length": "7",
+        "retry-after": "30",
+      },
+    });
+    const req = new Request("https://dev.example.com/alpha/api/health");
+    const res = await proxyHttp(
+      req,
+      BASE,
+      "/alpha/api/health",
+      fetchReturning(upstream),
+    );
+
+    expect(res.status).toBe(503);
+    expect(res.statusText).toBe("Service Unavailable");
+    expect(res.headers.get("content-encoding")).toBeNull();
+    expect(res.headers.get("content-length")).toBeNull();
+    expect(res.headers.get("retry-after")).toBe("30");
+    expect(await res.text()).toBe(body);
+  });
+
+  it("leaves an UNCOMPRESSED response untouched (Content-Length preserved)", async () => {
+    const body = "plain uncompressed body";
+    const upstream = new Response(body, {
+      status: 200,
+      headers: {
+        "content-length": String(new TextEncoder().encode(body).length),
+        "content-type": "text/plain; charset=utf-8",
+      },
+    });
+    const req = new Request("https://dev.example.com/alpha/api/ping");
+    const res = await proxyHttp(
+      req,
+      BASE,
+      "/alpha/api/ping",
+      fetchReturning(upstream),
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-encoding")).toBeNull();
+    // No encoding ⇒ the accurate Content-Length must be left intact.
+    expect(res.headers.get("content-length")).toBe(
+      String(new TextEncoder().encode(body).length),
+    );
+    expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(await res.text()).toBe(body);
+  });
+
+  it("compares binary body bytes (arrayBuffer) on an encoded response", async () => {
+    const bytes = new Uint8Array([0x7b, 0x22, 0x6f, 0x6b, 0x22, 0x7d]); // {"ok"}
+    const upstream = new Response(bytes, {
+      status: 200,
+      headers: { "content-encoding": "gzip", "content-length": "20" },
+    });
+    const req = new Request("https://dev.example.com/alpha/x");
+    const res = await proxyHttp(req, BASE, "/alpha/x", fetchReturning(upstream));
+
+    expect(res.headers.get("content-encoding")).toBeNull();
+    expect(res.headers.get("content-length")).toBeNull();
+    const got = new Uint8Array(await res.arrayBuffer());
+    expect(Array.from(got)).toEqual(Array.from(bytes));
+  });
+});
+
 describe("buildWsUpgradeHeaders", () => {
   it("carries auth + WS negotiation headers, omits absent ones", () => {
     const req = new Request("https://dev.example.com/alpha/ws", {
