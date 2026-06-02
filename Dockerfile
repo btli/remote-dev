@@ -105,23 +105,27 @@ RUN bun run terminal:build
 # both into `/app/node_modules` in the runtime stage to keep `require('node-pty')`
 # and `require('better-sqlite3')` resolvable from there.
 #
-# We ALSO stage the whole `@libsql` scope: the DB layer (src/db/index.ts) uses
-# `@libsql/client/node`, which conditionally `require`s a platform-native binding
-# at runtime (on this linux-x64 build runner that's `@libsql/linux-x64-gnu`).
-# That conditional require is invisible to the Next.js standalone trace, so the
-# binding is absent from the standalone tree and the Node-run terminal server
-# (CWD=/app) crashes with `Cannot find module '@libsql/linux-x64-gnu'`. Staging
-# the full scope here (client/core/isomorphic-* + the native binding) lets the
-# runtime stage overlay it into /app/node_modules/@libsql. Path avoids `@` to
-# sidestep any shell/COPY quirks.
+# We ALSO stage the platform-native `@libsql` binding: the DB layer
+# (src/db/index.ts) uses `@libsql/client/node`, whose underlying `libsql`
+# package conditionally `require`s a platform-native binding at runtime (on this
+# linux-x64 glibc build runner that's `@libsql/linux-x64-gnu`). That conditional
+# require is invisible to the Next.js standalone trace, so the binding ALONE is
+# absent from the standalone tree and the Node-run terminal server (CWD=/app)
+# crashes with `Cannot find module '@libsql/linux-x64-gnu'`.
 #
-# `cp -RL` dereferences symlinks (bun's isolated layout uses internal symlinks);
-# this gives the runtime stage a self-contained tree that doesn't depend on
-# anything else under /app/node_modules.
+# Stage ONLY the leaf binding — NOT the whole `@libsql` scope. The standalone
+# COPY in the runtime stage already populates /app/node_modules/@libsql/ with
+# `client`/`core`/`isomorphic-*` as SYMLINKS; overlaying a full staged scope
+# directory on top of that fails in BuildKit with `cannot copy to non-directory:
+# .../@libsql/client` (cannot copy a source dir onto a destination symlink).
+# Copying just the missing leaf into the existing dir sidesteps the collision.
+#
+# `cp -RL` dereferences symlinks (bun's isolated layout uses internal symlinks)
+# so the staged binding is a self-contained real directory.
 RUN mkdir -p /opt/native && \
     cp -RL node_modules/node-pty /opt/native/node-pty && \
     cp -RL node_modules/better-sqlite3 /opt/native/better-sqlite3 && \
-    cp -RL node_modules/@libsql /opt/native/libsql-scope
+    cp -RL node_modules/@libsql/linux-x64-gnu /opt/native/libsql-linux-x64-gnu
 
 # Build the rdv Rust CLI (statically linkable so it runs in the slim runtime)
 RUN cd crates/rdv && cargo build --release --locked && \
@@ -191,13 +195,18 @@ COPY --from=build --chown=rdv:rdv /app/tsconfig.json ./tsconfig.json
 # it here too so `require('better-sqlite3')` resolves from CWD=/app.
 COPY --from=build --chown=rdv:rdv /opt/native/node-pty ./node_modules/node-pty
 COPY --from=build --chown=rdv:rdv /opt/native/better-sqlite3 ./node_modules/better-sqlite3
-# Overlay the full @libsql scope (incl. the linux-x64-gnu native binding) into
-# /app/node_modules. `@libsql/client` conditionally `require`s the host's native
-# binding at runtime, which the Next.js standalone trace does not capture — so it
-# is absent from the standalone tree and the Node-run terminal server crashes with
-# `Cannot find module '@libsql/linux-x64-gnu'`. This makes @libsql resolvable from
-# CWD=/app for BOTH the standalone Next.js app and dist-terminal.
-COPY --from=build --chown=rdv:rdv /opt/native/libsql-scope ./node_modules/@libsql
+# Add ONLY the platform-native libsql binding into the @libsql scope that the
+# standalone COPY above already created. `libsql` (used by `@libsql/client/node`)
+# conditionally `require`s `@libsql/linux-x64-gnu` at runtime; the Next.js
+# standalone trace cannot see that conditional require, so the binding is the one
+# `@libsql/*` package missing from the standalone tree — without it the Node-run
+# terminal server (CWD=/app) crashes with `Cannot find module
+# '@libsql/linux-x64-gnu'`. Copying just the leaf (rather than overlaying the
+# whole scope, which collides with the symlinked `@libsql/client` and fails the
+# build with `cannot copy to non-directory`) places the binding where Node's
+# ancestor `node_modules` resolution finds it for BOTH the standalone app and
+# dist-terminal.
+COPY --from=build --chown=rdv:rdv /opt/native/libsql-linux-x64-gnu ./node_modules/@libsql/linux-x64-gnu
 
 # rdv Rust CLI
 COPY --from=build --chown=rdv:rdv /tmp/rdv-binary /usr/local/bin/rdv
