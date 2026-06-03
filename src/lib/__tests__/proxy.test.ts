@@ -94,7 +94,10 @@ function makeRequest(
   const cookieSet = new Set(cookieNames);
   const headers = new Headers(opts.headers ?? {});
   return {
-    nextUrl: { pathname },
+    // Real NextRequest.nextUrl always exposes `origin`; the proxy reads it as
+    // the fallback for resolveExternalOrigin() when no forwarded/host header is
+    // present, so the fake must provide it too.
+    nextUrl: { pathname, origin: "https://host" },
     url: `https://host${pathname}`,
     headers,
     cookies: {
