@@ -27,7 +27,6 @@ import { githubAccountRepository, gitCredentialManager } from "@/infrastructure/
 import { GitHubAccountEnvironment } from "@/domain/value-objects/GitHubAccountEnvironment";
 import { createApiKey } from "@/services/api-key-service";
 import { createLogger } from "@/lib/logger";
-import { ensureSoxShim } from "@/services/voice-shim-service";
 
 const log = createLogger("SessionService");
 
@@ -519,7 +518,7 @@ export async function createSessionWithDedupFlag(
   //
   // `isAgentRuntime` — narrow flag: true ONLY when the tmux pane is actually
   //   running an AI coding agent (Claude/Codex/Gemini/OpenCode). Gates the
-  //   agent-specific side effects: API key creation, sox shim, RDV env vars,
+  //   agent-specific side effects: API key creation, RDV env vars,
   //   `ensureAgentConfig` settings.json injection, proxy env, claude defaults.
   //
   // `isAgentSession` — wider flag: true when the plugin opts into the agent-
@@ -569,19 +568,6 @@ export async function createSessionWithDedupFlag(
     }
   }
 
-  // Install sox shim for voice mode support in agent sessions.
-  // Must happen before tmux session creation so the shim PATH is in the
-  // initial environment when the agent process starts. Gated on
-  // isAgentRuntime — SSH sessions don't use the local voice mode shim.
-  let voiceShimDir: string | undefined;
-  if (isAgentRuntime) {
-    try {
-      voiceShimDir = ensureSoxShim();
-    } catch (error) {
-      log.warn("Failed to install voice sox shim", { sessionId, error: String(error) });
-    }
-  }
-
   // RDV_* env vars only matter to local agent hook scripts that call back
   // into the terminal/API server. SSH sessions don't run those hooks (the
   // remote shell wouldn't see the vars anyway), so skip injecting them.
@@ -595,9 +581,6 @@ export async function createSessionWithDedupFlag(
           ? { RDV_API_SOCKET: process.env.SOCKET_PATH }
           : { RDV_API_PORT: process.env.PORT ?? "6001" }),
         ...(agentApiKey ? { RDV_API_KEY: agentApiKey } : {}),
-        // Prepend sox shim directory to PATH so Claude Code's voice mode
-        // uses our shim (reads from FIFO) instead of the real sox (CoreAudio)
-        ...(voiceShimDir ? { PATH: `${voiceShimDir}:${process.env.PATH ?? ""}` } : {}),
       }
     : {};
 

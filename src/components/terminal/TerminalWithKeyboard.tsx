@@ -4,7 +4,6 @@ import { useRef, useCallback, useState, forwardRef, useImperativeHandle } from "
 import { Terminal, type TerminalRef } from "./Terminal";
 import { MobileInputBar } from "./MobileInputBar";
 import { MobileKeyboard } from "./MobileKeyboard";
-import { VoiceMicButton } from "./VoiceMicButton";
 import { SessionEndedOverlay } from "./SessionEndedOverlay";
 import { ChevronDown } from "lucide-react";
 import { ErrorBoundary } from "@/components/common/ErrorBoundary";
@@ -57,8 +56,8 @@ export interface TerminalWithKeyboardRef {
  * - `"builtin"` (default): the wrapper owns the mobile UI. Existing call
  *   sites (desktop session manager, terminal plugins) keep this behavior.
  * - `"external"`: the wrapper renders only the terminal (and the agent
- *   voice button + session-ended overlay) so a parent can supply its own
- *   chrome around it. The parent uses the ref to forward input.
+ *   session-ended overlay) so a parent can supply its own chrome around
+ *   it. The parent uses the ref to forward input.
  */
 export type MobileChromeMode = "builtin" | "external";
 
@@ -299,11 +298,6 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
       <div className="flex flex-col h-full relative">
         <div className="flex-1 min-h-0 relative">
           {terminalElement}
-          {session?.terminalType === "agent" && (
-            <div className="absolute top-2 left-2 z-50">
-              <VoiceMicButton getWebSocket={() => wsRef.current} />
-            </div>
-          )}
         </div>
 
         {/* Scroll to bottom indicator, mobile only. */}
@@ -355,11 +349,6 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
     <div className="flex flex-col h-full relative">
       <div className="flex-1 min-h-0 relative">
         {terminalElement}
-        {session?.terminalType === "agent" && (
-          <div className="absolute top-2 left-2 z-50" style={isRecording ? { left: "5.5rem" } : undefined}>
-            <VoiceMicButton getWebSocket={() => wsRef.current} />
-          </div>
-        )}
       </div>
 
       {sessionEndedOverlay}

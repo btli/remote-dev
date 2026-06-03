@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../domain/auth_cookie.dart';
 import 'mobile_credentials.dart';
 
 /// Default url_launcher integration. Opens [uri] in
@@ -15,66 +16,136 @@ Future<bool> _defaultUrlLauncher(Uri uri) async {
   return launchUrl(uri, mode: LaunchMode.externalApplication);
 }
 
+/// Builds the callback URL for a given base URL, preserving any workspace
+/// path prefix.
+///
+/// Examples:
+///   `https://h`        → `https://h/auth/mobile-callback`
+///   `https://h/demo`   → `https://h/demo/auth/mobile-callback`
+///   `https://h/demo/`  → `https://h/demo/auth/mobile-callback` (trailing slash stripped)
+///
+/// This fixes the base-path bug where using `baseUrl.replace(path:
+/// '/auth/mobile-callback')` would discard any workspace prefix (e.g.
+/// an instance at `https://host/demo` would wrongly open
+/// `https://host/auth/mobile-callback` instead of
+/// `https://host/demo/auth/mobile-callback`).
+Uri buildCallbackUrl(Uri base) {
+  final trimmed = base.path.replaceFirst(RegExp(r'/+$'), '');
+  return base.replace(path: '$trimmed/auth/mobile-callback');
+}
+
 /// Parsed result of a `remotedev://auth/callback` deep link.
 ///
 /// Two shapes share one callback scheme (the app picks the branch by
 /// `scope=host` / the presence of `apiKey`):
 ///   * [InstanceCallback] — a workspace/instance login. Carries the
-///     per-workspace `apiKey` plus the host-wide CF token.
+///     per-workspace `apiKey` (nullable for OIDC flows) plus auth cookies
+///     and identity hints.
 ///   * [HostCallback] — a host (Supervisor) login for workspace
-///     discovery. Carries ONLY the host-wide CF token; the Supervisor has
-///     no API key to mint, so per-workspace keys are issued separately.
+///     discovery. Carries ONLY the host-wide auth cookies / CF token; the
+///     Supervisor has no API key to mint, so per-workspace keys are issued
+///     separately.
 sealed class MobileCallbackResult {}
 
-/// Instance/workspace callback: `?apiKey=...&cfToken=...&userId=...&email=...`.
+/// Instance/workspace callback.
+///
+/// Classic shape: `?apiKey=...&cfToken=...&userId=...&email=...`
+/// OIDC shape:    `?scope=instance&authCookies=<b64json>&userId=...&email=...`
+///
+/// [apiKey] is nullable — OIDC instance callbacks carry no API key (the
+/// server uses the OIDC session instead). Callers MUST null-check before use.
+///
+/// [authCookies] is the preferred credential carrier going forward. For legacy
+/// callbacks without an `authCookies` param, it is synthesized from `cfToken`
+/// as `[AuthCookie(name: "CF_Authorization", value: cfToken, path: "/")]` when
+/// `cfToken` is non-empty; otherwise it is empty.
 class InstanceCallback extends MobileCallbackResult {
   InstanceCallback({
     required this.apiKey,
     required this.cfToken,
     required this.email,
     required this.userId,
+    required this.authCookies,
   });
 
-  final String apiKey;
+  /// The per-workspace API key. Null for OIDC instance callbacks.
+  final String? apiKey;
   final String cfToken;
   final String email;
   final String userId;
+
+  /// Decoded auth cookies from the `authCookies` query parameter, or
+  /// synthesized from `cfToken` for legacy callbacks.
+  final List<AuthCookie> authCookies;
 }
 
-/// Host (Supervisor) callback: `?scope=host&cfToken=...&userId=...&email=...`
-/// — note the deliberate ABSENCE of `apiKey`.
+/// Host (Supervisor) callback.
+///
+/// Shape: `?scope=host&authCookies=<b64json>&userId=...&email=...`
+/// Legacy: `?scope=host&cfToken=...&userId=...&email=...`
+///
+/// [authCookies] is the preferred credential carrier. For legacy callbacks
+/// without an `authCookies` param, it is synthesized from `cfToken` when
+/// non-empty; otherwise it is empty.
 class HostCallback extends MobileCallbackResult {
   HostCallback({
     required this.cfToken,
     required this.email,
     required this.userId,
+    required this.authCookies,
   });
 
   final String cfToken;
   final String email;
   final String userId;
+
+  /// Decoded auth cookies from the `authCookies` query parameter, or
+  /// synthesized from `cfToken` for legacy callbacks.
+  final List<AuthCookie> authCookies;
 }
 
 /// True when [uri] is the `remotedev://auth/callback` deep link this app
 /// listens for. Shared by [parseMobileCallback] and the launcher's stream
 /// filter so both agree on exactly one shape.
 bool _isCallbackUri(Uri uri) =>
-    uri.scheme == 'remotedev' &&
-    uri.host == 'auth' &&
-    uri.path == '/callback';
+    uri.scheme == 'remotedev' && uri.host == 'auth' && uri.path == '/callback';
+
+/// Resolves the [AuthCookie] list for a callback.
+///
+/// Priority:
+///   1. `authCookies` query param (base64url JSON) — preferred for all new
+///      server-side flows (CF Access, OIDC).
+///   2. Legacy fallback: if `authCookies` is absent/empty but `cfToken` is
+///      present, synthesize `[AuthCookie(name: "CF_Authorization", ...)]`.
+///   3. Otherwise `[]`.
+List<AuthCookie> _resolveAuthCookies(Map<String, String> params) {
+  final raw = params['authCookies'];
+  if (raw != null && raw.isNotEmpty) {
+    final decoded = decodeAuthCookies(raw);
+    // decodeAuthCookies returns [] on malformed input — no need to check.
+    return decoded;
+  }
+  // Legacy cfToken fallback.
+  final cfToken = params['cfToken'];
+  if (cfToken != null && cfToken.isNotEmpty) {
+    return [AuthCookie(name: 'CF_Authorization', value: cfToken, path: '/')];
+  }
+  return [];
+}
 
 /// Pure parser for the `remotedev://auth/callback` deep link.
 ///
-/// Returns:
-///   * `null` when [uri] is not a callback URI (wrong scheme/host/path).
-///   * a [HostCallback] when `scope=host` OR `apiKey` is absent/empty — the
-///     host (Supervisor) shape carries no API key.
-///   * an [InstanceCallback] when a non-empty `apiKey` is present.
+/// Precedence:
+///   * `scope=host`                             → [HostCallback]
+///   * `scope=instance`                         → [InstanceCallback] (apiKey nullable)
+///   * legacy (no scope) + non-empty `apiKey`   → [InstanceCallback]
+///   * legacy (no scope) + absent/empty `apiKey`→ [HostCallback]
+///
+/// Returns `null` when [uri] is not a callback URI (wrong scheme/host/path).
 ///
 /// Identity/token fields default to the empty string when missing so callers
-/// get a total result; emptiness of `cfToken`/`email`/`userId` is non-fatal
-/// (they are best-effort hints), whereas `apiKey` presence is what selects
-/// the instance branch.
+/// get a total result; emptiness of `cfToken`/`email`/`userId` is non-fatal.
+/// `authCookies` is always resolved via [_resolveAuthCookies] — never null.
 MobileCallbackResult? parseMobileCallback(Uri uri) {
   if (!_isCallbackUri(uri)) return null;
 
@@ -84,31 +155,57 @@ MobileCallbackResult? parseMobileCallback(Uri uri) {
   final cfToken = params['cfToken'] ?? '';
   final email = params['email'] ?? '';
   final userId = params['userId'] ?? '';
+  final authCookies = _resolveAuthCookies(params);
 
-  final isHost = scope == 'host' || apiKey == null || apiKey.isEmpty;
-  if (isHost) {
-    return HostCallback(cfToken: cfToken, email: email, userId: userId);
+  // Explicit scope takes priority.
+  if (scope == 'host') {
+    return HostCallback(
+      cfToken: cfToken,
+      email: email,
+      userId: userId,
+      authCookies: authCookies,
+    );
   }
-  return InstanceCallback(
-    apiKey: apiKey,
+  if (scope == 'instance') {
+    return InstanceCallback(
+      apiKey: apiKey?.isNotEmpty == true ? apiKey : null,
+      cfToken: cfToken,
+      email: email,
+      userId: userId,
+      authCookies: authCookies,
+    );
+  }
+
+  // Legacy (no scope): apiKey presence determines the branch.
+  final hasApiKey = apiKey != null && apiKey.isNotEmpty;
+  if (hasApiKey) {
+    return InstanceCallback(
+      apiKey: apiKey,
+      cfToken: cfToken,
+      email: email,
+      userId: userId,
+      authCookies: authCookies,
+    );
+  }
+  return HostCallback(
     cfToken: cfToken,
     email: email,
     userId: userId,
+    authCookies: authCookies,
   );
 }
 
-/// Drives the system-browser CF Access login.
+/// Drives the system-browser CF Access / OIDC login.
 ///
 /// Flow:
 ///   1. Caller invokes [login] with the server's base URL.
-///   2. We open `<server>/auth/mobile-callback` in the platform
-///      system browser (Chrome Custom Tab / SFSafariViewController).
-///   3. The user completes CF Access in that browser, sharing cookies
+///   2. We open `<server>/auth/mobile-callback` (via [buildCallbackUrl],
+///      which preserves any workspace path prefix) in the platform system
+///      browser (Chrome Custom Tab / SFSafariViewController).
+///   3. The user completes CF Access / OIDC in that browser, sharing cookies
 ///      with their main browser session.
 ///   4. `/auth/mobile-callback` (already deployed on the server) mints
-///      an API key, reads the CF JWT from the request's
-///      `CF_Authorization` cookie, and 302s to
-///      `remotedev://auth/callback?apiKey=...&cfToken=...&userId=...&email=...`.
+///      credentials and 302s to a `remotedev://auth/callback?...` deep link.
 ///   5. The OS routes that custom-scheme URI back into the app; our
 ///      `app_links` subscription picks it up, the launcher's stream
 ///      filter matches, and we resolve with [MobileCredentials].
@@ -140,11 +237,44 @@ class MobileCallbackLoginLauncher {
   /// `remotedev://auth/callback` deep-link emitted by the server, or
   /// `null` on timeout / user cancel / malformed callback.
   ///
-  /// PUBLIC SIGNATURE IS LOAD-BEARING: reauth (and Add Server) call
-  /// `login(serverUrl: ...)` and rely on the `MobileCredentials?` return +
-  /// null-on-cancel semantics. A host-shaped callback (no `apiKey`) is
-  /// treated here as a malformed instance login → `null`.
+  /// DEPRECATED for new call sites: prefer [loginInstance], which returns
+  /// the richer [InstanceCallback] that carries `authCookies` and treats
+  /// `apiKey` as optional (supporting OIDC flows). This method is kept for
+  /// legacy callers (reauth path in `main.dart`) that still expect
+  /// `MobileCredentials?` with a non-null `apiKey`.
+  ///
+  /// A host-shaped callback (no `apiKey`) or an OIDC callback (empty `apiKey`)
+  /// is treated here as a malformed instance login → `null`.
   Future<MobileCredentials?> login({required Uri serverUrl}) async {
+    final result = await loginInstance(serverUrl: serverUrl);
+    if (result == null) return null;
+    final apiKey = result.apiKey;
+    if (apiKey == null || apiKey.isEmpty) {
+      // OIDC instance callback — no API key. Legacy callers cannot build a
+      // MobileCredentials without an apiKey; use loginInstance() instead.
+      debugPrint(
+        '[MobileCallbackLogin] OIDC instance callback (no apiKey) at '
+        '${serverUrl.path} — callers should use loginInstance()',
+      );
+      return null;
+    }
+    return MobileCredentials(
+      apiKey: apiKey,
+      cfToken: result.cfToken.isNotEmpty ? result.cfToken : null,
+      userId: result.userId.isNotEmpty ? result.userId : null,
+      email: result.email.isNotEmpty ? result.email : null,
+    );
+  }
+
+  /// Opens the system browser at `<serverUrl>/auth/mobile-callback` and
+  /// resolves with the [InstanceCallback] parsed from the server's
+  /// `remotedev://auth/callback` deep-link, or `null` on timeout / user
+  /// cancel / malformed callback / host-shaped callback.
+  ///
+  /// Unlike the legacy [login], `apiKey` is treated as optional — OIDC
+  /// instance callbacks carry `authCookies` without an `apiKey`. Callers
+  /// must persist both `authCookies` (always) and `apiKey` (when non-null).
+  Future<InstanceCallback?> loginInstance({required Uri serverUrl}) async {
     final Uri callbackUri;
     try {
       callbackUri = await _awaitCallback(serverUrl);
@@ -160,22 +290,15 @@ class MobileCallbackLoginLauncher {
 
     final result = parseMobileCallback(callbackUri);
     if (result is! InstanceCallback) {
-      // Missing/empty apiKey (or an explicitly host-scoped callback) — not a
-      // valid instance login. Redact the query string before logging: it can
-      // carry a `cfToken` we don't want to leak into release logs.
+      // Host-scoped callback or completely unparseable — not a valid instance
+      // login. Redact the query string before logging.
       debugPrint(
-        '[MobileCallbackLogin] callback missing apiKey at '
+        '[MobileCallbackLogin] expected instance callback at '
         '${callbackUri.path}',
       );
       return null;
     }
-
-    return MobileCredentials(
-      apiKey: result.apiKey,
-      cfToken: result.cfToken.isNotEmpty ? result.cfToken : null,
-      userId: result.userId.isNotEmpty ? result.userId : null,
-      email: result.email.isNotEmpty ? result.email : null,
-    );
+    return result;
   }
 
   /// Host (Supervisor) login for workspace discovery.
@@ -221,8 +344,9 @@ class MobileCallbackLoginLauncher {
 
   /// Shared browser-launch + deep-link-await plumbing for [login] and
   /// [loginHost]. Subscribes to the deep-link stream BEFORE launching (so a
-  /// fast callback is never missed), opens `<baseUrl>/auth/mobile-callback`,
-  /// and completes with the first matching `remotedev://auth/callback` URI.
+  /// fast callback is never missed), opens `<baseUrl>/auth/mobile-callback`
+  /// (preserving any workspace path prefix via [buildCallbackUrl]), and
+  /// completes with the first matching `remotedev://auth/callback` URI.
   ///
   /// SINGLE IN-FLIGHT LOGIN ASSUMPTION: callers ([login] / [loginHost], and
   /// their UI screens) run at most one sign-in at a time. The shared
@@ -256,7 +380,8 @@ class MobileCallbackLoginLauncher {
     );
 
     try {
-      final callbackUrl = baseUrl.replace(path: '/auth/mobile-callback');
+      // Use buildCallbackUrl to preserve workspace path prefixes.
+      final callbackUrl = buildCallbackUrl(baseUrl);
       final launched = await _launch(callbackUrl);
       if (!launched) {
         debugPrint(

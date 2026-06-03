@@ -945,12 +945,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
                 onPrimaryChangeRef.current?.(next);
                 break;
               }
-              case "voice_ready":
-                console.log(`[Voice] Ready for session ${msg.sessionId}`);
-                break;
-              case "voice_error":
-                console.error(`[Voice] Error: ${msg.message}`);
-                break;
               case "error":
                 terminal.writeln(`\r\n\x1b[31mError: ${msg.message}\x1b[0m`);
                 // Check if this is an authentication error

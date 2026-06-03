@@ -6,7 +6,6 @@ import '../../../domain/instance_summary.dart';
 import '../../../domain/workspace_config.dart';
 import '../../../infrastructure/api/instances_api.dart';
 import '../../../infrastructure/auth/mobile_callback_login_launcher.dart';
-import '../../../infrastructure/auth/mobile_credentials.dart';
 import '../../../infrastructure/deep_link/deep_link_stream_provider.dart';
 import '../webview_host/session_route_host.dart'
     show
@@ -15,10 +14,9 @@ import '../webview_host/session_route_host.dart'
         mobileCredentialsStoreProvider,
         secureStorageProvider;
 
-/// Test seam — replaces the system-browser instance login (`launcher.login`)
-/// when supplied. Returns the minted [MobileCredentials], or `null` if the
-/// user cancelled the CF Access flow.
-typedef WorkspaceLoginLauncher = Future<MobileCredentials?> Function(
+/// Test seam — replaces the system-browser instance login (`launcher.loginInstance`)
+/// when supplied. Returns the [InstanceCallback], or `null` if the user cancelled.
+typedef WorkspaceLoginLauncher = Future<InstanceCallback?> Function(
   Uri serverUrl,
 );
 
@@ -74,8 +72,7 @@ class WorkspacePickerScreen extends ConsumerStatefulWidget {
       _WorkspacePickerScreenState();
 }
 
-class _WorkspacePickerScreenState
-    extends ConsumerState<WorkspacePickerScreen> {
+class _WorkspacePickerScreenState extends ConsumerState<WorkspacePickerScreen> {
   late List<InstanceSummary> _instances = widget.instances;
   bool _busy = false;
   String? _error;
@@ -90,13 +87,13 @@ class _WorkspacePickerScreenState
     );
   }
 
-  Future<MobileCredentials?> _runLogin(Uri serverUrl) async {
+  Future<InstanceCallback?> _runLogin(Uri serverUrl) async {
     final override = widget.workspaceLoginLauncher;
     if (override != null) return override(serverUrl);
     final launcher = MobileCallbackLoginLauncher(
       deepLinkStream: ref.read(deepLinkStreamProvider),
     );
-    return launcher.login(serverUrl: serverUrl);
+    return launcher.loginInstance(serverUrl: serverUrl);
   }
 
   Future<void> _refresh() async {
@@ -124,12 +121,14 @@ class _WorkspacePickerScreenState
     });
     try {
       final host = widget.host;
-      // Mint the per-workspace API key against `<origin>/<slug>`.
-      final creds = await _runLogin(
+      // Mint the per-workspace credentials against `<origin>/<slug>`.
+      // Supports both classic (apiKey + cfToken) and OIDC (authCookies only)
+      // callback shapes: loginInstance() treats apiKey as optional.
+      final instanceCb = await _runLogin(
         Uri.parse('${host.origin}/${instance.slug}'),
       );
       if (!mounted) return;
-      if (creds == null) {
+      if (instanceCb == null) {
         setState(() => _error = 'Sign-in cancelled.');
         return;
       }
@@ -147,12 +146,19 @@ class _WorkspacePickerScreenState
       final credentials = ref.read(mobileCredentialsStoreProvider);
       // Persist credentials BEFORE the workspace row + active pointer so any
       // listener reacting to the new active workspace finds the key in place.
-      await credentials.setWorkspaceApiKey(ws.id, creds.apiKey);
-      // The instance callback can carry a fresher host CF token (the browser
-      // session may have re-challenged); refresh it so discovery + API calls
-      // keep working.
-      final cf = creds.cfToken;
-      if (cf != null && cf.isNotEmpty) {
+      //
+      // Always persist authCookies (OIDC session-token, or CF JWT for legacy).
+      await credentials.setWorkspaceAuthCookies(ws.id, instanceCb.authCookies);
+      // apiKey is optional (null for OIDC callbacks).
+      final apiKey = instanceCb.apiKey;
+      if (apiKey != null && apiKey.isNotEmpty) {
+        await credentials.setWorkspaceApiKey(ws.id, apiKey);
+      }
+      // Legacy compat: the instance callback can carry a fresher host CF token
+      // (the browser session may have re-challenged). For OIDC paths cfToken
+      // is empty, so this is a no-op in that case.
+      final cf = instanceCb.cfToken;
+      if (cf.isNotEmpty) {
         await credentials.setHostCfToken(host.id, cf);
       }
 

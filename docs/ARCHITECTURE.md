@@ -376,7 +376,6 @@ command, env, metadata), `renderContent()`, `onSessionExit()`,
 | `appearance-service` | User appearance settings + color schemes |
 | `activity-dashboard-service` | Track/analyze agent session activity |
 | `beads-service` | Read the `bd` (beads) issue tracker DB (issues, comments, deps) |
-| `voice-shim-service` | Install `sox`/`rec` shims under `~/.remote-dev/bin` for voice input |
 
 > Many services maintain their own data behind dedicated SQLite databases under
 > `~/.remote-dev/` (logs, LiteLLM analytics) following the `LogDatabase` pattern,

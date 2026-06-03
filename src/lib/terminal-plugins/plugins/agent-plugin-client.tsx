@@ -3,8 +3,8 @@
  *
  * Shares the same underlying `TerminalWithKeyboard` component as the shell
  * plugin — the historical SessionManager default branch handled both shell
- * and agent the same way, with agent-specific details (voice mic, exit
- * overlay) scoped inside `TerminalWithKeyboard` via `session.terminalType`.
+ * and agent the same way, with agent-specific details (exit overlay) scoped
+ * inside `TerminalWithKeyboard` via `session.terminalType`.
  *
  * @see ./agent-plugin-server.ts for lifecycle.
  */
@@ -30,7 +30,7 @@ const TerminalWithKeyboard = dynamic(
 
 /**
  * Agent session component. Currently identical in shape to the shell
- * component — exit overlay, voice mic, and mobile UI are all handled by
+ * component — exit overlay and mobile UI are all handled by
  * `TerminalWithKeyboard` based on `session.terminalType`.
  */
 function AgentSessionComponent(props: TerminalTypeClientComponentProps) {

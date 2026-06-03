@@ -7,9 +7,10 @@ import {
 } from "@/lib/cloudflare-access";
 import {
   getSessionCookieName,
-  getSessionCookieNameCandidates,
+  hasSessionCookie,
 } from "@/lib/auth-cookies";
 import { INSTANCE_SLUG, prefixPath } from "@/lib/base-path";
+import { resolveExternalOrigin } from "@/lib/request-origin";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("proxy");
@@ -121,11 +122,11 @@ export async function proxy(request: NextRequest) {
   const scoped = INSTANCE_SLUG.length > 0;
   let isLoggedIn: boolean;
   if (scoped) {
-    const candidates = getSessionCookieNameCandidates();
-    isLoggedIn = candidates.some((name) => request.cookies.has(name));
+    const presentNames = request.cookies.getAll().map((c) => c.name);
+    isLoggedIn = hasSessionCookie(presentNames);
     log.debug(
       "scoped instance proxy realm; using session-cookie presence gate (getToken is unreliable here)",
-      { isLoggedIn, candidateCount: candidates.length, pathname },
+      { isLoggedIn, presentCount: presentNames.length, pathname },
     );
   } else {
     const token = await getToken({
@@ -155,13 +156,21 @@ export async function proxy(request: NextRequest) {
 
   // Protect pages.
   //
-  // Next.js strips the deployment prefix (`/alpha`) from `request.url` before
-  // the proxy runs, so `new URL("/login", request.url)` would build
-  // `https://host/login` — which 404s under `RDV_BASE_PATH=/alpha`. Use
-  // `prefixPath()` to put the prefix back on every Location header.
+  // Build redirect Locations against the EXTERNAL origin (edge-forwarded
+  // Host/proto), NOT `request.url`. In production single-server SOCKET mode
+  // `request.url` is the internal `http://localhost:<random>` that
+  // standalone-server.js binds behind the Cloudflare tunnel, so an absolute
+  // redirect built from it leaks that dead internal address into the Location.
+  // NextResponse.redirect requires an absolute URL (a relative Location throws
+  // at runtime), so we resolve the real origin instead. `prefixPath()` still
+  // re-adds the deployment prefix (`/alpha`) that Next strips from request.url.
+  const redirectOrigin = resolveExternalOrigin(
+    (name) => request.headers.get(name),
+    request.nextUrl.origin,
+  );
   if (!isLoggedIn && !isLoginPage) {
     return tagInstance(
-      NextResponse.redirect(new URL(prefixPath("/login"), request.url))
+      NextResponse.redirect(new URL(prefixPath("/login"), redirectOrigin))
     );
   }
 
@@ -173,7 +182,7 @@ export async function proxy(request: NextRequest) {
   // stale cookie. (Unauthenticated /dev→/login redirect above is unaffected.)
   if (isLoggedIn && isLoginPage && !scoped) {
     return tagInstance(
-      NextResponse.redirect(new URL(prefixPath("/"), request.url))
+      NextResponse.redirect(new URL(prefixPath("/"), redirectOrigin))
     );
   }
 

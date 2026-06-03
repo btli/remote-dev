@@ -9,12 +9,9 @@
          image_picker's docs so newer devices skip this permission. -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"/>
-    <!-- Voice mic in agent sessions (bd remote-dev-cp47) -->
-    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
-    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
     <!-- Camera capture via image_picker (long-press shortcut on the
-         smart-key strip's image button) + WebView getUserMedia for voice/
-         future in-terminal image capture (bd remote-dev-cp47). -->
+         smart-key strip's image button) + WebView getUserMedia for
+         in-terminal image capture (bd remote-dev-cp47). -->
     <uses-permission android:name="android.permission.CAMERA"/>
     <!-- Declare CAMERA feature usage as optional so Play store filtering
          doesn't hide the app from camera-less devices. -->

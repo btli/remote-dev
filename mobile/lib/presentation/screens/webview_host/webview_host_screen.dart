@@ -72,12 +72,15 @@ class _WebViewHostScreenState extends ConsumerState<WebViewHostScreen> {
       final conn = await ref.read(activeWorkspaceProvider.future);
       if (conn == null) return;
       final credentials = ref.read(mobileCredentialsStoreProvider);
-      // CF token is host-wide.
-      final cfToken = await credentials.getHostCfToken(conn.host.id);
-      if (cfToken == null || cfToken.isEmpty) return;
+      // Seed the workspace's instance cookies (OIDC session and/or CF edge).
+      final cookies = await credentials.getInstanceCookies(
+        conn.host.id,
+        conn.workspace.id,
+      );
+      if (cookies.isEmpty) return;
       await ref
           .read(webViewCookieSeederProvider)
-          .seedCfCookie(serverOrigin: widget.serverOrigin, value: cfToken);
+          .seedAuthCookies(serverOrigin: widget.serverOrigin, cookies: cookies);
     } catch (_) {
       // intentional: see ChannelScreen._seedCookie for rationale.
     }

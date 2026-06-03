@@ -664,21 +664,6 @@ export function BeadsSidebar({
                   Select a project folder to view issues
                 </p>
               </div>
-            ) : !initialized && !loading ? (
-              /* Beads not set up */
-              <div className="flex flex-col items-center justify-center px-4 py-8 gap-2">
-                <CircleOff className="w-5 h-5 text-muted-foreground" />
-                <p className="text-xs text-muted-foreground text-center">
-                  Beads is not set up for this project
-                </p>
-                <p className="text-[11px] text-muted-foreground text-center">
-                  Run{" "}
-                  <code className="px-1 py-0.5 rounded bg-muted text-foreground font-mono text-[10px]">
-                    bd init
-                  </code>{" "}
-                  to get started
-                </p>
-              </div>
             ) : error ? (
               /* Error state */
               <div className="px-4 py-6 space-y-2">
@@ -697,6 +682,21 @@ export function BeadsSidebar({
                   <RefreshCw className="w-3 h-3 mr-1.5" />
                   Retry
                 </Button>
+              </div>
+            ) : !initialized && !loading ? (
+              /* Beads not set up */
+              <div className="flex flex-col items-center justify-center px-4 py-8 gap-2">
+                <CircleOff className="w-5 h-5 text-muted-foreground" />
+                <p className="text-xs text-muted-foreground text-center">
+                  Beads is not set up for this project
+                </p>
+                <p className="text-[11px] text-muted-foreground text-center">
+                  Run{" "}
+                  <code className="px-1 py-0.5 rounded bg-muted text-foreground font-mono text-[10px]">
+                    bd init
+                  </code>{" "}
+                  to get started
+                </p>
               </div>
             ) : issues.length === 0 && !loading ? (
               /* Empty state */

@@ -1,5 +1,5 @@
 import { existsSync, rmSync, mkdirSync, cpSync } from "fs";
-import { dirname } from "path";
+import { dirname, join } from "path";
 
 /** SSR page routes probed by the deploy/rollback health gate. */
 export const SSR_PROBE_PATHS = ["/", "/login"] as const;
@@ -43,4 +43,100 @@ export function restoreStandalone(
   mkdirSync(dirname(liveStandalone), { recursive: true });
   cpSync(srcSlotStandalone, liveStandalone, { recursive: true });
   return { ok: true };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Isolated deploy source worktree (remote-dev-yxvy)
+//
+// Deploys used to build directly in PROJECT_ROOT — the LIVE dev + agent working
+// tree — doing `git reset --hard origin/master` there, which silently WIPED any
+// uncommitted/staged/untracked work a developer or agent had in progress. The fix
+// is to build from a deploy-OWNED, persistent detached worktree pinned to
+// origin/master that lives OUTSIDE the repo (so no .gitignore entry is needed and
+// PROJECT_ROOT's source is never touched). The helpers below are pure so they can
+// be unit-tested without running a real deploy.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The deploy-owned source worktree path, under the deploy data dir.
+ *
+ * Lives OUTSIDE PROJECT_ROOT (it's a sibling under `~/.remote-dev/deploy-src`) so
+ * that the hard reset we run to pin it to origin/master can NEVER touch the live
+ * working tree, and so nothing needs to be added to `.gitignore`.
+ */
+export function deploySourceDir(dataDir: string): string {
+  return join(dataDir, "deploy-src");
+}
+
+/**
+ * Ordered git command argv arrays to materialize/refresh the deploy source
+ * worktree, given whether it already exists.
+ *
+ * - `firstCreate === true`: the worktree does not exist yet. We `git fetch origin`
+ *   in PROJECT_ROOT, then `git worktree add --detach <deploySrc> origin/master`
+ *   from PROJECT_ROOT (the worktree's git dir is owned by PROJECT_ROOT's repo).
+ * - `firstCreate === false`: the worktree already exists. We fetch + hard-reset
+ *   it to origin/master IN the worktree itself (`git -C <deploySrc> …`). This
+ *   reset is safe — it's the deploy's OWN detached tree, not PROJECT_ROOT —
+ *   so no dev/agent work is ever at risk.
+ *
+ * The ancestry/divergence guard is NOT part of these argv arrays; it is a
+ * separate decision (see `ancestryGuardDecision`) so it can be tested in
+ * isolation and applied between the fetch and the reset.
+ */
+export function gitSyncCommands(
+  projectRoot: string,
+  deploySrc: string,
+  firstCreate: boolean,
+): string[][] {
+  if (firstCreate) {
+    return [
+      ["git", "-C", projectRoot, "fetch", "origin"],
+      ["git", "-C", projectRoot, "worktree", "add", "--detach", deploySrc, "origin/master"],
+    ];
+  }
+  return [
+    ["git", "-C", deploySrc, "fetch", "origin"],
+    ["git", "-C", deploySrc, "reset", "--hard", "origin/master"],
+  ];
+}
+
+/**
+ * Decision derived from the exit code of
+ * `git merge-base --is-ancestor HEAD origin/master`.
+ *
+ * Mirrors the original buildSlot branching so the "diverged vs git-error"
+ * distinction is preserved (and now testable):
+ *   - exit 0   → HEAD is an ancestor of origin/master (fast-forwardable or equal):
+ *                proceed.
+ *   - exit 1   → HEAD has diverged (local commits not on origin): refuse, a hard
+ *                reset would silently lose them.
+ *   - other    → a git error (typically 128 — e.g. origin/master ref missing after
+ *                a bad fetch): refuse and surface the error.
+ *
+ * For the deploy source worktree this guard is trivially satisfied (it's detached
+ * at origin/master, so HEAD never diverges), but we keep + test it so the
+ * "only ever build origin/master" safety property is explicit and preserved.
+ */
+export type AncestryDecision = "proceed" | "diverged" | "git-error";
+
+export function ancestryGuardDecision(exitCode: number): AncestryDecision {
+  if (exitCode === 0) return "proceed";
+  if (exitCode === 1) return "diverged";
+  return "git-error";
+}
+
+/**
+ * Defense-in-depth guard for self-healing a pruned/corrupt deploy-src: only a
+ * path that is EXACTLY the derived `<dataDir>/deploy-src` may be recursively
+ * removed. This stops a future refactor that mis-wires `DATA_DIR` (e.g. to `""`,
+ * `/`, or `$HOME`) from ever deleting an unintended directory. The check is by
+ * trailing path segment using the platform separator, so it holds regardless of
+ * the data dir prefix.
+ *
+ * @param candidate     the path the caller is about to `rmSync(recursive)`
+ * @param pathSeparator the platform path separator (Node `path.sep`)
+ */
+export function isSafeDeploySrcToRemove(candidate: string, pathSeparator: string): boolean {
+  return candidate.endsWith(`${pathSeparator}deploy-src`);
 }

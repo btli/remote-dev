@@ -351,8 +351,7 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
                     SizedBox(
                       height: statusBarHeight,
                       child: SessionStatusBar(
-                        projectName:
-                            _projectName.isEmpty ? null : _projectName,
+                        projectName: _projectName.isEmpty ? null : _projectName,
                         sessionName: title,
                         activity: _activity,
                         onMenuAction: _handleMenuAction,
@@ -468,8 +467,7 @@ class _Webview extends ConsumerWidget {
           // device repro of the blank-screen / submit-does-nothing bug we
           // surface page-load + console output to `flutter logs` so the
           // next iteration can see where the embedded PWA stops.
-          onLoadStop: (_, uri) =>
-              debugPrint('[SessionView] loadStop $uri'),
+          onLoadStop: (_, uri) => debugPrint('[SessionView] loadStop $uri'),
           onProgressChanged: (progress) =>
               debugPrint('[SessionView] progress $progress'),
           onConsoleMessage: (msg) => debugPrint(
@@ -495,12 +493,15 @@ class _Webview extends ConsumerWidget {
     final origin = Uri.parse(conn.host.origin);
     try {
       final credentials = ref.read(mobileCredentialsStoreProvider);
-      // CF token is host-wide.
-      final cfToken = await credentials.getHostCfToken(conn.host.id);
-      if (cfToken != null && cfToken.isNotEmpty) {
+      // Seed the workspace's instance cookies (OIDC session and/or CF edge).
+      final cookies = await credentials.getInstanceCookies(
+        conn.host.id,
+        conn.workspace.id,
+      );
+      if (cookies.isNotEmpty) {
         await ref
             .read(webViewCookieSeederProvider)
-            .seedCfCookie(serverOrigin: origin, value: cfToken);
+            .seedAuthCookies(serverOrigin: origin, cookies: cookies);
       }
     } catch (_) {
       // intentional: see seeder rationale in ChannelScreen._seedCookie.
@@ -530,9 +531,8 @@ class _WebviewTarget {
 Future<void> _openExternal(Uri uri) async {
   try {
     final isHttp = uri.scheme == 'http' || uri.scheme == 'https';
-    final mode = isHttp
-        ? LaunchMode.inAppBrowserView
-        : LaunchMode.externalApplication;
+    final mode =
+        isHttp ? LaunchMode.inAppBrowserView : LaunchMode.externalApplication;
     final ok = await launchUrl(uri, mode: mode);
     if (!ok) {
       debugPrint('[SessionView] launchUrl returned false for $uri');

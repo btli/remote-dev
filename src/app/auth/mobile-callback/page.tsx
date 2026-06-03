@@ -1,46 +1,26 @@
 export const dynamic = "force-dynamic";
 
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { validateAccessJWT } from "@/lib/cloudflare-access";
-import { createApiKey } from "@/services/api-key-service";
-import { createLogger } from "@/lib/logger";
-import { getOrCreateUserByEmail } from "@/lib/user-identity";
-
-const log = createLogger("auth/mobile-callback");
+import { prefixPath } from "@/lib/base-path";
+import { resolveInstanceMobileCallback } from "@/lib/mobile-callback";
 
 export default async function MobileCallbackPage() {
-  const cookieStore = await cookies();
-  const cfToken = cookieStore.get("CF_Authorization")?.value;
+  const result = await resolveInstanceMobileCallback();
 
-  if (!cfToken) {
-    return <ErrorPage message="No Cloudflare Access token found. Please sign in first." />;
+  if (result.kind === "redirect") {
+    redirect(result.url);
   }
 
-  const cfUser = await validateAccessJWT(cfToken);
-  if (!cfUser) {
-    return <ErrorPage message="Your Cloudflare Access token is invalid or expired." />;
+  if (result.kind === "login") {
+    redirect(
+      prefixPath(
+        `/login?callbackUrl=${encodeURIComponent(prefixPath("/auth/mobile-callback"))}`,
+      ),
+    );
   }
 
-  // Resolve via the multi-email index so any of the user's emails maps to the
-  // same account (creates user + primary user_email row when unknown).
-  const user = await getOrCreateUserByEmail(cfUser.email);
-
-  // Use the standard createApiKey service (handles prefix + hash correctly)
-  const result = await createApiKey(user.id, "Mobile App");
-
-  log.info("Mobile API key issued via callback", {
-    userId: user.id,
-    email: user.email,
-  });
-
-  // Redirect to deep link — the Flutter app intercepts this.
-  // Include the CF token so the app can send it as a cookie on API requests
-  // (CF Access blocks requests without a valid CF_Authorization cookie).
-  redirect(
-    `remotedev://auth/callback?apiKey=${encodeURIComponent(result.key)}&userId=${encodeURIComponent(user.id)}&email=${encodeURIComponent(user.email ?? "")}&cfToken=${encodeURIComponent(cfToken)}`
-  );
+  return <ErrorPage message={result.message} />;
 }
 
 function ErrorPage({ message }: { message: string }) {

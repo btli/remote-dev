@@ -4,7 +4,6 @@ import { useRef, useCallback, useState, useEffect, forwardRef, useImperativeHand
 import AnsiToHtml from "ansi-to-html";
 import { MobileInputBar } from "./MobileInputBar";
 import { MobileKeyboard } from "./MobileKeyboard";
-import { VoiceMicButton } from "./VoiceMicButton";
 import { AgentExitScreen } from "./AgentExitScreen";
 import { AuthErrorOverlay } from "./AuthErrorOverlay";
 import { useTerminalWebSocket } from "@/hooks/useTerminalWebSocket";
@@ -338,13 +337,6 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
             <span ref={anchorRef} />
           </pre>
         </div>
-
-        {/* Voice mic button for agent sessions */}
-        {session?.terminalType === "agent" && (
-          <div className="absolute top-8 left-2 z-50">
-            <VoiceMicButton getWebSocket={() => wsRef.current} />
-          </div>
-        )}
 
         {/* Text input bar (camera button lives in MobileKeyboard to avoid duplication) */}
         <MobileInputBar

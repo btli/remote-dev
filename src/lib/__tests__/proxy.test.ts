@@ -47,12 +47,31 @@ vi.mock("@/lib/cloudflare-access", () => ({
 
 // Default candidate set models a scoped (multi-instance) deployment. Individual
 // tests override via vi.mocked(...).mockReturnValueOnce(...) when needed.
+//
+// hasSessionCookie is implemented here using the mocked getSessionCookieNameCandidates
+// so that the proxy's call to hasSessionCookie uses the same controllable candidates
+// as the existing tests — and chunk-suffix detection exercises the real logic.
+const _mockGetSessionCookieNameCandidates = vi.fn(() => [
+  "__Secure-rdv-dev-session-token",
+  "rdv-dev-session-token",
+]);
 vi.mock("@/lib/auth-cookies", () => ({
   getSessionCookieName: vi.fn(() => "__Secure-rdv-dev-session-token"),
-  getSessionCookieNameCandidates: vi.fn(() => [
-    "__Secure-rdv-dev-session-token",
-    "rdv-dev-session-token",
-  ]),
+  get getSessionCookieNameCandidates() {
+    return _mockGetSessionCookieNameCandidates;
+  },
+  hasSessionCookie: (presentCookieNames: string[]) => {
+    const candidates = _mockGetSessionCookieNameCandidates();
+    const present = new Set(presentCookieNames);
+    return candidates.some(
+      (c: string) =>
+        present.has(c) ||
+        presentCookieNames.some(
+          (n: string) =>
+            n.startsWith(`${c}.`) && /^\d+$/.test(n.slice(c.length + 1)),
+        ),
+    );
+  },
 }));
 
 // INSTANCE_SLUG is a live binding the proxy reads INSIDE proxy() on every call,
@@ -94,11 +113,16 @@ function makeRequest(
   const cookieSet = new Set(cookieNames);
   const headers = new Headers(opts.headers ?? {});
   return {
-    nextUrl: { pathname },
+    // Real NextRequest.nextUrl always exposes `origin`; the proxy reads it as
+    // the fallback for resolveExternalOrigin() when no forwarded/host header is
+    // present, so the fake must provide it too.
+    nextUrl: { pathname, origin: "https://host" },
     url: `https://host${pathname}`,
     headers,
     cookies: {
       has: (name: string) => cookieSet.has(name),
+      // getAll() is used by hasSessionCookie to enumerate present cookie names.
+      getAll: () => cookieNames.map((name) => ({ name, value: "" })),
     },
   } as unknown as NextRequest;
 }
@@ -209,6 +233,68 @@ describe("proxy — scoped instance realm (presence gate, regardless of AUTH_SEC
     // No redirect — the login page passes through.
     expect(res.headers.get("location")).toBeNull();
     expect(res.status).toBe(200);
+  });
+
+  describe("chunked session cookies (JWE too large for one cookie)", () => {
+    // When NextAuth chunks the JWE the browser sends `<name>.0` (and optionally
+    // `<name>.1`, …) instead of the bare `<name>`. The scoped presence gate must
+    // recognise these numeric-suffix variants as a valid session.
+
+    beforeEach(() => {
+      vi.stubEnv("AUTH_SECRET", "");
+    });
+
+    it("treats a request with only the .0 chunk as logged-in (NOT redirected)", async () => {
+      const req = makeRequest("/dashboard", {
+        cookies: ["__Secure-rdv-dev-session-token.0"],
+      });
+
+      const res = await proxy(req);
+
+      expect(getTokenMock).not.toHaveBeenCalled();
+      expect(res.headers.get("location")).toBeNull();
+      expect(res.status).toBe(200);
+    });
+
+    it("treats a request with both .0 and .1 chunks as logged-in", async () => {
+      const req = makeRequest("/dashboard", {
+        cookies: [
+          "__Secure-rdv-dev-session-token.0",
+          "__Secure-rdv-dev-session-token.1",
+        ],
+      });
+
+      const res = await proxy(req);
+
+      expect(getTokenMock).not.toHaveBeenCalled();
+      expect(res.headers.get("location")).toBeNull();
+      expect(res.status).toBe(200);
+    });
+
+    it("also recognises the bare (non-secure) slug variant chunk (.0)", async () => {
+      const req = makeRequest("/dashboard", {
+        cookies: ["rdv-dev-session-token.0"],
+      });
+
+      const res = await proxy(req);
+
+      expect(getTokenMock).not.toHaveBeenCalled();
+      expect(res.headers.get("location")).toBeNull();
+      expect(res.status).toBe(200);
+    });
+
+    it("does NOT treat a non-numeric suffix as a chunk (e.g. .extra is not a session cookie)", async () => {
+      const req = makeRequest("/dashboard", {
+        cookies: ["__Secure-rdv-dev-session-token.extra"],
+      });
+
+      const res = await proxy(req);
+
+      expect(getTokenMock).not.toHaveBeenCalled();
+      // Not recognised → redirected to login.
+      expect(res.status).toBe(307);
+      expect(res.headers.get("location")).toBe("https://host/dev/login");
+    });
   });
 });
 

@@ -19,10 +19,10 @@ class WebViewFactory {
   /// return a lightweight stand-in without triggering the platform plugin.
   ///
   /// When [policy] carries a same-origin server (the production case),
-  /// `onPermissionRequest` grants MICROPHONE (and CAMERA for future image
-  /// capture flows) to that origin only. Cross-origin requests — e.g. an
-  /// embedded iframe — are denied to keep the WebView from becoming an
-  /// open mic for the broader web. See bd remote-dev-cp47.
+  /// `onPermissionRequest` grants CAMERA (for image capture flows) to that
+  /// origin only. Cross-origin requests — e.g. an embedded iframe — are
+  /// denied to keep the WebView from being coerced into capturing media for
+  /// the broader web. See bd remote-dev-cp47.
   Widget build({
     required Uri initialUrl,
     required NavigationPolicy policy,
@@ -48,16 +48,14 @@ class WebViewFactory {
         // Spec §4: Android hybrid composition
         useHybridComposition: !kIsWeb,
         // iOS requires explicit opt-in for getUserMedia to surface a
-        // permission prompt without a tap. The native voice mic button is
-        // a user gesture, so this flag is the right knob; without it
-        // WKWebView silently rejects `navigator.mediaDevices.getUserMedia`
-        // on iOS 15+ even when the WKUIDelegate would grant. See bd
-        // remote-dev-cp47.
+        // permission prompt without a tap; without it WKWebView silently
+        // rejects `navigator.mediaDevices.getUserMedia` on iOS 15+ even
+        // when the WKUIDelegate would grant. See bd remote-dev-cp47.
         mediaPlaybackRequiresUserGesture: false,
         // Android: hand off Permission API + getUserMedia decisions to
         // our `onPermissionRequest` handler. Without this, the system
-        // default policy is DENY and no prompt is ever shown — which is
-        // exactly the bug the voice mic surfaces today.
+        // default policy is DENY and no prompt is ever shown for
+        // in-terminal image capture.
         allowsInlineMediaPlayback: true,
         applicationNameForUserAgent: 'RemoteDevMobile/0.1.0',
       ),
@@ -95,10 +93,9 @@ class WebViewFactory {
   }
 }
 
-/// Grants MICROPHONE (and CAMERA, for future image capture) when the
-/// requesting origin matches [serverOrigin]. Everything else is denied
-/// so the WebView can't be coerced into capturing audio for arbitrary
-/// third-party origins.
+/// Grants CAMERA (for image capture) when the requesting origin matches
+/// [serverOrigin]. Everything else is denied so the WebView can't be
+/// coerced into capturing media for arbitrary third-party origins.
 ///
 /// On Android this corresponds to WebChromeClient.onPermissionRequest;
 /// on iOS it maps to WKUIDelegate's
@@ -118,10 +115,11 @@ PermissionResponse _resolvePermission({
       action: PermissionResponseAction.DENY,
     );
   }
-  final allowed = request.resources.where((resource) {
-    return resource == PermissionResourceType.MICROPHONE ||
-        resource == PermissionResourceType.CAMERA;
-  }).toList(growable: false);
+  final allowed = request.resources
+      .where((resource) {
+        return resource == PermissionResourceType.CAMERA;
+      })
+      .toList(growable: false);
   if (allowed.isEmpty) {
     return PermissionResponse(
       resources: request.resources,
