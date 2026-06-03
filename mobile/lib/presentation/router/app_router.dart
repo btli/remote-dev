@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../domain/server_config.dart';
+import '../../domain/session_summary.dart';
 import '../../infrastructure/push/push_token_registrar.dart';
 import '../screens/biometric/biometric_settings_screen.dart';
 import '../screens/bridge_spike/bridge_spike_screen.dart';
@@ -200,6 +201,15 @@ class AppRouter {
           path: '/home/session/:id',
           builder: (context, state) => SessionViewScreen(
             sessionId: state.pathParameters['id']!,
+            // Pre-resolved summary when navigation carries one (Sessions
+            // list / freshly-created session). Notification/deep-link
+            // cold-starts pass no extra, so the screen resolves the name
+            // from the sessions list instead. Guard the cast: GoRouter may
+            // hand back arbitrary extras (e.g. a ServerConfig from an
+            // unrelated push) so only accept a SessionSummary.
+            initialSummary: state.extra is SessionSummary
+                ? state.extra! as SessionSummary
+                : null,
           ),
         ),
         GoRoute(

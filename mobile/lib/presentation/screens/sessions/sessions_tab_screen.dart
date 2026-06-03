@@ -95,13 +95,17 @@ class _SessionsTabScreenState extends ConsumerState<SessionsTabScreen> {
       // Refresh the list and navigate to the session view.
       ref.invalidate(sessionsListProvider);
       // push so the session view has an implicit back arrow that pops
-      // to the Sessions tab inside HomeShell.
-      context.push('/home/session/${created.id}');
+      // to the Sessions tab inside HomeShell. Pass the created summary as
+      // `extra` so the header shows the real name immediately (no list
+      // round-trip).
+      context.push('/home/session/${created.id}', extra: created);
     }
   }
 
   void _onTapSession(SessionSummary session) {
-    context.push('/home/session/${session.id}');
+    // Pass the summary as `extra` so SessionViewScreen's header renders the
+    // session name immediately instead of resolving it from the list.
+    context.push('/home/session/${session.id}', extra: session);
   }
 
   @override

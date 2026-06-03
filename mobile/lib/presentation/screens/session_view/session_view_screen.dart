@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../application/state/appearance_provider.dart';
 import '../../../domain/appearance_settings.dart';
+import '../../../domain/session_summary.dart';
 import '../../../infrastructure/webview/bridge_controller.dart';
 import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
@@ -42,10 +43,19 @@ import 'smart_key_strip.dart';
 class SessionViewScreen extends ConsumerStatefulWidget {
   const SessionViewScreen({
     required this.sessionId,
+    this.initialSummary,
     super.key,
   });
 
   final String sessionId;
+
+  /// Optional pre-resolved summary for the session, passed via the route's
+  /// `extra` when navigation originates from a surface that already holds the
+  /// object (the Sessions list, a freshly-created session). When present, the
+  /// header shows the real name immediately. When absent (notification / deep
+  /// link cold-start), the name is resolved from the sessions list API and the
+  /// header shows a neutral 'Session' label until then — never the raw id.
+  final SessionSummary? initialSummary;
 
   @override
   ConsumerState<SessionViewScreen> createState() => _SessionViewScreenState();
@@ -55,23 +65,47 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
   BridgeController? _bridge;
   SessionActivity _activity = SessionActivity.idle;
   final String _projectName = '';
-  String _sessionName = '';
+
+  /// The session's display name once resolved. Null until resolution
+  /// completes; the header falls back to `initialSummary?.name` and then the
+  /// neutral 'Session' label — it NEVER shows the raw session id.
+  String? _resolvedName;
 
   @override
   void initState() {
     super.initState();
-    _loadActiveServer();
+    _resolveSessionName();
   }
 
-  Future<void> _loadActiveServer() async {
-    final store = ref.read(serverConfigStoreProvider);
-    final server = await store.loadActive();
-    if (mounted && server != null) {
-      // Phase 2 simplification: use sessionId as the title; full session
-      // detail resolution arrives in Phase 4 polish.
-      setState(() {
-        _sessionName = widget.sessionId;
-      });
+  /// Resolves the session's display name for the header.
+  ///
+  /// If the route handed us an [SessionViewScreen.initialSummary] (Sessions
+  /// list / freshly-created session), use its name directly — no network
+  /// call. Otherwise (notification / deep-link cold-start) fetch the sessions
+  /// list and match on [SessionViewScreen.sessionId].
+  ///
+  /// We list rather than GET `/api/sessions/[id]` because the by-id endpoint
+  /// is `withAuth` (session-cookie only) server-side, whereas `list()` goes
+  /// through `withApiAuth` and so works with the mobile Bearer key.
+  Future<void> _resolveSessionName() async {
+    // When the route already handed us a summary, the build-time fallback
+    // (`title = _resolvedName ?? widget.initialSummary?.name ?? 'Session'`)
+    // already renders the real name, so there is nothing async to do — and
+    // we must NOT call setState during initState.
+    if (widget.initialSummary != null) return;
+    try {
+      final sessions = await ref.read(sessionsApiProvider).list();
+      if (!mounted) return;
+      for (final s in sessions) {
+        if (s.id == widget.sessionId) {
+          setState(() => _resolvedName = s.name);
+          return;
+        }
+      }
+    } catch (err) {
+      // Resolution is best-effort: a failed or unauthorized list must not
+      // crash the terminal. The header keeps showing 'Session'.
+      debugPrint('[SessionView] name resolution failed: $err');
     }
   }
 
@@ -282,6 +316,10 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
         _bridge?.setCursorBlink(next.cursorBlink);
       }
     });
+    // Header title: resolved name, else the route-supplied summary name,
+    // else a neutral label. CRITICAL: no branch falls back to
+    // `widget.sessionId`, so the raw UUID is never rendered (bd Task F).
+    final title = _resolvedName ?? widget.initialSummary?.name ?? 'Session';
     return Scaffold(
       backgroundColor: const Color(0xFF1A1B26),
       // Spec §4: own the layout; never let Scaffold reflow on keyboard.
@@ -314,9 +352,7 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
                       child: SessionStatusBar(
                         projectName:
                             _projectName.isEmpty ? null : _projectName,
-                        sessionName: _sessionName.isEmpty
-                            ? widget.sessionId
-                            : _sessionName,
+                        sessionName: title,
                         activity: _activity,
                         onMenuAction: _handleMenuAction,
                       ),
