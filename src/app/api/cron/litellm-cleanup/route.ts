@@ -50,7 +50,7 @@ export async function POST(request: Request) {
 
     // Run cleanup (90-day retention for request logs)
     log.info("Running scheduled LiteLLM log cleanup...");
-    const result = LiteLLMAnalyticsService.pruneOldLogs(90);
+    const result = await LiteLLMAnalyticsService.pruneOldLogs(90);
 
     log.info("LiteLLM cleanup complete", { deletedCount: result.deletedCount });
 

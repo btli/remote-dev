@@ -16,11 +16,14 @@ export interface QueryLogsResult {
 export class QueryLogsUseCase {
   constructor(private readonly logRepository: LogRepository) {}
 
-  execute(options: LogQueryOptions = {}): QueryLogsResult {
+  async execute(options: LogQueryOptions = {}): Promise<QueryLogsResult> {
     const limit = Math.min(Math.max(1, options.limit ?? 200), 500);
 
     // Fetch one extra to determine if there are more results
-    const entries = this.logRepository.query({ ...options, limit: limit + 1 });
+    const entries = await this.logRepository.query({
+      ...options,
+      limit: limit + 1,
+    });
     const hasMore = entries.length > limit;
 
     return {

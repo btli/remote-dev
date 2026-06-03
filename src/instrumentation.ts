@@ -16,10 +16,27 @@ export async function register() {
     const { runMigrations } = await import("@/db/migrate");
     await runMigrations();
 
+    // On the Postgres path, the sidecar datasets (logs + analytics) live in the
+    // SAME database under dedicated `logs` / `analytics` schemas. Bootstrap them
+    // idempotently right after the main-DB migrations. No-op on SQLite (those
+    // sidecars use their own better-sqlite3 files, created on first connect).
+    try {
+      const { isPostgres } = await import("@/db/is-postgres");
+      if (isPostgres()) {
+        const { initSidecarSchemas } = await import(
+          "@/infrastructure/persistence/pg/sidecar-schema"
+        );
+        await initSidecarSchemas();
+      }
+    } catch (error) {
+      log.error("Sidecar schema bootstrap failed", { error: String(error) });
+      throw error;
+    }
+
     // Prune old log entries (7-day retention)
     try {
       const { pruneLogsUseCase } = await import("@/infrastructure/container");
-      const pruned = pruneLogsUseCase.execute();
+      const pruned = await pruneLogsUseCase.execute();
       if (pruned > 0) {
         log.info("Pruned expired log entries", { count: pruned });
       }

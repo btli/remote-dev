@@ -16,7 +16,7 @@
 
 import { LEVEL_RANK, type LogLevelValue } from "@/domain/value-objects/LogLevel";
 import type { LogSource } from "@/application/ports/LogRepository";
-import { getLogRepositoryInstance } from "@/infrastructure/persistence/repositories/BetterSqliteLogRepository";
+import { getLogStore } from "@/infrastructure/persistence/sidecar-factory";
 
 export interface Logger {
   error(message: string, data?: Record<string, unknown>): void;
@@ -81,7 +81,7 @@ function writeToDb(
   data?: Record<string, unknown>
 ): void {
   try {
-    getLogRepositoryInstance().write({
+    getLogStore().write({
       timestamp: Date.now(),
       level,
       namespace,
