@@ -9,7 +9,7 @@ const DEFAULT_RETENTION_DAYS = 7;
 export class PruneLogsUseCase {
   constructor(private readonly logRepository: LogRepository) {}
 
-  execute(retentionDays: number = DEFAULT_RETENTION_DAYS): number {
+  execute(retentionDays: number = DEFAULT_RETENTION_DAYS): Promise<number> {
     const cutoffMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
     return this.logRepository.deleteOlderThan(cutoffMs);
   }

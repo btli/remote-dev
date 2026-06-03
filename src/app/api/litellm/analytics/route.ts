@@ -39,7 +39,7 @@ export const GET = withAuth(async (request, { userId: _userId }) => {
 
     switch (type) {
       case "summary": {
-        const summary = LiteLLMAnalyticsService.getSummary({
+        const summary = await LiteLLMAnalyticsService.getSummary({
           startDate,
           endDate,
           model,
@@ -58,7 +58,7 @@ export const GET = withAuth(async (request, { userId: _userId }) => {
             "INVALID_GRANULARITY"
           );
         }
-        const timeseries = LiteLLMAnalyticsService.getTimeSeries({
+        const timeseries = await LiteLLMAnalyticsService.getTimeSeries({
           startDate,
           endDate,
           granularity,
@@ -68,7 +68,7 @@ export const GET = withAuth(async (request, { userId: _userId }) => {
       }
 
       case "models": {
-        const models = LiteLLMAnalyticsService.getModelBreakdown({
+        const models = await LiteLLMAnalyticsService.getModelBreakdown({
           startDate,
           endDate,
         });
@@ -79,7 +79,7 @@ export const GET = withAuth(async (request, { userId: _userId }) => {
         const limit = searchParams.get("limit")
           ? parseInt(searchParams.get("limit")!, 10)
           : 50;
-        const sessions = LiteLLMAnalyticsService.getSessionAttribution({
+        const sessions = await LiteLLMAnalyticsService.getSessionAttribution({
           startDate,
           endDate,
           limit,
@@ -88,7 +88,7 @@ export const GET = withAuth(async (request, { userId: _userId }) => {
       }
 
       case "latency": {
-        const latency = LiteLLMAnalyticsService.getLatencyPercentiles({
+        const latency = await LiteLLMAnalyticsService.getLatencyPercentiles({
           startDate,
           endDate,
           model,

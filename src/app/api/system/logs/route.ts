@@ -38,7 +38,7 @@ export const GET = withApiAuth(async (request) => {
     const limit = parseIntParam(searchParams.get("limit"));
     if (Number.isNaN(limit)) return errorResponse("Invalid limit parameter", 400);
 
-    const result = queryLogsUseCase.execute({
+    const result = await queryLogsUseCase.execute({
       level: level as LogLevelValue | undefined,
       namespace: searchParams.get("namespace") ?? undefined,
       source: source as LogSource | undefined,
@@ -69,7 +69,7 @@ export const DELETE = withApiAuth(async (request) => {
     const days = parseIntParam(searchParams.get("olderThanDays")) ?? 0;
     if (Number.isNaN(days)) return errorResponse("Invalid olderThanDays parameter", 400);
 
-    const deleted = pruneLogsUseCase.execute(days);
+    const deleted = await pruneLogsUseCase.execute(days);
     return NextResponse.json({ deleted });
   } catch {
     return errorResponse("Failed to clear logs", 500);

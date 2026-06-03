@@ -79,6 +79,7 @@ function row(status: InstanceStatus, overrides: Partial<InstanceRow> = {}): Inst
     baseUrl: null,
     storageTargetId: null,
     storageConfigSnapshot: null,
+    dbConfigSnapshot: null,
     cpuRequest: null,
     cpuLimit: null,
     memRequest: null,
@@ -99,7 +100,8 @@ const fakeClients = {} as ReturnType<ReconcilerDeps["getClients"]>;
 function baseDeps(over: Partial<ReconcilerDeps>): ReconcilerDeps {
   return {
     db: makeDb([]).db,
-    provisionInstance: vi.fn(async () => undefined),
+    // SQLite path: provisionInstance returns null (no per-instance CNPG DB).
+    provisionInstance: vi.fn(async () => null),
     checkInstanceReady: vi.fn(async () => ({ ready: true })),
     terminateInstance: vi.fn(async () => undefined),
     namespaceExists: vi.fn(async () => false),
@@ -142,7 +144,7 @@ afterEach(() => {
 describe("reconcileInstances — requested → provisioning", () => {
   it("claims (provisioning) then calls provisionInstance; stays provisioning on success", async () => {
     const { db, updates } = makeDb([row("requested")]);
-    const provisionInstance = vi.fn(async () => undefined);
+    const provisionInstance = vi.fn(async () => null);
     await reconcileInstances(baseDeps({ db, provisionInstance }));
 
     // First update is the claim → provisioning.
@@ -152,11 +154,59 @@ describe("reconcileInstances — requested → provisioning", () => {
     expect(updates.some((u) => u.set.status === "error")).toBe(false);
   });
 
+  it("persists dbConfigSnapshot when provisionInstance returns one (Postgres, Unit 8)", async () => {
+    const { db, updates } = makeDb([row("requested")]);
+    const snapshot = {
+      type: "postgres" as const,
+      dbName: "rdv_alpha",
+      roleName: "rdv_alpha",
+      poolerHost: "pooler.cnpg.svc",
+    };
+    const provisionInstance = vi.fn(async () => snapshot);
+    await reconcileInstances(baseDeps({ db, provisionInstance }));
+
+    // One of the row writes sets dbConfigSnapshot to the serialized snapshot.
+    const dbWrite = updates.find((u) => "dbConfigSnapshot" in u.set);
+    expect(dbWrite?.set.dbConfigSnapshot).toBe(JSON.stringify(snapshot));
+  });
+
+  it("does NOT write dbConfigSnapshot on the SQLite path (provisionInstance → null)", async () => {
+    const { db, updates } = makeDb([row("requested")]);
+    // baseDeps default provisionInstance returns null (SQLite path).
+    await reconcileInstances(baseDeps({ db }));
+    expect(updates.some((u) => "dbConfigSnapshot" in u.set)).toBe(false);
+  });
+
+  it("does NOT re-write dbConfigSnapshot when the row already carries it (self-heal preserves the deadline)", async () => {
+    const snapshot = {
+      type: "postgres" as const,
+      dbName: "rdv_alpha",
+      roleName: "rdv_alpha",
+      poolerHost: "pooler.cnpg.svc",
+    };
+    // Row already has the snapshot AND is mid-provisioning → a self-heal tick.
+    const { db, updates } = makeDb([
+      row("provisioning", { dbConfigSnapshot: JSON.stringify(snapshot) }),
+    ]);
+    const provisionInstance = vi.fn(async () => snapshot);
+    // Within budget + STS missing triggers the self-heal re-provision.
+    const checkInstanceReady = vi.fn(async () => ({
+      ready: false,
+      reason: "statefulset-not-found",
+    }));
+    await reconcileInstances(baseDeps({ db, provisionInstance, checkInstanceReady }));
+
+    expect(provisionInstance).toHaveBeenCalledOnce();
+    // No dbConfigSnapshot write (already stored) → updatedAt is not bumped.
+    expect(updates.some((u) => "dbConfigSnapshot" in u.set)).toBe(false);
+  });
+
   it("generates an AUTH_SECRET and passes it to provisionInstance (never persisted)", async () => {
     const { db, updates } = makeDb([row("requested")]);
     let seenSecret: string | undefined;
     const provisionInstance = vi.fn(async (_r, opts) => {
       seenSecret = opts.authSecret;
+      return null;
     });
     await reconcileInstances(baseDeps({ db, provisionInstance }));
 
@@ -180,6 +230,7 @@ describe("reconcileInstances — requested → provisioning", () => {
     let seenStorage: unknown;
     const provisionInstance = vi.fn(async (_r, opts) => {
       seenStorage = opts.storage;
+      return null;
     });
     await reconcileInstances(baseDeps({ db, provisionInstance }));
 
@@ -195,6 +246,7 @@ describe("reconcileInstances — requested → provisioning", () => {
     let seenStorage: { kind?: string; configSnapshot?: Record<string, unknown> } | undefined;
     const provisionInstance = vi.fn(async (_r, opts) => {
       seenStorage = opts.storage;
+      return null;
     });
     await reconcileInstances(baseDeps({ db, provisionInstance }));
 
@@ -250,7 +302,7 @@ describe("reconcileInstances — provisioning → ready / error", () => {
     const { db, updates } = makeDb([
       row("provisioning", { updatedAt: now, createdAt: now }),
     ]);
-    const provisionInstance = vi.fn(async () => undefined);
+    const provisionInstance = vi.fn(async () => null);
     await reconcileInstances(
       baseDeps({
         db,
@@ -274,7 +326,7 @@ describe("reconcileInstances — provisioning → ready / error", () => {
     const { db, updates } = makeDb([
       row("provisioning", { updatedAt: now, createdAt: now }),
     ]);
-    const provisionInstance = vi.fn(async () => undefined);
+    const provisionInstance = vi.fn(async () => null);
     await reconcileInstances(
       baseDeps({
         db,
@@ -320,7 +372,7 @@ describe("reconcileInstances — terminating → deleted", () => {
 describe("reconcileInstances — resilience", () => {
   it("k8s client unavailable: returns without crashing and does NOT mark error", async () => {
     const { db, updates } = makeDb([row("requested")]);
-    const provisionInstance = vi.fn(async () => undefined);
+    const provisionInstance = vi.fn(async () => null);
     await expect(
       reconcileInstances(
         baseDeps({

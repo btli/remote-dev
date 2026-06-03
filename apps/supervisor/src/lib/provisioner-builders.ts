@@ -57,6 +57,15 @@ export function authSecretName(slug: string): string {
   return `rdv-${slug}`;
 }
 
+/**
+ * Per-instance DATABASE_URL secret name (`rdv-<slug>-db`). Created only on the
+ * Postgres dual-backend path (Unit 8); the StatefulSet reads DATABASE_URL from
+ * it as a secretKeyRef when `withDatabase` is set.
+ */
+export function dbSecretName(slug: string): string {
+  return `rdv-${slug}-db`;
+}
+
 /** Labels shared by all objects for an instance. */
 function instanceLabels(slug: string): Record<string, string> {
   return {
@@ -140,6 +149,45 @@ export function buildAuthSecret(
     },
     type: "Opaque",
     stringData,
+  };
+}
+
+/**
+ * V1Secret `rdv-<slug>-db` — the per-instance DATABASE_URL for the Postgres
+ * dual-backend path (Unit 8). Carries a single `DATABASE_URL` key pointed at the
+ * CNPG PgBouncer Pooler (NOT the RW Service — the app uses transaction pooling),
+ * which the StatefulSet reads as a secretKeyRef (see `withDatabase` in
+ * {@link buildStatefulSet}). Created ONLY when the supervisor runs on Postgres
+ * and the instance was bootstrapped with its own database; the SQLite path never
+ * creates this Secret.
+ *
+ * SECURITY: callers MUST NOT log the returned object or `opts.password` — the
+ * URL embeds the role password.
+ */
+export function buildDbSecret(
+  slug: string,
+  opts: {
+    host: string;
+    port: number | string;
+    dbName: string;
+    roleName: string;
+    password: string;
+  },
+): V1Secret {
+  const url =
+    `postgresql://${encodeURIComponent(opts.roleName)}:` +
+    `${encodeURIComponent(opts.password)}@${opts.host}:${opts.port}/` +
+    `${encodeURIComponent(opts.dbName)}`;
+  return {
+    metadata: {
+      name: dbSecretName(slug),
+      namespace: namespaceForSlug(slug),
+      labels: instanceLabels(slug),
+    },
+    type: "Opaque",
+    stringData: {
+      DATABASE_URL: url,
+    },
   };
 }
 
@@ -289,6 +337,14 @@ export interface BuildStatefulSetOptions {
    */
   withOidc?: boolean;
   /**
+   * Wire the DATABASE_URL secretKeyRef (Postgres dual-backend, Unit 8) sourced
+   * from the per-instance `rdv-<slug>-db` Secret. Set ONLY when the supervisor
+   * runs on Postgres and the instance was bootstrapped with its own CNPG
+   * database; omitted on the SQLite path (the instance uses its per-PVC
+   * sqlite.db). The non-secret env is unchanged — DATABASE_URL is secret-backed.
+   */
+  withDatabase?: boolean;
+  /**
    * Name of an image-pull Secret in the instance namespace, referenced in the
    * pod's `imagePullSecrets` (private-registry instance images; remote-dev-2xhg).
    * Omitted when unset, preserving current output for public-registry instances.
@@ -342,6 +398,11 @@ export function buildStatefulSet(
     env.push(
       secretEnv("OIDC_CLIENT_SECRET", authSecretName(slug), "OIDC_CLIENT_SECRET"),
     );
+  }
+  if (opts.withDatabase) {
+    // Postgres dual-backend (Unit 8): DATABASE_URL comes from the per-instance
+    // `rdv-<slug>-db` Secret (Pooler-pointed). Pushed only on the Postgres path.
+    env.push(secretEnv("DATABASE_URL", dbSecretName(slug), "DATABASE_URL"));
   }
 
   return {
@@ -429,9 +490,23 @@ export function buildSeedJob(
      */
     imagePullSecretName?: string;
     nodeSelector?: Record<string, string>;
+    /**
+     * Postgres dual-backend (Unit 8): wire the DATABASE_URL secretKeyRef from the
+     * per-instance `rdv-<slug>-db` Secret so the seed run targets the instance's
+     * CNPG database instead of a sqlite.db. Omitted on the SQLite path.
+     */
+    withDatabase?: boolean;
   },
 ): V1Job {
   const ns = namespaceForSlug(slug);
+  const env: V1EnvVar[] = [
+    { name: "AUTHORIZED_USERS", value: opts.authorizedEmails.join(",") },
+    { name: "RDV_INSTANCE_SLUG", value: slug },
+    { name: "RDV_DATA_DIR", value: DATA_DIR },
+  ];
+  if (opts.withDatabase) {
+    env.push(secretEnv("DATABASE_URL", dbSecretName(slug), "DATABASE_URL"));
+  }
   return {
     metadata: {
       name: `rdv-${slug}-seed`,
@@ -464,14 +539,7 @@ export function buildSeedJob(
               name: "seed",
               image: opts.image,
               command: ["bun", "run", "db:seed"],
-              env: [
-                {
-                  name: "AUTHORIZED_USERS",
-                  value: opts.authorizedEmails.join(","),
-                },
-                { name: "RDV_INSTANCE_SLUG", value: slug },
-                { name: "RDV_DATA_DIR", value: DATA_DIR },
-              ],
+              env,
             },
           ],
         },

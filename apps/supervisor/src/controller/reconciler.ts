@@ -424,7 +424,36 @@ async function attemptProvision(
   }
 
   try {
-    await deps.provisionInstance(row, opts, clients);
+    const dbConfigSnapshot = await deps.provisionInstance(row, opts, clients);
+    // Postgres dual-backend (Unit 8): persist the instance's DB config snapshot
+    // returned by the provisioner (the k8s/CNPG single writer doesn't own the DB
+    // row). Write ONLY when it is non-null AND not already stored — so the
+    // within-budget self-heal re-provision (which re-runs attemptProvision after
+    // the snapshot was already persisted) does NOT bump `updatedAt` and reset the
+    // readiness deadline. On the SQLite path (null) we never write.
+    if (dbConfigSnapshot) {
+      const serialized = JSON.stringify(dbConfigSnapshot);
+      if (row.dbConfigSnapshot !== serialized) {
+        try {
+          await deps.db
+            .update(instance)
+            .set({ dbConfigSnapshot: serialized })
+            .where(eq(instance.id, row.id));
+        } catch (persistErr) {
+          // The k8s objects AND the CNPG database already EXIST (provisionInstance
+          // succeeded) — we just failed to record the snapshot. Do NOT rethrow:
+          // tearing down a live, running instance over a metadata-write blip would
+          // be far worse than a missing snapshot (it self-heals on a later tick,
+          // since the snapshot is re-derived and re-written when it still differs).
+          // Log LOUDLY so the live-but-unrecorded state is visible for manual repair.
+          log.error(
+            "CRITICAL: k8s objects and CNPG database EXIST but dbConfigSnapshot was " +
+              "not persisted; reconcile may need manual repair",
+            { slug: row.slug, instanceId: row.id, error: String(persistErr) },
+          );
+        }
+      }
+    }
     return true;
   } catch (err) {
     if (err instanceof ProvisioningError) {

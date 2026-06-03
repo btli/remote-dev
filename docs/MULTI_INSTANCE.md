@@ -373,6 +373,62 @@ stringData:
 
 ---
 
+## CloudNativePG (database-per-instance)
+
+By default each instance keeps its own **SQLite** DB on its PVC. Optionally, a
+fleet can instead run on **PostgreSQL** with a **database-per-instance** model
+on one shared, highly-available [CloudNativePG](https://cloudnative-pg.io/)
+(CNPG) cluster. This is opt-in: leave the `CNPG_*` env unset and instances stay
+on SQLite (unchanged behavior).
+
+- **One shared HA cluster.** `deploy/k8s/cnpg/` (`namespace.yaml`,
+  `cluster.yaml`) declares a single `rdv-pg` cluster (primary + standbys), a
+  daily backup, and a **PgBouncer Pooler**. See
+  [`deploy/k8s/cnpg/README.md`](../deploy/k8s/cnpg/README.md) for operator
+  install + cluster setup.
+- **One database + role per instance.** When CNPG is configured, the supervisor
+  provisioner creates a login role + database `rdv_<slug>` for each instance
+  (`bootstrapInstanceDatabase`, idempotent DDL). This DDL runs against the CNPG
+  **RW Service**, not the Pooler — PgBouncer's transaction-pooling mode blocks
+  session-level DDL like `CREATE DATABASE`.
+- **Per-instance `DATABASE_URL`.** The provisioner injects each instance's
+  connection string as a per-instance `rdv-<slug>-db` Secret, pointed at the
+  **PgBouncer Pooler** (the supervisor and instance apps connect through the
+  pool, not the RW Service). The instance StatefulSet reads `DATABASE_URL` from
+  that Secret as a `secretKeyRef`.
+- **Migrate-on-boot.** An instance whose `DATABASE_URL` is a `postgresql://` URL
+  applies its schema via the app's Postgres migrate-on-boot; the container
+  entrypoint **skips the SQLite schema bootstrap** in that case (`docker/
+  entrypoint.sh`).
+
+### CNPG_* configuration
+
+Set these on the supervisor (see
+`deploy/k8s/supervisor/secrets.example.yaml`) only for a Postgres-backed fleet;
+leave them all unset for SQLite:
+
+| Key | Purpose |
+|-----|---------|
+| `CNPG_CLUSTER_NAMESPACE`, `CNPG_CLUSTER_NAME` | Identify the shared cluster (e.g. `cnpg-clusters` / `rdv-pg`). |
+| `CNPG_POOLER_HOST`, `CNPG_POOLER_PORT` | PgBouncer Pooler endpoint baked into each instance's `DATABASE_URL`. |
+| `CNPG_RW_HOST` | RW Service used for provisioning DDL (`CREATE ROLE`/`CREATE DATABASE`). |
+| `CNPG_SUPERUSER_SECRET_NAME`, `CNPG_SUPERUSER_SECRET_NAMESPACE` | The CNPG-generated superuser Secret the provisioner reads to run that DDL. |
+
+### Soft teardown + manual purge
+
+Instance teardown is **soft** by design: deleting an instance removes its
+namespace/objects but **does not drop its CNPG database or role** (dropping a
+database is irreversible — a mis-fire would destroy user data). To reclaim a
+deleted instance's database, run the purge **manually against the CNPG RW
+Service** (not the Pooler):
+
+```sql
+DROP DATABASE rdv_<slug>;
+DROP ROLE rdv_<slug>;
+```
+
+---
+
 ## First-boot seeding
 
 The image deliberately does not seed `authorized_users` from the

@@ -111,7 +111,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 // Logs
-import { getLogRepositoryInstance } from "./persistence/repositories/BetterSqliteLogRepository";
+import { getLogStore } from "./persistence/sidecar-factory";
 import { QueryLogsUseCase, PruneLogsUseCase } from "@/application/use-cases/logs";
 import type { LogRepository } from "@/application/ports/LogRepository";
 
@@ -369,7 +369,7 @@ export const unbindProjectFromGitHubAccountUseCase =
 // Log System
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const logRepository: LogRepository = getLogRepositoryInstance();
+export const logRepository: LogRepository = getLogStore();
 
 export const queryLogsUseCase = new QueryLogsUseCase(logRepository);
 

@@ -6,6 +6,7 @@
  */
 
 import { db } from "@/db";
+import { affectedRows, ltDate } from "@/db/sql-helpers";
 import { githubIssues } from "@/db/schema";
 import { eq, and, asc, desc, sql, min } from "drizzle-orm";
 import type { GitHubIssue } from "@/domain/entities/GitHubIssue";
@@ -203,7 +204,7 @@ export class DrizzleGitHubIssueRepository implements GitHubIssueRepository {
       .delete(githubIssues)
       .where(eq(githubIssues.repositoryId, repositoryId));
 
-    return result.rowsAffected ?? 0;
+    return affectedRows(result);
   }
 
   /**
@@ -215,11 +216,11 @@ export class DrizzleGitHubIssueRepository implements GitHubIssueRepository {
       .where(
         and(
           eq(githubIssues.repositoryId, repositoryId),
-          sql`${githubIssues.cachedAt} < ${cachedBefore.getTime()}`
+          ltDate(githubIssues.cachedAt, cachedBefore)
         )
       );
 
-    return result.rowsAffected ?? 0;
+    return affectedRows(result);
   }
 
   /**
@@ -236,7 +237,7 @@ export class DrizzleGitHubIssueRepository implements GitHubIssueRepository {
         )
       );
 
-    return result.rowsAffected ?? 0;
+    return affectedRows(result);
   }
 
   /**
@@ -257,7 +258,7 @@ export class DrizzleGitHubIssueRepository implements GitHubIssueRepository {
         )
       );
 
-    return (result.rowsAffected ?? 0) > 0;
+    return affectedRows(result) > 0;
   }
 
   /**

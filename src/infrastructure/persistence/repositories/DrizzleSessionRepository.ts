@@ -6,6 +6,7 @@
  */
 
 import { db } from "@/db";
+import { affectedRows } from "@/db/sql-helpers";
 import { terminalSessions } from "@/db/schema";
 import { eq, and, asc, desc, inArray, max, isNull, isNotNull, sql } from "drizzle-orm";
 import type { Session } from "@/domain/entities/Session";
@@ -251,7 +252,7 @@ export class DrizzleSessionRepository implements SessionRepository {
         and(eq(terminalSessions.id, id), eq(terminalSessions.userId, userId))
       );
 
-    return result.rowsAffected > 0;
+    return affectedRows(result) > 0;
   }
 
   /**
@@ -269,7 +270,7 @@ export class DrizzleSessionRepository implements SessionRepository {
         )
       );
 
-    return result.rowsAffected;
+    return affectedRows(result);
   }
 
   /**

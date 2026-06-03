@@ -1,22 +1,16 @@
-import { createClient } from "@libsql/client/node";
-import { drizzle } from "drizzle-orm/libsql";
-import * as schema from "./schema";
-import { getDatabaseUrl, ensureDataDirectories } from "@/lib/paths";
+/**
+ * Database entry point.
+ *
+ * Resolves the active dialect (SQLite or PostgreSQL, chosen at boot by
+ * `DATABASE_URL`) synchronously and re-exports its handles. Consumers continue
+ * to `import { db, client } from "@/db"` unchanged; `execute` / `runProbe` are
+ * the dialect-neutral raw-SQL escape hatches.
+ */
+import { getDialect } from "./dialect";
 
-// Ensure data directories exist before connecting to database
-ensureDataDirectories();
+const _d = getDialect();
 
-// Use centralized path configuration
-// Priority: DATABASE_URL env var > RDV_DATA_DIR/sqlite.db > ~/.remote-dev/sqlite.db
-const databaseUrl = getDatabaseUrl();
-
-export const client = createClient({
-  url: databaseUrl,
-});
-
-// Enable WAL mode and busy_timeout to prevent SQLITE_BUSY under concurrent writes
-client.execute("PRAGMA journal_mode = WAL").catch(() => {});
-client.execute("PRAGMA synchronous = NORMAL").catch(() => {});
-client.execute("PRAGMA busy_timeout = 5000").catch(() => {});
-
-export const db = drizzle(client, { schema });
+export const db = _d.db;
+export const client = _d.client; // DialectClient facade (NOT the raw libsql client)
+export const execute = _d.execute; // execute(sql, args)
+export const runProbe = _d.runProbe;

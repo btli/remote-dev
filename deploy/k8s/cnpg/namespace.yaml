@@ -1,0 +1,20 @@
+# cnpg-clusters — the namespace that holds the shared HA PostgreSQL cluster.
+#
+# ONE CloudNativePG `Cluster` (rdv-pg) lives here and serves the WHOLE fleet on a
+# DATABASE-PER-INSTANCE model: the supervisor provisioner connects with the
+# superuser creds (from the rdv-pg-superuser Secret) and runs CREATE ROLE +
+# CREATE DATABASE rdv_<slug> for each instance, then injects a per-instance
+# DATABASE_URL. The supervisor's own control-plane DB (rdv_supervisor) also lives
+# on this cluster. Apply this first; cluster.yaml references it.
+#
+# NOTE: the CloudNativePG operator itself is installed cluster-wide in its own
+# namespace (typically cnpg-system) — see README.md. This namespace only holds
+# the Cluster/Pooler/ScheduledBackup CRs and the cluster's Secrets.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cnpg-clusters
+  labels:
+    # Same ownership label the supervisor stamps on its other resources, so a
+    # single `kubectl get ns -l managed-by=rdv-supervisor` lists the whole fleet.
+    managed-by: rdv-supervisor

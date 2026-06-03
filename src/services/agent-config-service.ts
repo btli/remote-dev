@@ -6,6 +6,7 @@
  */
 
 import { db } from "@/db";
+import { affectedRows } from "@/db/sql-helpers";
 import { agentConfigs } from "@/db/schema";
 import { eq, and, isNull, asc } from "drizzle-orm";
 import type {
@@ -197,7 +198,7 @@ export async function deleteConfig(
     .delete(agentConfigs)
     .where(and(eq(agentConfigs.id, configId), eq(agentConfigs.userId, userId)));
 
-  return (result.rowsAffected ?? 0) > 0;
+  return affectedRows(result) > 0;
 }
 
 /**
@@ -213,7 +214,7 @@ export async function deleteFolderConfigs(
       and(eq(agentConfigs.projectId, folderId), eq(agentConfigs.userId, userId))
     );
 
-  return result.rowsAffected ?? 0;
+  return affectedRows(result);
 }
 
 /**

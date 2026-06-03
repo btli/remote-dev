@@ -3,11 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 
 // Mock the DB and exec helpers before importing the route handler so the
-// handler closes over the mocks. `db.run` returns a libsql ResultSet; we
-// return a minimal Promise that resolves to `undefined` since the route
-// only cares about throw-vs-resolve.
+// handler closes over the mocks. The route probes the DB via the dialect-
+// neutral `runProbe()` facade; we return a minimal Promise that resolves to
+// `undefined` since the route only cares about throw-vs-resolve.
 vi.mock("@/db", () => ({
-  db: { run: vi.fn() },
+  runProbe: vi.fn(),
 }));
 vi.mock("@/lib/exec", () => ({
   execFile: vi.fn(),
@@ -23,11 +23,11 @@ vi.mock("node:http", () => ({
   request: (...args: unknown[]) => httpRequestMock(...args),
 }));
 
-import { db } from "@/db";
+import { runProbe } from "@/db";
 import { execFile } from "@/lib/exec";
 import { GET } from "../route";
 
-const mockedDbRun = vi.mocked(db.run);
+const mockedDbRun = vi.mocked(runProbe);
 const mockedExecFile = vi.mocked(execFile);
 
 // Use `vi.stubGlobal` to replace global `fetch`. `vi.spyOn(globalThis, "fetch")`

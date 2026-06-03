@@ -35,10 +35,20 @@ export function getDataDir(): string {
 }
 
 /**
+ * True when the value is a PostgreSQL connection string. Postgres URLs are
+ * passed through untouched — they must never be coerced into a `file:` SQLite
+ * URL.
+ */
+function isPostgresUrl(value: string): boolean {
+  return value.startsWith("postgresql://") || value.startsWith("postgres://");
+}
+
+/**
  * Get the database file path.
  *
  * Priority:
- * 1. DATABASE_URL environment variable (for explicit SQLite path)
+ * 1. DATABASE_URL environment variable (for explicit SQLite path, or a
+ *    PostgreSQL connection string returned unchanged)
  * 2. RDV_DATA_DIR/sqlite.db
  * 3. ~/.remote-dev/sqlite.db (default)
  */
@@ -46,6 +56,10 @@ export function getDatabasePath(): string {
   // If DATABASE_URL is set and is a file URL, use it directly
   const dbUrl = process.env.DATABASE_URL;
   if (dbUrl) {
+    // PostgreSQL connection string: pass through unchanged.
+    if (isPostgresUrl(dbUrl)) {
+      return dbUrl;
+    }
     // Handle file:path format
     if (dbUrl.startsWith("file:")) {
       return dbUrl.slice(5); // Remove 'file:' prefix
@@ -57,12 +71,17 @@ export function getDatabasePath(): string {
 }
 
 /**
- * Get the database URL for libsql client.
- * Always returns a file: URL format.
+ * Get the database URL for the libsql client.
+ * Returns a `file:` URL for SQLite. A PostgreSQL connection string is returned
+ * unchanged (the Postgres dialect reads `DATABASE_URL` directly).
  */
 export function getDatabaseUrl(): string {
   const dbUrl = process.env.DATABASE_URL;
   if (dbUrl) {
+    // PostgreSQL connection string: pass through unchanged.
+    if (isPostgresUrl(dbUrl)) {
+      return dbUrl;
+    }
     // Already in file: format
     if (dbUrl.startsWith("file:")) {
       return dbUrl;

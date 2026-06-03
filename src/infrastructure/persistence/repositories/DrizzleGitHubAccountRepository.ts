@@ -6,6 +6,7 @@
  */
 
 import { db } from "@/db";
+import { affectedRows } from "@/db/sql-helpers";
 import {
   githubAccountMetadata,
   accounts,
@@ -117,7 +118,7 @@ export class DrizzleGitHubAccountRepository implements GitHubAccountRepository {
           eq(githubAccountMetadata.userId, userId)
         )
       );
-    return (result.rowsAffected ?? 0) > 0;
+    return affectedRows(result) > 0;
   }
 
   async setDefault(providerAccountId: string, userId: string): Promise<void> {

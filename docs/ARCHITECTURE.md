@@ -383,10 +383,13 @@ command, env, metadata), `renderContent()`, `onSessionExit()`,
 
 ## Database Layer
 
-- **Drizzle ORM** with **libsql** (SQLite-compatible; runs under both Bun and Node.js).
-- Schema: `src/db/schema.ts` — **59 `sqliteTable` definitions**.
+- **Drizzle ORM**, defaulting to **libsql** (SQLite-compatible; runs under both Bun and Node.js).
+- Schema source of truth: `src/db/schema.def.ts` (**59 tables**); the runtime
+  `src/db/schema.ts` is a generated barrel. See "Dual database backend" below.
 - Primary database file: `sqlite.db` (gitignored). Logs and LiteLLM analytics use
   separate databases under `~/.remote-dev/`.
+- Optionally runs on **PostgreSQL** instead — opt-in via `DATABASE_URL` (see
+  "Dual database backend" below).
 
 ### Table overview (by domain)
 
@@ -493,6 +496,47 @@ command, env, metadata), `renderContent()`, `onSessionExit()`,
 | `ssh_connection` | User-scoped SSH connection definitions |
 | `litellm_config` | LiteLLM proxy configuration |
 | `litellm_models` | LiteLLM model definitions |
+
+### Dual database backend (SQLite / PostgreSQL)
+
+The same codebase runs on **SQLite (default)** or **PostgreSQL**, chosen once at
+boot from the `DATABASE_URL` scheme. SQLite behavior is unchanged when Postgres
+is not configured. The supervisor app (`apps/supervisor`) uses the identical
+model.
+
+- **Dialect facade.** `src/db/is-postgres.ts` is the single dialect predicate
+  (`postgresql://` / `postgres://` → Postgres). `src/db/dialect.ts` constructs
+  exactly one backend synchronously at import (`dialect-sqlite.ts` /
+  `dialect-pg.ts`); the Postgres builder uses a lazy `pg.Pool` (no I/O at import,
+  no top-level await). `db` is exported as a stable `AppDb` type so the ~80
+  `import { db } from "@/db"` consumers are dialect-agnostic; a raw-SQL escape
+  hatch (`client.execute`) rewrites libsql-style `?` placeholders to `$1..$N` on
+  the Postgres side.
+- **Schema codegen.** `src/db/schema.def.ts` is a hand-maintained, dialect-neutral
+  definition. `bun run db:codegen` (→ `scripts/codegen-schema.ts` →
+  `scripts/lib/schema-codegen.ts`) emits three committed files:
+  `schema.sqlite.ts` (drizzle `sqlite-core`), `schema.pg.ts` (drizzle `pg-core`),
+  and the runtime barrel `schema.ts` (re-exports the active dialect's tables by
+  `isPostgres()`). Two drift guards keep these honest: a **codegen-in-sync** test
+  (regenerated output must byte-match the committed files) and an
+  **`$inferSelect` parity** test (per-table row types must be identical across
+  dialects, so the barrel's cast to the SQLite types is sound).
+- **Native PG types.** The generator maps neutral kinds to native Postgres types
+  — `json → jsonb`, `timestampMs`/`timestampS → timestamptz`, `boolean →
+  boolean` — while SQLite keeps the historical `text`/`integer` storage with
+  Drizzle column modes, so the JS-side values are identical on both backends.
+- **Dual migrations.** `drizzle/` holds the SQLite migrations (config
+  `drizzle.config.ts`); `drizzle/pg/` holds the Postgres migrations (config
+  `drizzle.pg.config.ts`). The SQLite path keeps using `db:push`; the Postgres
+  path applies `drizzle/pg/` via **migrate-on-boot** (`src/db/migrate.ts`,
+  invoked from `src/instrumentation.ts`) so a fresh database self-initializes.
+- **Dual-backend sidecars.** The logs + LiteLLM-analytics stores are selected by
+  `src/infrastructure/persistence/sidecar-factory.ts`: on SQLite, the existing
+  synchronous `better-sqlite3` stores (separate `~/.remote-dev/*.db` files); on
+  Postgres, async **write-buffered** stores
+  (`src/infrastructure/persistence/pg/`) that flush into `logs` / `analytics`
+  schemas inside the *same* Postgres database. The buffer never blocks the
+  request path and drops (never blocks) under a Postgres outage.
 
 ## Agent Peer Communication
 

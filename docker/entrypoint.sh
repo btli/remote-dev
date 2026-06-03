@@ -144,11 +144,25 @@ echo "[entrypoint] basePath materialization complete"
 # use node, not bun (bun crashes loading the @libsql native binding). Fail the
 # boot loudly on error rather than serving a schemaless instance that never
 # reaches readyz.
-echo "[entrypoint] bootstrapping instance DB schema"
-if ! node /app/scripts/instance-bootstrap-db.mjs; then
-  echo "[entrypoint] FATAL: instance DB schema bootstrap failed" >&2
-  exit 1
-fi
+#
+# Postgres dual-backend (Unit 8): this SQLite bootstrap applies ONLY to the
+# SQLite path. When DATABASE_URL points at Postgres (postgresql://), the
+# instance app's migrate-on-boot (src/db/migrate.ts, already wired) creates the
+# schema on the per-instance CNPG database, so the SQLite bootstrap is skipped.
+# Skip when DATABASE_URL is non-empty AND starts with postgresql:// (or the
+# postgres:// alias); otherwise run it (empty DATABASE_URL or a file:/sqlite URL).
+case "${DATABASE_URL:-}" in
+    postgresql://*|postgres://*)
+        echo "[entrypoint] DATABASE_URL is Postgres; skipping SQLite schema bootstrap (app migrate-on-boot handles Postgres)"
+        ;;
+    *)
+        echo "[entrypoint] bootstrapping instance DB schema"
+        if ! node /app/scripts/instance-bootstrap-db.mjs; then
+            echo "[entrypoint] FATAL: instance DB schema bootstrap failed" >&2
+            exit 1
+        fi
+        ;;
+esac
 
 # Start the terminal server in the background.
 echo "[entrypoint] starting terminal server on port ${TERMINAL_PORT}"

@@ -6,6 +6,7 @@
  */
 
 import { db } from "@/db";
+import { affectedRows } from "@/db/sql-helpers";
 import { mcpServers } from "@/db/schema";
 import { eq, and, isNull, asc } from "drizzle-orm";
 import type {
@@ -180,7 +181,7 @@ export async function deleteServer(
     .delete(mcpServers)
     .where(and(eq(mcpServers.id, serverId), eq(mcpServers.userId, userId)));
 
-  return (result.rowsAffected ?? 0) > 0;
+  return affectedRows(result) > 0;
 }
 
 /**

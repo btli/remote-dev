@@ -135,14 +135,14 @@ export async function listTasksByNode(
 ): Promise<ProjectTask[]> {
   const rowsRaw =
     node.type === "project"
-      ? await client.execute({
-          sql: `SELECT * FROM project_task
+      ? await client.execute(
+          `SELECT * FROM project_task
                 WHERE project_id = ? AND user_id = ?
                 ORDER BY sort_order ASC, created_at ASC`,
-          args: [node.id, userId],
-        })
-      : await client.execute({
-          sql: `
+          [node.id, userId]
+        )
+      : await client.execute(
+          `
             WITH RECURSIVE descendants(id, depth) AS (
               SELECT id, 0 FROM project_group WHERE id = ?
               UNION
@@ -160,8 +160,8 @@ export async function listTasksByNode(
               )
             ORDER BY t.sort_order ASC, t.created_at ASC
           `,
-          args: [node.id, userId],
-        });
+          [node.id, userId]
+        );
 
   // Convert raw rows to the Drizzle select shape expected by parseTaskRow.
   const tasks = rowsRaw.rows.map((r) =>

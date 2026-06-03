@@ -6,6 +6,7 @@
  */
 
 import { db } from "@/db";
+import { affectedRows } from "@/db/sql-helpers";
 import { projectSecretsConfig, projects } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { createSecretsProvider, isProviderSupported } from "./secrets";
@@ -188,7 +189,7 @@ export async function deleteFolderSecretsConfig(
       )
     );
 
-  return (result.rowsAffected ?? 0) > 0;
+  return affectedRows(result) > 0;
 }
 
 /**

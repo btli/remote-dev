@@ -167,6 +167,25 @@ async function startServer(): Promise<void> {
         const { closeAnalyticsDatabase } = await import("../infrastructure/analytics/AnalyticsDatabase.js");
         closeAnalyticsDatabase();
       } catch { /* ignore */ }
+
+      // Drain the Postgres sidecar write buffers (logs + analytics) before
+      // closing the sidecar pool. No-op on SQLite (nothing is buffered and the
+      // sidecar pool is never created). On Postgres this flushes any in-memory
+      // log/analytics rows that the async buffers have not yet written.
+      try {
+        const { flushSidecarStores } = await import(
+          "../infrastructure/persistence/sidecar-factory.js"
+        );
+        await flushSidecarStores();
+        const { closeSidecarPool } = await import(
+          "../infrastructure/persistence/pg/sidecar-db.js"
+        );
+        await closeSidecarPool();
+      } catch (error) {
+        log.error("Error flushing/closing Postgres sidecar stores", {
+          error: String(error),
+        });
+      }
     })();
 
     const { timedOut } = await withTimeout(cleanup, SHUTDOWN_CLEANUP_TIMEOUT_MS);

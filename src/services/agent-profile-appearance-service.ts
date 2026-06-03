@@ -6,6 +6,7 @@
  */
 
 import { db } from "@/db";
+import { affectedRows } from "@/db/sql-helpers";
 import { profileAppearanceSettings } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import type {
@@ -131,7 +132,7 @@ export async function deleteProfileAppearance(
       )
     );
 
-  return (result.rowsAffected ?? 0) > 0;
+  return affectedRows(result) > 0;
 }
 
 /**

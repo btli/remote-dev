@@ -1,0 +1,133 @@
+# Shared HA PostgreSQL for the whole Supervisor fleet (PostgreSQL dual-backend).
+#
+# This file declares THREE CloudNativePG resources (separated by `---`):
+#   1. Cluster          rdv-pg          — the HA Postgres cluster itself.
+#   2. ScheduledBackup  rdv-pg-daily    — nightly base backup to object storage.
+#   3. Pooler           pooler-rdv-pg   — the PgBouncer connection pool (rw).
+#
+# Design (locked): ONE cluster, DATABASE-PER-INSTANCE. The supervisor provisioner
+# reads the superuser creds (rdv-pg-superuser Secret) and runs, AGAINST THE RW
+# SERVICE (not the Pooler — PgBouncer transaction mode blocks DDL):
+#   CREATE ROLE rdv_<slug> LOGIN PASSWORD '<pw>';
+#   CREATE DATABASE rdv_<slug> OWNER rdv_<slug>;
+# then injects DATABASE_URL=postgresql://rdv_<slug>:<pw>@<pooler>:5432/rdv_<slug>
+# into the instance. The supervisor's own control-plane DB (rdv_supervisor) is
+# created at cluster init via bootstrap.initdb below.
+#
+# Prerequisite: the CloudNativePG operator must already be installed cluster-wide
+# (it owns the postgresql.cnpg.io/v1 CRDs). See README.md.
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: rdv-pg
+  namespace: cnpg-clusters
+  labels:
+    managed-by: rdv-supervisor
+    app.kubernetes.io/name: rdv-pg
+spec:
+  # 1 primary + 2 hot-standby replicas for HA (synchronous failover handled by
+  # the operator). A dev cluster with no need for HA can set `instances: 1`.
+  instances: 3
+
+  # Track the PostgreSQL MAJOR version only (operator pins the patch). Bump this
+  # tag deliberately for a major upgrade — do NOT pin a stale patch here.
+  imageName: ghcr.io/cloudnative-pg/postgresql:17
+
+  postgresql:
+    parameters:
+      max_connections: "200"
+      shared_buffers: "256MB"
+      work_mem: "4MB"
+      # logical decoding enabled so future CDC / logical replication is possible
+      # without a restart; also a safe default for this fleet's workload.
+      wal_level: "logical"
+      max_wal_senders: "10"
+      wal_keep_size: "512MB"
+
+  storage:
+    size: 20Gi
+    # ─────────────────────────────────────────────────────────────────────────
+    # MUST be a REPLICATED StorageClass — Longhorn, Rook-Ceph, or a cloud CSI
+    # (EBS/PD/etc.) — NOT local-path. Each Postgres instance (primary + standbys)
+    # AND its WAL must survive node loss; a local-path PVC pins data to one node
+    # with no replication, so a node failure would lose the fleet's databases.
+    # For Longhorn specifically, ensure the class sets numberOfReplicas: 3.
+    # ─────────────────────────────────────────────────────────────────────────
+    storageClass: REPLACE_ME-replicated-storageclass
+
+  # CNPG generates the `postgres` superuser and STORES its password in this
+  # Secret (data keys: username/password + libpq conn fields). The provisioner
+  # reads it to CREATE ROLE / CREATE DATABASE per instance against the RW Service.
+  # Enabling the superuser secret also enables superuser password access.
+  enableSuperuserAccess: true
+  superuserSecret:
+    name: rdv-pg-superuser
+
+  bootstrap:
+    # The supervisor control-plane database, created once at cluster init. Its
+    # owner role + password come from the rdv-pg-supervisor-creds Secret
+    # (basic-auth type: keys `username` and `password`).
+    initdb:
+      database: rdv_supervisor
+      owner: rdv_supervisor
+      secret:
+        name: rdv-pg-supervisor-creds
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Backups to S3-compatible object storage (continuous WAL archiving + the base
+  # backups taken by the ScheduledBackup below). REMOVE THIS ENTIRE `backup:`
+  # STANZA for a dev cluster with no object store (and remove the ScheduledBackup
+  # doc below too). The s3Credentials reference the rdv-pg-s3-creds Secret.
+  # ───────────────────────────────────────────────────────────────────────────
+  backup:
+    retentionPolicy: "7d"
+    barmanObjectStore:
+      destinationPath: s3://REPLACE_ME-rdv-pg-backups
+      endpointURL: REPLACE_ME
+      s3Credentials:
+        accessKeyId:
+          name: rdv-pg-s3-creds
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: rdv-pg-s3-creds
+          key: SECRET_ACCESS_KEY
+      wal:
+        compression: gzip
+---
+# Nightly base backup at 02:00. CNPG cron is 6-field (leading seconds field).
+# REMOVE this doc if the Cluster's `backup:` stanza above was removed.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: rdv-pg-daily
+  namespace: cnpg-clusters
+  labels:
+    managed-by: rdv-supervisor
+spec:
+  schedule: "0 0 2 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: rdv-pg
+---
+# PgBouncer pool fronting the cluster's READ-WRITE endpoint. Instances + the
+# supervisor connect their app DATABASE_URL through this pool. DDL (CREATE ROLE /
+# DATABASE) must NOT go through here — transaction pooling mode blocks it; the
+# provisioner targets the RW Service directly for DDL (see README.md).
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: pooler-rdv-pg
+  namespace: cnpg-clusters
+  labels:
+    managed-by: rdv-supervisor
+spec:
+  cluster:
+    name: rdv-pg
+  type: rw
+  instances: 2
+  pgbouncer:
+    poolMode: transaction
+    parameters:
+      max_client_conn: "200"
+      default_pool_size: "20"

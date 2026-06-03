@@ -14,10 +14,10 @@ async function ensureTable() {
 
 export async function getMigrationState(key: string): Promise<string | null> {
   await ensureTable();
-  const result = await client.execute({
-    sql: `SELECT value FROM ${MIGRATION_STATE_TABLE} WHERE key = ?`,
-    args: [key],
-  });
+  const result = await client.execute(
+    `SELECT value FROM ${MIGRATION_STATE_TABLE} WHERE key = ?`,
+    [key]
+  );
   const row = result.rows[0];
   if (!row) return null;
   const value = row.value;
@@ -29,9 +29,9 @@ export async function setMigrationState(
   value: string
 ): Promise<void> {
   await ensureTable();
-  await client.execute({
-    sql: `INSERT INTO ${MIGRATION_STATE_TABLE} (key, value, updated_at) VALUES (?, ?, ?)
+  await client.execute(
+    `INSERT INTO ${MIGRATION_STATE_TABLE} (key, value, updated_at) VALUES (?, ?, ?)
           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-    args: [key, value, Date.now()],
-  });
+    [key, value, Date.now()]
+  );
 }

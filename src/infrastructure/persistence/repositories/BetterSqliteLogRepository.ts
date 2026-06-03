@@ -42,7 +42,7 @@ export class BetterSqliteLogRepository implements LogRepository {
     );
   }
 
-  query(options: LogQueryOptions = {}): LogEntryRecord[] {
+  query(options: LogQueryOptions = {}): Promise<LogEntryRecord[]> {
     const conditions: string[] = [];
     const params: (string | number)[] = [];
 
@@ -78,21 +78,30 @@ export class BetterSqliteLogRepository implements LogRepository {
     const sql = `SELECT id, ts as timestamp, level, namespace, message, data, source FROM log_entry ${where} ORDER BY ts DESC LIMIT ?`;
     params.push(limit);
 
-    return getLogDatabase().prepare(sql).all(...params) as LogEntryRecord[];
+    // better-sqlite3 is synchronous; wrap in a resolved promise to satisfy the
+    // (now async-read) LogRepository port. Behavior is byte-for-byte unchanged.
+    return Promise.resolve(
+      getLogDatabase().prepare(sql).all(...params) as LogEntryRecord[]
+    );
   }
 
-  getNamespaces(): string[] {
+  getNamespaces(): Promise<string[]> {
     const rows = getLogDatabase()
       .prepare("SELECT DISTINCT namespace FROM log_entry ORDER BY namespace")
       .all() as Array<{ namespace: string }>;
-    return rows.map((r) => r.namespace);
+    return Promise.resolve(rows.map((r) => r.namespace));
   }
 
-  deleteOlderThan(cutoffMs: number): number {
+  deleteOlderThan(cutoffMs: number): Promise<number> {
     const result = getLogDatabase()
       .prepare("DELETE FROM log_entry WHERE ts < ?")
       .run(cutoffMs);
-    return result.changes;
+    return Promise.resolve(result.changes);
+  }
+
+  /** No-op on SQLite — writes are synchronous, nothing is buffered. */
+  flush(): Promise<void> {
+    return Promise.resolve();
   }
 }
 

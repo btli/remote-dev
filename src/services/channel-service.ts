@@ -6,6 +6,7 @@
  */
 
 import { db, client } from "@/db";
+import { gtDate } from "@/db/sql-helpers";
 import {
   channelGroups,
   channels,
@@ -246,7 +247,7 @@ export async function listChannelGroups(
         )}) AND ${agentPeerMessages.parentMessageId} IS NULL AND (${sql.join(
           channelsWithReadState.map(
             (c) =>
-              sql`(${agentPeerMessages.channelId} = ${c.id} AND ${agentPeerMessages.createdAt} > ${c.lastReadAt.getTime()})`
+              sql`(${agentPeerMessages.channelId} = ${c.id} AND ${gtDate(agentPeerMessages.createdAt, c.lastReadAt)})`
           ),
           sql` OR `
         )})`
@@ -326,8 +327,8 @@ async function resolveProjectIdsForNode(node: {
     });
     return row ? [row.id] : [];
   }
-  const res = await client.execute({
-    sql: `
+  const res = await client.execute(
+    `
       WITH RECURSIVE descendants(id, depth) AS (
         SELECT id, 0 FROM project_group WHERE id = ?
         UNION
@@ -339,8 +340,8 @@ async function resolveProjectIdsForNode(node: {
       FROM project p
       WHERE p.group_id IN (SELECT id FROM descendants)
     `,
-    args: [node.id],
-  });
+    [node.id]
+  );
   return res.rows
     .map((r) => r.project_id as string | null)
     .filter((id): id is string => Boolean(id));

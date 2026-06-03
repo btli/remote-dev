@@ -354,11 +354,70 @@ AUTHORIZED_USERS="your-email@example.com" bun run db:seed
 
 ### Schema Changes
 
-After modifying `src/db/schema.ts`:
+The schema has a single source of truth at `src/db/schema.def.ts`. Edit that
+file (not the generated `schema.sqlite.ts` / `schema.pg.ts` / `schema.ts`), then
+regenerate the dialect files:
+
+```bash
+bun run db:codegen
+```
+
+After regenerating, push the SQLite schema:
 
 ```bash
 bun run db:push
 ```
+
+(If you target Postgres, also generate the PG migrations — see below.)
+
+## PostgreSQL backend (optional)
+
+SQLite (libsql) is the **default** and requires no extra configuration. Remote
+Dev can instead run on **PostgreSQL** — useful for multi-instance / clustered
+deployments — by setting a single environment variable. The connection-string
+**scheme selects the dialect at boot**; nothing else changes for callers.
+
+```bash
+# Opt in — any postgresql:// (or postgres://) URL switches the backend.
+DATABASE_URL=postgresql://user:pass@host:5432/dbname
+```
+
+- **Driver:** [`node-postgres`](https://www.npmjs.com/package/pg) (`pg`). The
+  driver and Postgres-specific code are only loaded when `DATABASE_URL` is a
+  Postgres URL — a SQLite install never pulls in `pg`.
+- **Minimum version:** PostgreSQL **14+** (the CloudNativePG manifests in
+  `deploy/k8s/cnpg/` provision **17**).
+- **Unset / `file:` URL → SQLite.** Leaving `DATABASE_URL` unset (or pointing it
+  at a `file:` path) keeps the default SQLite behavior unchanged.
+
+### Creating the Postgres schema
+
+On the Postgres path the app applies the committed Drizzle migrations
+**automatically on boot** (`src/db/migrate.ts`, invoked from
+`src/instrumentation.ts`) — a fresh database (e.g. an empty CNPG database) is
+brought fully up to schema at startup, idempotently. No manual `db:push` is
+needed in production.
+
+For manual/dev use, create or update the schema directly:
+
+```bash
+# Apply the current PG schema to a database (drizzle-kit push):
+DATABASE_URL=postgresql://user:pass@host:5432/dbname bun run db:push:pg
+
+# Or generate a new PG migration after a schema change (see db:codegen above):
+DATABASE_URL=postgresql://user:pass@host:5432/dbname bun run db:generate:pg
+```
+
+### Logs + analytics on Postgres
+
+When the backend is Postgres, the **logs** and **LiteLLM analytics** sidecars
+live in the *same* Postgres database under dedicated `logs` and `analytics`
+schemas (bootstrapped on boot), rather than in separate `~/.remote-dev/*.db`
+files. This is transparent to the app — the sidecar factory picks the backend
+from `DATABASE_URL`.
+
+To move an existing SQLite install onto Postgres, see
+[`docs/POSTGRES_MIGRATION.md`](./POSTGRES_MIGRATION.md).
 
 ## Development Workflow
 

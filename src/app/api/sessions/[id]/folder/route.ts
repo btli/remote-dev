@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
 import { broadcastSidebarChanged } from "@/lib/broadcast";
 import { db } from "@/db";
+import { affectedRows } from "@/db/sql-helpers";
 import { terminalSessions } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 
@@ -51,7 +52,7 @@ export const PUT = withAuth(async (request, { userId, params }) => {
       )
     );
 
-  if ((result.rowsAffected ?? 0) === 0) {
+  if (affectedRows(result) === 0) {
     return errorResponse("Session not found", 404);
   }
 
