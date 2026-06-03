@@ -23,90 +23,36 @@ import type { ChannelType } from "@/types/channels";
 // Re-exported so the verbatim import block above (consumed by the codegen extractor) is not flagged as unused.
 export type { AdapterAccountType, SessionStatus, CIStatusState, PRState, ScheduleType, ScheduleStatus, ExecutionStatus, AgentProvider, AgentConfigType, MCPTransport, AgentProviderType, WorktreeType, TerminalType, AgentExitState, AppearanceMode, ColorSchemeCategory, ColorSchemeId, TaskPriority, TaskStatus, TaskSource, NotificationType, ChannelType };
 
-export type ColumnKind =
-  | "text"
-  | "integer"
-  | "boolean"
-  | "timestampMs"
-  | "timestampS"
-  | "json";
+// DSL vocabulary lives in the shared generator core so both this app and the
+// supervisor app describe their schemas with one set of types. Re-exported here
+// for local use + back-compat. (This import is intentionally BELOW the verbatim
+// brand-import block above so the codegen extractor — which stops at the first
+// `export type` — does not copy it into the generated dialect files.)
+import type {
+  ColumnKind,
+  DefaultValue,
+  DefaultFn,
+  DefaultRaw,
+  ColumnDefault,
+  ColumnReference,
+  ColumnDefinition,
+  IndexDefinition,
+  TableDefinition,
+  SchemaDefinition,
+} from "../../scripts/lib/schema-codegen";
 
-/** A literal value default (`.default(value)`). */
-export interface DefaultValue {
-  kind: "value";
-  /** Emitted verbatim as the argument to `.default(...)`. */
-  value: string;
-}
-/** A well-known default function. */
-export interface DefaultFn {
-  kind: "fn";
-  /** "uuid" => crypto.randomUUID(); "now" => new Date(). */
-  fn: "uuid" | "now";
-}
-/** A raw arrow-body expression for `.$defaultFn(() => <expr>)`, emitted verbatim. */
-export interface DefaultRaw {
-  kind: "raw";
-  expr: string;
-}
-export type ColumnDefault = DefaultValue | DefaultFn | DefaultRaw;
-
-export interface ColumnReference {
-  /** Export name of the referenced table in this file. */
-  table: string;
-  /** JS field name of the referenced column. */
-  column: string;
-  onDelete?: "cascade" | "set null" | "restrict" | "no action" | "set default";
-  /** True for the projectGroups.parentGroupId self-FK (needs AnyXColumn cast). */
-  selfRef?: boolean;
-}
-
-export interface ColumnDefinition {
-  /** JS property name on the table object. */
-  field: string;
-  /** Physical column name in the database. */
-  dbName: string;
-  kind: ColumnKind;
-  notNull?: boolean;
-  primaryKey?: boolean;
-  unique?: boolean;
-  /** `{ enum: [...] }` option — narrows the inferred TS type; SQL type unchanged. */
-  enumValues?: string[];
-  /** TS type name(s) for `.$type<X>()`; emitted verbatim into both dialects. */
-  typeBrand?: string;
-  default?: ColumnDefault;
-  references?: ColumnReference;
-}
-
-export interface IndexDefinition {
-  name: string;
-  /** JS field names. */
-  columns: string[];
-  unique?: boolean;
-  /**
-   * Skip emitting this explicit index for the Postgres dialect.
-   *
-   * Use only when a column-level `unique: true` on the same column already
-   * auto-creates a backing index with the IDENTICAL name in Postgres — there,
-   * emitting an explicit `CREATE UNIQUE INDEX` of the same name collides
-   * (Postgres error 42P07). On SQLite an inline UNIQUE plus a named index
-   * coexist harmlessly, and the live SQLite DBs already carry both, so the
-   * SQLite output keeps emitting this index unchanged.
-   */
-  omitForPg?: boolean;
-}
-
-export interface TableDefinition {
-  /** Exported JS const name (e.g. "users"). */
-  exportName: string;
-  /** Physical table name (e.g. "user"). */
-  sqlName: string;
-  columns: ColumnDefinition[];
-  /** Composite primary key (JS field names) when present. */
-  primaryKey?: string[];
-  indexes?: IndexDefinition[];
-}
-
-export type SchemaDefinition = TableDefinition[];
+export type {
+  ColumnKind,
+  DefaultValue,
+  DefaultFn,
+  DefaultRaw,
+  ColumnDefault,
+  ColumnReference,
+  ColumnDefinition,
+  IndexDefinition,
+  TableDefinition,
+  SchemaDefinition,
+};
 
 export const schema: SchemaDefinition = [
   {
