@@ -19,6 +19,11 @@ export default defineConfig({
       // mid-run).
       ".claude/worktrees/**",
       ".worktrees/**",
+      // Docker-gated PostgreSQL integration tests. They run ONLY under
+      // `bun run test:pg` (vitest.pg.config.ts), which starts a real Postgres
+      // container via globalSetup. Excluded here so the FAST suite never tries
+      // to spin up docker.
+      "**/*.pg.test.ts",
     ],
     coverage: {
       provider: "v8",
