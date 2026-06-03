@@ -213,5 +213,50 @@ void main() {
         expect(cookie, contains('CF_Authorization=cf-jwt'));
       },
     );
+
+    test(
+      'supervisor app-session host cookie is NOT forwarded to instance requests (scope isolation)',
+      () async {
+        final storage = _FakeStorage();
+        final creds = MobileCredentialsStore(storage);
+
+        // OIDC workspace: the per-instance, slug-scoped session-token.
+        await creds.setWorkspaceAuthCookies('ws-5', [
+          const AuthCookie(
+            name: '__Secure-rdv-demo-session-token',
+            value: 'inst-tok',
+            path: '/demo',
+          ),
+        ]);
+        // OIDC host: the SUPERVISOR's app-level session cookie. It is NOT an
+        // edge/perimeter cookie, so it must never ride along on an instance
+        // request (design §7.2 — would leak the supervisor session).
+        await creds.setHostAuthCookies('host-1', [
+          const AuthCookie(
+            name: '__Secure-authjs.session-token',
+            value: 'sup-tok',
+            path: '/',
+          ),
+        ]);
+
+        final adapter = _CapturingAdapter();
+        final client = RemoteDevClient.forWorkspace(
+          origin: 'https://host.example.com',
+          basePath: '/demo',
+          hostId: 'host-1',
+          workspaceId: 'ws-5',
+          storage: storage,
+          dio: Dio()..httpClientAdapter = adapter,
+        );
+
+        await client.get('/api/sessions');
+
+        final cookie = adapter.captured!.headers['cookie'] as String;
+        expect(cookie, contains('__Secure-rdv-demo-session-token=inst-tok'));
+        // The supervisor session cookie is excluded.
+        expect(cookie, isNot(contains('__Secure-authjs.session-token')));
+        expect(cookie, isNot(contains('sup-tok')));
+      },
+    );
   });
 }

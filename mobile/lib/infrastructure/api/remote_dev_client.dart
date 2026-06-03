@@ -66,20 +66,25 @@ class RemoteDevClient implements ApiClientPort {
       scopeId: workspaceId,
       authReader: (_) async {
         final apiKey = await _credentials.getWorkspaceApiKey(workspaceId);
-        // Workspace auth cookies (OIDC session, CF JWT, …) are the union of
-        // workspace-scoped cookies (e.g. per-instance OIDC session-token) with
-        // any host-scoped cookies (e.g. CF Access JWT from the host login).
-        // Workspace cookies take priority; host cookies fill in anything missing.
+        // A workspace request carries that workspace's OWN cookies (e.g. the
+        // per-instance OIDC session-token, or the CF JWT a CF instance callback
+        // persisted). On a Cloudflare-Access host the perimeter additionally
+        // blocks ANY request to the host (instance subpaths included) that
+        // lacks the host-wide `CF_Authorization` edge cookie, so that one
+        // EDGE cookie must ride along too. We deliberately do NOT forward the
+        // supervisor's app-level session cookie (e.g.
+        // `__Secure-authjs.session-token`) to instances: it would leak the
+        // supervisor session to the instance server and serves no purpose
+        // there (the instance reads its own slug-scoped cookie). See design
+        // §7.2 (scope isolation).
         final wsCookies =
             await _credentials.getWorkspaceAuthCookies(workspaceId);
-        final hostCookies = await _credentials.getHostAuthCookies(hostId);
-        // Merge: workspace cookies first, then host cookies that are not already
-        // represented (by name) in the workspace set.
         final wsNames = wsCookies.map((c) => c.name).toSet();
-        final merged = [
-          ...wsCookies,
-          ...hostCookies.where((c) => !wsNames.contains(c.name)),
-        ];
+        final hostCookies = await _credentials.getHostAuthCookies(hostId);
+        final edgeHostCookies = hostCookies.where(
+          (c) => c.name == 'CF_Authorization' && !wsNames.contains(c.name),
+        );
+        final merged = [...wsCookies, ...edgeHostCookies];
         return AuthMaterial(apiKey: apiKey, cookies: merged);
       },
       // The interceptor passes its captured scope id; the workspace refresh
