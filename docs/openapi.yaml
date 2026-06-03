@@ -1620,6 +1620,20 @@ paths:
       summary: Browse filesystem directories
       parameters: [{ name: path, in: query, schema: { type: string } }]
       responses: { '200': { description: Directory entries, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+    post:
+      tags: [Directories]
+      summary: Create a folder
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [path, name], properties: { path: { type: string, description: Parent directory }, name: { type: string, description: New folder name } } } } } }
+      responses:
+        '200': { description: Created folder, content: { application/json: { schema: { type: object, properties: { entry: { type: object, properties: { name: { type: string }, path: { type: string }, isDirectory: { type: boolean } } } } } } } }
+        '400': { description: Invalid name or path }
+        '403': { description: Permission denied }
+        '409': { description: Folder already exists }
+  /api/directories/roots:
+    get:
+      tags: [Directories]
+      summary: Quick-access browse roots
+      responses: { '200': { description: Browse roots, content: { application/json: { schema: { type: object, properties: { roots: { type: array, items: { type: object, properties: { id: { type: string }, label: { type: string }, path: { type: string } } } } } } } } } }
 
   # ===================== Git =====================
   /api/git/validate:

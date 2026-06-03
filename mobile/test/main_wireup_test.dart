@@ -2,11 +2,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:remote_dev/app.dart';
+import 'package:remote_dev/application/ports/secure_storage_port.dart';
 import 'package:remote_dev/application/ports/server_config_store.dart';
 import 'package:remote_dev/domain/server_config.dart';
+import 'package:remote_dev/infrastructure/storage/host_workspace_store_impl.dart';
 import 'package:remote_dev/main.dart' show buildServerScopedOverrides;
 import 'package:remote_dev/presentation/screens/webview_host/session_route_host.dart'
-    show serverConfigStoreProvider;
+    show hostWorkspaceStoreProvider, serverConfigStoreProvider;
 
 class _StubStore extends Mock implements ServerConfigStore {
   @override
@@ -14,6 +16,20 @@ class _StubStore extends Mock implements ServerConfigStore {
 
   @override
   Future<ServerConfig?> loadActive() async => null;
+}
+
+/// In-memory [SecureStoragePort] so the Host/Workspace stack the picker now
+/// reads resolves to an EMPTY store at boot rather than blocking on the
+/// platform channel.
+class _FakeStorage implements SecureStoragePort {
+  @override
+  Future<String?> read(String ns, String key) async => null;
+  @override
+  Future<void> write(String ns, String key, String value) async {}
+  @override
+  Future<void> delete(String ns, String key) async {}
+  @override
+  Future<void> deleteAll(String ns) async {}
 }
 
 void main() {
@@ -26,6 +42,8 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          hostWorkspaceStoreProvider
+              .overrideWithValue(HostWorkspaceStoreImpl(_FakeStorage())),
           serverConfigStoreProvider.overrideWithValue(_StubStore()),
           ...buildServerScopedOverrides(deviceId: 'test-device-id'),
         ],

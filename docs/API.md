@@ -1106,11 +1106,20 @@ POST /api/files/exists                  # [session] batch existence check { path
 ## Directories
 
 ```http
-GET /api/directories?path=…   # [session] browse filesystem directories
+GET  /api/directories?path=…   # [session] browse filesystem directories
+GET  /api/directories/roots    # [session] quick-access browse roots
+POST /api/directories          # [session] create a folder { path, name }
 ```
 
-Returns `{ entries: [{ name, path, isDirectory }] }`, restricted to allowed
-paths. Used by the directory-picker UI.
+**Browse** returns `{ entries: [{ name, path, isDirectory }] }`, restricted to
+allowed paths. Used by the directory-picker UI.
+
+**Roots** returns `{ roots: [{ id, label, path }] }` — quick-access entries
+(Home, Projects) that exist on disk and resolve inside the browse allowlist.
+
+**Create** body `{ path, name }` makes a new folder under `path`; returns
+`{ entry: { name, path, isDirectory } }`. Errors: `400` invalid name/path,
+`403` permission denied, `409` already exists.
 
 ---
 

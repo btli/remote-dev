@@ -52,6 +52,20 @@ abstract final class MobileCredentialsKeys {
   /// `RemoteDevAuthInterceptor` so existing installs keep working until
   /// they re-auth, but new logins write [cfToken] instead.
   static const legacyCfAuthorization = 'cf_authorization';
+
+  // --- Host / Workspace hierarchy keys -------------------------------------
+
+  /// Namespace prefix for host-wide credentials: `host.<hostId>`.
+  static const hostNsPrefix = 'host.';
+
+  /// Namespace prefix for per-workspace credentials: `workspace.<workspaceId>`.
+  static const workspaceNsPrefix = 'workspace.';
+
+  /// Host-wide CF Access JWT. Logical key: `host.<hostId>.cfToken`.
+  static const hostCfToken = 'cfToken';
+
+  /// Per-workspace API key. Logical key: `workspace.<workspaceId>.apiKey`.
+  static const workspaceApiKey = 'apiKey';
 }
 
 /// Thin typed wrapper around [SecureStoragePort] that knows the
@@ -135,4 +149,46 @@ class MobileCredentialsStore {
       MobileCredentialsKeys.legacyCfAuthorization,
     );
   }
+
+  // --- Host / Workspace credentials (multi-workspace hierarchy) ------------
+  //
+  // The CF Access token is host-wide; the API key is per-workspace. Both ride
+  // on the same [SecureStoragePort] by treating `host.<hostId>` and
+  // `workspace.<workspaceId>` as the namespace, mirroring the existing
+  // per-server `server.<id>.<key>` layout. The logical credential keys are
+  // therefore `host.<hostId>.cfToken` and `workspace.<workspaceId>.apiKey`.
+
+  static String _hostNs(String hostId) =>
+      '${MobileCredentialsKeys.hostNsPrefix}$hostId';
+
+  static String _workspaceNs(String workspaceId) =>
+      '${MobileCredentialsKeys.workspaceNsPrefix}$workspaceId';
+
+  Future<void> setHostCfToken(String hostId, String token) => _storage.write(
+        _hostNs(hostId),
+        MobileCredentialsKeys.hostCfToken,
+        token,
+      );
+
+  Future<String?> getHostCfToken(String hostId) =>
+      _storage.read(_hostNs(hostId), MobileCredentialsKeys.hostCfToken);
+
+  /// Best-effort clear of every credential under this host's namespace.
+  Future<void> clearHost(String hostId) => _storage.deleteAll(_hostNs(hostId));
+
+  Future<void> setWorkspaceApiKey(String workspaceId, String key) =>
+      _storage.write(
+        _workspaceNs(workspaceId),
+        MobileCredentialsKeys.workspaceApiKey,
+        key,
+      );
+
+  Future<String?> getWorkspaceApiKey(String workspaceId) => _storage.read(
+        _workspaceNs(workspaceId),
+        MobileCredentialsKeys.workspaceApiKey,
+      );
+
+  /// Best-effort clear of every credential under this workspace's namespace.
+  Future<void> clearWorkspace(String workspaceId) =>
+      _storage.deleteAll(_workspaceNs(workspaceId));
 }

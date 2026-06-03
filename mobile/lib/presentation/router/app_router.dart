@@ -2,19 +2,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../domain/server_config.dart';
+import '../../domain/host_config.dart';
+import '../../domain/instance_summary.dart';
+import '../../domain/session_summary.dart';
+import '../../infrastructure/api/instances_api.dart';
 import '../../infrastructure/push/push_token_registrar.dart';
 import '../screens/biometric/biometric_settings_screen.dart';
 import '../screens/bridge_spike/bridge_spike_screen.dart';
 import '../screens/channels/channel_screen.dart';
+import '../screens/host_picker/add_host_screen.dart';
+import '../screens/host_picker/workspace_picker_screen.dart';
 import '../screens/profile/about_screen.dart';
 import '../screens/profile/account_screen.dart';
 import '../screens/profile/appearance_screen.dart';
 import '../screens/profile/github_accounts_screen.dart';
 import '../screens/profile/servers_screen.dart';
 import '../screens/recording/recording_screen.dart';
-import '../screens/server_picker/add_server_screen.dart';
-import '../screens/server_picker/edit_server_screen.dart';
+import '../screens/server_picker/edit_host_screen.dart';
 import '../screens/server_picker/server_picker_screen.dart';
 import '../screens/session_view/session_view_screen.dart';
 import '../screens/shell/adaptive_bottom_bar.dart';
@@ -23,11 +27,12 @@ import '../screens/webview_host/reauth_screen.dart';
 import '../screens/webview_host/session_route_host.dart';
 import 'app_route.dart';
 
-/// FCM token registrar wired against the app's PushPort + ServerConfigStore +
-/// API client factory. Default impl throws — `main.dart` overrides this in the
-/// `ProviderScope` after Firebase is initialized (matching the
-/// `sessionsApiProvider` pattern). The server picker reads it best-effort so
-/// dev builds without Firebase config still allow server deletion.
+/// FCM token registrar wired against the app's PushPort + HostWorkspaceStore +
+/// MobileCredentialsStore + workspace API-client factory. Default impl throws —
+/// `main.dart` overrides this in the `ProviderScope` after Firebase is
+/// initialized (matching the `sessionsApiProvider` pattern). The server picker
+/// reads it best-effort so dev builds without Firebase config still allow
+/// workspace deletion.
 final pushTokenRegistrarProvider = Provider<PushTokenRegistrar>((ref) {
   throw UnimplementedError(
     'pushTokenRegistrarProvider must be overridden in main.dart with '
@@ -50,8 +55,76 @@ class AppRouter {
   /// a valid value.
   String _lastGoodLocation = const ServerPickerRoute().toPath();
 
-  void navigateTo(AppRoute route) {
-    _config.go(route.toPath());
+  /// Navigate to a deep-linked target (notification tap / app-link) such that
+  /// a back target always exists.
+  ///
+  /// A plain [GoRouter.go] REPLACES the whole navigation stack, so when the
+  /// app is cold-started from a notification there is nothing beneath the
+  /// target to pop back to and the system/back button does nothing. For
+  /// session/channel targets this roots the navigation at `/home` and then
+  /// PUSHES the target on top, so back returns to the home shell instead of
+  /// being a dead end.
+  ///
+  /// `/home` and the deep-link targets (`/home/session/:id`,
+  /// `/home/channel/:id`, `/notifications`, …) are sibling top-level
+  /// `GoRoute`s — not a `StatefulShellRoute` — so `go('/home')` + `push(...)`
+  /// yields a genuinely poppable two-entry stack.
+  void navigateDeepLink(AppRoute route) {
+    final loc = route.toPath();
+    final homeLoc = const AppRoute.home().toPath();
+    final notifLoc = const AppRoute.notifications().toPath();
+    // Home and notifications are both full `HomeShell` destinations with their
+    // own internal tab + back handling. Pushing notifications on top of /home
+    // would stack a second shell instance, so replace (go) rather than push.
+    if (loc == homeLoc || loc == notifLoc) {
+      _config.go(loc);
+      return;
+    }
+    // Re-entrancy / double-tap guard: Android can deliver a tap via both
+    // getInitialMessage AND onMessageOpenedApp, and a fast double-tap can
+    // fire twice. If the target is already on top of a rooted stack, bail so
+    // we don't stack `[home, target, home, target]`.
+    final current = _config.routerDelegate.currentConfiguration;
+    if (current.matches.length >= 2 &&
+        current.matches.last.matchedLocation == loc) {
+      return;
+    }
+    // Ensure the home shell is beneath the target so back returns to it.
+    _config.go(homeLoc);
+    _config.push(loc);
+  }
+
+  /// "Open another workspace" on an already-linked multi-workspace host:
+  /// re-discover its instances via the Supervisor (`GET /api/instances`, using
+  /// the stored host CF token) and push the [WorkspacePickerScreen]. If the
+  /// re-list fails (network, expired token) we surface a snackbar but still
+  /// push the picker with an empty list so the user can pull-to-refresh / retry
+  /// from there rather than being dead-ended.
+  Future<void> _openAnotherWorkspace(
+    BuildContext context,
+    WidgetRef ref,
+    HostConfig host,
+  ) async {
+    List<InstanceSummary> instances = const [];
+    try {
+      final api = InstancesApi(
+        origin: host.origin,
+        hostId: host.id,
+        storage: ref.read(secureStorageProvider),
+      );
+      instances = await api.list();
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not refresh workspaces: $e')),
+        );
+      }
+    }
+    if (!context.mounted) return;
+    context.push(
+      '/hosts/workspaces',
+      extra: WorkspacePickerArgs(host: host, instances: instances),
+    );
   }
 
   GoRouter _buildRouter() {
@@ -66,11 +139,12 @@ class AppRouter {
       // The launcher's own broadcast-stream subscription (via
       // `deepLinkStreamProvider`) consumes the URI for credentials in
       // parallel. We must NOT navigate away from the current screen here:
-      // `AddServerScreen._save()` is `await`-ing `_runCallbackLogin()`,
-      // and if GoRouter swaps in a different page the State is disposed,
-      // the post-await `if (!mounted) return;` aborts, and the new server
-      // is never persisted (v0.3.12 regression: CF Access succeeds, but
-      // no server appears).
+      // `AddHostScreen._bootstrapHost()` (and the single-workspace
+      // `_runInstanceLogin`) is `await`-ing the system-browser login, and if
+      // GoRouter swaps in a different page the State is disposed, the
+      // post-await `if (!mounted) return;` aborts, and the new host/workspace
+      // is never persisted (v0.3.12-class regression: CF Access succeeds, but
+      // nothing appears).
       //
       // The trick is to return the LAST-KNOWN-GOOD location from the
       // redirect. go_router treats "redirect to the current location" as
@@ -101,67 +175,107 @@ class AppRouter {
           path: '/servers',
           builder: (context, state) => Consumer(
             builder: (context, ref, _) => ServerPickerScreen(
-              onSelect: (server) async {
+              // D3: select/switch now drives the Host/Workspace store. Setting
+              // the active workspace + invalidating activeWorkspaceProvider
+              // (which the display-only activeServerProvider shim derives from)
+              // is what actually makes switching between connections work.
+              onSelectWorkspace: (ws) async {
                 await ref
-                    .read(serverConfigStoreProvider)
-                    .setActive(server.id);
-                ref.invalidate(activeServerProvider);
-                ref.invalidate(serversListProvider);
+                    .read(hostWorkspaceStoreProvider)
+                    .setActiveWorkspace(ws.id);
+                ref.invalidate(activeWorkspaceProvider);
+                ref.invalidate(serverPickerDataProvider);
                 if (context.mounted) {
                   context.go('/home');
                 }
               },
               // push sub-routes so the server picker stays on the back
               // stack and the AppBar shows an implicit back arrow.
-              onAdd: () => context.push('/servers/add'),
-              onEdit: (server) => context.push(
+              onAddHost: () => context.push('/hosts/add'),
+              onEditHost: (host, soleWorkspace) => context.push(
                 '/servers/edit',
-                extra: server,
+                extra: EditHostArgs(host: host, workspace: soleWorkspace),
               ),
+              onEditWorkspace: (host, ws) => context.push(
+                '/servers/edit',
+                extra: EditHostArgs(host: host, workspace: ws),
+              ),
+              onOpenAnotherWorkspace: (host) =>
+                  _openAnotherWorkspace(context, ref, host),
               onTestBridge: () => context.push('/spike'),
-            ),
-          ),
-        ),
-        GoRoute(
-          path: '/servers/add',
-          builder: (context, state) => Consumer(
-            builder: (context, ref, _) => AddServerScreen(
-              onSaved: (server) {
-                ref.invalidate(serversListProvider);
-                ref.invalidate(activeServerProvider);
-                // Prefer pop so the picker beneath us survives. Fall back
-                // to go for direct deep-link cold-starts where add is
-                // the root of the stack.
-                if (context.canPop()) {
-                  context.pop();
-                } else {
-                  context.go('/servers');
-                }
-              },
             ),
           ),
         ),
         GoRoute(
           path: '/servers/edit',
           builder: (context, state) {
-            final server = state.extra;
-            if (server is! ServerConfig) {
+            final args = state.extra;
+            if (args is! EditHostArgs) {
               // Direct deep-link without state — bounce back to the picker.
               return _EditMissingExtraScreen(
                 onBack: () => context.go('/servers'),
               );
             }
             return Consumer(
-              builder: (context, ref, _) => EditServerScreen(
-                initial: server,
-                onSaved: (_) {
-                  ref.invalidate(serversListProvider);
-                  ref.invalidate(activeServerProvider);
+              builder: (context, ref, _) => EditHostScreen(
+                args: args,
+                onSaved: () {
+                  // EditHostScreen already invalidated the picker data + the
+                  // active-connection shim.
                   if (context.canPop()) {
                     context.pop();
                   } else {
                     context.go('/servers');
                   }
+                },
+              ),
+            );
+          },
+        ),
+        // --- D2: host / workspace onboarding ---------------------------------
+        GoRoute(
+          path: '/hosts/add',
+          builder: (context, state) => Consumer(
+            builder: (context, ref, _) => AddHostScreen(
+              onSingleWorkspaceActivated: (_) {
+                // A single-workspace host minted + activated its workspace.
+                // The activeWorkspaceProvider was already invalidated inside
+                // the screen; just land on home.
+                context.go('/home');
+              },
+              onSupervisorDetected: (host, instances) {
+                // Multi-workspace host: push the workspace picker on top so the
+                // user can back out to the server list.
+                context.push(
+                  '/hosts/workspaces',
+                  extra: WorkspacePickerArgs(
+                    host: host,
+                    instances: instances,
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+        GoRoute(
+          path: '/hosts/workspaces',
+          builder: (context, state) {
+            final args = state.extra;
+            if (args is! WorkspacePickerArgs) {
+              // Direct deep-link without state — bounce back to the picker.
+              return _MissingExtraScreen(
+                title: 'Workspaces',
+                message: 'No host selected.',
+                onBack: () => context.go('/servers'),
+              );
+            }
+            return Consumer(
+              builder: (context, ref, _) => WorkspacePickerScreen(
+                host: args.host,
+                instances: args.instances,
+                onActivated: (_) {
+                  // activeWorkspaceProvider already invalidated in-screen.
+                  context.go('/home');
                 },
               ),
             );
@@ -175,6 +289,15 @@ class AppRouter {
           path: '/home/session/:id',
           builder: (context, state) => SessionViewScreen(
             sessionId: state.pathParameters['id']!,
+            // Pre-resolved summary when navigation carries one (Sessions
+            // list / freshly-created session). Notification/deep-link
+            // cold-starts pass no extra, so the screen resolves the name
+            // from the sessions list instead. Guard the cast: GoRouter may
+            // hand back arbitrary extras (e.g. a ServerConfig from an
+            // unrelated push) so only accept a SessionSummary.
+            initialSummary: state.extra is SessionSummary
+                ? state.extra! as SessionSummary
+                : null,
           ),
         ),
         GoRoute(
@@ -244,10 +367,11 @@ class AppRouter {
           builder: (context, state) => Consumer(
             builder: (context, ref, _) => ReauthScreen(
               onSuccess: () {
-                // Fresh cookie has been persisted; refresh the active
-                // server provider so any consumer that already cached a
-                // null/expired session re-reads, then bounce home.
-                ref.invalidate(activeServerProvider);
+                // Fresh host/workspace credentials have been persisted;
+                // refresh the active-connection provider so any consumer
+                // (incl. the rebuilt API client) re-reads, then bounce home.
+                // The activeServerProvider shim derives from this.
+                ref.invalidate(activeWorkspaceProvider);
                 context.go('/home');
               },
               onCancel: () => context.go('/servers'),
@@ -277,7 +401,7 @@ class _EditMissingExtraScreen extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: const Color(0xFF1A1B26),
         title: const Text(
-          'Edit server',
+          'Edit host',
           style: TextStyle(color: Colors.white),
         ),
         iconTheme: const IconThemeData(color: Colors.white),
@@ -289,8 +413,54 @@ class _EditMissingExtraScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               const Text(
-                'No server selected.',
+                'No host selected.',
                 style: TextStyle(color: Colors.white, fontSize: 16),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: onBack,
+                child: const Text('Back to servers'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Generic "this route needs an `extra` that wasn't supplied" fallback, used by
+/// routes (e.g. the workspace picker) reached without their required state —
+/// typically a cold-start deep link.
+class _MissingExtraScreen extends StatelessWidget {
+  const _MissingExtraScreen({
+    required this.title,
+    required this.message,
+    required this.onBack,
+  });
+
+  final String title;
+  final String message;
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF1A1B26),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF1A1B26),
+        title: Text(title, style: const TextStyle(color: Colors.white)),
+        iconTheme: const IconThemeData(color: Colors.white),
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                message,
+                style: const TextStyle(color: Colors.white, fontSize: 16),
               ),
               const SizedBox(height: 16),
               ElevatedButton(

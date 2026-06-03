@@ -123,6 +123,97 @@ void main() {
     });
   });
 
+  group('MobileCallbackLoginLauncher.loginHost', () {
+    test(
+        'opens <origin>/auth/mobile-callback and resolves a HostCallback '
+        'from remotedev://auth/callback?scope=host', () async {
+      final stream = StreamController<Uri>.broadcast();
+      Uri? launchedAt;
+      final launcher = MobileCallbackLoginLauncher(
+        deepLinkStream: stream.stream,
+        urlLauncher: (uri) async {
+          launchedAt = uri;
+          scheduleMicrotask(() {
+            stream.add(
+              Uri.parse(
+                'remotedev://auth/callback?scope=host&cfToken=host-jwt'
+                '&userId=u9&email=h%40b.com',
+              ),
+            );
+          });
+          return true;
+        },
+      );
+
+      final host = await launcher.loginHost(
+        origin: Uri.parse('https://sup.example.com'),
+      );
+
+      expect(
+        launchedAt,
+        Uri.parse('https://sup.example.com/auth/mobile-callback'),
+      );
+      expect(host.cfToken, 'host-jwt');
+      expect(host.userId, 'u9');
+      expect(host.email, 'h@b.com');
+
+      await stream.close();
+    });
+
+    test('throws MobileCallbackLaunchException when the browser fails to open',
+        () async {
+      final stream = StreamController<Uri>.broadcast();
+      final launcher = MobileCallbackLoginLauncher(
+        deepLinkStream: stream.stream,
+        urlLauncher: (_) async => false,
+      );
+
+      await expectLater(
+        launcher.loginHost(origin: Uri.parse('https://sup.example.com')),
+        throwsA(isA<MobileCallbackLaunchException>()),
+      );
+      await stream.close();
+    });
+
+    test('throws TimeoutException when no callback arrives', () async {
+      final stream = StreamController<Uri>.broadcast();
+      final launcher = MobileCallbackLoginLauncher(
+        deepLinkStream: stream.stream,
+        urlLauncher: (_) async => true,
+        timeout: const Duration(milliseconds: 50),
+      );
+
+      await expectLater(
+        launcher.loginHost(origin: Uri.parse('https://sup.example.com')),
+        throwsA(isA<TimeoutException>()),
+      );
+      await stream.close();
+    });
+
+    test(
+        'throws MobileCallbackShapeException when the callback is an instance '
+        '(apiKey-bearing) shape', () async {
+      final stream = StreamController<Uri>.broadcast();
+      final launcher = MobileCallbackLoginLauncher(
+        deepLinkStream: stream.stream,
+        urlLauncher: (_) async {
+          scheduleMicrotask(() {
+            stream.add(
+              Uri.parse('remotedev://auth/callback?apiKey=k&cfToken=jwt'),
+            );
+          });
+          return true;
+        },
+      );
+
+      await expectLater(
+        launcher.loginHost(origin: Uri.parse('https://sup.example.com')),
+        throwsA(isA<MobileCallbackShapeException>()),
+      );
+      await stream.close();
+    });
+  });
+
   test('MobileCredentials default constructor preserves fields', () {
     const c = MobileCredentials(
       apiKey: 'k',

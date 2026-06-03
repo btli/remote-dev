@@ -213,6 +213,72 @@ void main() {
     );
   });
 
+  group('base-path workspace (/demo)', () {
+    // A path-prefixed workspace serves its mobile routes at
+    // `<origin>/demo/m/*`. The policy must treat those as in-surface, and
+    // continue to intercept bare `/m/*` (no basePath) and sister surfaces.
+    final policy = NavigationPolicy(
+      serverOrigin: Uri.parse('https://h'),
+      basePath: '/demo',
+      allowedPathPrefixes: const ['/demo/m/session/'],
+    );
+
+    test('allows the base-path-prefixed in-surface route', () {
+      expect(
+        policy.decide(Uri.parse('https://h/demo/m/session/abc')),
+        NavigationDecision.allow,
+      );
+    });
+
+    test('intercepts a bare /m/* path that lacks the basePath', () {
+      // `https://h/m/session/abc` is NOT this workspace — the gate is
+      // `/demo/m/`, so an un-prefixed `/m/` path is intercepted.
+      expect(
+        policy.decide(Uri.parse('https://h/m/session/abc')),
+        NavigationDecision.intercept,
+      );
+    });
+
+    test('intercepts a sister surface under the same basePath', () {
+      expect(
+        policy.decide(Uri.parse('https://h/demo/m/channel/x')),
+        NavigationDecision.intercept,
+      );
+    });
+
+    test('still routes off-origin links externally', () {
+      expect(
+        policy.decide(Uri.parse('https://github.com/btli/remote-dev')),
+        NavigationDecision.interceptAndOpenExternally,
+      );
+    });
+
+    test('still allows the CF Access challenge', () {
+      expect(
+        policy.decide(
+          Uri.parse('https://example.cloudflareaccess.com/cdn-cgi/access'),
+        ),
+        NavigationDecision.allow,
+      );
+    });
+
+    test('channel-scoped /demo policy allows its route, blocks session', () {
+      final channel = NavigationPolicy(
+        serverOrigin: Uri.parse('https://h'),
+        basePath: '/demo',
+        allowedPathPrefixes: const ['/demo/m/channel/'],
+      );
+      expect(
+        channel.decide(Uri.parse('https://h/demo/m/channel/c1')),
+        NavigationDecision.allow,
+      );
+      expect(
+        channel.decide(Uri.parse('https://h/demo/m/session/s1')),
+        NavigationDecision.intercept,
+      );
+    });
+  });
+
   group('login policy (Add Server / re-auth)', () {
     final policy = NavigationPolicy.forLogin(
       serverOrigin: Uri.parse('https://dev.example.com'),

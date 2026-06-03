@@ -40,6 +40,7 @@ import {
 import { join } from "path";
 import { homedir, hostname as osHostname } from "os";
 import http from "http";
+import { SSR_PROBE_PATHS, isAcceptableSsrStatus, restoreStandalone } from "./deploy-lib";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -63,6 +64,7 @@ const EXTERNAL_URL =
   process.env.DEPLOY_EXTERNAL_URL || "https://dev.bryanli.net";
 const HEALTH_CHECK_TIMEOUT_MS = 90_000;
 const HEALTH_CHECK_INTERVAL_MS = 3_000;
+const SSR_PROBE_TIMEOUT_MS = 30_000;
 
 const PROCESS_STOP_TIMEOUT_MS = 10_000;
 
@@ -706,7 +708,7 @@ async function healthCheckLocal(): Promise<boolean> {
             logDeploy(
               `Health check: local HTTP OK (${result.statusCode})`
             );
-            return true;
+            return await healthCheckSSR();
           }
           logError(
             `Health check: API returned error: ${JSON.stringify(data.error)}`
@@ -720,7 +722,7 @@ async function healthCheckLocal(): Promise<boolean> {
         logDeploy(
           `Health check: local HTTP responding (${result.statusCode}, auth pending)`
         );
-        return true;
+        return await healthCheckSSR();
       } else {
         logDeploy(
           `Health check: got ${result.statusCode}, retrying...`
@@ -735,6 +737,42 @@ async function healthCheckLocal(): Promise<boolean> {
 
   logError("Health check failed: local HTTP not responding");
   return false;
+}
+
+// SSR page probe — closes the gap where /api/* returns 200 while page routes
+// 500 (remote-dev-2cd4 / the 2026-06-03 proxy-redirect incident). Runs after
+// the API liveness check confirms the server is up.
+async function healthCheckSSR(socketPath: string = NEXTJS_SOCKET): Promise<boolean> {
+  for (const path of SSR_PROBE_PATHS) {
+    const deadline = Date.now() + SSR_PROBE_TIMEOUT_MS;
+    let status = -1;
+    let lastErr = "";
+    while (Date.now() < deadline) {
+      try {
+        const res = await httpGetOverSocket(socketPath, path);
+        status = res.statusCode;
+        if (isAcceptableSsrStatus(path, status)) break;
+        if (status >= 500) {
+          // A 5xx on an SSR route is a deterministic broken build — fail fast
+          // rather than burn the timeout retrying a compile/runtime error.
+          logError(`Health check: SSR ${path} returned ${status} (5xx) — broken build`);
+          return false;
+        }
+        // Unexpected non-5xx (e.g. a transient 404 during warmup): retry.
+      } catch (err) {
+        lastErr = String(err);
+      }
+      await Bun.sleep(HEALTH_CHECK_INTERVAL_MS);
+    }
+    if (!isAcceptableSsrStatus(path, status)) {
+      logError(
+        `Health check: SSR ${path} not healthy (last status: ${status}${lastErr ? `, error: ${lastErr}` : ""})`,
+      );
+      return false;
+    }
+    logDeploy(`Health check: SSR ${path} OK (${status})`);
+  }
+  return true;
 }
 
 async function healthCheckExternal(): Promise<boolean> {
@@ -931,9 +969,32 @@ async function deploy(): Promise<void> {
   }
 }
 
-async function rollbackTo(slot: Slot): Promise<void> {
-  logDeploy(`Rolling back, restarting via rdv.ts...`);
+// Restore a slot's known-good build over the live serving dir before restart.
+// Computes the slot/live paths from the deploy layout and delegates the copy to
+// restoreStandalone (deploy-lib, unit-tested). remote-dev-j0x5.
+function restoreSlotToLive(slot: Slot): boolean {
+  const slotStandalone = join(BUILDS_DIR, slot, "standalone");
+  const liveStandalone = join(PROJECT_ROOT, ".next", "standalone");
+  const res = restoreStandalone(slotStandalone, liveStandalone);
+  if (!res.ok) {
+    logError(`Rollback: could not restore ${slot} slot build (${res.reason})`);
+    return false;
+  }
+  logDeploy(`Rollback: restored ${slot} slot build -> live .next/standalone`);
+  return true;
+}
 
+async function rollbackTo(slot: Slot): Promise<void> {
+  // Restore the target slot's KNOWN-GOOD build over the live serving dir BEFORE
+  // restarting — otherwise the restart re-serves the still-broken build a failed
+  // deploy left in PROJECT_ROOT/.next/standalone (remote-dev-j0x5).
+  if (!restoreSlotToLive(slot)) {
+    logError(
+      `CRITICAL: ${slot} slot build missing — restarting current build as a last resort (may still be broken).`,
+    );
+  }
+
+  logDeploy(`Rolling back to ${slot}, restarting via rdv.ts...`);
   restartViaRdvAsync();
   await Bun.sleep(5000);
 
@@ -1068,14 +1129,16 @@ async function init(): Promise<void> {
 // Main
 // ─────────────────────────────────────────────────────────────────────────────
 
-const args = process.argv.slice(2);
+if (import.meta.main) {
+  const args = process.argv.slice(2);
 
-if (args.includes("--rollback")) {
-  await rollback();
-} else if (args.includes("--status")) {
-  showStatus();
-} else if (args.includes("--init")) {
-  await init();
-} else {
-  await deploy();
+  if (args.includes("--rollback")) {
+    await rollback();
+  } else if (args.includes("--status")) {
+    showStatus();
+  } else if (args.includes("--init")) {
+    await init();
+  } else {
+    await deploy();
+  }
 }

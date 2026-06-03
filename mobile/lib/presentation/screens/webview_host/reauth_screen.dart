@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../application/state/active_connection.dart';
 import '../../../infrastructure/auth/mobile_callback_login_launcher.dart';
 import '../../../infrastructure/auth/mobile_credentials.dart';
 import '../../../infrastructure/deep_link/deep_link_stream_provider.dart';
 import 'session_route_host.dart'
-    show activeServerProvider, mobileCredentialsStoreProvider;
+    show activeWorkspaceProvider, mobileCredentialsStoreProvider;
 
-/// Test seam — mirrors [MobileCallbackLauncher] from `AddServerScreen`.
+/// Test seam — wraps a [MobileCallbackLoginLauncher.login]-shaped call.
 /// In production this is `null` and we build a real
 /// [MobileCallbackLoginLauncher] against the shared deep-link stream.
 typedef MobileCallbackLauncherForReauth = Future<MobileCredentials?> Function(
@@ -16,7 +17,7 @@ typedef MobileCallbackLauncherForReauth = Future<MobileCredentials?> Function(
 
 /// Screen we land on whenever Dio sees a 401/403 from the active server
 /// (see [reauthSignalProvider]). Runs the same system-browser flow the
-/// Add Server screen uses — opens `<server>/auth/mobile-callback` in
+/// host onboarding flow uses — opens `<server>/auth/mobile-callback` in
 /// the platform browser, waits for the `remotedev://auth/callback`
 /// deep link, persists the fresh credentials back into secure storage
 /// under the active server's id, then bounces back to `/home`.
@@ -61,9 +62,10 @@ class _ReauthScreenState extends ConsumerState<ReauthScreen> {
   bool _running = false;
   bool _completed = false;
 
-  Future<void> _runLaunch(Uri serverUrl, String serverId) async {
+  Future<void> _runLaunch(ActiveConnection conn) async {
     if (_running || _completed) return;
     setState(() => _running = true);
+    final serverUrl = Uri.parse(conn.effectiveUrl);
     final launcher = widget.mobileCallbackLauncherOverride;
     final result = launcher != null
         ? await launcher(serverUrl)
@@ -76,8 +78,14 @@ class _ReauthScreenState extends ConsumerState<ReauthScreen> {
       widget.onCancel();
       return;
     }
+    // Persist onto the host/workspace namespaces: CF token is host-wide,
+    // API key is per-workspace.
     final credentials = ref.read(mobileCredentialsStoreProvider);
-    await credentials.save(serverId, result);
+    final cf = result.cfToken;
+    if (cf != null && cf.isNotEmpty) {
+      await credentials.setHostCfToken(conn.host.id, cf);
+    }
+    await credentials.setWorkspaceApiKey(conn.workspace.id, result.apiKey);
     if (!mounted) return;
     _completed = true;
     widget.onSuccess();
@@ -85,30 +93,30 @@ class _ReauthScreenState extends ConsumerState<ReauthScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final asyncServer = ref.watch(activeServerProvider);
-    return asyncServer.when(
+    final asyncConn = ref.watch(activeWorkspaceProvider);
+    return asyncConn.when(
       loading: () => const Scaffold(
         backgroundColor: Color(0xFF1A1B26),
         body: Center(child: CircularProgressIndicator()),
       ),
       error: (e, _) => _NoActiveServer(onCancel: widget.onCancel, message: '$e'),
-      data: (server) {
-        if (server == null) {
+      data: (conn) {
+        if (conn == null) {
           return _NoActiveServer(onCancel: widget.onCancel);
         }
         // Fire-and-forget the launch the first time we settle on a
-        // non-null active server. Subsequent rebuilds while the launcher
+        // non-null active connection. Subsequent rebuilds while the launcher
         // is in flight are gated by `_running` / `_completed`.
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
-          _runLaunch(Uri.parse(server.url), server.id);
+          _runLaunch(conn);
         });
         return Scaffold(
           backgroundColor: const Color(0xFF1A1B26),
           appBar: AppBar(
             backgroundColor: const Color(0xFF1A1B26),
             title: Text(
-              'Sign in to ${Uri.parse(server.url).host}',
+              'Sign in to ${Uri.parse(conn.effectiveUrl).host}',
               style: const TextStyle(color: Colors.white),
             ),
             iconTheme: const IconThemeData(color: Colors.white),
@@ -150,10 +158,7 @@ class _ReauthScreenState extends ConsumerState<ReauthScreen> {
                       const CircularProgressIndicator()
                     else
                       ElevatedButton(
-                        onPressed: () => _runLaunch(
-                          Uri.parse(server.url),
-                          server.id,
-                        ),
+                        onPressed: () => _runLaunch(conn),
                         child: const Text('Open browser again'),
                       ),
                   ],

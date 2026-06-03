@@ -5,8 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app.dart';
 import 'application/ports/api_client_port.dart';
+import 'application/state/active_connection.dart';
 import 'application/state/reauth_signal_provider.dart';
-import 'domain/server_config.dart';
 import 'infrastructure/api/account_api.dart';
 import 'infrastructure/api/agent_cli_api.dart';
 import 'infrastructure/api/cf_auth_interceptor.dart' show AuthMaterial;
@@ -44,10 +44,10 @@ import 'presentation/screens/sessions/sessions_tab_screen.dart'
     show sessionsApiProvider;
 import 'presentation/screens/webview_host/session_route_host.dart'
     show
-        activeServerProvider,
+        activeWorkspaceProvider,
+        hostWorkspaceStoreProvider,
         mobileCredentialsStoreProvider,
-        secureStorageProvider,
-        serverConfigStoreProvider;
+        secureStorageProvider;
 
 /// Thrown by [_apiClientProvider] when no active server has been chosen.
 ///
@@ -70,8 +70,8 @@ class NoActiveServerError extends Error {
 /// `cloudflareaccess.com`, or 200 text/html). The callback drives the
 /// same system-browser `/auth/mobile-callback` flow we use at initial
 /// sign-in via [MobileCallbackLoginLauncher], persists the refreshed
-/// credentials, and returns the new [AuthMaterial] so Dio can replay
-/// the original request transparently.
+/// credentials onto the host/workspace namespaces, and returns the new
+/// [AuthMaterial] so Dio can replay the original request transparently.
 ///
 /// When the browser's CF SSO session is still valid (the common case
 /// — browser sessions typically outlive our stored JWT), the Custom Tab
@@ -79,56 +79,57 @@ class NoActiveServerError extends Error {
 /// when the browser session is ALSO dead does the user need to type
 /// credentials again.
 ///
-/// Returning `null` signals genuine failure (user cancelled, timeout,
-/// no active server, etc.) — the interceptor then falls through to
-/// `onReauthNeeded` so the UI routes to `/reauth`.
-Future<AuthMaterial?> Function(String serverId) _buildRefreshAuth(Ref ref) {
-  return (String serverId) async {
-    // The interceptor passes its captured serverId; we honour it rather
-    // than reading the (potentially stale) active server, so a refresh
-    // can't accidentally cross-bind credentials to a different server
-    // after the user switches.
-    ServerConfig? server;
-    try {
-      final all = await ref.read(serverConfigStoreProvider).loadAll();
-      for (final cfg in all) {
-        if (cfg.id == serverId) {
-          server = cfg;
-          break;
-        }
-      }
-    } catch (e) {
-      debugPrint('[CfAuth] refresh aborted: serverConfigStore.loadAll failed: $e');
-      return null;
-    }
-    if (server == null) return null;
-
+/// [conn] is captured at client-construction time so a refresh can't
+/// accidentally cross-bind credentials to a different workspace after the
+/// user switches. The login runs against `origin + basePath` (== `origin`
+/// for a migrated single-workspace config, where basePath is `''`).
+///
+/// Returning `null` signals genuine failure (user cancelled, timeout, etc.)
+/// — the interceptor then falls through to `onReauthNeeded` so the UI routes
+/// to `/reauth`.
+Future<AuthMaterial?> Function() _buildWorkspaceRefreshAuth(
+  Ref ref,
+  ActiveConnection conn,
+) {
+  return () async {
     final launcher = MobileCallbackLoginLauncher(
       deepLinkStream: ref.read(deepLinkStreamProvider),
     );
-    final result = await launcher.login(serverUrl: Uri.parse(server.url));
+    final result =
+        await launcher.login(serverUrl: Uri.parse(conn.effectiveUrl));
     if (result == null) return null;
 
-    await ref.read(mobileCredentialsStoreProvider).save(server.id, result);
+    final creds = ref.read(mobileCredentialsStoreProvider);
+    // CF token is host-wide; API key is per-workspace.
+    final cf = result.cfToken;
+    if (cf != null && cf.isNotEmpty) {
+      await creds.setHostCfToken(conn.host.id, cf);
+    }
+    await creds.setWorkspaceApiKey(conn.workspace.id, result.apiKey);
     return AuthMaterial(apiKey: result.apiKey, cfCookie: result.cfToken);
   };
 }
 
-/// Internal: synchronous [ApiClientPort] bound to the current active server.
+/// Internal: synchronous [ApiClientPort] bound to the current active
+/// workspace (and its host).
 ///
-/// Re-evaluates whenever [activeServerProvider] resolves to a different
-/// server, which transparently rebinds every dependent API provider.
+/// Re-evaluates whenever [activeWorkspaceProvider] resolves to a different
+/// connection, which transparently rebinds every dependent API provider.
+/// The client reads the host-wide CF token via `getHostCfToken(host.id)`
+/// and the per-workspace API key via `getWorkspaceApiKey(workspace.id)`.
 final _apiClientProvider = Provider<ApiClientPort>((ref) {
-  final server = ref.watch(activeServerProvider).value;
-  if (server == null) {
+  final conn = ref.watch(activeWorkspaceProvider).value;
+  if (conn == null) {
     throw NoActiveServerError();
   }
   final storage = ref.watch(secureStorageProvider);
-  return RemoteDevClient(
-    serverOrigin: Uri.parse(server.url),
-    serverId: server.id,
+  return RemoteDevClient.forWorkspace(
+    origin: conn.host.origin,
+    basePath: conn.workspace.basePath,
+    hostId: conn.host.id,
+    workspaceId: conn.workspace.id,
     storage: storage,
-    refreshAuth: _buildRefreshAuth(ref),
+    refreshAuth: _buildWorkspaceRefreshAuth(ref, conn),
     onReauthNeeded: () => ref.read(reauthSignalProvider.notifier).request(),
   );
 });
@@ -169,12 +170,21 @@ List<Override> buildServerScopedOverrides({required String deviceId}) {
     pushTokenRegistrarProvider.overrideWith(
       (ref) => PushTokenRegistrar(
         push: FcmPushService(),
-        serverStore: ref.watch(serverConfigStoreProvider),
-        clientFactory: (server) => RemoteDevClient(
-          serverOrigin: Uri.parse(server.url),
-          serverId: server.id,
+        store: ref.watch(hostWorkspaceStoreProvider),
+        credentials: ref.watch(mobileCredentialsStoreProvider),
+        // Push registration is a best-effort background POST against EVERY
+        // saved WORKSPACE; it must not trigger an interactive CF refresh on a
+        // non-active workspace (no UI is mounted to drive the browser). We pass
+        // NO `refreshAuth`, so `forWorkspace`'s default no-op refresh falls
+        // through to a logged per-workspace failure — the desired behaviour
+        // here. The client is base-path-aware (origin + ws.basePath) and reads
+        // the per-workspace API key + host-wide CF cookie.
+        clientFactory: (host, ws) => RemoteDevClient.forWorkspace(
+          origin: host.origin,
+          basePath: ws.basePath,
+          hostId: host.id,
+          workspaceId: ws.id,
           storage: ref.read(secureStorageProvider),
-          refreshAuth: _buildRefreshAuth(ref),
           onReauthNeeded: () =>
               ref.read(reauthSignalProvider.notifier).request(),
         ),
@@ -216,6 +226,19 @@ void main() async {
   final container = ProviderContainer(
     overrides: buildServerScopedOverrides(deviceId: deviceId),
   );
+
+  // One-time migration of legacy `servers` → Host/Workspace hierarchy. Must
+  // run before the first route resolves / before `activeWorkspaceProvider` is
+  // first read so a migrated single-workspace user lands on their workspace.
+  // Idempotent (guarded by a persisted schema_version) and non-destructive
+  // (legacy keys are retained). On error we log and continue so the app still
+  // launches — the migration can resume on the next cold start.
+  try {
+    await container.read(hostWorkspaceStoreProvider).migrateLegacyServersIfNeeded();
+  } catch (e) {
+    debugPrint('[Migration] migrateLegacyServersIfNeeded failed: $e');
+  }
+
   // Read for side effect — kicks off AppLinkListener.start().
   container.read(appLinkListenerProvider);
   // Read for side effect — wires FirebaseMessaging.onMessageOpenedApp and

@@ -10,6 +10,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { InstanceActions } from "@/components/instance-actions";
 import { InstanceLogs } from "@/components/instance-logs";
 import { InstanceEvents } from "@/components/instance-events";
+import { InstanceStorage } from "@/components/instance-storage";
 
 function NotVisible({ message }: { message: string }) {
   return (
@@ -132,6 +133,7 @@ export default async function InstanceDetailPage({
         <div className="mt-3">
           <InstanceActions
             instanceId={row.id}
+            slug={row.slug}
             status={row.status}
             storageRequest={row.storageRequest}
             imageTag={row.imageTag}
@@ -140,6 +142,15 @@ export default async function InstanceDetailPage({
           />
         </div>
       </section>
+
+      {canOperate ? (
+        <section className="mt-10">
+          <h2 className="text-sm font-medium text-muted-foreground">Storage</h2>
+          <div className="mt-3">
+            <InstanceStorage instanceId={row.id} />
+          </div>
+        </section>
+      ) : null}
 
       <section className="mt-10">
         <h2 className="text-sm font-medium text-muted-foreground">Logs</h2>
