@@ -1,12 +1,10 @@
 /**
  * Beads API authorization helpers.
  *
- * Validates that a projectPath belongs to the authenticated user's folders
- * and has a valid beads installation.
+ * Validates that a projectPath belongs to the authenticated user's folders.
  */
 
 import { resolve, join } from "node:path";
-import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { db } from "@/db";
 import { projects, nodePreferences, userSettings } from "@/db/schema";
@@ -18,10 +16,13 @@ const log = createLogger("BeadsAuth");
 /**
  * Validate that a projectPath is authorized for the given user.
  *
+ * This validates path ownership only — whether the path has beads initialized
+ * (a `.beads/` directory) is NOT an authorization concern and is reported
+ * separately by the route layer.
+ *
  * Checks:
  * 1. Path is absolute and resolves cleanly (no traversal)
- * 2. The path has a .beads/ directory (is a beads-enabled project)
- * 3. The path matches one of the user's folder defaultWorkingDirectory values,
+ * 2. The path matches one of the user's folder defaultWorkingDirectory values,
  *    or their global defaultWorkingDirectory setting
  *
  * Returns the resolved (canonical) path on success, null on failure.
@@ -39,12 +40,6 @@ export async function validateProjectPath(
 
   // Resolve to absolute canonical path
   const resolved = resolve(expandedPath);
-
-  // Must have a .beads/ directory
-  if (!existsSync(resolve(resolved, ".beads"))) {
-    log.debug("Project path has no .beads directory", { projectPath: resolved, userId });
-    return null;
-  }
 
   // Check if it matches the user's global defaultWorkingDirectory
   const settings = await db.query.userSettings.findFirst({
