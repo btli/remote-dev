@@ -28,12 +28,14 @@ import {
   buildNamespace,
   buildSharedSecret,
   buildAuthSecret,
+  buildDbSecret,
   buildImagePullSecret,
   buildService,
   buildStatefulSet,
   buildInstanceEnv,
   SERVICE_NAME,
 } from "@/lib/provisioner-builders";
+import { bootstrapInstanceDatabase, instanceDbName } from "@/lib/instance-db";
 import { DATA_VOLUME_NAME } from "@/lib/storage";
 import {
   toVolumeClaimTemplate,
@@ -62,11 +64,25 @@ export function defaultClients(): K8sClients {
 /** The stage at which provisioning failed (for the audit log / error message). */
 export type ProvisioningStage =
   | "namespace"
+  | "database"
   | "image-pull-secret"
   | "shared-secret"
   | "auth-secret"
+  | "db-secret"
   | "service"
   | "statefulset";
+
+/**
+ * The JSON shape persisted to `instance.dbConfigSnapshot` on the Postgres
+ * dual-backend path (Unit 8). `null` on the SQLite path. The role PASSWORD is
+ * NOT part of the snapshot — it lives only in the `rdv-<slug>-db` Secret.
+ */
+export interface DbConfigSnapshot {
+  type: "postgres";
+  dbName: string;
+  roleName: string;
+  poolerHost: string;
+}
 
 /** Typed error carrying the failing stage + the underlying cause. */
 export class ProvisioningError extends Error {
@@ -161,12 +177,17 @@ export interface ProvisionOptions {
  * Provision an instance transactionally (§6.4). Creates objects in order; on the
  * first failure, deletes the namespace (cascade rollback) and rethrows a
  * {@link ProvisioningError}.
+ *
+ * @returns the {@link DbConfigSnapshot} the caller must persist to
+ *   `instance.dbConfigSnapshot` on the Postgres dual-backend path (Unit 8), or
+ *   `null` on the SQLite path. The caller (reconciler) owns the row write — this
+ *   service is the single k8s writer and does NOT touch the DB row.
  */
 export async function provisionInstance(
   row: InstanceRow,
   opts: ProvisionOptions,
   clients: K8sClients = defaultClients(),
-): Promise<void> {
+): Promise<DbConfigSnapshot | null> {
   const { slug } = row;
   const namespace = namespaceForSlug(slug);
   const { core, apps } = clients;
@@ -179,6 +200,27 @@ export async function provisionInstance(
     imagePullSecretName: opts.imagePullSecret?.name,
     nodeSelector: opts.nodeSelector,
   });
+
+  // Postgres dual-backend (Unit 8): create the instance's OWN database + role on
+  // the shared CNPG cluster BEFORE any k8s objects (a DB failure should not leave
+  // orphaned k8s objects). No-op (null) when CNPG is not configured (SQLite path).
+  // The returned password is baked into the `rdv-<slug>-db` Secret below and is
+  // NEVER logged or persisted to the DB row.
+  let dbPassword: string | null;
+  try {
+    dbPassword = await bootstrapInstanceDatabase(slug, clients);
+  } catch (err) {
+    throw new ProvisioningError("database", err);
+  }
+  const withDatabase = dbPassword !== null;
+  const dbConfigSnapshot: DbConfigSnapshot | null = withDatabase
+    ? {
+        type: "postgres",
+        dbName: instanceDbName(slug),
+        roleName: instanceDbName(slug),
+        poolerHost: process.env.CNPG_POOLER_HOST ?? "",
+      }
+    : null;
 
   try {
     // 1. Namespace.
@@ -225,6 +267,33 @@ export async function provisionInstance(
       }),
     );
 
+    // 3b. Per-instance DATABASE_URL Secret (Postgres dual-backend, Unit 8) —
+    //     ONLY when the instance was bootstrapped with its own CNPG database.
+    //     Points at the PgBouncer Pooler (CNPG_POOLER_HOST), NOT the RW Service.
+    //     SECURITY: never log the built Secret / dbPassword.
+    if (withDatabase) {
+      const poolerHost = process.env.CNPG_POOLER_HOST;
+      const poolerPort = process.env.CNPG_POOLER_PORT;
+      if (!poolerHost || !poolerPort) {
+        throw new ProvisioningError(
+          "db-secret",
+          new Error("CNPG_POOLER_HOST / CNPG_POOLER_PORT not set (required for instance DATABASE_URL)"),
+        );
+      }
+      await createStep("db-secret", () =>
+        core.createNamespacedSecret({
+          namespace,
+          body: buildDbSecret(slug, {
+            host: poolerHost,
+            port: poolerPort,
+            dbName: instanceDbName(slug),
+            roleName: instanceDbName(slug),
+            password: dbPassword!,
+          }),
+        }),
+      );
+    }
+
     // 4. Governing Service `rdv`.
     await createStep("service", () =>
       core.createNamespacedService({ namespace, body: buildService(slug) }),
@@ -247,6 +316,8 @@ export async function provisionInstance(
           volumeClaimTemplate: toVolumeClaimTemplate(opts.storage),
           withGithub: Boolean(opts.github),
           withOidc: Boolean(opts.oidc),
+          // Postgres dual-backend (Unit 8): DATABASE_URL from `rdv-<slug>-db`.
+          withDatabase,
           // Referenced whenever the name is set — even without a dockerConfigJson
           // (operator-provisioned pull Secret); the nodeSelector pins arch.
           imagePullSecretName: opts.imagePullSecret?.name,
@@ -262,6 +333,7 @@ export async function provisionInstance(
     // (buildSeedJob) stays, but provisioning does NOT dispatch it in Phase 1.
 
     log.info("provisioning succeeded", { slug, namespace });
+    return dbConfigSnapshot;
   } catch (err) {
     // Roll back: delete the namespace (cascade). Best-effort — log if cleanup
     // itself fails, but always rethrow the ORIGINAL provisioning error.
@@ -323,6 +395,13 @@ export async function checkInstanceReady(
 /**
  * Terminate an instance: delete its namespace `rdv-<slug>` (cascade). A 404
  * NotFound means the namespace is already gone — treated as success.
+ *
+ * Postgres dual-backend teardown (Unit 8) is intentionally SOFT in v1: we do NOT
+ * auto-DROP the instance's CNPG database/role on terminate. Dropping a database
+ * is irreversible and a mis-fire would destroy user data, so the instance DB +
+ * role are left in place for a deliberate, operator-driven purge. Unit 12 will
+ * document the manual purge runbook (DROP DATABASE rdv_<slug>; DROP ROLE
+ * rdv_<slug>). DO NOT implement an automatic DROP here.
  */
 export async function terminateInstance(
   slug: string,

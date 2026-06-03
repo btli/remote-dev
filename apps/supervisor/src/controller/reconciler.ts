@@ -424,7 +424,22 @@ async function attemptProvision(
   }
 
   try {
-    await deps.provisionInstance(row, opts, clients);
+    const dbConfigSnapshot = await deps.provisionInstance(row, opts, clients);
+    // Postgres dual-backend (Unit 8): persist the instance's DB config snapshot
+    // returned by the provisioner (the k8s/CNPG single writer doesn't own the DB
+    // row). Write ONLY when it is non-null AND not already stored — so the
+    // within-budget self-heal re-provision (which re-runs attemptProvision after
+    // the snapshot was already persisted) does NOT bump `updatedAt` and reset the
+    // readiness deadline. On the SQLite path (null) we never write.
+    if (dbConfigSnapshot) {
+      const serialized = JSON.stringify(dbConfigSnapshot);
+      if (row.dbConfigSnapshot !== serialized) {
+        await deps.db
+          .update(instance)
+          .set({ dbConfigSnapshot: serialized })
+          .where(eq(instance.id, row.id));
+      }
+    }
     return true;
   } catch (err) {
     if (err instanceof ProvisioningError) {

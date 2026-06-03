@@ -1,0 +1,1 @@
+ALTER TABLE "instance" ADD COLUMN "db_config_snapshot" text;

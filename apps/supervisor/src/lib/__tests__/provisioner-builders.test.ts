@@ -4,6 +4,7 @@ import {
   buildNamespace,
   buildSharedSecret,
   buildAuthSecret,
+  buildDbSecret,
   buildImagePullSecret,
   buildService,
   buildStatefulSet,
@@ -11,6 +12,7 @@ import {
   buildInspectorJob,
   buildInstanceEnv,
   authSecretName,
+  dbSecretName,
   MANAGED_BY,
   SERVICE_NAME,
   SHARED_SECRET_NAME,
@@ -84,6 +86,38 @@ describe("buildAuthSecret", () => {
       oidc: { clientSecret: "oidc-secret" },
     });
     expect(s.stringData?.OIDC_CLIENT_SECRET).toBe("oidc-secret");
+  });
+});
+
+describe("buildDbSecret (Postgres dual-backend, Unit 8)", () => {
+  it("is an Opaque Secret named rdv-<slug>-db in the instance namespace with instance labels", () => {
+    const s = buildDbSecret(SLUG, {
+      host: "pooler-rdv-pg-rw.cnpg-clusters.svc.cluster.local",
+      port: 5432,
+      dbName: "rdv_alpha",
+      roleName: "rdv_alpha",
+      password: "p@ss/word",
+    });
+    expect(s.type).toBe("Opaque");
+    expect(s.metadata?.name).toBe(dbSecretName(SLUG));
+    expect(s.metadata?.name).toBe("rdv-alpha-db");
+    expect(s.metadata?.namespace).toBe("rdv-alpha");
+    expect(s.metadata?.labels?.["managed-by"]).toBe(MANAGED_BY);
+    expect(s.metadata?.labels?.["rdv.io/slug"]).toBe(SLUG);
+  });
+
+  it("builds a postgresql:// DATABASE_URL with URL-encoded role/password/db", () => {
+    const s = buildDbSecret(SLUG, {
+      host: "pooler.cnpg.svc",
+      port: "5432",
+      dbName: "rdv_alpha",
+      roleName: "rdv_alpha",
+      // A password with reserved URL chars must be percent-encoded.
+      password: "p@ss:w/ord?",
+    });
+    expect(s.stringData?.DATABASE_URL).toBe(
+      "postgresql://rdv_alpha:p%40ss%3Aw%2Ford%3F@pooler.cnpg.svc:5432/rdv_alpha",
+    );
   });
 });
 
@@ -293,6 +327,25 @@ describe("buildStatefulSet", () => {
     expect(secret?.valueFrom?.secretKeyRef?.key).toBe("OIDC_CLIENT_SECRET");
   });
 
+  it("wires DATABASE_URL as a secretKeyRef only when withDatabase (Unit 8)", () => {
+    // Default options (top-of-describe `sts`) have no database → no DATABASE_URL.
+    expect(envByName(container?.env, "DATABASE_URL")).toBeUndefined();
+
+    const withDb = buildStatefulSet(SLUG, {
+      image: "img",
+      env: buildInstanceEnv(SLUG, { host: "h" }),
+      volumeClaimTemplate: PVC,
+      withDatabase: true,
+    });
+    const dbEnv = withDb.spec?.template.spec?.containers[0].env;
+    const databaseUrl = dbEnv?.find((e) => e.name === "DATABASE_URL");
+    // Secret-backed (never an inline value), sourced from rdv-<slug>-db.
+    expect(databaseUrl?.value).toBeUndefined();
+    expect(databaseUrl?.valueFrom?.secretKeyRef?.name).toBe(dbSecretName(SLUG));
+    expect(databaseUrl?.valueFrom?.secretKeyRef?.name).toBe("rdv-alpha-db");
+    expect(databaseUrl?.valueFrom?.secretKeyRef?.key).toBe("DATABASE_URL");
+  });
+
   it("mounts the data volume at /var/lib/rdv and includes the volumeClaimTemplate", () => {
     const mount = container?.volumeMounts?.find((m) => m.name === "data");
     expect(mount?.mountPath).toBe(DATA_DIR);
@@ -383,6 +436,25 @@ describe("buildSeedJob", () => {
     const plain = buildSeedJob(SLUG, { authorizedEmails: ["a@example.com"], image: "img" });
     expect(plain.spec?.template.spec?.imagePullSecrets).toBeUndefined();
     expect(plain.spec?.template.spec?.nodeSelector).toBeUndefined();
+  });
+
+  it("wires DATABASE_URL as a secretKeyRef only when withDatabase (Unit 8)", () => {
+    // Without withDatabase, the seed Job carries no DATABASE_URL.
+    const plain = buildSeedJob(SLUG, { authorizedEmails: ["a@example.com"], image: "img" });
+    expect(plain.spec?.template.spec?.containers[0].env?.find((e) => e.name === "DATABASE_URL")).toBeUndefined();
+
+    const withDb = buildSeedJob(SLUG, {
+      authorizedEmails: ["a@example.com"],
+      image: "img",
+      withDatabase: true,
+    });
+    const env = withDb.spec?.template.spec?.containers[0].env;
+    const databaseUrl = env?.find((e) => e.name === "DATABASE_URL");
+    expect(databaseUrl?.value).toBeUndefined();
+    expect(databaseUrl?.valueFrom?.secretKeyRef?.name).toBe(dbSecretName(SLUG));
+    expect(databaseUrl?.valueFrom?.secretKeyRef?.key).toBe("DATABASE_URL");
+    // The base seed env (AUTHORIZED_USERS / slug / data dir) is still present.
+    expect(env?.find((e) => e.name === "AUTHORIZED_USERS")?.value).toBe("a@example.com");
   });
 });
 

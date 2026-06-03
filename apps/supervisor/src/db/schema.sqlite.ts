@@ -34,6 +34,7 @@ export const instance = sqliteTable(
     baseUrl: text("base_url"),
     storageTargetId: text("storage_target_id"),
     storageConfigSnapshot: text("storage_config_snapshot"),
+    dbConfigSnapshot: text("db_config_snapshot"),
     cpuRequest: text("cpu_request"),
     cpuLimit: text("cpu_limit"),
     memRequest: text("mem_request"),

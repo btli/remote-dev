@@ -92,6 +92,12 @@ export const schema: SchemaDefinition = [
       // live instances; the chosen config is snapshotted below.
       { field: "storageTargetId", dbName: "storage_target_id", kind: "text" },
       { field: "storageConfigSnapshot", dbName: "storage_config_snapshot", kind: "text" },
+      // Postgres dual-backend (Unit 8): when the supervisor runs on Postgres,
+      // each instance gets its OWN database on the shared CNPG cluster. This
+      // mirrors storageConfigSnapshot — nullable; stores the JSON
+      // {type:"postgres", dbName, roleName, poolerHost} the provisioner wrote at
+      // create time, or null for the SQLite (per-PVC sqlite.db) path.
+      { field: "dbConfigSnapshot", dbName: "db_config_snapshot", kind: "text" },
       { field: "cpuRequest", dbName: "cpu_request", kind: "text" },
       { field: "cpuLimit", dbName: "cpu_limit", kind: "text" },
       { field: "memRequest", dbName: "mem_request", kind: "text" },

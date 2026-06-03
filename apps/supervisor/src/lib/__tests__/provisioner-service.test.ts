@@ -1,5 +1,30 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ApiException } from "@kubernetes/client-node";
+
+// Mock `pg` so the Postgres dual-backend (Unit 8) DDL path needs no real DB.
+// A minimal recording Client (the dedicated DDL idempotency assertions live in
+// instance-db.test.ts; here we only need provisionInstance's k8s wiring). The
+// shared `pgQueries` array + the Client class are created via vi.hoisted so the
+// hoisted vi.mock factory can reference them safely.
+const { pgQueries } = vi.hoisted(() => ({ pgQueries: [] as string[] }));
+vi.mock("pg", () => {
+  class FakePgClient {
+    escapeIdentifier(id: string): string {
+      return `"${id.replace(/"/g, '""')}"`;
+    }
+    escapeLiteral(s: string): string {
+      return `'${s.replace(/'/g, "''")}'`;
+    }
+    async connect(): Promise<void> {}
+    async query(text: string): Promise<{ rowCount: number; rows: unknown[] }> {
+      pgQueries.push(text);
+      return { rowCount: 0, rows: [] };
+    }
+    async end(): Promise<void> {}
+  }
+  return { Client: FakePgClient };
+});
+
 import {
   provisionInstance,
   terminateInstance,
@@ -37,6 +62,7 @@ function row(slug = "alpha"): InstanceRow {
     baseUrl: null,
     storageTargetId: null,
     storageConfigSnapshot: null,
+    dbConfigSnapshot: null,
     cpuRequest: null,
     cpuLimit: null,
     memRequest: null,
@@ -83,6 +109,10 @@ function makeClients(): { clients: K8sClients; order: string[] } {
         order.push("deleteNamespace");
       }),
       readNamespace: vi.fn(async () => ({})),
+      // CNPG superuser secret read (Unit 8); base64 `password` key.
+      readNamespacedSecret: vi.fn(async () => ({
+        data: { password: Buffer.from("super-pw", "utf8").toString("base64") },
+      })),
     },
     apps: {
       createNamespacedStatefulSet: vi.fn(async () => {
@@ -234,6 +264,90 @@ describe("provisionInstance — provision baseline (remote-dev-uobt)", () => {
   });
 });
 
+describe("provisionInstance — Postgres dual-backend (Unit 8)", () => {
+  const CNPG_ENV = {
+    CNPG_CLUSTER_NAME: "rdv-pg",
+    CNPG_RW_HOST: "rdv-pg-rw.cnpg.svc",
+    CNPG_POOLER_HOST: "pooler-rdv-pg-rw.cnpg.svc",
+    CNPG_POOLER_PORT: "5432",
+    CNPG_SUPERUSER_SECRET_NAME: "rdv-pg-superuser",
+    CNPG_SUPERUSER_SECRET_NAMESPACE: "cnpg",
+  };
+  const saved: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    pgQueries.length = 0;
+    for (const [k, v] of Object.entries(CNPG_ENV)) {
+      saved[k] = process.env[k];
+      process.env[k] = v;
+    }
+  });
+  afterEach(() => {
+    for (const k of Object.keys(CNPG_ENV)) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it("bootstraps the DB, creates the rdv-<slug>-db Secret before the Service, and returns the snapshot", async () => {
+    const { clients, order } = makeClients();
+    const snapshot = await provisionInstance(row(), OPTS, clients);
+
+    // The DDL ran (role/db/grant) against the mocked pg client.
+    expect(pgQueries.some((q) => /CREATE ROLE %I/.test(q))).toBe(true);
+
+    // The db Secret is created AFTER the auth secret and BEFORE the Service.
+    expect(order).toEqual([
+      "namespace",
+      "secret:rdv-shared",
+      "secret:rdv-alpha",
+      "secret:rdv-alpha-db",
+      "service",
+      "statefulset",
+    ]);
+
+    // The db Secret carries a Pooler-pointed DATABASE_URL.
+    const dbSecret = (clients.core.createNamespacedSecret as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => c[0].body)
+      .find((b: { metadata?: { name?: string } }) => b.metadata?.name === "rdv-alpha-db");
+    expect(dbSecret.type).toBe("Opaque");
+    expect(dbSecret.stringData.DATABASE_URL).toMatch(
+      /^postgresql:\/\/rdv_alpha:.+@pooler-rdv-pg-rw\.cnpg\.svc:5432\/rdv_alpha$/,
+    );
+
+    // The StatefulSet reads DATABASE_URL as a secretKeyRef from rdv-alpha-db.
+    const stsBody = (clients.apps.createNamespacedStatefulSet as ReturnType<typeof vi.fn>)
+      .mock.calls[0][0].body;
+    const env: Array<{ name: string; valueFrom?: { secretKeyRef?: { name?: string } } }> =
+      stsBody.spec.template.spec.containers[0].env;
+    const dbUrlEnv = env.find((e) => e.name === "DATABASE_URL");
+    expect(dbUrlEnv?.valueFrom?.secretKeyRef?.name).toBe("rdv-alpha-db");
+
+    // The returned snapshot (persisted by the reconciler) has no password.
+    expect(snapshot).toEqual({
+      type: "postgres",
+      dbName: "rdv_alpha",
+      roleName: "rdv_alpha",
+      poolerHost: "pooler-rdv-pg-rw.cnpg.svc",
+    });
+    expect(JSON.stringify(snapshot)).not.toContain("super-pw");
+  });
+
+  it("a DB bootstrap failure surfaces as ProvisioningError(database) and rolls back", async () => {
+    const { clients, order } = makeClients();
+    (clients.core.readNamespacedSecret as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      apiError(500),
+    );
+    await expect(provisionInstance(row(), OPTS, clients)).rejects.toMatchObject({
+      name: "ProvisioningError",
+      stage: "database",
+    });
+    // The DB step is first, so nothing was created; rollback still runs (no-op).
+    expect(order).not.toContain("statefulset");
+    expect(order).not.toContain("secret:rdv-alpha-db");
+  });
+});
+
 describe("provisionInstance — rollback on failure", () => {
   it("a Service failure rolls back (deletes namespace) and throws ProvisioningError(service)", async () => {
     const { clients, order } = makeClients();
@@ -273,7 +387,8 @@ describe("provisionInstance — idempotent 409", () => {
       apiError(409),
     );
 
-    await expect(provisionInstance(row(), OPTS, clients)).resolves.toBeUndefined();
+    // SQLite path (no CNPG env) → returns null, not a snapshot.
+    await expect(provisionInstance(row(), OPTS, clients)).resolves.toBeNull();
     // Namespace + service "already existed" but the rest still ran; no rollback.
     expect(order).toContain("statefulset");
     expect(order).not.toContain("deleteNamespace");
