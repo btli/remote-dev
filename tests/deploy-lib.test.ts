@@ -4,7 +4,14 @@ import {
 } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { isAcceptableSsrStatus, restoreStandalone } from "../scripts/deploy-lib";
+import {
+  isAcceptableSsrStatus,
+  restoreStandalone,
+  deploySourceDir,
+  gitSyncCommands,
+  ancestryGuardDecision,
+  isSafeDeploySrcToRemove,
+} from "../scripts/deploy-lib";
 
 describe("isAcceptableSsrStatus", () => {
   it("accepts 2xx/3xx on / (unauth redirect to /login)", () => {
@@ -58,5 +65,97 @@ describe("restoreStandalone", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("deploySourceDir", () => {
+  it("places the deploy source worktree under the data dir, outside the repo", () => {
+    expect(deploySourceDir("/home/u/.remote-dev")).toBe("/home/u/.remote-dev/deploy-src");
+  });
+  it("composes relative data dirs with join (no double slashes)", () => {
+    expect(deploySourceDir("/data/")).toBe("/data/deploy-src");
+  });
+});
+
+describe("gitSyncCommands", () => {
+  const PROJECT_ROOT = "/repo";
+  const DEPLOY_SRC = "/data/deploy-src";
+
+  it("first create: fetch in PROJECT_ROOT, then worktree add --detach @ origin/master", () => {
+    const cmds = gitSyncCommands(PROJECT_ROOT, DEPLOY_SRC, true);
+    expect(cmds).toEqual([
+      ["git", "-C", PROJECT_ROOT, "fetch", "origin"],
+      ["git", "-C", PROJECT_ROOT, "worktree", "add", "--detach", DEPLOY_SRC, "origin/master"],
+    ]);
+  });
+
+  it("first create never resets — only ever ADDS the worktree (no reset --hard)", () => {
+    const cmds = gitSyncCommands(PROJECT_ROOT, DEPLOY_SRC, true);
+    const hasReset = cmds.some((c) => c.includes("reset"));
+    expect(hasReset).toBe(false);
+  });
+
+  it("refresh: fetch + hard-reset to origin/master, all scoped to DEPLOY_SRC", () => {
+    const cmds = gitSyncCommands(PROJECT_ROOT, DEPLOY_SRC, false);
+    expect(cmds).toEqual([
+      ["git", "-C", DEPLOY_SRC, "fetch", "origin"],
+      ["git", "-C", DEPLOY_SRC, "reset", "--hard", "origin/master"],
+    ]);
+  });
+
+  it("refresh NEVER targets PROJECT_ROOT — the live tree is never touched", () => {
+    const cmds = gitSyncCommands(PROJECT_ROOT, DEPLOY_SRC, false);
+    for (const cmd of cmds) {
+      expect(cmd).not.toContain(PROJECT_ROOT);
+    }
+    // And the only reset present is the hard reset of DEPLOY_SRC to origin/master.
+    const reset = cmds.find((c) => c.includes("reset"));
+    expect(reset).toEqual(["git", "-C", DEPLOY_SRC, "reset", "--hard", "origin/master"]);
+  });
+
+  it("always pins to origin/master in both modes (only ever build origin/master)", () => {
+    for (const firstCreate of [true, false]) {
+      const cmds = gitSyncCommands(PROJECT_ROOT, DEPLOY_SRC, firstCreate);
+      const refsTouched = cmds.flat().filter((tok) => tok === "origin/master");
+      expect(refsTouched.length).toBeGreaterThanOrEqual(1);
+    }
+  });
+});
+
+describe("ancestryGuardDecision", () => {
+  it("exit 0 → proceed (HEAD is ancestor of / equal to origin/master)", () => {
+    expect(ancestryGuardDecision(0)).toBe("proceed");
+  });
+  it("exit 1 → diverged (local commits not on origin — refuse hard reset)", () => {
+    expect(ancestryGuardDecision(1)).toBe("diverged");
+  });
+  it("other non-zero (e.g. 128 missing ref) → git-error, NOT diverged", () => {
+    expect(ancestryGuardDecision(128)).toBe("git-error");
+    expect(ancestryGuardDecision(2)).toBe("git-error");
+    expect(ancestryGuardDecision(-1)).toBe("git-error");
+  });
+});
+
+describe("isSafeDeploySrcToRemove", () => {
+  const SEP = "/";
+  it("allows the exact derived deploy-src path", () => {
+    expect(isSafeDeploySrcToRemove("/home/u/.remote-dev/deploy-src", SEP)).toBe(true);
+    // Whatever the data dir prefix, the trailing /deploy-src is what matters.
+    expect(isSafeDeploySrcToRemove(deploySourceDir("/data"), SEP)).toBe(true);
+  });
+  it("refuses dangerous / unintended paths (mis-wired DATA_DIR)", () => {
+    expect(isSafeDeploySrcToRemove("/", SEP)).toBe(false);
+    expect(isSafeDeploySrcToRemove("", SEP)).toBe(false);
+    expect(isSafeDeploySrcToRemove("/home/u/.remote-dev", SEP)).toBe(false);
+    expect(isSafeDeploySrcToRemove("/home/u", SEP)).toBe(false);
+    // A directory merely CONTAINING the token mid-path is not the leaf — refuse.
+    expect(isSafeDeploySrcToRemove("/home/deploy-src/other", SEP)).toBe(false);
+    // The bare segment with no separator prefix must not match.
+    expect(isSafeDeploySrcToRemove("deploy-src", SEP)).toBe(false);
+  });
+  it("honors the supplied platform separator", () => {
+    expect(isSafeDeploySrcToRemove("C:\\rd\\deploy-src", "\\")).toBe(true);
+    // Right token, wrong separator → not the leaf under that platform's rules.
+    expect(isSafeDeploySrcToRemove("C:\\rd\\deploy-src", "/")).toBe(false);
   });
 });

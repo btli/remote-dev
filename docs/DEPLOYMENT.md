@@ -32,6 +32,8 @@ All deploy state lives under the data dir (`RDV_DATA_DIR`, default `~/.remote-de
 │   ├── state.json      # Active slot, commit SHA, timestamps, previous slot
 │   ├── deploy.lock     # PID-based concurrent-deploy lock (O_EXCL create)
 │   └── deploy.log      # Append-only deploy history
+├── deploy-src/         # Deploy-owned detached git worktree pinned to origin/master
+│                       #   (builds run HERE, never in PROJECT_ROOT)
 ├── builds/
 │   ├── blue/standalone/   # Build slot A (standalone output + static + public)
 │   └── green/standalone/  # Build slot B
@@ -62,13 +64,15 @@ All deploy state lives under the data dir (`RDV_DATA_DIR`, default `~/.remote-de
    the deploy.
 2. **Pick the inactive slot.** Reads `state.json`; if active is `blue`, builds into
    `green` (and vice-versa). Defaults to `blue` on first run.
-3. **Build into the inactive slot** (`buildSlot`):
-   - `git fetch origin` then `git merge --ff-only origin/master`
-   - `bun install --frozen-lockfile`
+3. **Build into the inactive slot** (`buildSlot`) — from an **isolated deploy-owned
+   worktree**, never from `PROJECT_ROOT` (see [Isolated build worktree](#isolated-build-worktree)):
+   - Ensure `~/.remote-dev/deploy-src` is a detached git worktree pinned to
+     `origin/master` (created on first deploy, refreshed thereafter)
+   - `bun install --frozen-lockfile` (in `deploy-src`)
    - `cargo install --path crates/rdv` (soft requirement — warns and continues if
      `cargo` is unavailable; the rdv CLI is not strictly required for the web app)
-   - `bun run build`
-   - Copy `.next/standalone`, `.next/static`, and `public/` into
+   - `bun run build` (in `deploy-src`)
+   - Copy `deploy-src/.next/standalone`, `.next/static`, and `public/` into
      `builds/{slot}/standalone/`
 4. **Swap.** Stop the current servers (`stopCurrentServers`), run DB migrations
    while stopped (`db:push` + `db:migrate-github-accounts`), then restart via the
@@ -89,6 +93,68 @@ All deploy state lives under the data dir (`RDV_DATA_DIR`, default `~/.remote-de
 > `rdv` process manager from the project checkout, not by pointing a process at a
 > slot directory. The slot/state machinery tracks *which commit is live* and gives
 > rollback a known-good target; the actual restart path is `rdv:prod`.
+
+### Isolated build worktree
+
+Builds run from a **deploy-owned, persistent detached git worktree** at
+`~/.remote-dev/deploy-src`, **not** from `PROJECT_ROOT` (remote-dev-yxvy).
+
+**Why.** `PROJECT_ROOT` is the live dev + agent working tree, and parallel agent
+work is always in flight here. The deploy pins its source to `origin/master` with
+`git reset --hard`, which silently discards uncommitted/staged tracked changes and
+deletes colliding untracked files. Running that in `PROJECT_ROOT` would **wipe an
+agent's in-progress edits** mid-deploy. Building from a separate worktree the
+deploy owns makes the reset safe: **a deploy never modifies `PROJECT_ROOT`'s
+source tree** — uncommitted, staged, and untracked files there survive untouched.
+
+**Lifecycle (idempotent, in `buildSlot` → `ensureDeploySrcAtOrigin`):**
+
+- **First deploy:** `git -C PROJECT_ROOT fetch origin`, then
+  `git -C PROJECT_ROOT worktree add --detach ~/.remote-dev/deploy-src origin/master`.
+  Its `node_modules` is then **warmed** from `PROJECT_ROOT/node_modules` via an
+  APFS copy-on-write clone (`cp -cR`, the same trick as
+  [`scripts/worktree-warm.sh`](../scripts/worktree-warm.sh)) so the first build
+  isn't a 5–10 min cold `bun install`. If the clonefile fails, the subsequent
+  `bun install --frozen-lockfile` populates `node_modules` instead (slower). We do
+  **not** symlink `node_modules` — Turbopack 16 rejects a `node_modules` symlink
+  pointing out of the worktree root (see `CLAUDE.md` § Worktree Setup).
+- **Every deploy:** `git -C deploy-src fetch origin` → a divergence guard
+  (`git merge-base --is-ancestor HEAD origin/master`; trivially satisfied because
+  `deploy-src` is detached at `origin/master`, but kept + logged so a surprise
+  local commit is **refused** rather than silently discarded) → `git -C deploy-src
+  reset --hard origin/master`. This reset is safe because it targets the deploy's
+  **own** tree, never `PROJECT_ROOT`. The deploy therefore only ever builds
+  `origin/master` — the same safety property the original `--ff-only`/ancestry
+  guard provided.
+
+The recorded **deployed commit** (`state.json.activeCommit`, used by the CI poll)
+is read from `deploy-src`'s HEAD — i.e. the `origin/master` commit actually built —
+not from `PROJECT_ROOT`, whose HEAD is no longer reset per deploy.
+
+**Activation is unchanged.** The chosen slot's standalone is still copied over the
+**live** serving dir (`PROJECT_ROOT/.next/standalone`) on rollback.
+
+**Migrations run from `deploy-src`, not `PROJECT_ROOT`.** `runMigration()`
+(`db:push` plus the GitHub-account and user-email backfills) runs in the
+`deploy-src` worktree. The live prod DB is selected by **env** (`DATABASE_URL` /
+the `~/.remote-dev` libsql path), **not** by cwd — so it still targets the live
+DB — but the **schema source** (`drizzle.config` → `src/db/schema.ts`, resolved
+relative to cwd) is now `origin/master`'s, matching the built+served code. Running
+from `PROJECT_ROOT` (which is intentionally never synced to `origin/master`
+post-yxvy) would push the dev checkout's stale/mid-edit schema to the **live** DB —
+a schema/code mismatch this avoids. `runMigration()` defensively ensures
+`deploy-src` exists (calling `ensureDeploySrcAtOrigin()` if needed) and **refuses**
+to migrate rather than silently fall back to `PROJECT_ROOT`'s schema.
+
+**Pruning / self-heal.** `deploy-src` is persistent and reused across deploys.
+Worktree validity is checked with `git -C deploy-src rev-parse
+--is-inside-work-tree` (not mere `.git` file presence — a pruned worktree leaves a
+dangling `.git` file behind). If `deploy-src` exists but is **not** a valid
+worktree (pruned out-of-band, corrupt, or half-removed), the next deploy
+**self-heals**: it removes the stale directory (guarded so only an exact
+`…/deploy-src` path is ever deleted), runs `git -C PROJECT_ROOT worktree prune` to
+clear the stale registration, then recreates and re-warms it — no manual
+intervention needed.
 
 ### Stopping servers safely
 
@@ -179,9 +245,11 @@ green the instant it got the `202`, with **zero visibility** into whether the
 server-side deploy actually landed. A failed deploy (build error, failed
 migration, failed health check) calls `process.exit(1)` **without** advancing the
 live-slot pointer, leaving the old commit serving traffic while the workflow
-showed a green check (remote-dev-6pbo). The classic trap: a stray untracked file
-or dirty tracked file in `PROJECT_ROOT` aborts the deploy (see the dirty-tree
-fix above) while CI stays green — trust `bun run deploy:status`, not the workflow.
+showed a green check (remote-dev-6pbo). (Historically a stray untracked or dirty
+file in `PROJECT_ROOT` could even abort the build silently; that is no longer
+possible now that builds run from the isolated `deploy-src` worktree — see
+[Isolated build worktree](#isolated-build-worktree).) Regardless, trust
+`bun run deploy:status`, not the workflow.
 
 To close that gap, the workflow now **polls the deploy outcome** after triggering:
 
@@ -214,7 +282,8 @@ actually live**, not merely that the webhook was accepted. On failure the step
 prints the failing stage/error and points at `~/.remote-dev/deploy/deploy.log`.
 
 **Known behavior — superseded pushes.** The deploy always ships `origin/master`
-HEAD (`git fetch` + `git reset --hard origin/master`), not a pinned SHA. If
+HEAD (`git fetch` + `git reset --hard origin/master` in the isolated
+`deploy-src` worktree), not a pinned SHA. If
 `origin/master` advances between an earlier push's webhook and that deploy's
 `git fetch`, the deploy ships the **newer** HEAD. The superseded (older) push's
 workflow run will then fail its poll with "reported success but active commit
@@ -233,7 +302,7 @@ without inbound CI access (e.g. distributed installs).
 | | Webhook path (default) | Poll path (`AUTO_UPDATE_ENABLED=true`) |
 |---|---|---|
 | Trigger | CI POSTs to `/api/deploy` on push to `master` | Server polls **GitHub Releases** on a schedule |
-| Builds from | Source (`git merge --ff-only` + `bun run build`) | Downloaded release artifact |
+| Builds from | Source (isolated `deploy-src` worktree @ `origin/master` + `bun run build`) | Downloaded release artifact |
 | `/api/deploy` | Active | Returns `410 Gone` |
 | Driver | `scripts/deploy.ts` | `AutoUpdateOrchestrator` in the terminal server |
 | Apply via CLI | n/a | `rdv system update check` / `rdv system update apply` |
