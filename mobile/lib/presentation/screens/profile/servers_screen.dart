@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../server_picker/server_picker_screen.dart';
 import '../webview_host/session_route_host.dart'
-    show activeServerProvider, serverConfigStoreProvider;
+    show activeWorkspaceProvider, serverConfigStoreProvider;
 
 /// Profile → Servers entry point.
 ///
@@ -21,8 +21,11 @@ class ServersScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return ServerPickerScreen(
       onSelect: (server) async {
+        // Legacy server store (Task D migrates the picker to Host/Workspace).
+        // Invalidate the workspace provider so the activeServerProvider shim
+        // re-derives.
         await ref.read(serverConfigStoreProvider).setActive(server.id);
-        ref.invalidate(activeServerProvider);
+        ref.invalidate(activeWorkspaceProvider);
         ref.invalidate(serversListProvider);
         if (!context.mounted) return;
         // Prefer pop so the Profile tab (HomeShell) stays on the back stack;

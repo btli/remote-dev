@@ -10,6 +10,7 @@ import '../../../infrastructure/webview/webview_factory.dart';
 import '../webview_host/session_route_host.dart'
     show
         activeServerProvider,
+        activeWorkspaceProvider,
         mobileCredentialsStoreProvider,
         webViewCookieSeederProvider;
 import 'channels_tab_screen.dart'
@@ -90,13 +91,14 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
     // seeder providers from blocking on the platform secure-storage
     // plugin (which isn't available under flutter_test).
     try {
-      final server = await ref.read(activeServerProvider.future);
-      if (server == null) return;
+      final conn = await ref.read(activeWorkspaceProvider.future);
+      if (conn == null) return;
       final credentials = ref.read(mobileCredentialsStoreProvider);
-      final cfToken = await credentials.readCfToken(server.id);
+      // CF token is host-wide; seed it against the host origin.
+      final cfToken = await credentials.getHostCfToken(conn.host.id);
       if (cfToken == null || cfToken.isEmpty) return;
       await ref.read(webViewCookieSeederProvider).seedCfCookie(
-            serverOrigin: Uri.parse(server.url),
+            serverOrigin: Uri.parse(conn.host.origin),
             value: cfToken,
           );
     } catch (_) {

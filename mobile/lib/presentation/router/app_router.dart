@@ -138,10 +138,17 @@ class AppRouter {
           builder: (context, state) => Consumer(
             builder: (context, ref, _) => ServerPickerScreen(
               onSelect: (server) async {
+                // NOTE: the picker still writes the LEGACY server store
+                // (Task D migrates it to the Host/Workspace model). We
+                // invalidate the workspace provider (which the
+                // activeServerProvider shim derives from) so downstream
+                // rebinds, but the legacy `setActive` won't change the
+                // active *workspace* until Task D wires the picker through
+                // the Host/Workspace store.
                 await ref
                     .read(serverConfigStoreProvider)
                     .setActive(server.id);
-                ref.invalidate(activeServerProvider);
+                ref.invalidate(activeWorkspaceProvider);
                 ref.invalidate(serversListProvider);
                 if (context.mounted) {
                   context.go('/home');
@@ -164,7 +171,9 @@ class AppRouter {
             builder: (context, ref, _) => AddServerScreen(
               onSaved: (server) {
                 ref.invalidate(serversListProvider);
-                ref.invalidate(activeServerProvider);
+                // Legacy add path (Task D). Invalidate the workspace
+                // provider so the shim re-derives.
+                ref.invalidate(activeWorkspaceProvider);
                 // Prefer pop so the picker beneath us survives. Fall back
                 // to go for direct deep-link cold-starts where add is
                 // the root of the stack.
@@ -192,7 +201,9 @@ class AppRouter {
                 initial: server,
                 onSaved: (_) {
                   ref.invalidate(serversListProvider);
-                  ref.invalidate(activeServerProvider);
+                  // Legacy edit path (Task D). Invalidate the workspace
+                  // provider so the shim re-derives.
+                  ref.invalidate(activeWorkspaceProvider);
                   if (context.canPop()) {
                     context.pop();
                   } else {
@@ -289,10 +300,11 @@ class AppRouter {
           builder: (context, state) => Consumer(
             builder: (context, ref, _) => ReauthScreen(
               onSuccess: () {
-                // Fresh cookie has been persisted; refresh the active
-                // server provider so any consumer that already cached a
-                // null/expired session re-reads, then bounce home.
-                ref.invalidate(activeServerProvider);
+                // Fresh host/workspace credentials have been persisted;
+                // refresh the active-connection provider so any consumer
+                // (incl. the rebuilt API client) re-reads, then bounce home.
+                // The activeServerProvider shim derives from this.
+                ref.invalidate(activeWorkspaceProvider);
                 context.go('/home');
               },
               onCancel: () => context.go('/servers'),

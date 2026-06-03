@@ -17,8 +17,8 @@ import '../../../infrastructure/webview/webview_factory.dart';
 import '../sessions/sessions_tab_screen.dart' show sessionsApiProvider;
 import '../webview_host/session_route_host.dart'
     show
+        activeWorkspaceProvider,
         mobileCredentialsStoreProvider,
-        serverConfigStoreProvider,
         webViewCookieSeederProvider;
 import 'activity_pip.dart';
 import 'mobile_input_bar.dart';
@@ -481,12 +481,16 @@ class _Webview extends ConsumerWidget {
   /// WebView (the WebView will hit a CF Access challenge instead, and
   /// the user re-auths via /reauth).
   Future<Uri?> _resolveOrigin(WidgetRef ref) async {
-    final server = await ref.read(serverConfigStoreProvider).loadActive();
-    if (server == null) return null;
-    final origin = Uri.parse(server.url);
+    final conn = await ref.read(activeWorkspaceProvider.future);
+    if (conn == null) return null;
+    // The WebView loads `<origin>/m/session/<id>`. base-path prefixing is
+    // Task B; for a migrated single-workspace config basePath is '' so the
+    // origin is exactly the host origin.
+    final origin = Uri.parse(conn.host.origin);
     try {
       final credentials = ref.read(mobileCredentialsStoreProvider);
-      final cfToken = await credentials.readCfToken(server.id);
+      // CF token is host-wide.
+      final cfToken = await credentials.getHostCfToken(conn.host.id);
       if (cfToken != null && cfToken.isNotEmpty) {
         await ref
             .read(webViewCookieSeederProvider)

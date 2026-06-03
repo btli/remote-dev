@@ -5,8 +5,8 @@ import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
 import 'session_route_host.dart'
     show
+        activeWorkspaceProvider,
         mobileCredentialsStoreProvider,
-        serverConfigStoreProvider,
         webViewCookieSeederProvider;
 
 /// Hosts an InAppWebView pointed at a `/m/<surface>/<id>` URL on the
@@ -58,10 +58,11 @@ class _WebViewHostScreenState extends ConsumerState<WebViewHostScreen> {
   Future<void> _seedCookie() async {
     // Best-effort — failures don't block the WebView from mounting.
     try {
-      final server = await ref.read(serverConfigStoreProvider).loadActive();
-      if (server == null) return;
+      final conn = await ref.read(activeWorkspaceProvider.future);
+      if (conn == null) return;
       final credentials = ref.read(mobileCredentialsStoreProvider);
-      final cfToken = await credentials.readCfToken(server.id);
+      // CF token is host-wide.
+      final cfToken = await credentials.getHostCfToken(conn.host.id);
       if (cfToken == null || cfToken.isEmpty) return;
       await ref
           .read(webViewCookieSeederProvider)
