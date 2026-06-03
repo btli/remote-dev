@@ -26,6 +26,7 @@ class RemoteDevClient implements ApiClientPort {
       authReader: (id) async {
         final apiKey = await _credentials.readApiKey(id);
         final cfToken = await _credentials.readCfToken(id);
+        // Legacy per-server client uses the old cfCookie field for compat.
         return AuthMaterial(apiKey: apiKey, cfCookie: cfToken);
       },
       refreshAuth: refreshAuth ?? ((_) async => null),
@@ -65,8 +66,13 @@ class RemoteDevClient implements ApiClientPort {
       scopeId: workspaceId,
       authReader: (_) async {
         final apiKey = await _credentials.getWorkspaceApiKey(workspaceId);
-        final cfToken = await _credentials.getHostCfToken(hostId);
-        return AuthMaterial(apiKey: apiKey, cfCookie: cfToken);
+        // Workspace's own cookies + the host-wide CF_Authorization edge cookie
+        // (required by the CF perimeter). The supervisor's app session cookie
+        // is never forwarded to instances — see
+        // MobileCredentialsStore.getInstanceCookies / design §7.2.
+        final cookies =
+            await _credentials.getInstanceCookies(hostId, workspaceId);
+        return AuthMaterial(apiKey: apiKey, cookies: cookies);
       },
       // The interceptor passes its captured scope id; the workspace refresh
       // closure ignores it (it already closes over the right host/workspace),

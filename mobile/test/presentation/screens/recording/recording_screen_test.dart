@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:remote_dev/application/state/active_connection.dart';
+import 'package:remote_dev/domain/auth_cookie.dart';
 import 'package:remote_dev/domain/host_config.dart';
 import 'package:remote_dev/domain/workspace_config.dart';
 import 'package:remote_dev/infrastructure/auth/mobile_credentials.dart';
@@ -69,9 +70,8 @@ ActiveConnection _conn({
       id: hostId,
       label: 'Work',
       origin: origin,
-      kind: basePath.isEmpty
-          ? HostKind.singleWorkspace
-          : HostKind.multiWorkspace,
+      kind:
+          basePath.isEmpty ? HostKind.singleWorkspace : HostKind.multiWorkspace,
       createdAt: now,
       lastUsedAt: now,
     ),
@@ -86,16 +86,20 @@ ActiveConnection _conn({
   );
 }
 
-/// Stubs a [MobileCredentialsStore] whose `getHostCfToken` resolves to a
-/// fixed dummy token. Used to keep tests that don't care about the seed
+/// Stubs a [MobileCredentialsStore] whose `getInstanceCookies` resolves to a
+/// fixed dummy cookie. Used to keep tests that don't care about the seed
 /// path from blocking on the real platform secure-storage channel.
 _MockCredentialsStore _fastCredentials() {
   final m = _MockCredentialsStore();
-  when(() => m.getHostCfToken(any())).thenAnswer((_) async => 'cf-jwt-stub');
+  when(() => m.getInstanceCookies(any(), any())).thenAnswer(
+    (_) async => const [
+      AuthCookie(name: 'CF_Authorization', value: 'cf-jwt-stub', path: '/'),
+    ],
+  );
   return m;
 }
 
-/// Stubs a [WebViewCookieSeeder] whose `seedCfCookie` resolves to `true`
+/// Stubs a [WebViewCookieSeeder] whose `seedAuthCookies` resolves to `true`
 /// synchronously (next microtask). Used so the FutureBuilder gate
 /// transitions to `ConnectionState.done` immediately and the WebView
 /// mounts in unit tests where the real `CookieManager` method channel
@@ -103,20 +107,21 @@ _MockCredentialsStore _fastCredentials() {
 _MockCookieSeeder _fastSeeder() {
   final m = _MockCookieSeeder();
   when(
-    () => m.seedCfCookie(
+    () => m.seedAuthCookies(
       serverOrigin: any(named: 'serverOrigin'),
-      value: any(named: 'value'),
+      cookies: any(named: 'cookies'),
     ),
-  ).thenAnswer((_) async => true);
+  ).thenAnswer((_) async {});
   return m;
 }
 
 void main() {
   setUpAll(() {
     // mocktail requires a fallback value for any non-nullable positional /
-    // named argument matched via `any(named: ...)`. `seedCfCookie` takes a
+    // named argument matched via `any(named: ...)`. `seedAuthCookies` takes a
     // non-nullable `Uri serverOrigin`.
     registerFallbackValue(Uri.parse('https://fallback.example.com'));
+    registerFallbackValue(<AuthCookie>[]);
   });
 
   // InAppWebView's platform plugin isn't available under flutter_test.
@@ -205,10 +210,10 @@ void main() {
       // directly, but we can probe its observable behaviour.
       expect(factory.capturedPolicy, isNotNull);
       expect(
-        factory.capturedPolicy!.decide(Uri.parse('https://accounts.google.com/')),
+        factory.capturedPolicy!
+            .decide(Uri.parse('https://accounts.google.com/')),
         equals(NavigationDecision.interceptAndOpenExternally),
-        reason:
-            'Recording WebView should use the strict NavigationPolicy '
+        reason: 'Recording WebView should use the strict NavigationPolicy '
             '(not .forLogin) so terminal output containing third-party links '
             'is intercepted, not loaded in-place.',
       );
@@ -280,9 +285,9 @@ void main() {
       );
       // Cookie seeding still targets the bare HOST origin (host-scoped).
       verify(
-        () => seeder.seedCfCookie(
+        () => seeder.seedAuthCookies(
           serverOrigin: Uri.parse('https://h'),
-          value: any(named: 'value'),
+          cookies: any(named: 'cookies'),
         ),
       ).called(1);
     },
@@ -354,22 +359,29 @@ void main() {
       // setCookie flush — when it lost, CF Access rejected the request
       // and the user was bounced into /reauth.
       //
-      // We verify the gate by hanging `seedCfCookie` on a Completer the
+      // We verify the gate by hanging `seedAuthCookies` on a Completer the
       // test controls, then asserting that `WebViewFactory.build` is NOT
       // called while the seed is pending. Completing the seed must allow
       // the factory to fire.
       suppressInAppWebViewErrors(tester);
 
       final credentials = _MockCredentialsStore();
-      when(() => credentials.getHostCfToken(any()))
-          .thenAnswer((_) async => 'cf-jwt-token');
+      when(() => credentials.getInstanceCookies(any(), any())).thenAnswer(
+        (_) async => const [
+          AuthCookie(
+            name: 'CF_Authorization',
+            value: 'cf-jwt-token',
+            path: '/',
+          ),
+        ],
+      );
 
       final seeder = _MockCookieSeeder();
-      final seedCompleter = Completer<bool>();
+      final seedCompleter = Completer<void>();
       when(
-        () => seeder.seedCfCookie(
+        () => seeder.seedAuthCookies(
           serverOrigin: any(named: 'serverOrigin'),
-          value: any(named: 'value'),
+          cookies: any(named: 'cookies'),
         ),
       ).thenAnswer((_) => seedCompleter.future);
 
@@ -391,7 +403,7 @@ void main() {
         ),
       );
       // Flush the activeServerProvider microtask + the initState seed
-      // chain up to (but not past) the pending seedCfCookie future.
+      // chain up to (but not past) the pending seedAuthCookies future.
       for (var i = 0; i < 5; i++) {
         await tester.pump(const Duration(milliseconds: 16));
       }
@@ -401,8 +413,7 @@ void main() {
       expect(
         factory.capturedUrl,
         isNull,
-        reason:
-            'WebViewFactory.build should NOT be invoked while the seed '
+        reason: 'WebViewFactory.build should NOT be invoked while the seed '
             'future is unresolved — otherwise the WebView races the '
             'CookieManager.setCookie flush.',
       );
@@ -412,7 +423,7 @@ void main() {
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
       // Complete the seed → next pump should mount the WebView.
-      seedCompleter.complete(true);
+      seedCompleter.complete();
       for (var i = 0; i < 5; i++) {
         await tester.pump(const Duration(milliseconds: 16));
       }
@@ -420,15 +431,14 @@ void main() {
       expect(
         factory.capturedUrl,
         isNotNull,
-        reason:
-            'Once the seed future completes, the FutureBuilder must mount '
+        reason: 'Once the seed future completes, the FutureBuilder must mount '
             'the real WebView via WebViewFactory.build.',
       );
       expect(factory.capturedUrl!.path, equals('/m/recording/rec-race'));
       verify(
-        () => seeder.seedCfCookie(
+        () => seeder.seedAuthCookies(
           serverOrigin: any(named: 'serverOrigin'),
-          value: any(named: 'value'),
+          cookies: any(named: 'cookies'),
         ),
       ).called(1);
     },

@@ -80,12 +80,16 @@ class _RecordingScreenState extends ConsumerState<RecordingScreen> {
       final conn = await ref.read(activeWorkspaceProvider.future);
       if (conn == null) return;
       final credentials = ref.read(mobileCredentialsStoreProvider);
-      // CF token is host-wide; seed it against the host origin.
-      final cfToken = await credentials.getHostCfToken(conn.host.id);
-      if (cfToken == null || cfToken.isEmpty) return;
-      await ref.read(webViewCookieSeederProvider).seedCfCookie(
+      // Seed the workspace's instance cookies (OIDC session and/or the CF
+      // edge cookie) against the host origin; the seeder path-scopes each.
+      final cookies = await credentials.getInstanceCookies(
+        conn.host.id,
+        conn.workspace.id,
+      );
+      if (cookies.isEmpty) return;
+      await ref.read(webViewCookieSeederProvider).seedAuthCookies(
             serverOrigin: Uri.parse(conn.host.origin),
-            value: cfToken,
+            cookies: cookies,
           );
     } catch (_) {
       // intentional: failures are non-fatal.

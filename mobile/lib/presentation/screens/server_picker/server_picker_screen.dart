@@ -6,7 +6,11 @@ import '../../../domain/host_config.dart';
 import '../../../domain/workspace_config.dart';
 import '../../router/app_router.dart' show pushTokenRegistrarProvider;
 import '../webview_host/session_route_host.dart'
-    show activeWorkspaceProvider, hostWorkspaceStoreProvider;
+    show
+        activeWorkspaceProvider,
+        hostWorkspaceStoreProvider,
+        mobileCredentialsStoreProvider,
+        webViewCookieSeederProvider;
 
 /// One host together with the workspace(s) that belong to it. A
 /// single-workspace host (migrated legacy server) carries exactly one
@@ -33,7 +37,10 @@ class HostEntry {
 /// legacy per-server store.
 @immutable
 class ServerPickerData {
-  const ServerPickerData({required this.entries, required this.activeWorkspaceId});
+  const ServerPickerData({
+    required this.entries,
+    required this.activeWorkspaceId,
+  });
 
   final List<HostEntry> entries;
   final String? activeWorkspaceId;
@@ -143,6 +150,10 @@ class ServerPickerScreen extends ConsumerWidget {
     // Unregister the push token FIRST, while the workspace's creds still exist
     // (removeWorkspace clears them). Best-effort — never blocks the delete.
     await _unregisterPushBestEffort(ref, ws.id);
+    // Evict the workspace's private session cookie from the in-app WebView jar
+    // before its creds are cleared, so a removed workspace can't stay
+    // authenticated in the WebView (best-effort — never blocks the delete).
+    await _deleteWorkspaceWebCookiesBestEffort(ref, ws);
     final store = ref.read(hostWorkspaceStoreProvider);
     await store.removeWorkspace(ws.id);
     ref.invalidate(activeWorkspaceProvider);
@@ -159,13 +170,62 @@ class ServerPickerScreen extends ConsumerWidget {
       final children = await store.loadWorkspaces(hostId: host.id);
       for (final ws in children) {
         await _unregisterPushBestEffort(ref, ws.id);
+        await _deleteWorkspaceWebCookiesBestEffort(ref, ws);
       }
     } catch (_) {
-      // Intentional: enumerating children for unregister is best-effort.
+      // Intentional: enumerating children is best-effort.
     }
+    // Evict the host-wide edge cookie (e.g. CF_Authorization) from the jar.
+    await _deleteHostWebCookiesBestEffort(ref, host);
     await store.removeHost(host.id);
     ref.invalidate(activeWorkspaceProvider);
     ref.invalidate(serverPickerDataProvider);
+  }
+
+  /// Best-effort eviction of [ws]'s PRIVATE cookies (its OIDC session-token)
+  /// from the in-app WebView cookie jar. MUST run before the workspace's stored
+  /// creds are cleared. The host-wide `CF_Authorization` edge cookie is left
+  /// alone — it is shared across a CF host's workspaces and is evicted only on
+  /// full host removal (see [_deleteHostWebCookiesBestEffort]).
+  Future<void> _deleteWorkspaceWebCookiesBestEffort(
+    WidgetRef ref,
+    WorkspaceConfig ws,
+  ) async {
+    try {
+      final store = ref.read(hostWorkspaceStoreProvider);
+      final host = await store.loadHost(ws.hostId);
+      if (host == null) return;
+      final creds = ref.read(mobileCredentialsStoreProvider);
+      final cookies = (await creds.getWorkspaceAuthCookies(ws.id))
+          .where((c) => c.name != 'CF_Authorization')
+          .toList();
+      if (cookies.isEmpty) return;
+      await ref.read(webViewCookieSeederProvider).deleteAuthCookies(
+            serverOrigin: Uri.parse(host.origin),
+            cookies: cookies,
+          );
+    } catch (_) {
+      // Intentional: WebView cookie eviction is best-effort.
+    }
+  }
+
+  /// Best-effort eviction of [host]'s host-wide cookies (e.g. the
+  /// `CF_Authorization` edge cookie) from the WebView jar on full host removal.
+  Future<void> _deleteHostWebCookiesBestEffort(
+    WidgetRef ref,
+    HostConfig host,
+  ) async {
+    try {
+      final creds = ref.read(mobileCredentialsStoreProvider);
+      final cookies = await creds.getHostAuthCookies(host.id);
+      if (cookies.isEmpty) return;
+      await ref.read(webViewCookieSeederProvider).deleteAuthCookies(
+            serverOrigin: Uri.parse(host.origin),
+            cookies: cookies,
+          );
+    } catch (_) {
+      // Intentional: WebView cookie eviction is best-effort.
+    }
   }
 
   Future<void> _showWorkspaceActionSheet(
@@ -404,9 +464,8 @@ class ServerPickerScreen extends ConsumerWidget {
               host: entry.host,
               ws: ws,
               title: ws.displayName.isNotEmpty ? ws.displayName : ws.slug,
-              subtitle: ws.status == null
-                  ? ws.slug
-                  : '${ws.slug} · ${ws.status}',
+              subtitle:
+                  ws.status == null ? ws.slug : '${ws.slug} · ${ws.status}',
               isActive: ws.id == activeWorkspaceId,
               isSingleWorkspaceRow: false,
             ),
