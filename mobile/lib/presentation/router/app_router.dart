@@ -8,6 +8,8 @@ import '../../infrastructure/push/push_token_registrar.dart';
 import '../screens/biometric/biometric_settings_screen.dart';
 import '../screens/bridge_spike/bridge_spike_screen.dart';
 import '../screens/channels/channel_screen.dart';
+import '../screens/host_picker/add_host_screen.dart';
+import '../screens/host_picker/workspace_picker_screen.dart';
 import '../screens/profile/about_screen.dart';
 import '../screens/profile/account_screen.dart';
 import '../screens/profile/appearance_screen.dart';
@@ -156,7 +158,11 @@ class AppRouter {
               },
               // push sub-routes so the server picker stays on the back
               // stack and the AppBar shows an implicit back arrow.
-              onAdd: () => context.push('/servers/add'),
+              //
+              // D2: the add entry point now drives the host/workspace
+              // onboarding flow ([AddHostScreen]) rather than the legacy
+              // [AddServerScreen]. D3 rewires the LIST itself.
+              onAdd: () => context.push('/hosts/add'),
               onEdit: (server) => context.push(
                 '/servers/edit',
                 extra: server,
@@ -209,6 +215,55 @@ class AppRouter {
                   } else {
                     context.go('/servers');
                   }
+                },
+              ),
+            );
+          },
+        ),
+        // --- D2: host / workspace onboarding ---------------------------------
+        GoRoute(
+          path: '/hosts/add',
+          builder: (context, state) => Consumer(
+            builder: (context, ref, _) => AddHostScreen(
+              onSingleWorkspaceActivated: (_) {
+                // A single-workspace host minted + activated its workspace.
+                // The activeWorkspaceProvider was already invalidated inside
+                // the screen; just land on home.
+                context.go('/home');
+              },
+              onSupervisorDetected: (host, instances) {
+                // Multi-workspace host: push the workspace picker on top so the
+                // user can back out to the server list.
+                context.push(
+                  '/hosts/workspaces',
+                  extra: WorkspacePickerArgs(
+                    host: host,
+                    instances: instances,
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+        GoRoute(
+          path: '/hosts/workspaces',
+          builder: (context, state) {
+            final args = state.extra;
+            if (args is! WorkspacePickerArgs) {
+              // Direct deep-link without state — bounce back to the picker.
+              return _MissingExtraScreen(
+                title: 'Workspaces',
+                message: 'No host selected.',
+                onBack: () => context.go('/servers'),
+              );
+            }
+            return Consumer(
+              builder: (context, ref, _) => WorkspacePickerScreen(
+                host: args.host,
+                instances: args.instances,
+                onActivated: (_) {
+                  // activeWorkspaceProvider already invalidated in-screen.
+                  context.go('/home');
                 },
               ),
             );
@@ -348,6 +403,52 @@ class _EditMissingExtraScreen extends StatelessWidget {
               const Text(
                 'No server selected.',
                 style: TextStyle(color: Colors.white, fontSize: 16),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: onBack,
+                child: const Text('Back to servers'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Generic "this route needs an `extra` that wasn't supplied" fallback, used by
+/// routes (e.g. the workspace picker) reached without their required state —
+/// typically a cold-start deep link.
+class _MissingExtraScreen extends StatelessWidget {
+  const _MissingExtraScreen({
+    required this.title,
+    required this.message,
+    required this.onBack,
+  });
+
+  final String title;
+  final String message;
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF1A1B26),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF1A1B26),
+        title: Text(title, style: const TextStyle(color: Colors.white)),
+        iconTheme: const IconThemeData(color: Colors.white),
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                message,
+                style: const TextStyle(color: Colors.white, fontSize: 16),
               ),
               const SizedBox(height: 16),
               ElevatedButton(

@@ -36,7 +36,10 @@ class ServersScreen extends ConsumerWidget {
           context.go('/home');
         }
       },
-      onAdd: () => context.push('/servers/add'),
+      // D2: the add entry point drives the host/workspace onboarding flow
+      // ([AddHostScreen]); D3 rewires the LIST + edit to the host/workspace
+      // store.
+      onAdd: () => context.push('/hosts/add'),
       onEdit: (server) => context.push('/servers/edit', extra: server),
     );
   }
