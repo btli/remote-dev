@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import '../../application/ports/secure_storage_port.dart';
+import '../../domain/auth_cookie.dart';
 
 /// Credentials returned by the system-browser CF Access login flow.
 ///
@@ -64,8 +67,22 @@ abstract final class MobileCredentialsKeys {
   /// Host-wide CF Access JWT. Logical key: `host.<hostId>.cfToken`.
   static const hostCfToken = 'cfToken';
 
+  /// Host-wide auth cookies (JSON array). Logical key: `host.<hostId>.authCookies`.
+  ///
+  /// Preferred over [hostCfToken] for new installs (OIDC + CF both use this).
+  /// Reads fall back to [hostCfToken] if this key is absent.
+  static const hostAuthCookies = 'authCookies';
+
   /// Per-workspace API key. Logical key: `workspace.<workspaceId>.apiKey`.
   static const workspaceApiKey = 'apiKey';
+
+  /// Per-workspace auth cookies (JSON array). Logical key:
+  /// `workspace.<workspaceId>.authCookies`.
+  ///
+  /// Preferred over a non-existent workspace cfToken for new installs.
+  /// No legacy fallback exists for workspace cookies (there was never a
+  /// workspace-scoped cfToken).
+  static const workspaceAuthCookies = 'authCookies';
 }
 
 /// Thin typed wrapper around [SecureStoragePort] that knows the
@@ -173,6 +190,43 @@ class MobileCredentialsStore {
   Future<String?> getHostCfToken(String hostId) =>
       _storage.read(_hostNs(hostId), MobileCredentialsKeys.hostCfToken);
 
+  /// Persist [cookies] as a JSON array at `host.<hostId>.authCookies`.
+  Future<void> setHostAuthCookies(String hostId, List<AuthCookie> cookies) =>
+      _storage.write(
+        _hostNs(hostId),
+        MobileCredentialsKeys.hostAuthCookies,
+        jsonEncode(cookies.map((c) => c.toJson()).toList()),
+      );
+
+  /// Read the host's auth cookies.
+  ///
+  /// Priority:
+  ///   1. `host.<hostId>.authCookies` (new-style JSON array).
+  ///   2. Legacy fallback: `host.<hostId>.cfToken` → synthesised as
+  ///      `[AuthCookie(name:"CF_Authorization", value: token, path:"/")]`.
+  ///   3. Empty list if neither key exists.
+  Future<List<AuthCookie>> getHostAuthCookies(String hostId) async {
+    final raw =
+        await _storage.read(_hostNs(hostId), MobileCredentialsKeys.hostAuthCookies);
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final list = jsonDecode(raw) as List;
+        return list
+            .cast<Map<String, dynamic>>()
+            .map(AuthCookie.fromJson)
+            .toList();
+      } catch (_) {
+        // Malformed JSON — fall through to legacy.
+      }
+    }
+    // Legacy fallback: cfToken.
+    final cfToken = await getHostCfToken(hostId);
+    if (cfToken != null && cfToken.isNotEmpty) {
+      return [AuthCookie(name: 'CF_Authorization', value: cfToken, path: '/')];
+    }
+    return const [];
+  }
+
   /// Best-effort clear of every credential under this host's namespace.
   Future<void> clearHost(String hostId) => _storage.deleteAll(_hostNs(hostId));
 
@@ -187,6 +241,41 @@ class MobileCredentialsStore {
         _workspaceNs(workspaceId),
         MobileCredentialsKeys.workspaceApiKey,
       );
+
+  /// Persist [cookies] as a JSON array at `workspace.<workspaceId>.authCookies`.
+  Future<void> setWorkspaceAuthCookies(
+    String workspaceId,
+    List<AuthCookie> cookies,
+  ) =>
+      _storage.write(
+        _workspaceNs(workspaceId),
+        MobileCredentialsKeys.workspaceAuthCookies,
+        jsonEncode(cookies.map((c) => c.toJson()).toList()),
+      );
+
+  /// Read the workspace's auth cookies.
+  ///
+  /// Reads `workspace.<workspaceId>.authCookies`. No legacy workspace-level
+  /// cfToken key ever existed, so there is no fallback — returns `[]` when
+  /// absent.
+  Future<List<AuthCookie>> getWorkspaceAuthCookies(String workspaceId) async {
+    final raw = await _storage.read(
+      _workspaceNs(workspaceId),
+      MobileCredentialsKeys.workspaceAuthCookies,
+    );
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final list = jsonDecode(raw) as List;
+        return list
+            .cast<Map<String, dynamic>>()
+            .map(AuthCookie.fromJson)
+            .toList();
+      } catch (_) {
+        return const [];
+      }
+    }
+    return const [];
+  }
 
   /// Best-effort clear of every credential under this workspace's namespace.
   Future<void> clearWorkspace(String workspaceId) =>
