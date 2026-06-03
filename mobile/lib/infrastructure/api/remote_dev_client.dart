@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import '../../application/ports/api_client_port.dart';
 import '../../application/ports/secure_storage_port.dart';
 import '../auth/mobile_credentials.dart';
+import '../url/workspace_urls.dart';
 import 'cf_auth_interceptor.dart';
 
 class RemoteDevClient implements ApiClientPort {
@@ -37,10 +38,12 @@ class RemoteDevClient implements ApiClientPort {
   /// per-workspace ([MobileCredentialsStore.getWorkspaceApiKey]).
   ///
   /// [origin] is `scheme://host[:port]` (no trailing slash); [basePath] is
-  /// `''` or `/<slug>`. Per Task A2 scope, [basePath] is a stored field only —
-  /// request paths are NOT yet prefixed with it (that is Task B). For a
-  /// migrated single-workspace config [basePath] is `''`, so the effective
-  /// requests are byte-identical to the pre-migration client.
+  /// `''` or `/<slug>`. Every request path is prefixed with [basePath] (via
+  /// [WorkspaceUrls.api]) while `Dio.baseUrl` stays the bare [origin] — so
+  /// with basePath `/demo`, `get('/api/sessions')` hits
+  /// `<origin>/demo/api/sessions`. For a migrated single-workspace config
+  /// [basePath] is `''`, so the effective requests are byte-identical to the
+  /// pre-migration client.
   RemoteDevClient.forWorkspace({
     required String origin,
     required this.basePath,
@@ -55,7 +58,9 @@ class RemoteDevClient implements ApiClientPort {
         _dio = dio ?? Dio(),
         _credentials = MobileCredentialsStore(storage) {
     _configure(
-      // baseUrl stays at the bare origin for now — see Task B note above.
+      // baseUrl stays at the bare origin; basePath is applied per-request
+      // via [_path] so a single Dio instance serves a path-prefixed
+      // workspace without rewriting its baseUrl.
       baseUrl: origin,
       scopeId: workspaceId,
       authReader: (_) async {
@@ -74,7 +79,8 @@ class RemoteDevClient implements ApiClientPort {
   final Uri serverOrigin;
   final String serverId;
 
-  /// `''` or `/<slug>`. Stored for Task B; not yet applied to request paths.
+  /// `''` or `/<slug>`. Prefixed onto every request path via [_path] so
+  /// requests for a path-prefixed workspace hit `<origin><basePath><path>`.
   final String basePath;
 
   final Dio _dio;
@@ -105,26 +111,39 @@ class RemoteDevClient implements ApiClientPort {
     );
   }
 
+  /// Prefixes the workspace [basePath] onto a request [path]. `Dio.baseUrl`
+  /// is the bare origin, so the effective URL is `<origin><basePath><path>`.
+  /// With basePath `''` this returns [path] unchanged (modulo a guaranteed
+  /// leading slash), keeping single-workspace requests byte-identical.
+  ///
+  /// Callers pass paths that may carry a query string (e.g.
+  /// `/api/channels?nodeId=x`); since the basePath is only ever prepended to
+  /// the front, the query is preserved verbatim.
+  String _path(String path) =>
+      // `api()` only consumes basePath + path; origin is irrelevant here
+      // (Dio.baseUrl already supplies it), so we pass an empty origin.
+      WorkspaceUrls('', basePath).api(path);
+
   @override
   Future<dynamic> get(String path) async {
-    final response = await _dio.get<dynamic>(path);
+    final response = await _dio.get<dynamic>(_path(path));
     return response.data;
   }
 
   @override
   Future<dynamic> post(String path, {Map<String, dynamic>? body}) async {
-    final response = await _dio.post<dynamic>(path, data: body);
+    final response = await _dio.post<dynamic>(_path(path), data: body);
     return response.data;
   }
 
   @override
   Future<dynamic> patch(String path, {Map<String, dynamic>? body}) async {
-    final response = await _dio.patch<dynamic>(path, data: body);
+    final response = await _dio.patch<dynamic>(_path(path), data: body);
     return response.data;
   }
 
   @override
   Future<void> delete(String path, {Map<String, dynamic>? body}) async {
-    await _dio.delete<dynamic>(path, data: body);
+    await _dio.delete<dynamic>(_path(path), data: body);
   }
 }
