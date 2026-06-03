@@ -76,27 +76,46 @@ function validateSessionName(name: string): boolean {
 }
 
 /**
- * Validate a path to prevent path traversal attacks.
- * Must be absolute and within allowed directories.
+ * Validate a working directory for a new terminal session.
+ *
+ * Canonicalizes the path (neutralizing .., ., duplicate slashes) and verifies
+ * the directory exists before passing it to `tmux new-session -c`. A missing or
+ * invalid path falls back to the shell's default start directory (with a
+ * warning) rather than aborting session creation.
+ *
+ * We intentionally do NOT restrict to $HOME: instance/container workspaces
+ * routinely live outside the server process's HOME (which may also be unset),
+ * and a terminal already grants full shell access, so a cwd allowlist would add
+ * no security — only the silent "starts in home" breakage this avoids. The
+ * existence check is best-effort (the dir could change before tmux uses it);
+ * worst case tmux falls back to its default dir, the same as today.
  */
 function validatePath(path: string | undefined): string | undefined {
   if (!path) return undefined;
 
-  // Must be absolute path
-  if (!path.startsWith("/")) return undefined;
+  // Must be an absolute path
+  if (!path.startsWith("/")) {
+    log.warn("Ignoring non-absolute working directory", { path });
+    return undefined;
+  }
 
-  // Resolve to canonical path (removes .., ., etc.)
+  // Canonicalize (collapses .., ., duplicate slashes) — neutralizes traversal.
   const resolved = pathResolve(path);
 
-  // Must be within home directory or /tmp
-  const home = process.env.HOME || "/tmp";
-  if (!resolved.startsWith(home) && !resolved.startsWith("/tmp")) {
+  // statSync follows symlinks, so a symlink to a directory is accepted (desired
+  // for worktree/workspace layouts). Missing or non-directory → fall back.
+  try {
+    if (!fs.statSync(resolved).isDirectory()) {
+      log.warn("Working directory is not a directory; using default start dir", { path: resolved });
+      return undefined;
+    }
+  } catch {
+    log.warn("Working directory does not exist; using default start dir", { path: resolved });
     return undefined;
   }
 
   return resolved;
 }
-
 
 interface TerminalConnection {
   connectionId: string;

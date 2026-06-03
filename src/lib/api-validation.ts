@@ -10,7 +10,13 @@ import { validateEnvVarKey, validateEnvVarValue } from "@/types/environment";
 
 /**
  * Validate a project path to prevent path traversal attacks.
- * SECURITY: Ensures paths are within allowed directories.
+ * SECURITY: Ensures paths are within allowed directories ($HOME or /tmp).
+ *
+ * This confines the HTTP file endpoints (/api/files/*) and file-viewer paths to
+ * the user's own files — unlike a terminal session, those endpoints have no
+ * other sandbox, so the allowlist is load-bearing here. Terminal *working
+ * directories* use a separate, permissive validator (validatePath in
+ * src/server/terminal.ts), since a shell already grants full filesystem access.
  *
  * @param path - The path to validate
  * @returns Resolved path if valid, undefined if invalid
