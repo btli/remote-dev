@@ -222,6 +222,29 @@ export const schema: SchemaDefinition = [
     ],
   },
   {
+    exportName: "portClaims",
+    sqlName: "port_claim",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
+      { field: "sessionId", dbName: "session_id", kind: "text", notNull: true, references: { table: "terminalSessions", column: "id", onDelete: "cascade" } },
+      { field: "userId", dbName: "user_id", kind: "text", notNull: true, references: { table: "users", column: "id", onDelete: "cascade" } },
+      { field: "projectId", dbName: "project_id", kind: "text", references: { table: "projects", column: "id", onDelete: "cascade" } },
+      { field: "port", dbName: "port", kind: "integer", notNull: true },
+      { field: "variableName", dbName: "variable_name", kind: "text", notNull: true },
+      { field: "isListening", dbName: "is_listening", kind: "boolean" },
+      { field: "pid", dbName: "pid", kind: "integer" },
+      { field: "expiresAt", dbName: "expires_at", kind: "timestampMs", notNull: true },
+      { field: "claimedAt", dbName: "claimed_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+      { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "port_claim_session_idx", columns: ["sessionId"] },
+      { name: "port_claim_user_idx", columns: ["userId"] },
+      { name: "port_claim_port_idx", columns: ["port"] },
+      { name: "port_claim_session_port_unique", columns: ["sessionId","port"], unique: true },
+    ],
+  },
+  {
     exportName: "sessionTemplates",
     sqlName: "session_template",
     columns: [

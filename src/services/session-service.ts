@@ -765,6 +765,41 @@ export async function createSessionWithDedupFlag(
       })
       .returning();
 
+    // Claim the project's registered ports for this live session. The runtime
+    // port-proxy data-plane reads these claims to decide which ports are
+    // reachable. Best-effort: claiming must NEVER fail or block session
+    // creation, so the whole thing is wrapped and only logged on failure.
+    // Dynamic imports avoid an import cycle — session-service is heavily
+    // imported, and the port services transitively pull it back in.
+    if (input.projectId) {
+      try {
+        const { getPortsForFolder } = await import(
+          "./port-registry-service"
+        );
+        const regPorts = await getPortsForFolder(input.projectId, userId);
+        if (regPorts.length > 0) {
+          const { claimPortsForSession } = await import(
+            "./port-claims-service"
+          );
+          await claimPortsForSession(
+            sessionId,
+            userId,
+            input.projectId,
+            regPorts.map((p) => ({
+              port: p.port,
+              variableName: p.variableName,
+            }))
+          );
+        }
+      } catch (error) {
+        log.warn("Failed to claim ports for session", {
+          sessionId,
+          projectId: input.projectId,
+          error: String(error),
+        });
+      }
+    }
+
     return { session: mapDbSessionToSession(session), reused: false };
   } catch (error) {
     // F7: race handling. When two concurrent createSession calls both pass
@@ -1386,6 +1421,19 @@ export async function closeSession(
         eq(terminalSessions.userId, userId)
       )
     );
+
+  // Release runtime port claims held by this session. closeSession only marks
+  // status=closed (it does not delete the row), so the FK cascade never fires
+  // here — this explicit release is what actually frees the claimed ports.
+  try {
+    const { releasePortsForSession } = await import("./port-claims-service");
+    await releasePortsForSession(sessionId);
+  } catch (error) {
+    log.error("Failed to release port claims", {
+      sessionId,
+      error: String(error),
+    });
+  }
 
   // Revoke agent-session API key so it can't be used after close
   try {

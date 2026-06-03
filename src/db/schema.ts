@@ -21,6 +21,7 @@ export const {
   githubRepositories,
   githubAccountMetadata,
   portRegistry,
+  portClaims,
   sessionTemplates,
   sessionRecordings,
   apiKeys,

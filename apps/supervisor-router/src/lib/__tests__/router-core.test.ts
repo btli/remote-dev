@@ -286,6 +286,68 @@ describe("decideRoute — instance WebSocket proxy", () => {
   });
 });
 
+describe("decideRoute — port-proxy WebSocket (HMR/live-reload)", () => {
+  it("/<slug>/proxy/<port>/… upgrade (ready) → proxy-ws to the INSTANCE :6002 with UNCHANGED path", () => {
+    const d = decideRoute("/alpha/proxy/6000/_hmr", true, allowlistOf("alpha"), SUP);
+    expect(d).toEqual({
+      kind: "proxy-ws",
+      upstreamWsBase: "ws://rdv.rdv-alpha.svc.cluster.local:6002",
+      path: "/alpha/proxy/6000/_hmr",
+      slug: "alpha",
+    });
+  });
+
+  it("bare /<slug>/proxy/<port> upgrade (no trailing path) → proxy-ws (the (?:/|$) boundary matches)", () => {
+    const d = decideRoute("/alpha/proxy/6000", true, allowlistOf("alpha"), SUP);
+    expect(d).toEqual({
+      kind: "proxy-ws",
+      upstreamWsBase: "ws://rdv.rdv-alpha.svc.cluster.local:6002",
+      path: "/alpha/proxy/6000",
+      slug: "alpha",
+    });
+  });
+
+  it("the SAME /<slug>/proxy/<port>/… path WITHOUT upgrade → proxy-http (regression guard: B1 HTTP unchanged)", () => {
+    const d = decideRoute("/alpha/proxy/6000/_hmr", false, allowlistOf("alpha"), SUP);
+    expect(d).toEqual({
+      kind: "proxy-http",
+      upstreamBase: "http://rdv.rdv-alpha.svc.cluster.local:6001",
+      path: "/alpha/proxy/6000/_hmr",
+      slug: "alpha",
+    });
+  });
+
+  it("a port-proxy WS upgrade for an unknown/not-ready slug falls through to the Supervisor (allowlist gates instances)", () => {
+    const d = decideRoute("/ghost/proxy/6000/_hmr", true, allowlistOf("alpha"), SUP);
+    expect(d).toEqual({
+      kind: "proxy-ws",
+      upstreamWsBase: SUP.wsBase,
+      path: "/ghost/proxy/6000/_hmr",
+      slug: "",
+    });
+  });
+
+  it("a non-numeric proxy segment under upgrade is NOT a port-proxy WS → HTTP proxy to the instance (only \\d+ matches)", () => {
+    const d = decideRoute("/alpha/proxy/notaport", true, allowlistOf("alpha"), SUP);
+    expect(d).toMatchObject({
+      kind: "proxy-http",
+      upstreamBase: "http://rdv.rdv-alpha.svc.cluster.local:6001",
+      path: "/alpha/proxy/notaport",
+      slug: "alpha",
+    });
+  });
+
+  it("/<slug>/ws upgrade still proxies to the instance ws (the new rule does not shadow it)", () => {
+    const d = decideRoute("/alpha/ws", true, allowlistOf("alpha"), SUP);
+    expect(d).toEqual({
+      kind: "proxy-ws",
+      upstreamWsBase: "ws://rdv.rdv-alpha.svc.cluster.local:6002",
+      path: "/alpha/ws",
+      slug: "alpha",
+    });
+  });
+});
+
 describe("decideRoute — uses the entry's own ports/namespace", () => {
   it("honours non-default ports/namespace from the route entry", () => {
     const custom: AllowlistLookup = {

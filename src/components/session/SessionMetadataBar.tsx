@@ -7,6 +7,7 @@ import {
   ArrowDown,
   GitPullRequest,
   Radio,
+  ExternalLink,
 } from "lucide-react";
 import { useSessionGitStatus } from "@/hooks/useSessionGitStatus";
 import { usePortContext } from "@/contexts/PortContext";
@@ -16,14 +17,36 @@ import { AGENT_VISUALS } from "./project-tree/agentVisuals";
 interface SessionMetadataBarProps {
   session: TerminalSession;
   isCollapsed?: boolean;
+  /**
+   * Optional override (B2): when provided, a live/listening port chip calls
+   * `onOpenPort(port)` instead of the default behavior. The default — used by
+   * every current call site — consumes `getProxyUrl` from `PortContext` and
+   * opens the in-pod proxy URL in a new tab.
+   */
+  onOpenPort?: (port: number) => void;
 }
 
 export function SessionMetadataBar({
   session,
   isCollapsed,
+  onOpenPort,
 }: SessionMetadataBarProps) {
   const { gitStatus } = useSessionGitStatus(session.id, !isCollapsed);
-  const { allocations } = usePortContext();
+  const { allocations, isPortActive, getProxyUrl } = usePortContext();
+
+  // Open a live port via the seam. Prefer an explicit `onOpenPort` override (B2);
+  // otherwise build the proxy URL from the context and open it in a new tab.
+  // `noopener,noreferrer` so the proxied app can't reach back via `window.opener`.
+  const handleOpenPort = (port: number) => {
+    if (onOpenPort) {
+      onOpenPort(port);
+      return;
+    }
+    const url = getProxyUrl?.(port);
+    if (url) {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+  };
 
   // Get ports for this session's project
   const sessionPorts = session.projectId
@@ -98,14 +121,51 @@ export function SessionMetadataBar({
       )}
 
       {/* Port chips */}
-      {sessionPorts.map((port) => (
-        <span
-          key={port.port}
-          className="inline-flex items-center gap-0.5 text-[10px] text-blue-400 bg-blue-400/10 rounded px-1 py-0.5"
-        >
-          <Radio className="w-2.5 h-2.5" />:{port.port}
-        </span>
-      ))}
+      {sessionPorts.map((port) => {
+        // `isPortActive` may be absent under stubbed contexts; treat as idle.
+        const active = isPortActive?.(port.port) ?? false;
+        // Openable only when live AND a real target exists: an explicit
+        // `onOpenPort` override, or a non-null `getProxyUrl` for this port.
+        const canOpen =
+          active && (Boolean(onOpenPort) || getProxyUrl?.(port.port) != null);
+
+        const chipClasses = cn(
+          "inline-flex items-center gap-0.5 text-[10px] rounded px-1 py-0.5",
+          active
+            ? "text-emerald-400 bg-emerald-400/10"
+            : "text-muted-foreground/70 bg-muted/30"
+        );
+
+        if (canOpen) {
+          return (
+            <button
+              key={port.port}
+              type="button"
+              onClick={() => handleOpenPort(port.port)}
+              title={`Open port ${port.port}`}
+              aria-label={`Open port ${port.port}`}
+              className={cn(
+                chipClasses,
+                "hover:bg-emerald-400/20 transition-colors",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400/50"
+              )}
+            >
+              <Radio className="w-2.5 h-2.5" />:{port.port}
+              <ExternalLink className="w-2 h-2" />
+            </button>
+          );
+        }
+
+        return (
+          <span
+            key={port.port}
+            className={chipClasses}
+            title={active ? `Port ${port.port} active` : `Port ${port.port} idle`}
+          >
+            <Radio className="w-2.5 h-2.5" />:{port.port}
+          </span>
+        );
+      })}
     </div>
   );
 }

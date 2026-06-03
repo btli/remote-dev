@@ -298,6 +298,65 @@ External (through the tunnel + Cloudflare Access — one app):
 
 ---
 
+## In-pod port proxy
+
+Each instance can expose a dev server it is running (a Vite/Next/etc. process
+listening on `127.0.0.1:<port>` inside its **own** pod) to the user's browser,
+at `https://<host>/<slug>/proxy/<port>/…`. No per-instance configuration is
+required — the capability ships with the instance image and the router.
+
+**How it works (request path):**
+
+1. The router matches `/<slug>/*` and forwards it to the instance unchanged
+   (same as any other instance traffic). For a WebSocket **upgrade** on a
+   `^/<slug>/proxy/<port>(/|$)` path it uses its single `proxy-ws` rule and
+   forwards to the instance's **terminal server** (`wsPort`); everything else
+   goes to the instance's HTTP port.
+2. Inside the pod, Next.js strips the `/<slug>` basePath and the route handler
+   (`src/app/proxy/[port]/[...path]`) `fetch`es `http://127.0.0.1:<port>/…`.
+   WebSocket upgrades are bridged by the terminal server to
+   `ws://127.0.0.1:<port>/…` (HMR / live-reload).
+3. Responses are rewritten so a path-based-proxied app works: a `<base>` tag is
+   injected into HTML, and `Location`/`Set-Cookie` paths are re-homed under
+   `/<slug>/proxy/<port>/`.
+
+**Operational notes:**
+
+- **Loopback only — no NetworkPolicy needed.** The proxy connects to
+  `127.0.0.1:<port>` *inside the same pod* as the Next.js app, so the traffic is
+  pure intra-pod loopback. It never crosses a pod boundary, so there is **no
+  east-west / pod-IP reachability concern and no NetworkPolicy to author** for
+  this feature. (A pod-IP-based proxy could not reach a `localhost`-bound dev
+  server anyway — loopback is what makes the common case work.)
+- **Port-scan tools are baked into the instance image.** Live "is anything
+  listening?" detection (used by `/api/ports`, `/api/ports/proxyable`, and the
+  UI's port chips) shells out to `lsof` (primary) with `ps` (`procps`) and `ss`
+  (`iproute2`) fallbacks. The instance image installs all three; without them
+  the listening signal would silently return empty on a real instance.
+- **Allowlist.** Only ports in `[1024, 65535]` are proxyable; privileged
+  (`< 1024`) and the instance's own `6001`/`6002` are always blocked
+  (`403`/`502` with a plain-text message). The router only routes ready slugs.
+- **Auth** is owner-by-construction: the request has already cleared the single
+  Cloudflare Access app (or instance OIDC/credentials), and an instance DB only
+  contains the users it was seeded with (`AUTHORIZED_USERS`), so any
+  authenticated caller is an authorized owner. A stricter
+  *requesting-email == instance-owner* gate was **assessed and deliberately not
+  implemented** (B4): there is no single "owner email" identity to enforce
+  against (instances carry a multi-value `AUTHORIZED_USERS` allow-list, not one
+  owner; the route sees only `userId`), and single-server / localhost
+  (`RDV_BASE_PATH=""`) has no owner concept at all, so a strict gate would risk
+  breaking that case for no gain. It remains available as future defense-in-depth
+  should a per-instance owner-email config ever be added.
+
+**Limitation.** Path-based proxying only fixes *relative* URLs (via the `<base>`
+tag). Apps that hardcode **absolute** URLs in JS (`fetch('/api/x')`) or build
+WebSocket URLs from `location` will still hit the bare host and break. Run such
+dev servers under a matching base path (e.g. Vite
+`--base=/<slug>/proxy/<port>/`, Next.js `basePath`); the clean long-term fix is
+the deferred per-port **subdomain** scheme.
+
+---
+
 ## Rollout + rollback
 
 - **New version:** build/push new `:$SHA` images, then patch the two control-

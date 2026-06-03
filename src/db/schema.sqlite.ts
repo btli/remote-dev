@@ -180,6 +180,29 @@ export const portRegistry = sqliteTable(
   ]
 );
 
+export const portClaims = sqliteTable(
+  "port_claim",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    sessionId: text("session_id").notNull().references(() => terminalSessions.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    port: integer("port").notNull(),
+    variableName: text("variable_name").notNull(),
+    isListening: integer("is_listening", { mode: "boolean" }),
+    pid: integer("pid"),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    claimedAt: integer("claimed_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("port_claim_session_idx").on(table.sessionId),
+    index("port_claim_user_idx").on(table.userId),
+    index("port_claim_port_idx").on(table.port),
+    uniqueIndex("port_claim_session_port_unique").on(table.sessionId, table.port),
+  ]
+);
+
 export const sessionTemplates = sqliteTable(
   "session_template",
   {
