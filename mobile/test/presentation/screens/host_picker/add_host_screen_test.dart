@@ -171,6 +171,7 @@ void main() {
           cfToken: 'host-jwt',
           email: 'a@b.com',
           userId: 'u1',
+          authCookies: const [],
         ),
         apiFactory: (host) => _apiWithAdapter(
           host,
@@ -228,6 +229,7 @@ void main() {
           cfToken: 'host-jwt',
           email: 'a@b.com',
           userId: 'u1',
+          authCookies: const [],
         ),
         instanceLogin: (serverUrl) async => const MobileCredentials(
           apiKey: 'sk-single',
@@ -290,6 +292,7 @@ void main() {
           cfToken: 'host-jwt',
           email: '',
           userId: '',
+          authCookies: const [],
         ),
         apiFactory: (host) => _apiWithAdapter(
           host,
@@ -337,7 +340,12 @@ void main() {
         tester,
         hostLogin: (origin) async {
           hostLoginCalls += 1;
-          return HostCallback(cfToken: 't', email: '', userId: '');
+          return HostCallback(
+            cfToken: 't',
+            email: '',
+            userId: '',
+            authCookies: const [],
+          );
         },
         apiFactory: (host) => _apiWithAdapter(
           host,
