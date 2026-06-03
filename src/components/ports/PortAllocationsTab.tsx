@@ -16,7 +16,7 @@ import {
   Search,
   ExternalLink,
   Circle,
-  FolderOpen,
+  Settings2,
 } from "lucide-react";
 import { usePortContext } from "@/contexts/PortContext";
 import type { PortAllocationWithFolder } from "@/types/port";
@@ -24,6 +24,13 @@ import type { PortAllocationWithFolder } from "@/types/port";
 interface PortAllocationsTabProps {
   selectedFolderId: string | null;
   onSelectFolder: (folderId: string | null) => void;
+  /**
+   * Seam (A5): when provided, the open-port action calls this for a listening
+   * port. Track B (B2 / remote-dev-kmrx) passes a handler that opens the in-pod
+   * proxy URL. When omitted, the action falls back to `getProxyUrl(port)` and
+   * stays disabled while that returns `null` (the current A5 stub).
+   */
+  onOpenPort?: (port: number) => void;
 }
 
 type SortField = "port" | "folder" | "variable";
@@ -32,8 +39,9 @@ type SortDirection = "asc" | "desc";
 export function PortAllocationsTab({
   selectedFolderId,
   onSelectFolder,
+  onOpenPort,
 }: PortAllocationsTabProps) {
-  const { allocations, isPortActive } = usePortContext();
+  const { allocations, isPortActive, getProxyUrl } = usePortContext();
   // folders context not needed since we get folder names from allocations
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -126,6 +134,23 @@ export function PortAllocationsTab({
       new CustomEvent("open-folder-preferences", { detail: { folderId } })
     );
   }, []);
+
+  // Open the port via the seam. Prefer an explicit `onOpenPort` handler (B2);
+  // otherwise this is inert until `getProxyUrl` returns a real URL (A5 stub
+  // returns null, so the row's button stays disabled).
+  const handleOpenPort = useCallback(
+    (port: number) => {
+      if (onOpenPort) {
+        onOpenPort(port);
+        return;
+      }
+      const url = getProxyUrl?.(port);
+      if (url) {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+    },
+    [onOpenPort, getProxyUrl]
+  );
 
   if (allocations.length === 0) {
     return (
@@ -239,14 +264,24 @@ export function PortAllocationsTab({
             No matching allocations
           </div>
         ) : (
-          filteredAllocations.map((alloc) => (
-            <PortAllocationRow
-              key={alloc.id}
-              allocation={alloc}
-              isActive={isPortActive(alloc.port)}
-              onOpenFolderPrefs={handleOpenFolderPrefs}
-            />
-          ))
+          filteredAllocations.map((alloc) => {
+            const active = isPortActive(alloc.port);
+            // The open action is available only for a live/listening port, and
+            // only when a real target exists: either an explicit `onOpenPort`
+            // handler (B2) or a non-null `getProxyUrl` (still the A5 stub → null).
+            const canOpen =
+              active && (Boolean(onOpenPort) || getProxyUrl?.(alloc.port) != null);
+            return (
+              <PortAllocationRow
+                key={alloc.id}
+                allocation={alloc}
+                isActive={active}
+                canOpen={canOpen}
+                onOpenPort={handleOpenPort}
+                onOpenFolderPrefs={handleOpenFolderPrefs}
+              />
+            );
+          })
         )}
       </div>
 
@@ -265,12 +300,17 @@ export function PortAllocationsTab({
 interface PortAllocationRowProps {
   allocation: PortAllocationWithFolder;
   isActive: boolean;
+  /** Whether the open-port action is currently actionable (live + has a target). */
+  canOpen: boolean;
+  onOpenPort: (port: number) => void;
   onOpenFolderPrefs: (folderId: string) => void;
 }
 
 function PortAllocationRow({
   allocation,
   isActive,
+  canOpen,
+  onOpenPort,
   onOpenFolderPrefs,
 }: PortAllocationRowProps) {
   return (
@@ -292,7 +332,7 @@ function PortAllocationRow({
 
       {/* Folder */}
       <div className="flex-1 flex items-center gap-1.5">
-        <FolderOpen className="w-3.5 h-3.5 text-muted-foreground" />
+        <Network className="w-3.5 h-3.5 text-muted-foreground" />
         <span className="text-xs text-muted-foreground truncate">
           {allocation.folderName}
         </span>
@@ -317,15 +357,35 @@ function PortAllocationRow({
       </div>
 
       {/* Actions */}
-      <div className="w-8">
+      <div className="flex items-center gap-0.5">
+        {/* Open the running app via the proxy (only meaningful when live). */}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => onOpenPort(allocation.port)}
+          disabled={!canOpen}
+          className="h-6 w-6 text-muted-foreground hover:text-primary disabled:opacity-30"
+          title={
+            canOpen
+              ? `Open port ${allocation.port}`
+              : isActive
+                ? "Open is not available yet"
+                : "Port is idle"
+          }
+          aria-label={`Open port ${allocation.port}`}
+        >
+          <ExternalLink className="w-3.5 h-3.5" />
+        </Button>
+        {/* Edit this port's environment variable in folder preferences. */}
         <Button
           variant="ghost"
           size="icon"
           onClick={() => onOpenFolderPrefs(allocation.folderId)}
           className="h-6 w-6 text-muted-foreground hover:text-primary"
           title="Edit in folder preferences"
+          aria-label="Edit in folder preferences"
         >
-          <ExternalLink className="w-3.5 h-3.5" />
+          <Settings2 className="w-3.5 h-3.5" />
         </Button>
       </div>
     </div>

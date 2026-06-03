@@ -7,6 +7,7 @@ import {
   ArrowDown,
   GitPullRequest,
   Radio,
+  ExternalLink,
 } from "lucide-react";
 import { useSessionGitStatus } from "@/hooks/useSessionGitStatus";
 import { usePortContext } from "@/contexts/PortContext";
@@ -16,14 +17,21 @@ import { AGENT_VISUALS } from "./project-tree/agentVisuals";
 interface SessionMetadataBarProps {
   session: TerminalSession;
   isCollapsed?: boolean;
+  /**
+   * Seam (A5): when provided, a live/listening port chip becomes a clickable
+   * button that calls `onOpenPort(port)`. Track B (B2 / remote-dev-kmrx) passes
+   * a handler that opens the in-pod proxy URL; until then the chip stays inert.
+   */
+  onOpenPort?: (port: number) => void;
 }
 
 export function SessionMetadataBar({
   session,
   isCollapsed,
+  onOpenPort,
 }: SessionMetadataBarProps) {
   const { gitStatus } = useSessionGitStatus(session.id, !isCollapsed);
-  const { allocations } = usePortContext();
+  const { allocations, isPortActive } = usePortContext();
 
   // Get ports for this session's project
   const sessionPorts = session.projectId
@@ -98,14 +106,48 @@ export function SessionMetadataBar({
       )}
 
       {/* Port chips */}
-      {sessionPorts.map((port) => (
-        <span
-          key={port.port}
-          className="inline-flex items-center gap-0.5 text-[10px] text-blue-400 bg-blue-400/10 rounded px-1 py-0.5"
-        >
-          <Radio className="w-2.5 h-2.5" />:{port.port}
-        </span>
-      ))}
+      {sessionPorts.map((port) => {
+        // `isPortActive` may be absent under stubbed contexts; treat as idle.
+        const active = isPortActive?.(port.port) ?? false;
+        const canOpen = active && Boolean(onOpenPort);
+
+        const chipClasses = cn(
+          "inline-flex items-center gap-0.5 text-[10px] rounded px-1 py-0.5",
+          active
+            ? "text-emerald-400 bg-emerald-400/10"
+            : "text-muted-foreground/70 bg-muted/30"
+        );
+
+        if (canOpen) {
+          return (
+            <button
+              key={port.port}
+              type="button"
+              onClick={() => onOpenPort?.(port.port)}
+              title={`Open port ${port.port}`}
+              aria-label={`Open port ${port.port}`}
+              className={cn(
+                chipClasses,
+                "hover:bg-emerald-400/20 transition-colors",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400/50"
+              )}
+            >
+              <Radio className="w-2.5 h-2.5" />:{port.port}
+              <ExternalLink className="w-2 h-2" />
+            </button>
+          );
+        }
+
+        return (
+          <span
+            key={port.port}
+            className={chipClasses}
+            title={active ? `Port ${port.port} active` : `Port ${port.port} idle`}
+          >
+            <Radio className="w-2.5 h-2.5" />:{port.port}
+          </span>
+        );
+      })}
     </div>
   );
 }

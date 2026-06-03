@@ -180,6 +180,11 @@ export interface PortMonitoringConfig {
 export interface PortState {
   /** All port allocations for the user */
   allocations: PortAllocationWithFolder[];
+  /**
+   * Live proxyable ports from `GET /api/ports/proxyable` (the A4 seam).
+   * Drives the active/idle distinction and the "open" affordances in the UI.
+   */
+  livePorts: ProxyablePort[];
   /** Ports currently listening on localhost */
   activePorts: Set<number>;
   /** Detected frameworks per folder */
@@ -200,6 +205,17 @@ export interface PortState {
 export interface PortContextValue extends PortState {
   /** Refresh all port allocations */
   refreshAllocations: () => Promise<void>;
+  /** Refresh the live proxyable-ports set from `GET /api/ports/proxyable`. */
+  refreshLivePorts: () => Promise<void>;
+  /**
+   * Build the in-pod proxy URL for a port (the seam consumed by chips,
+   * allocation rows, and the mobile Ports screen).
+   *
+   * STUB in this PR (A5): always returns `null`, so every "open" affordance
+   * renders inert/disabled. Track B (issue B2 / remote-dev-kmrx) implements
+   * the real path — `prefixPath('/proxy/<port>/')` with the runtime base path.
+   */
+  getProxyUrl: (port: number) => string | null;
   /** Detect frameworks for a folder */
   detectFrameworks: (folderId: string, workingDirectory: string | null) => Promise<DetectedFramework[]>;
   /** Detect runtime for a folder */

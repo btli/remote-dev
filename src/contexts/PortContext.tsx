@@ -17,6 +17,8 @@ import type {
   PortStatus,
   PortMonitoringConfig,
   PortContextValue,
+  ProxyablePort,
+  ProxyablePortsResponse,
 } from "@/types/port";
 
 // ============================================================================
@@ -41,6 +43,7 @@ const DEFAULT_MONITORING_CONFIG: PortMonitoringConfig = {
 export function PortProvider({ children }: PortProviderProps) {
   // State
   const [allocations, setAllocations] = useState<PortAllocationWithFolder[]>([]);
+  const [livePorts, setLivePorts] = useState<ProxyablePort[]>([]);
   const [activePorts, setActivePorts] = useState<Set<number>>(new Set());
   const [frameworks, setFrameworks] = useState<Map<string, DetectedFramework[]>>(
     new Map()
@@ -88,6 +91,38 @@ export function PortProvider({ children }: PortProviderProps) {
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load ports");
+    }
+  }, []);
+
+  /**
+   * Refresh the live proxyable-ports set from the A4 seam.
+   *
+   * This is the authoritative source of "what is actually listening / claimed"
+   * for this instance. We mirror the listening subset into `activePorts` so the
+   * existing `isPortActive(port)` query reflects real runtime state without a
+   * second polling mechanism.
+   */
+  const refreshLivePorts = useCallback(async () => {
+    try {
+      const response = await apiFetch("/api/ports/proxyable", {
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          // Not authenticated - expected during initial load
+          return;
+        }
+        throw new Error("Failed to fetch proxyable ports");
+      }
+
+      const data: ProxyablePortsResponse = await response.json();
+      const ports = data.ports ?? [];
+
+      setLivePorts(ports);
+    } catch (err) {
+      // Non-fatal: keep prior live data. Surface only if nothing else has.
+      console.error("Live port refresh failed:", err);
     }
   }, []);
 
@@ -188,9 +223,21 @@ export function PortProvider({ children }: PortProviderProps) {
   // ============================================================================
 
   /**
-   * Check which ports are currently listening
+   * Check which ports are currently listening.
+   *
+   * Two complementary signals feed the active set (see `isPortActive`):
+   *  - `/api/ports/status` probes the *allocated* ports specifically, so
+   *    declared-but-unclaimed ports still get a live status.
+   *  - `refreshLivePorts` pulls the instance-wide proxyable universe (the A4
+   *    seam), which also covers listening ports that have no allocation row.
+   *
+   * Both are refreshed together here so the single monitoring tick keeps the
+   * whole picture fresh without a second independent timer.
    */
   const checkPortsNow = useCallback(async () => {
+    // Always refresh the live proxyable set alongside the status probe.
+    const liveRefresh = refreshLivePorts();
+
     const ports = allocations.map((a) => a.port);
     if (ports.length === 0) {
       setActivePorts(new Set());
@@ -198,6 +245,7 @@ export function PortProvider({ children }: PortProviderProps) {
         ...prev,
         lastCheck: new Date(),
       }));
+      await liveRefresh;
       return;
     }
 
@@ -226,7 +274,9 @@ export function PortProvider({ children }: PortProviderProps) {
     } catch (err) {
       console.error("Port status check failed:", err);
     }
-  }, [allocations]);
+
+    await liveRefresh;
+  }, [allocations, refreshLivePorts]);
 
   // ============================================================================
   // Allocation Queries
@@ -254,14 +304,37 @@ export function PortProvider({ children }: PortProviderProps) {
   );
 
   /**
-   * Check if a port is currently listening
+   * Set of ports currently listening per the live proxyable seam. Merged with
+   * `activePorts` (the allocated-port status probe) so a port counts as active
+   * if EITHER signal observed it listening.
+   */
+  const liveListeningPorts = useMemo(
+    () => new Set(livePorts.filter((p) => p.isListening).map((p) => p.port)),
+    [livePorts]
+  );
+
+  /**
+   * Check if a port is currently listening (union of the status probe and the
+   * live proxyable seam).
    */
   const isPortActive = useCallback(
     (port: number): boolean => {
-      return activePorts.has(port);
+      return activePorts.has(port) || liveListeningPorts.has(port);
     },
-    [activePorts]
+    [activePorts, liveListeningPorts]
   );
+
+  /**
+   * Build the in-pod proxy URL for a port.
+   *
+   * STUB (A5): always returns `null` so every "open" affordance stays inert.
+   * Track B (B2 / remote-dev-kmrx) replaces this with the real
+   * `prefixPath('/proxy/<port>/')` path. The argument is intentionally unused
+   * for now; it is part of the frozen seam signature B2 implements against.
+   */
+  const getProxyUrl = useCallback((_port: number): string | null => {
+    return null;
+  }, []);
 
   // ============================================================================
   // Monitoring Control
@@ -285,12 +358,12 @@ export function PortProvider({ children }: PortProviderProps) {
   useEffect(() => {
     const loadInitialData = async () => {
       setLoading(true);
-      await refreshAllocations();
+      await Promise.all([refreshAllocations(), refreshLivePorts()]);
       setLoading(false);
     };
 
     loadInitialData();
-  }, [refreshAllocations]);
+  }, [refreshAllocations, refreshLivePorts]);
 
   // Check ports when allocations change
   useEffect(() => {
@@ -307,8 +380,10 @@ export function PortProvider({ children }: PortProviderProps) {
       monitoringIntervalRef.current = null;
     }
 
-    // Start new interval if enabled
-    if (monitoring.enabled && allocations.length > 0) {
+    // Start new interval if enabled. Runs even with zero allocations so the
+    // live proxyable set (which can include unallocated listening ports) stays
+    // fresh; `checkPortsNow` handles the empty-allocation case internally.
+    if (monitoring.enabled) {
       monitoringIntervalRef.current = setInterval(() => {
         checkPortsNow();
       }, monitoring.intervalMs);
@@ -319,7 +394,7 @@ export function PortProvider({ children }: PortProviderProps) {
         clearInterval(monitoringIntervalRef.current);
       }
     };
-  }, [monitoring.enabled, monitoring.intervalMs, allocations.length, checkPortsNow]);
+  }, [monitoring.enabled, monitoring.intervalMs, checkPortsNow]);
 
   // ============================================================================
   // Context Value
@@ -329,6 +404,7 @@ export function PortProvider({ children }: PortProviderProps) {
     () => ({
       // State
       allocations,
+      livePorts,
       activePorts,
       frameworks,
       runtimes,
@@ -338,6 +414,8 @@ export function PortProvider({ children }: PortProviderProps) {
 
       // Actions
       refreshAllocations,
+      refreshLivePorts,
+      getProxyUrl,
       detectFrameworks,
       detectRuntime,
       getAllocationsForFolder,
@@ -348,6 +426,7 @@ export function PortProvider({ children }: PortProviderProps) {
     }),
     [
       allocations,
+      livePorts,
       activePorts,
       frameworks,
       runtimes,
@@ -355,6 +434,8 @@ export function PortProvider({ children }: PortProviderProps) {
       error,
       monitoring,
       refreshAllocations,
+      refreshLivePorts,
+      getProxyUrl,
       detectFrameworks,
       detectRuntime,
       getAllocationsForFolder,
