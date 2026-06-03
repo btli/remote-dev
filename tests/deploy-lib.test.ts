@@ -53,6 +53,53 @@ describe("restoreStandalone", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+  it("replaces a stale live build with the newer slot build (forward-activation, remote-dev-4vmm)", () => {
+    // Forward deploys build into a slot but historically never copied it over
+    // the live serving dir — the restart then re-served the OLD build. This
+    // locks in that activating a slot (the same restoreStandalone the forward
+    // path now calls between stop and restart) fully replaces stale live
+    // content with the freshly-built slot, including nested + asset dirs.
+    const root = mkdtempSync(join(tmpdir(), "rdv-fwd-activate-"));
+    try {
+      const slot = join(root, "slot", "standalone");
+      const live = join(root, "live", ".next", "standalone");
+
+      // Freshly-built slot (NEW): a server bundle, static + public assets.
+      mkdirSync(join(slot, ".next", "server"), { recursive: true });
+      mkdirSync(join(slot, ".next", "static"), { recursive: true });
+      mkdirSync(join(slot, "public"), { recursive: true });
+      writeFileSync(join(slot, "server.js"), "NEW");
+      writeFileSync(join(slot, ".next", "server", "page.js"), "NEW-PAGE");
+      writeFileSync(join(slot, ".next", "static", "app.js"), "NEW-STATIC");
+      writeFileSync(join(slot, "public", "favicon.ico"), "NEW-ICON");
+
+      // Stale live build (OLD): an outdated bundle + a file the new build drops.
+      mkdirSync(join(live, ".next", "server"), { recursive: true });
+      writeFileSync(join(live, "server.js"), "OLD");
+      writeFileSync(join(live, ".next", "server", "page.js"), "OLD-PAGE");
+      writeFileSync(join(live, "removed-route.js"), "OLD-ONLY"); // must be gone
+
+      const res = restoreStandalone(slot, live);
+      expect(res.ok).toBe(true);
+
+      // Live now mirrors the slot exactly: old content replaced by new...
+      expect(readFileSync(join(live, "server.js"), "utf-8")).toBe("NEW");
+      expect(readFileSync(join(live, ".next", "server", "page.js"), "utf-8")).toBe(
+        "NEW-PAGE",
+      );
+      // ...assets (public + .next/static) carried over...
+      expect(readFileSync(join(live, ".next", "static", "app.js"), "utf-8")).toBe(
+        "NEW-STATIC",
+      );
+      expect(readFileSync(join(live, "public", "favicon.ico"), "utf-8")).toBe(
+        "NEW-ICON",
+      );
+      // ...and files that only existed in the stale build are gone.
+      expect(existsSync(join(live, "removed-route.js"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   it("returns ok:false when the slot has no standalone build", () => {
     const root = mkdtempSync(join(tmpdir(), "rdv-restore-"));
     try {
