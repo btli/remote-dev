@@ -17,6 +17,16 @@ const STATUS_STYLES: Record<string, string> = {
   error: "bg-red-500/15 text-red-400",
 };
 
+/**
+ * Display labels that differ from the raw status value. Only the DISPLAY text
+ * changes — the underlying status (e.g. `suspended`) is unchanged everywhere
+ * else (DB, audit, API). "Stopped" is the user-facing label for `suspended`
+ * (remote-dev-jvcx.15).
+ */
+const STATUS_LABELS: Record<string, string> = {
+  suspended: "Stopped",
+};
+
 export function StatusBadge({ status }: { status: string }) {
   return (
     <span
@@ -25,7 +35,7 @@ export function StatusBadge({ status }: { status: string }) {
         STATUS_STYLES[status] ?? "bg-muted text-muted-foreground",
       )}
     >
-      {status}
+      {STATUS_LABELS[status] ?? status}
     </span>
   );
 }
