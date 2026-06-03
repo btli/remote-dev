@@ -143,11 +143,19 @@ void main() {
 
         // Workspace has a CF_Authorization cookie (newer one from ws login).
         await creds.setWorkspaceAuthCookies('ws-3', [
-          const AuthCookie(name: 'CF_Authorization', value: 'ws-jwt', path: '/'),
+          const AuthCookie(
+            name: 'CF_Authorization',
+            value: 'ws-jwt',
+            path: '/',
+          ),
         ]);
         // Host also has CF_Authorization (older one from host login).
         await creds.setHostAuthCookies('host-1', [
-          const AuthCookie(name: 'CF_Authorization', value: 'host-jwt', path: '/'),
+          const AuthCookie(
+            name: 'CF_Authorization',
+            value: 'host-jwt',
+            path: '/',
+          ),
         ]);
 
         final adapter = _CapturingAdapter();

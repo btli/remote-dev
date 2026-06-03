@@ -66,26 +66,13 @@ class RemoteDevClient implements ApiClientPort {
       scopeId: workspaceId,
       authReader: (_) async {
         final apiKey = await _credentials.getWorkspaceApiKey(workspaceId);
-        // A workspace request carries that workspace's OWN cookies (e.g. the
-        // per-instance OIDC session-token, or the CF JWT a CF instance callback
-        // persisted). On a Cloudflare-Access host the perimeter additionally
-        // blocks ANY request to the host (instance subpaths included) that
-        // lacks the host-wide `CF_Authorization` edge cookie, so that one
-        // EDGE cookie must ride along too. We deliberately do NOT forward the
-        // supervisor's app-level session cookie (e.g.
-        // `__Secure-authjs.session-token`) to instances: it would leak the
-        // supervisor session to the instance server and serves no purpose
-        // there (the instance reads its own slug-scoped cookie). See design
-        // §7.2 (scope isolation).
-        final wsCookies =
-            await _credentials.getWorkspaceAuthCookies(workspaceId);
-        final wsNames = wsCookies.map((c) => c.name).toSet();
-        final hostCookies = await _credentials.getHostAuthCookies(hostId);
-        final edgeHostCookies = hostCookies.where(
-          (c) => c.name == 'CF_Authorization' && !wsNames.contains(c.name),
-        );
-        final merged = [...wsCookies, ...edgeHostCookies];
-        return AuthMaterial(apiKey: apiKey, cookies: merged);
+        // Workspace's own cookies + the host-wide CF_Authorization edge cookie
+        // (required by the CF perimeter). The supervisor's app session cookie
+        // is never forwarded to instances — see
+        // MobileCredentialsStore.getInstanceCookies / design §7.2.
+        final cookies =
+            await _credentials.getInstanceCookies(hostId, workspaceId);
+        return AuthMaterial(apiKey: apiKey, cookies: cookies);
       },
       // The interceptor passes its captured scope id; the workspace refresh
       // closure ignores it (it already closes over the right host/workspace),

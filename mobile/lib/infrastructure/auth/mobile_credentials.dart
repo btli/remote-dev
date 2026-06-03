@@ -206,8 +206,10 @@ class MobileCredentialsStore {
   ///      `[AuthCookie(name:"CF_Authorization", value: token, path:"/")]`.
   ///   3. Empty list if neither key exists.
   Future<List<AuthCookie>> getHostAuthCookies(String hostId) async {
-    final raw =
-        await _storage.read(_hostNs(hostId), MobileCredentialsKeys.hostAuthCookies);
+    final raw = await _storage.read(
+      _hostNs(hostId),
+      MobileCredentialsKeys.hostAuthCookies,
+    );
     if (raw != null && raw.isNotEmpty) {
       try {
         final list = jsonDecode(raw) as List;
@@ -275,6 +277,28 @@ class MobileCredentialsStore {
       }
     }
     return const [];
+  }
+
+  /// The cookies an INSTANCE request/WebView should carry for workspace
+  /// [workspaceId] under host [hostId]: the workspace's OWN cookies (the
+  /// per-instance OIDC session-token, or a CF JWT a CF instance callback
+  /// persisted) PLUS the host-wide `CF_Authorization` EDGE cookie, which the
+  /// Cloudflare perimeter requires on every request to the host (instance
+  /// subpaths included). The supervisor's app-level session cookie is
+  /// deliberately excluded — it must never leak to instances (design §7.2).
+  /// Single source of truth shared by [RemoteDevClient.forWorkspace] (REST)
+  /// and the WebView cookie seeder.
+  Future<List<AuthCookie>> getInstanceCookies(
+    String hostId,
+    String workspaceId,
+  ) async {
+    final ws = await getWorkspaceAuthCookies(workspaceId);
+    final wsNames = ws.map((c) => c.name).toSet();
+    final host = await getHostAuthCookies(hostId);
+    final edge = host.where(
+      (c) => c.name == 'CF_Authorization' && !wsNames.contains(c.name),
+    );
+    return [...ws, ...edge];
   }
 
   /// Best-effort clear of every credential under this workspace's namespace.
