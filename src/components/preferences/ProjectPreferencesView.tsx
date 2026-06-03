@@ -28,6 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { PathInput } from "@/components/common/PathInput";
 import { AgentProviderConfigCard } from "@/components/agents";
 import { AGENT_PROVIDERS, type AgentProviderType } from "@/types/session";
 import {
@@ -198,14 +199,14 @@ export function ProjectPreferencesView({
 
             <div className="space-y-2">
               <Label htmlFor="project-local-path">Local repo path</Label>
-              <Input
+              <PathInput
                 id="project-local-path"
+                mode="directory"
                 value={prefs.localRepoPath ?? ""}
-                onChange={(e) =>
-                  setPrefs({ ...prefs, localRepoPath: e.target.value || null })
+                onChange={(v) =>
+                  setPrefs({ ...prefs, localRepoPath: v || null })
                 }
                 placeholder="/path/to/repo"
-                className="bg-card/50 border-border focus:border-primary"
               />
             </div>
 
@@ -346,17 +347,17 @@ export function ProjectPreferencesView({
           {/* Shared section */}
           <div className="space-y-2">
             <Label htmlFor="project-cwd">Default working directory</Label>
-            <Input
+            <PathInput
               id="project-cwd"
+              mode="directory"
               value={prefs.defaultWorkingDirectory ?? ""}
-              onChange={(e) =>
+              onChange={(v) =>
                 setPrefs({
                   ...prefs,
-                  defaultWorkingDirectory: e.target.value || null,
+                  defaultWorkingDirectory: v || null,
                 })
               }
               placeholder="/path/to/workspace"
-              className="bg-card/50 border-border focus:border-primary"
             />
           </div>
 

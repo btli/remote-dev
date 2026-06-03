@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
-import { withAuth, errorResponse } from "@/lib/api";
-import { resolve, sep } from "node:path";
+import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
+import { resolve } from "node:path";
 import { getFsPromises, getFs } from "@/lib/dynamic-fs";
 import { createLogger } from "@/lib/logger";
+import { validateBrowsePath, validateFolderName } from "@/lib/directory-browse";
 
 const log = createLogger("api/directories");
 
@@ -10,62 +11,6 @@ interface DirectoryEntry {
   name: string;
   path: string;
   isDirectory: boolean;
-}
-
-/**
- * Validate and resolve a path for directory browsing
- *
- * SECURITY:
- * - Uses realpath() to resolve symlinks before validation (prevents /var -> /private/var bypass)
- * - Requires exact prefix match with path separator (prevents /Users-evil bypass)
- * - Only allows paths within HOME, /tmp, or common user directories
- */
-async function validateBrowsePath(inputPath: string): Promise<string | null> {
-  if (!inputPath) return null;
-
-  try {
-    // First resolve the path normally
-    const resolved = resolve(inputPath);
-
-    // Then resolve symlinks to get the real path
-    // This prevents bypasses like /var -> /private/var on macOS
-    let realPath: string;
-    try {
-      const fsp = await getFsPromises();
-      realPath = await fsp.realpath(resolved);
-    } catch {
-      // If realpath fails (path doesn't exist), use resolved path
-      // The existence check later will handle non-existent paths
-      realPath = resolved;
-    }
-
-    const home = process.env.HOME || "/tmp";
-
-    // Allow paths within home, /tmp, or common development roots
-    // Note: On macOS, /var is a symlink to /private/var, so we include /private/var
-    const allowedPrefixes = [
-      home,
-      "/tmp",
-      "/private/tmp",  // macOS realpath for /tmp
-      "/Users",
-      "/home",
-      "/private/var",  // macOS realpath for /var
-    ];
-
-    // SECURITY: Check that path equals prefix OR starts with prefix + separator
-    // This prevents bypasses like /Users-evil or /home-hack
-    const isAllowed = allowedPrefixes.some(prefix =>
-      realPath === prefix || realPath.startsWith(prefix + sep)
-    );
-
-    if (!isAllowed) {
-      return null;
-    }
-
-    return realPath;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -163,5 +108,65 @@ export const GET = withAuth(async (request) => {
   } catch (error) {
     log.error("Error reading directory", { error: String(error) });
     return errorResponse("Failed to read directory", 500);
+  }
+});
+
+/**
+ * POST /api/directories - Create a new folder
+ *
+ * Body:
+ *   - path: The parent directory to create the folder in
+ *   - name: The new folder name (no path separators)
+ *
+ * Returns:
+ *   - entry: The created directory entry { name, path, isDirectory }
+ */
+export const POST = withAuth(async (request) => {
+  const result = await parseJsonBody<{ path?: string; name?: string }>(request);
+  if ("error" in result) return result.error;
+
+  const { path: rawParent, name: rawName } = result.data;
+
+  // Validate the folder name (no separators, not '.'/'..', reasonable length).
+  const name = validateFolderName(rawName ?? "");
+  if (!name) {
+    return errorResponse("Invalid folder name", 400);
+  }
+
+  // Validate the parent path against the browse allowlist.
+  if (!rawParent) {
+    return errorResponse("Invalid path - must be within allowed directories", 400);
+  }
+  const parentReal = await validateBrowsePath(rawParent);
+  if (!parentReal) {
+    return errorResponse("Invalid path - must be within allowed directories", 400);
+  }
+
+  // Resolve the target and re-validate it lands inside an allowed prefix.
+  const target = resolve(parentReal, name);
+  const targetReal = await validateBrowsePath(target);
+  if (!targetReal) {
+    return errorResponse("Invalid path - must be within allowed directories", 400);
+  }
+
+  const fsp = await getFsPromises();
+
+  // Create atomically: mkdir fails with EEXIST when something already exists,
+  // which avoids a stat()->mkdir TOCTOU race and yields correct status codes.
+  try {
+    await fsp.mkdir(target);
+    return NextResponse.json({
+      entry: { name, path: target, isDirectory: true },
+    });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") {
+      return errorResponse("A folder with that name already exists", 409);
+    }
+    if (code === "EACCES" || code === "EPERM") {
+      return errorResponse("Permission denied", 403);
+    }
+    log.error("Error creating directory", { error: String(error) });
+    return errorResponse("Failed to create folder", 500);
   }
 });

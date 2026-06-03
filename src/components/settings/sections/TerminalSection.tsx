@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
+import { PathInput } from "@/components/common/PathInput";
 import {
   Select,
   SelectContent,
@@ -54,16 +54,15 @@ function TerminalSectionInner({ userSettings, updateUserSettings }: {
       {/* Working Directory */}
       <div className="space-y-2">
         <Label className="text-foreground">Default Working Directory</Label>
-        <Input
+        <PathInput
+          mode="directory"
           value={workingDirectory}
-          onChange={(e) => setWorkingDirectory(e.target.value)}
-          onBlur={() =>
-            updateUserSettings({
-              defaultWorkingDirectory: workingDirectory || null,
-            })
+          onChange={setWorkingDirectory}
+          onCommit={(v) =>
+            updateUserSettings({ defaultWorkingDirectory: v || null })
           }
           placeholder="~/projects"
-          className="bg-input border-border text-foreground placeholder:text-muted-foreground"
+          inputClassName="bg-input text-foreground placeholder:text-muted-foreground"
         />
         <p className="text-xs text-muted-foreground">
           Leave empty to use your home directory

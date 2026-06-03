@@ -223,16 +223,26 @@ export const PATCH = withSupervisorAuth("operator", async (request, { user, para
 });
 
 /**
- * DELETE /api/instances/:id — terminate the instance.
+ * DELETE /api/instances/:id — terminate the instance, OR permanently purge a
+ * `deleted` record when `?purge=true` is set.
  *
  * Admin-only per the role matrix (§6.6/§6.7): delete is an admin privilege.
  * Owner-scoping (canManageInstance) governs visibility/management of
  * create/suspend/resume, not delete — but we keep the canManageInstance/404
- * check here too (harmless for admins, who manage all). Transitions the row to
- * `terminating` and returns 202; the reconciler deletes the namespace (cascade)
- * and marks the row `deleted` once it confirms the namespace is gone.
+ * check here too (harmless for admins, who manage all).
+ *
+ * Soft delete (default, no purge param): transitions the row to `terminating`
+ * and returns 202; the reconciler deletes the namespace (cascade) and marks the
+ * row `deleted` once it confirms the namespace is gone.
+ *
+ * PURGE (`?purge=true`): hard-deletes the DB record so the slug is freed for
+ * reuse and the dashboard is no longer cluttered. Requires `status === "deleted"`
+ * (the reconciler already confirmed the namespace is gone) — else 409
+ * INVALID_STATE. The `instance_audit_log` + `instance_seed` rows cascade away
+ * with the record (onDelete:"cascade"), so by DESIGN no audit row is written for
+ * the purge itself (it would be deleted); we log instead.
  */
-export const DELETE = withSupervisorAuth("admin", async (_request, { user, params }) => {
+export const DELETE = withSupervisorAuth("admin", async (request, { user, params }) => {
   const id = params?.id;
   if (!id) {
     return NextResponse.json(
@@ -241,17 +251,46 @@ export const DELETE = withSupervisorAuth("admin", async (_request, { user, param
     );
   }
 
+  const purge = new URL(request.url).searchParams.get("purge") === "true";
+
   const row = await db.query.instance.findFirst({
     where: eq(instance.id, id),
   });
 
   // 404 (not 403) when missing OR not visible to the caller — don't leak
-  // existence of other owners' instances.
+  // existence of other owners' instances. For purge this also covers the
+  // idempotent "already purged" case (the row is gone) → 404, which the UI
+  // treats as success/redirect.
   if (!row || !canManageInstance(user, row)) {
     return NextResponse.json(
       { error: "Instance not found", code: "NOT_FOUND" },
       { status: 404 },
     );
+  }
+
+  // ── Permanent (hard) delete ────────────────────────────────────────────────
+  if (purge) {
+    // The reconciler must have already confirmed the namespace is gone, i.e.
+    // the row reached `deleted`. Purging any other status would orphan live k8s
+    // objects and/or race the reconciler — reject it.
+    if (row.status !== "deleted") {
+      return NextResponse.json(
+        {
+          error: `Purge requires status "deleted" (terminate first); current status "${row.status}"`,
+          code: "INVALID_STATE",
+        },
+        { status: 409 },
+      );
+    }
+
+    // Hard-delete the record. The cascade removes instance_audit_log +
+    // instance_seed automatically — so we deliberately do NOT write an audit row
+    // (it would be deleted by the same cascade). Log instead.
+    await db.delete(instance).where(eq(instance.id, id));
+
+    log.info("instance purged", { slug: row.slug, actor: user.email });
+
+    return NextResponse.json({ purged: true, slug: row.slug });
   }
 
   // Already terminating/deleted → idempotent success.
