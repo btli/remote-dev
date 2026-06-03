@@ -5,8 +5,8 @@ import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
 import 'session_route_host.dart'
     show
+        activeWorkspaceProvider,
         mobileCredentialsStoreProvider,
-        serverConfigStoreProvider,
         webViewCookieSeederProvider;
 
 /// Hosts an InAppWebView pointed at a `/m/<surface>/<id>` URL on the
@@ -21,18 +21,29 @@ import 'session_route_host.dart'
 ///
 /// When [allowedPathPrefixes] is supplied, it is forwarded to
 /// [NavigationPolicy] so this host pins the WebView to a single PWA
-/// surface. [SessionRouteHost] passes `['/m/session/']` to keep an
+/// surface. [SessionRouteHost] passes `['<basePath>/m/session/']` to keep an
 /// in-page redirect from quietly jumping into `/m/channel/<id>`.
+///
+/// [serverOrigin] is the bare host origin (`scheme://host[:port]`) — it is
+/// used both for cookie scoping (CF cookies are host/domain-scoped) and as
+/// the [NavigationPolicy]'s origin gate. [basePath] (`''` or `/<slug>`) is
+/// forwarded to [NavigationPolicy] so a path-prefixed workspace's
+/// `<basePath>/m/*` URLs are recognised as same-surface.
 class WebViewHostScreen extends ConsumerStatefulWidget {
   const WebViewHostScreen({
     required this.initialUrl,
     required this.serverOrigin,
+    this.basePath = '',
     this.allowedPathPrefixes,
     super.key,
   });
 
   final Uri initialUrl;
   final Uri serverOrigin;
+
+  /// `''` or `/<slug>` — forwarded to [NavigationPolicy] so `<basePath>/m/*`
+  /// paths are treated as the in-surface allow list.
+  final String basePath;
 
   /// Optional per-surface path scope. See [NavigationPolicy].
   final List<String>? allowedPathPrefixes;
@@ -58,10 +69,11 @@ class _WebViewHostScreenState extends ConsumerState<WebViewHostScreen> {
   Future<void> _seedCookie() async {
     // Best-effort — failures don't block the WebView from mounting.
     try {
-      final server = await ref.read(serverConfigStoreProvider).loadActive();
-      if (server == null) return;
+      final conn = await ref.read(activeWorkspaceProvider.future);
+      if (conn == null) return;
       final credentials = ref.read(mobileCredentialsStoreProvider);
-      final cfToken = await credentials.readCfToken(server.id);
+      // CF token is host-wide.
+      final cfToken = await credentials.getHostCfToken(conn.host.id);
       if (cfToken == null || cfToken.isEmpty) return;
       await ref
           .read(webViewCookieSeederProvider)
@@ -75,6 +87,7 @@ class _WebViewHostScreenState extends ConsumerState<WebViewHostScreen> {
   Widget build(BuildContext context) {
     final policy = NavigationPolicy(
       serverOrigin: widget.serverOrigin,
+      basePath: widget.basePath,
       allowedPathPrefixes: widget.allowedPathPrefixes,
     );
     return Scaffold(

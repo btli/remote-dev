@@ -1,16 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mocktail/mocktail.dart';
 import 'package:remote_dev/application/ports/secure_storage_port.dart';
-import 'package:remote_dev/application/ports/server_config_store.dart';
-import 'package:remote_dev/domain/server_config.dart';
+import 'package:remote_dev/application/state/active_connection.dart';
+import 'package:remote_dev/domain/host_config.dart';
+import 'package:remote_dev/domain/workspace_config.dart';
 import 'package:remote_dev/infrastructure/auth/mobile_credentials.dart';
 import 'package:remote_dev/presentation/screens/webview_host/reauth_screen.dart';
 import 'package:remote_dev/presentation/screens/webview_host/session_route_host.dart'
-    show mobileCredentialsStoreProvider, serverConfigStoreProvider;
-
-class _MockStore extends Mock implements ServerConfigStore {}
+    show activeWorkspaceProvider, mobileCredentialsStoreProvider;
 
 class _FakeStorage implements SecureStoragePort {
   final Map<String, String?> data = <String, String?>{};
@@ -37,21 +35,39 @@ class _FakeStorage implements SecureStoragePort {
   }
 }
 
-ServerConfig _config({
-  String id = 'srv-1',
-  String url = 'https://dev.example.com',
-}) =>
-    ServerConfig(
-      id: id,
+/// A migrated single-workspace connection: host owns the origin (no
+/// trailing path), workspace has an empty basePath so `effectiveUrl ==
+/// host.origin`.
+ActiveConnection _conn({
+  String hostId = 'h_srv-42',
+  String workspaceId = 'w_srv-42',
+  String origin = 'https://dev.example.com',
+}) {
+  final now = DateTime.utc(2026, 5, 1);
+  return ActiveConnection(
+    host: HostConfig(
+      id: hostId,
       label: 'Work',
-      url: url,
-      lastUsedAt: DateTime.utc(2025, 1, 1),
-    );
+      origin: origin,
+      kind: HostKind.singleWorkspace,
+      createdAt: now,
+      lastUsedAt: now,
+    ),
+    workspace: WorkspaceConfig(
+      id: workspaceId,
+      hostId: hostId,
+      slug: '',
+      basePath: '',
+      displayName: 'Work',
+      lastUsedAt: now,
+    ),
+  );
+}
 
 void main() {
   Future<void> pumpReauth(
     WidgetTester tester, {
-    required _MockStore store,
+    ActiveConnection? conn,
     _FakeStorage? storage,
     VoidCallback? onSuccess,
     VoidCallback? onCancel,
@@ -61,7 +77,7 @@ void main() {
     return tester.pumpWidget(
       ProviderScope(
         overrides: [
-          serverConfigStoreProvider.overrideWithValue(store),
+          activeWorkspaceProvider.overrideWith((ref) async => conn),
           mobileCredentialsStoreProvider
               .overrideWithValue(MobileCredentialsStore(s)),
         ],
@@ -77,15 +93,12 @@ void main() {
   }
 
   testWidgets(
-    'renders no-active-server panel when activeServerProvider has no server',
+    'renders no-active-server panel when there is no active connection',
     (tester) async {
-      final store = _MockStore();
-      when(store.loadActive).thenAnswer((_) async => null);
-
       var cancelled = 0;
       await pumpReauth(
         tester,
-        store: store,
+        conn: null,
         onCancel: () => cancelled++,
       );
       await tester.pumpAndSettle();
@@ -109,17 +122,16 @@ void main() {
   }
 
   testWidgets(
-    'on callback success, persists credentials and calls onSuccess',
+    'on callback success, persists host CF token + workspace API key and '
+    'calls onSuccess',
     (tester) async {
-      final store = _MockStore();
       final storage = _FakeStorage();
-      when(store.loadActive).thenAnswer((_) async => _config(id: 'srv-42'));
 
       var successCount = 0;
       Uri? capturedUrl;
       await pumpReauth(
         tester,
-        store: store,
+        conn: _conn(hostId: 'h_srv-42', workspaceId: 'w_srv-42'),
         storage: storage,
         onSuccess: () => successCount++,
         launcherOverride: (serverUrl) async {
@@ -132,9 +144,13 @@ void main() {
       );
       await drainFrames(tester);
 
+      // Launch ran against the effective URL (== host origin for a migrated
+      // single-workspace config).
       expect(capturedUrl, Uri.parse('https://dev.example.com'));
-      expect(storage.data['server.srv-42.api_key'], 'sk-fresh');
-      expect(storage.data['server.srv-42.cf_token'], 'fresh-jwt');
+      // CF token landed on the HOST namespace; API key on the WORKSPACE
+      // namespace (physical keys mirror `server.<ns>.<key>`).
+      expect(storage.data['server.workspace.w_srv-42.apiKey'], 'sk-fresh');
+      expect(storage.data['server.host.h_srv-42.cfToken'], 'fresh-jwt');
       expect(successCount, 1);
     },
   );
@@ -142,14 +158,12 @@ void main() {
   testWidgets(
     'on callback cancel (null result), propagates to onCancel without writing',
     (tester) async {
-      final store = _MockStore();
       final storage = _FakeStorage();
-      when(store.loadActive).thenAnswer((_) async => _config());
 
       var cancelled = 0;
       await pumpReauth(
         tester,
-        store: store,
+        conn: _conn(),
         storage: storage,
         onCancel: () => cancelled++,
         launcherOverride: (_) async => null,

@@ -10,14 +10,16 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../application/state/appearance_provider.dart';
 import '../../../domain/appearance_settings.dart';
+import '../../../domain/session_summary.dart';
+import '../../../infrastructure/url/workspace_urls.dart';
 import '../../../infrastructure/webview/bridge_controller.dart';
 import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
 import '../sessions/sessions_tab_screen.dart' show sessionsApiProvider;
 import '../webview_host/session_route_host.dart'
     show
+        activeWorkspaceProvider,
         mobileCredentialsStoreProvider,
-        serverConfigStoreProvider,
         webViewCookieSeederProvider;
 import 'activity_pip.dart';
 import 'mobile_input_bar.dart';
@@ -42,10 +44,19 @@ import 'smart_key_strip.dart';
 class SessionViewScreen extends ConsumerStatefulWidget {
   const SessionViewScreen({
     required this.sessionId,
+    this.initialSummary,
     super.key,
   });
 
   final String sessionId;
+
+  /// Optional pre-resolved summary for the session, passed via the route's
+  /// `extra` when navigation originates from a surface that already holds the
+  /// object (the Sessions list, a freshly-created session). When present, the
+  /// header shows the real name immediately. When absent (notification / deep
+  /// link cold-start), the name is resolved from the sessions list API and the
+  /// header shows a neutral 'Session' label until then — never the raw id.
+  final SessionSummary? initialSummary;
 
   @override
   ConsumerState<SessionViewScreen> createState() => _SessionViewScreenState();
@@ -55,23 +66,47 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
   BridgeController? _bridge;
   SessionActivity _activity = SessionActivity.idle;
   final String _projectName = '';
-  String _sessionName = '';
+
+  /// The session's display name once resolved. Null until resolution
+  /// completes; the header falls back to `initialSummary?.name` and then the
+  /// neutral 'Session' label — it NEVER shows the raw session id.
+  String? _resolvedName;
 
   @override
   void initState() {
     super.initState();
-    _loadActiveServer();
+    _resolveSessionName();
   }
 
-  Future<void> _loadActiveServer() async {
-    final store = ref.read(serverConfigStoreProvider);
-    final server = await store.loadActive();
-    if (mounted && server != null) {
-      // Phase 2 simplification: use sessionId as the title; full session
-      // detail resolution arrives in Phase 4 polish.
-      setState(() {
-        _sessionName = widget.sessionId;
-      });
+  /// Resolves the session's display name for the header.
+  ///
+  /// If the route handed us an [SessionViewScreen.initialSummary] (Sessions
+  /// list / freshly-created session), use its name directly — no network
+  /// call. Otherwise (notification / deep-link cold-start) fetch the sessions
+  /// list and match on [SessionViewScreen.sessionId].
+  ///
+  /// We list rather than GET `/api/sessions/[id]` because the by-id endpoint
+  /// is `withAuth` (session-cookie only) server-side, whereas `list()` goes
+  /// through `withApiAuth` and so works with the mobile Bearer key.
+  Future<void> _resolveSessionName() async {
+    // When the route already handed us a summary, the build-time fallback
+    // (`title = _resolvedName ?? widget.initialSummary?.name ?? 'Session'`)
+    // already renders the real name, so there is nothing async to do — and
+    // we must NOT call setState during initState.
+    if (widget.initialSummary != null) return;
+    try {
+      final sessions = await ref.read(sessionsApiProvider).list();
+      if (!mounted) return;
+      for (final s in sessions) {
+        if (s.id == widget.sessionId) {
+          setState(() => _resolvedName = s.name);
+          return;
+        }
+      }
+    } catch (err) {
+      // Resolution is best-effort: a failed or unauthorized list must not
+      // crash the terminal. The header keeps showing 'Session'.
+      debugPrint('[SessionView] name resolution failed: $err');
     }
   }
 
@@ -282,6 +317,10 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
         _bridge?.setCursorBlink(next.cursorBlink);
       }
     });
+    // Header title: resolved name, else the route-supplied summary name,
+    // else a neutral label. CRITICAL: no branch falls back to
+    // `widget.sessionId`, so the raw UUID is never rendered (bd Task F).
+    final title = _resolvedName ?? widget.initialSummary?.name ?? 'Session';
     return Scaffold(
       backgroundColor: const Color(0xFF1A1B26),
       // Spec §4: own the layout; never let Scaffold reflow on keyboard.
@@ -314,9 +353,7 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
                       child: SessionStatusBar(
                         projectName:
                             _projectName.isEmpty ? null : _projectName,
-                        sessionName: _sessionName.isEmpty
-                            ? widget.sessionId
-                            : _sessionName,
+                        sessionName: title,
                         activity: _activity,
                         onMenuAction: _handleMenuAction,
                       ),
@@ -387,11 +424,11 @@ class _Webview extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return FutureBuilder<Uri?>(
-      future: _resolveOrigin(ref),
+    return FutureBuilder<_WebviewTarget?>(
+      future: _resolveTarget(ref),
       builder: (context, snap) {
-        final origin = snap.data;
-        if (origin == null) {
+        final target = snap.data;
+        if (target == null) {
           return const ColoredBox(
             color: Color(0xFF1A1B26),
             child: Center(
@@ -405,12 +442,16 @@ class _Webview extends ConsumerWidget {
             ),
           );
         }
-        final url = origin.replace(path: '/m/session/$sessionId');
+        final origin = target.origin;
+        final basePath = target.basePath;
+        final urls = WorkspaceUrls(origin.toString(), basePath);
+        final url = Uri.parse(urls.web('/m/session/$sessionId'));
         return WebViewFactory().build(
           initialUrl: url,
           policy: NavigationPolicy(
             serverOrigin: origin,
-            allowedPathPrefixes: const ['/m/session/'],
+            basePath: basePath,
+            allowedPathPrefixes: ['$basePath/m/session/'],
           ),
           onLinkOpen: (uri) {
             // NavigationPolicy classifies cross-origin / non-/m navigations
@@ -439,18 +480,23 @@ class _Webview extends ConsumerWidget {
     );
   }
 
-  /// Resolves the active server's origin AND best-effort seeds the
-  /// platform CookieManager with the persisted CF JWT before the WebView
-  /// mounts. Seeding failures are swallowed so they don't block the
-  /// WebView (the WebView will hit a CF Access challenge instead, and
-  /// the user re-auths via /reauth).
-  Future<Uri?> _resolveOrigin(WidgetRef ref) async {
-    final server = await ref.read(serverConfigStoreProvider).loadActive();
-    if (server == null) return null;
-    final origin = Uri.parse(server.url);
+  /// Resolves the active connection into the WebView's host [origin] +
+  /// workspace [basePath], AND best-effort seeds the platform CookieManager
+  /// with the persisted CF JWT before the WebView mounts. Seeding failures
+  /// are swallowed so they don't block the WebView (the WebView will hit a
+  /// CF Access challenge instead, and the user re-auths via /reauth).
+  Future<_WebviewTarget?> _resolveTarget(WidgetRef ref) async {
+    final conn = await ref.read(activeWorkspaceProvider.future);
+    if (conn == null) return null;
+    // The WebView loads `<origin><basePath>/m/session/<id>`. The cookie is
+    // seeded against the bare HOST origin (CF cookies are host/domain-
+    // scoped); for a migrated single-workspace config basePath is '' so the
+    // navigated URL is exactly `<origin>/m/session/<id>`.
+    final origin = Uri.parse(conn.host.origin);
     try {
       final credentials = ref.read(mobileCredentialsStoreProvider);
-      final cfToken = await credentials.readCfToken(server.id);
+      // CF token is host-wide.
+      final cfToken = await credentials.getHostCfToken(conn.host.id);
       if (cfToken != null && cfToken.isNotEmpty) {
         await ref
             .read(webViewCookieSeederProvider)
@@ -459,8 +505,18 @@ class _Webview extends ConsumerWidget {
     } catch (_) {
       // intentional: see seeder rationale in ChannelScreen._seedCookie.
     }
-    return origin;
+    return _WebviewTarget(origin: origin, basePath: conn.workspace.basePath);
   }
+}
+
+/// The resolved WebView target: the bare host [origin] (used for cookie
+/// scoping and the [NavigationPolicy] origin gate) plus the workspace
+/// [basePath] (`''` or `/<slug>`) that prefixes the navigated `/m/*` URL and
+/// the in-surface allow list.
+class _WebviewTarget {
+  const _WebviewTarget({required this.origin, required this.basePath});
+  final Uri origin;
+  final String basePath;
 }
 
 /// Hands tapped links off to the OS browser sheet (Custom Tabs on

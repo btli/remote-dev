@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../domain/github_account.dart';
 import '../../../domain/server_config.dart';
 import '../../../infrastructure/api/github_accounts_api.dart';
+import '../../../infrastructure/url/workspace_urls.dart';
 import '../webview_host/session_route_host.dart' show activeServerProvider;
 
 /// Provider for the [GitHubAccountsApi]. Must be overridden in main.dart's
@@ -475,6 +476,13 @@ class _GitHubLinkWebView extends StatefulWidget {
 /// adds a `?github=connected` query under a different origin. Both signals
 /// must come from the same host (and matching port, when both sides specify
 /// one) as the active server. Visible for testing.
+///
+/// [serverOrigin] may carry the workspace base path (e.g. `https://h/demo`)
+/// — its path is treated as the basePath so the accepted callback becomes
+/// `<basePath>/api/auth/github/callback` and the accepted root becomes
+/// `<basePath>` / `<basePath>/`. When [serverOrigin] has no path (single-
+/// workspace), basePath is `''` and this reduces to the original `/api/...`
+/// and `/` checks exactly.
 @visibleForTesting
 bool isOAuthCallback(Uri uri, Uri serverOrigin) {
   // Same origin: scheme and host must match exactly.
@@ -489,11 +497,18 @@ bool isOAuthCallback(Uri uri, Uri serverOrigin) {
   } else if (uri.hasPort && uri.port != serverOrigin.port) {
     return false;
   }
-  // Exact callback path.
-  if (uri.path == '/api/auth/github/callback') return true;
-  // Or root path with `?github=connected`.
-  if ((uri.path == '/' || uri.path.isEmpty) &&
-      uri.queryParameters['github'] == 'connected') {
+  // The active workspace's base path (`''` or `/<slug>`), recovered from
+  // the server URL's path component.
+  final basePath = serverOrigin.path;
+  // Exact (base-path-prefixed) callback path.
+  if (uri.path == '$basePath/api/auth/github/callback') return true;
+  // Or the workspace root with `?github=connected`. The root is the
+  // basePath itself (`/demo`), `<basePath>/` (`/demo/`), or — for an empty
+  // basePath — `/` or the empty path.
+  final isRoot = uri.path == basePath ||
+      uri.path == '$basePath/' ||
+      (basePath.isEmpty && (uri.path == '/' || uri.path.isEmpty));
+  if (isRoot && uri.queryParameters['github'] == 'connected') {
     return true;
   }
   return false;
@@ -515,8 +530,15 @@ class _GitHubLinkWebViewState extends State<_GitHubLinkWebView> {
 
   @override
   Widget build(BuildContext context) {
-    final linkUrl =
-        Uri.parse(widget.server.url).resolve('/api/auth/github/link');
+    // `server.url` is the active workspace's effective URL (`host.origin +
+    // basePath`). Split it back into origin + basePath so the link URL is
+    // base-path-aware: `<origin><basePath>/api/auth/github/link`. For a
+    // single-workspace config basePath is '' and this is byte-identical to
+    // the previous `<origin>/api/auth/github/link`.
+    final shim = Uri.parse(widget.server.url);
+    final linkUrl = Uri.parse(
+      WorkspaceUrls(shim.origin, shim.path).web('/api/auth/github/link'),
+    );
     return Scaffold(
       backgroundColor: const Color(0xFF1A1B26),
       appBar: AppBar(

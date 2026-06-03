@@ -8,13 +8,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:remote_dev/application/ports/host_workspace_store.dart';
+import 'package:remote_dev/application/state/active_connection.dart';
 import 'package:remote_dev/domain/account.dart';
+import 'package:remote_dev/domain/host_config.dart';
 import 'package:remote_dev/domain/server_config.dart';
+import 'package:remote_dev/domain/workspace_config.dart';
 import 'package:remote_dev/infrastructure/api/account_api.dart';
+import 'package:remote_dev/infrastructure/push/push_token_registrar.dart';
 import 'package:remote_dev/infrastructure/storage/flutter_secure_storage_port.dart';
+import 'package:remote_dev/presentation/router/app_router.dart'
+    show pushTokenRegistrarProvider;
 import 'package:remote_dev/presentation/screens/profile/account_screen.dart';
 import 'package:remote_dev/presentation/screens/webview_host/session_route_host.dart'
-    show activeServerProvider, secureStorageProvider;
+    show
+        activeServerProvider,
+        activeWorkspaceProvider,
+        hostWorkspaceStoreProvider,
+        secureStorageProvider;
 
 class _MockAccountApi extends Mock implements AccountApi {}
 
@@ -22,12 +33,41 @@ class _MockSecureStorage extends Mock implements FlutterSecureStoragePort {}
 
 class _MockCookieManager extends Mock implements CookieManager {}
 
+class _MockHostWorkspaceStore extends Mock implements HostWorkspaceStore {}
+
+class _MockPushRegistrar extends Mock implements PushTokenRegistrar {}
+
 ServerConfig _server() => ServerConfig(
       id: 'srv-1',
       label: 'My Server',
       url: 'https://rdv.example',
       lastUsedAt: DateTime.utc(2026, 1, 1),
     );
+
+/// Migrated single-workspace connection matching `_server()`: the host owns
+/// the origin and the workspace has an empty basePath (so the shim's
+/// `effectiveUrl == host.origin`).
+ActiveConnection _conn() {
+  final now = DateTime.utc(2026, 1, 1);
+  return ActiveConnection(
+    host: HostConfig(
+      id: 'h_srv-1',
+      label: 'My Server',
+      origin: 'https://rdv.example',
+      kind: HostKind.singleWorkspace,
+      createdAt: now,
+      lastUsedAt: now,
+    ),
+    workspace: WorkspaceConfig(
+      id: 'w_srv-1',
+      hostId: 'h_srv-1',
+      slug: '',
+      basePath: '',
+      displayName: 'My Server',
+      lastUsedAt: now,
+    ),
+  );
+}
 
 Widget _wrap({
   required AccountApi api,
@@ -61,6 +101,8 @@ Widget _wrap({
   required AccountApi api,
   required FlutterSecureStoragePort storage,
   required CookieManager cookieManager,
+  required HostWorkspaceStore store,
+  required PushTokenRegistrar registrar,
   ServerConfig? server,
 }) {
   final router = GoRouter(
@@ -79,13 +121,48 @@ Widget _wrap({
       activeServerProvider.overrideWith(
         (ref) => SynchronousFuture<ServerConfig?>(server),
       ),
+      // Sign-out reads the active connection to clear the right host +
+      // workspace credential namespaces.
+      activeWorkspaceProvider.overrideWith(
+        (ref) => SynchronousFuture<ActiveConnection?>(
+          server == null ? null : _conn(),
+        ),
+      ),
       secureStorageProvider.overrideWithValue(storage),
       cookieManagerProvider.overrideWithValue(cookieManager),
+      // Sign-out checks the host's remaining workspaces (to gate the
+      // host-wide CF-token/cookie teardown) and unregisters the workspace's
+      // push token. Both are stubbed so the flow is deterministic.
+      hostWorkspaceStoreProvider.overrideWithValue(store),
+      pushTokenRegistrarProvider.overrideWithValue(registrar),
     ],
     child: MaterialApp.router(routerConfig: router),
   );
   return (widget: widget, router: router);
 }
+
+/// A [HostWorkspaceStore] stub whose `loadWorkspaces(hostId:)` returns a fixed
+/// list — the sign-out flow reads it to decide whether the host-wide token +
+/// cookies should be wiped (only when no sibling workspace remains).
+_MockHostWorkspaceStore _storeWithWorkspaces(List<WorkspaceConfig> onHost) {
+  final store = _MockHostWorkspaceStore();
+  when(() => store.loadWorkspaces(hostId: any(named: 'hostId')))
+      .thenAnswer((_) async => onHost);
+  return store;
+}
+
+/// A push registrar stub whose `unregisterWorkspace` records the ids it was
+/// asked to unregister and resolves successfully.
+_MockPushRegistrar _registrarRecording(List<String> unregistered) {
+  final registrar = _MockPushRegistrar();
+  when(() => registrar.unregisterWorkspace(any())).thenAnswer((inv) async {
+    unregistered.add(inv.positionalArguments.first as String);
+  });
+  return registrar;
+}
+
+/// The active workspace under test (`_conn()` → workspace `w_srv-1`).
+WorkspaceConfig _activeWs() => _conn().workspace;
 
 void main() {
   late _MockAccountApi api;
@@ -182,14 +259,17 @@ void main() {
   });
 
   testWidgets(
-      'sign-out: deletes per-server cf_authorization, scopes cookie '
-      'deletion to active server, invalidates active server, navigates '
-      'to /servers', (tester) async {
+      'sign-out (last workspace on host): clears host + workspace credential '
+      'namespaces, unregisters the push token, scopes cookie deletion to the '
+      'host origin, invalidates the active connection, navigates to /servers',
+      (tester) async {
     when(() => api.me()).thenAnswer(
       (_) async => const Account(email: 'jane@example.com'),
     );
     final storage = _MockSecureStorage();
     when(() => storage.delete(any(), any())).thenAnswer((_) async {});
+    // clearWorkspace / clearHost call deleteAll(namespace).
+    when(() => storage.deleteAll(any())).thenAnswer((_) async {});
     final cookies = _MockCookieManager();
     when(
       () => cookies.deleteCookies(
@@ -200,10 +280,18 @@ void main() {
       ),
     ).thenAnswer((_) async => true);
 
+    // Only the active workspace remains on the host → last-workspace path:
+    // the host-wide CF token + cookies SHOULD be wiped.
+    final store = _storeWithWorkspaces([_activeWs()]);
+    final unregistered = <String>[];
+    final registrar = _registrarRecording(unregistered);
+
     final scope = _wrapWithRouter(
       api: api,
       storage: storage,
       cookieManager: cookies,
+      store: store,
+      registrar: registrar,
       server: _server(),
     );
     await tester.pumpWidget(scope.widget);
@@ -215,13 +303,18 @@ void main() {
     await tester.tap(find.widgetWithText(TextButton, 'Sign out'));
     await tester.pumpAndSettle();
 
-    // Secure storage entry for THIS server's CF cookie was deleted with
-    // the conventional ('cf_authorization') key namespaced under serverId.
-    verify(() => storage.delete('srv-1', 'cf_authorization')).called(1);
+    // The workspace's push token was unregistered before its creds were
+    // cleared.
+    expect(unregistered, ['w_srv-1']);
 
-    // Cookie deletion was scoped to the active server's URL — NOT a
-    // global wipe. Capture the WebUri argument and assert its origin
-    // matches the server we configured.
+    // Both credential namespaces were cleared: the per-workspace API key
+    // and the host-wide CF token. MobileCredentialsStore namespaces these
+    // as `workspace.<id>` / `host.<id>`.
+    verify(() => storage.deleteAll('workspace.w_srv-1')).called(1);
+    verify(() => storage.deleteAll('host.h_srv-1')).called(1);
+
+    // Cookie deletion was scoped to the host origin — NOT a global wipe.
+    // Capture the WebUri argument and assert its origin matches the host.
     final captured = verify(
       () => cookies.deleteCookies(
         url: captureAny(named: 'url'),
@@ -234,6 +327,82 @@ void main() {
     expect((captured.single as WebUri).toString(), 'https://rdv.example');
 
     // Router landed on /servers.
+    expect(
+      scope.router.routerDelegate.currentConfiguration.uri.toString(),
+      '/servers',
+    );
+    expect(find.text('servers-screen'), findsOneWidget);
+  });
+
+  testWidgets(
+      'sign-out (sibling workspace remains on host): clears ONLY the '
+      'workspace key, leaves the host-wide CF token + cookies intact so the '
+      'sibling stays authenticated', (tester) async {
+    when(() => api.me()).thenAnswer(
+      (_) async => const Account(email: 'jane@example.com'),
+    );
+    final storage = _MockSecureStorage();
+    when(() => storage.delete(any(), any())).thenAnswer((_) async {});
+    when(() => storage.deleteAll(any())).thenAnswer((_) async {});
+    final cookies = _MockCookieManager();
+    when(
+      () => cookies.deleteCookies(
+        url: any(named: 'url'),
+        path: any(named: 'path'),
+        domain: any(named: 'domain'),
+        webViewController: any(named: 'webViewController'),
+      ),
+    ).thenAnswer((_) async => true);
+
+    // A sibling workspace under the same host survives the sign-out → the
+    // host-wide CF token + cookies must NOT be wiped (doing so would de-auth
+    // the sibling).
+    final sibling = WorkspaceConfig(
+      id: 'w_srv-2',
+      hostId: 'h_srv-1',
+      slug: 'demo',
+      basePath: '/demo',
+      displayName: 'Demo',
+      lastUsedAt: DateTime.utc(2026, 1, 1),
+    );
+    final store = _storeWithWorkspaces([_activeWs(), sibling]);
+    final unregistered = <String>[];
+    final registrar = _registrarRecording(unregistered);
+
+    final scope = _wrapWithRouter(
+      api: api,
+      storage: storage,
+      cookieManager: cookies,
+      store: store,
+      registrar: registrar,
+      server: _server(),
+    );
+    await tester.pumpWidget(scope.widget);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Sign out of this server'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Sign out'));
+    await tester.pumpAndSettle();
+
+    // The signed-out workspace's push token is still unregistered.
+    expect(unregistered, ['w_srv-1']);
+
+    // ONLY the per-workspace key is cleared…
+    verify(() => storage.deleteAll('workspace.w_srv-1')).called(1);
+    // …the host-wide CF token is preserved (sibling still needs it)…
+    verifyNever(() => storage.deleteAll('host.h_srv-1'));
+    // …and the host-origin cookies are NOT wiped.
+    verifyNever(
+      () => cookies.deleteCookies(
+        url: any(named: 'url'),
+        path: any(named: 'path'),
+        domain: any(named: 'domain'),
+        webViewController: any(named: 'webViewController'),
+      ),
+    );
+
+    // Sign-out still completes + navigates to the picker.
     expect(
       scope.router.routerDelegate.currentConfiguration.uri.toString(),
       '/servers',

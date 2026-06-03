@@ -7,8 +7,15 @@ import 'package:go_router/go_router.dart';
 import '../../../domain/account.dart';
 import '../../../domain/server_config.dart';
 import '../../../infrastructure/api/account_api.dart';
+import '../../router/app_router.dart' show pushTokenRegistrarProvider;
+import '../server_picker/server_picker_screen.dart'
+    show serverPickerDataProvider;
 import '../webview_host/session_route_host.dart'
-    show activeServerProvider, mobileCredentialsStoreProvider;
+    show
+        activeServerProvider,
+        activeWorkspaceProvider,
+        hostWorkspaceStoreProvider,
+        mobileCredentialsStoreProvider;
 
 /// Provider for the AccountApi. Must be overridden in main.dart's
 /// [buildServerScopedOverrides] once a [RemoteDevClient] is wired for the
@@ -83,34 +90,79 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
     setState(() => _signingOut = true);
 
     try {
-      // 1. Drop the per-server credentials (API key, CF JWT, identity)
-      //    from secure storage so the Dio interceptor can no longer
-      //    authenticate API calls. Also wipes the legacy
-      //    `cf_authorization` key from pre-jch1 installs.
-      final credentials = ref.read(mobileCredentialsStoreProvider);
-      await credentials.clear(server.id);
+      // Resolve the active connection so we clear the RIGHT host/workspace
+      // namespaces. The CF token is host-wide and the API key is
+      // per-workspace, so each is cleared at the correct scope.
+      final conn = await ref.read(activeWorkspaceProvider.future);
 
-      // 2. Best-effort: clear WebView cookies for *this* server's origin
-      //    only. `deleteCookies(url:)` removes every cookie scoped to
-      //    that origin (including the CF auth cookie) without touching
-      //    cookies belonging to other servers the user has linked.
-      try {
-        final manager =
-            ref.read(cookieManagerProvider) ?? CookieManager.instance();
-        await manager.deleteCookies(url: WebUri(server.url));
-      } catch (_) {
-        // Cookie-clearing is best-effort. If the platform channel is
-        // unavailable (e.g. in widget tests), we still want sign-out to
-        // proceed since the secure-storage delete already revoked the
-        // API client's auth.
+      // 1. Best-effort: unregister THIS workspace's push token BEFORE its
+      //    credentials are cleared (the registrar needs the per-workspace API
+      //    key + host CF cookie to authenticate the DELETE). Never blocks
+      //    sign-out — a missing registrar override (dev builds) or a network
+      //    failure is swallowed here and inside the registrar.
+      if (conn != null) {
+        try {
+          await ref
+              .read(pushTokenRegistrarProvider)
+              .unregisterWorkspace(conn.workspace.id);
+        } catch (_) {
+          // Intentional: push unregister is best-effort.
+        }
       }
 
-      // 3. Force a re-read of the active server so its auth header gets
-      //    rebuilt the next time someone reads it.
-      ref.invalidate(activeServerProvider);
+      // 2. Is this the LAST workspace on the host? The CF token + WebView
+      //    cookies are HOST-WIDE, so wiping them while siblings remain would
+      //    de-auth those siblings too. Only do the host-wide teardown when no
+      //    other workspace under this host survives the sign-out.
+      var isLastWorkspaceOnHost = true;
+      if (conn != null) {
+        final siblings = await ref
+            .read(hostWorkspaceStoreProvider)
+            .loadWorkspaces(hostId: conn.host.id);
+        isLastWorkspaceOnHost =
+            siblings.where((w) => w.id != conn.workspace.id).isEmpty;
+      }
+
+      // 3. Drop credentials from secure storage so the Dio interceptor can no
+      //    longer authenticate API calls. The per-workspace API key is always
+      //    cleared; the host-wide CF token only when this is the last
+      //    workspace on the host (otherwise siblings keep working).
+      final credentials = ref.read(mobileCredentialsStoreProvider);
+      if (conn != null) {
+        await credentials.clearWorkspace(conn.workspace.id);
+        if (isLastWorkspaceOnHost) {
+          await credentials.clearHost(conn.host.id);
+        }
+      }
+
+      // 4. Best-effort: clear WebView cookies for *this* host's origin. Those
+      //    cookies (incl. the CF auth cookie) are host-scoped and shared by
+      //    sibling workspaces, so only wipe them on the last-workspace path —
+      //    same host-wide reasoning as clearHost above. `deleteCookies(url:)`
+      //    leaves cookies for OTHER linked hosts untouched.
+      if (isLastWorkspaceOnHost) {
+        final cookieOrigin = conn?.host.origin ?? server.url;
+        try {
+          final manager =
+              ref.read(cookieManagerProvider) ?? CookieManager.instance();
+          await manager.deleteCookies(url: WebUri(cookieOrigin));
+        } catch (_) {
+          // Cookie-clearing is best-effort. If the platform channel is
+          // unavailable (e.g. in widget tests), we still want sign-out to
+          // proceed since the secure-storage delete already revoked the
+          // API client's auth.
+        }
+      }
+
+      // 5. Force a re-read of the active connection so the API client's auth
+      //    header gets rebuilt the next time someone reads it (the
+      //    `activeServerProvider` shim derives from this), and refresh the
+      //    server picker so the signed-out workspace's marker repaints.
+      ref.invalidate(activeWorkspaceProvider);
+      ref.invalidate(serverPickerDataProvider);
 
       if (!mounted) return;
-      // 4. Route back to the server picker.
+      // 6. Route back to the server picker.
       context.go('/servers');
     } catch (e) {
       if (!mounted) return;

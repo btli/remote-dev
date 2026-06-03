@@ -7,7 +7,8 @@ import '../../presentation/router/app_router.dart';
 import 'deep_link_router.dart';
 
 /// Listens to incoming deep-links and dispatches matching [AppRoute]
-/// values via [AppRouter.navigateTo].
+/// values via [AppRouter.navigateDeepLink] (which roots `/home` then pushes
+/// the target so the back button works on cold-start).
 ///
 /// Lifecycle:
 ///   - [start]: fetch the initial link (cold-start) via [AppLinks] and
@@ -66,7 +67,11 @@ class AppLinkListener {
     }
     final route = DeepLinkRouter.routeFor(uri);
     if (route != null) {
-      router.navigateTo(route);
+      // Use navigateDeepLink (root /home, then push) so back works when the
+      // app is cold-started from an external link. A plain go() would replace
+      // the stack and leave nothing to pop. navigateDeepLink replaces (go)
+      // rather than pushing for the /home and /notifications targets.
+      router.navigateDeepLink(route);
     } else {
       debugPrint('[DeepLink] no route for $uri');
     }

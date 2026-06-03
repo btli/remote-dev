@@ -338,4 +338,61 @@ void main() {
       );
     });
   });
+
+  group('isOAuthCallback with a /demo base path', () {
+    // For a path-prefixed workspace the active-server URL carries the
+    // basePath (`https://h/demo`); isOAuthCallback derives the basePath from
+    // that URL's path so the accepted callback / root are base-path-prefixed.
+    final serverOrigin = Uri.parse('https://h/demo');
+
+    test('accepts the base-path-prefixed callback path', () {
+      expect(
+        isOAuthCallback(
+          Uri.parse('https://h/demo/api/auth/github/callback?code=abc'),
+          serverOrigin,
+        ),
+        isTrue,
+      );
+    });
+
+    test('accepts the workspace root (/demo) with ?github=connected', () {
+      expect(
+        isOAuthCallback(
+          Uri.parse('https://h/demo?github=connected'),
+          serverOrigin,
+        ),
+        isTrue,
+      );
+      expect(
+        isOAuthCallback(
+          Uri.parse('https://h/demo/?github=connected'),
+          serverOrigin,
+        ),
+        isTrue,
+      );
+    });
+
+    test('rejects the un-prefixed callback path on a /demo workspace', () {
+      // `https://h/api/auth/github/callback` lacks the `/demo` prefix, so it
+      // is NOT this workspace's callback.
+      expect(
+        isOAuthCallback(
+          Uri.parse('https://h/api/auth/github/callback'),
+          serverOrigin,
+        ),
+        isFalse,
+      );
+    });
+
+    test('rejects bare site root with ?github=connected on a /demo workspace',
+        () {
+      expect(
+        isOAuthCallback(
+          Uri.parse('https://h/?github=connected'),
+          serverOrigin,
+        ),
+        isFalse,
+      );
+    });
+  });
 }

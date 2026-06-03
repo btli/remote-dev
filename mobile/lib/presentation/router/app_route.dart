@@ -2,7 +2,6 @@ sealed class AppRoute {
   const AppRoute();
 
   const factory AppRoute.serverPicker() = ServerPickerRoute;
-  const factory AppRoute.addServer() = AddServerRoute;
   const factory AppRoute.home() = HomeRoute;
   const factory AppRoute.session(String id) = SessionRoute;
   const factory AppRoute.channel(String id) = ChannelRoute;
@@ -13,7 +12,6 @@ sealed class AppRoute {
 
   String toPath() => switch (this) {
         ServerPickerRoute() => '/servers',
-        AddServerRoute() => '/servers/add',
         HomeRoute() => '/home',
         SessionRoute(:final id) => '/home/session/$id',
         ChannelRoute(:final id) => '/home/channel/$id',
@@ -26,10 +24,6 @@ sealed class AppRoute {
 
 final class ServerPickerRoute extends AppRoute {
   const ServerPickerRoute();
-}
-
-final class AddServerRoute extends AppRoute {
-  const AddServerRoute();
 }
 
 final class HomeRoute extends AppRoute {

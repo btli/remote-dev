@@ -3,16 +3,23 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:remote_dev/application/ports/api_client_port.dart';
+import 'package:remote_dev/application/ports/host_workspace_store.dart';
 import 'package:remote_dev/application/ports/push_port.dart';
-import 'package:remote_dev/application/ports/server_config_store.dart';
-import 'package:remote_dev/domain/server_config.dart';
+import 'package:remote_dev/domain/host_config.dart';
+import 'package:remote_dev/domain/workspace_config.dart';
+import 'package:remote_dev/infrastructure/auth/mobile_credentials.dart';
 import 'package:remote_dev/infrastructure/push/push_token_registrar.dart';
 
 class _MockPush extends Mock implements PushPort {}
 
-class _MockStore extends Mock implements ServerConfigStore {}
+class _MockStore extends Mock implements HostWorkspaceStore {}
+
+class _MockCredentials extends Mock implements MobileCredentialsStore {}
 
 class _MockClient extends Mock implements ApiClientPort {}
+
+/// The endpoint every registration / unregistration POSTs/DELETEs against.
+const _pushTokenPath = '/api/notifications/push-token';
 
 void main() {
   setUpAll(() {
@@ -21,11 +28,13 @@ void main() {
 
   late _MockPush push;
   late _MockStore store;
+  late _MockCredentials credentials;
   late StreamController<String> refresh;
 
   setUp(() {
     push = _MockPush();
     store = _MockStore();
+    credentials = _MockCredentials();
     refresh = StreamController<String>.broadcast();
     when(() => push.onTokenRefresh).thenAnswer((_) => refresh.stream);
   });
@@ -34,63 +43,133 @@ void main() {
     await refresh.close();
   });
 
-  ServerConfig server(String id, {String? label}) => ServerConfig(
+  final now = DateTime(2026, 5, 8);
+
+  HostConfig host(String id, {String origin = 'https://h'}) => HostConfig(
         id: id,
-        label: label ?? id,
-        url: 'https://$id.example.com',
-        lastUsedAt: DateTime(2026, 5, 8),
+        label: id,
+        origin: origin,
+        kind: HostKind.multiWorkspace,
+        createdAt: now,
+        lastUsedAt: now,
       );
 
-  test('registerWithAll POSTs to every saved server', () async {
+  WorkspaceConfig ws(
+    String id, {
+    required String hostId,
+    String slug = '',
+    String basePath = '',
+  }) =>
+      WorkspaceConfig(
+        id: id,
+        hostId: hostId,
+        slug: slug,
+        basePath: basePath,
+        displayName: id,
+        lastUsedAt: now,
+      );
+
+  /// Verify [client] POSTed the push token exactly [count] times.
+  void verifyPosted(_MockClient client, {int count = 1}) {
+    verify(() => client.post(_pushTokenPath, body: any(named: 'body')))
+        .called(count);
+  }
+
+  test('registerWithAll POSTs to every workspace with a stored API key',
+      () async {
     final clientA = _MockClient();
     final clientB = _MockClient();
     when(() => clientA.post(any(), body: any(named: 'body')))
         .thenAnswer((_) async => null);
     when(() => clientB.post(any(), body: any(named: 'body')))
         .thenAnswer((_) async => null);
-    when(store.loadAll).thenAnswer((_) async => [server('a'), server('b')]);
+
+    final h = host('h1');
+    final wsA = ws('a', hostId: 'h1');
+    final wsB = ws('b', hostId: 'h1', slug: 'demo', basePath: '/demo');
+    when(store.loadWorkspaces).thenAnswer((_) async => [wsA, wsB]);
+    when(() => store.loadHost('h1')).thenAnswer((_) async => h);
+    when(() => credentials.getWorkspaceApiKey('a'))
+        .thenAnswer((_) async => 'key-a');
+    when(() => credentials.getWorkspaceApiKey('b'))
+        .thenAnswer((_) async => 'key-b');
 
     final clients = {'a': clientA, 'b': clientB};
     final registrar = PushTokenRegistrar(
       push: push,
-      serverStore: store,
-      clientFactory: (s) => clients[s.id]!,
+      store: store,
+      credentials: credentials,
+      clientFactory: (_, w) => clients[w.id]!,
       deviceId: 'dev-1',
     );
 
     await registrar.registerWithAll('tok-1');
 
     final capturedA = verify(
-      () => clientA.post('/api/notifications/push-token', body: captureAny(named: 'body')),
+      () => clientA.post(_pushTokenPath, body: captureAny(named: 'body')),
     ).captured.single as Map<String, dynamic>;
     expect(capturedA['token'], 'tok-1');
     expect(capturedA['deviceId'], 'dev-1');
     expect(capturedA['platform'], anyOf('ios', 'android'));
 
-    verify(() => clientB.post('/api/notifications/push-token', body: any(named: 'body')))
-        .called(1);
+    verifyPosted(clientB);
   });
 
-  test('per-server failure does not block subsequent servers', () async {
+  test('registerWithAll skips workspaces with no stored API key', () async {
+    final clientB = _MockClient();
+    when(() => clientB.post(any(), body: any(named: 'body')))
+        .thenAnswer((_) async => null);
+
+    final h = host('h1');
+    final wsA = ws('a', hostId: 'h1'); // no API key → never signed in
+    final wsB = ws('b', hostId: 'h1');
+    when(store.loadWorkspaces).thenAnswer((_) async => [wsA, wsB]);
+    when(() => store.loadHost('h1')).thenAnswer((_) async => h);
+    when(() => credentials.getWorkspaceApiKey('a'))
+        .thenAnswer((_) async => null);
+    when(() => credentials.getWorkspaceApiKey('b'))
+        .thenAnswer((_) async => 'key-b');
+
+    final registrar = PushTokenRegistrar(
+      push: push,
+      store: store,
+      credentials: credentials,
+      clientFactory: (_, __) => clientB,
+      deviceId: 'dev-1',
+    );
+
+    await registrar.registerWithAll('tok-1');
+
+    // Only the signed-in workspace (b) is registered; a is skipped.
+    verifyPosted(clientB);
+  });
+
+  test('per-workspace failure does not block subsequent workspaces', () async {
     final clientA = _MockClient();
     final clientB = _MockClient();
     when(() => clientA.post(any(), body: any(named: 'body')))
         .thenThrow(Exception('boom'));
     when(() => clientB.post(any(), body: any(named: 'body')))
         .thenAnswer((_) async => null);
-    when(store.loadAll).thenAnswer((_) async => [server('a'), server('b')]);
+
+    final h = host('h1');
+    final pair = [ws('a', hostId: 'h1'), ws('b', hostId: 'h1')];
+    when(store.loadWorkspaces).thenAnswer((_) async => pair);
+    when(() => store.loadHost('h1')).thenAnswer((_) async => h);
+    when(() => credentials.getWorkspaceApiKey(any()))
+        .thenAnswer((_) async => 'key');
 
     final registrar = PushTokenRegistrar(
       push: push,
-      serverStore: store,
-      clientFactory: (s) => s.id == 'a' ? clientA : clientB,
+      store: store,
+      credentials: credentials,
+      clientFactory: (_, w) => w.id == 'a' ? clientA : clientB,
       deviceId: 'dev-1',
     );
 
     await registrar.registerWithAll('tok-1');
 
-    verify(() => clientB.post('/api/notifications/push-token', body: any(named: 'body')))
-        .called(1);
+    verifyPosted(clientB);
   });
 
   test('start() subscribes to onTokenRefresh and re-registers', () async {
@@ -99,30 +178,35 @@ void main() {
         .thenAnswer((_) async => null);
     when(() => push.initialize()).thenAnswer((_) async => true);
     when(() => push.getToken()).thenAnswer((_) async => 'initial-tok');
-    when(store.loadAll).thenAnswer((_) async => [server('a')]);
+
+    final h = host('h1');
+    when(store.loadWorkspaces).thenAnswer((_) async => [ws('a', hostId: 'h1')]);
+    when(() => store.loadHost('h1')).thenAnswer((_) async => h);
+    when(() => credentials.getWorkspaceApiKey('a'))
+        .thenAnswer((_) async => 'key-a');
 
     final registrar = PushTokenRegistrar(
       push: push,
-      serverStore: store,
-      clientFactory: (_) => clientA,
+      store: store,
+      credentials: credentials,
+      clientFactory: (_, __) => clientA,
       deviceId: 'dev-1',
     );
 
     await registrar.start();
 
-    verify(() => clientA.post('/api/notifications/push-token', body: any(named: 'body')))
-        .called(1);
+    verifyPosted(clientA);
 
     refresh.add('refreshed-tok');
     await Future<void>.delayed(Duration.zero);
 
-    verify(() => clientA.post('/api/notifications/push-token', body: any(named: 'body')))
-        .called(1);
+    verifyPosted(clientA);
 
     await registrar.stop();
   });
 
-  test('unregisterFromServer DELETEs from the specified server only', () async {
+  test('unregisterWorkspace DELETEs from the specified workspace only',
+      () async {
     final clientA = _MockClient();
     final clientB = _MockClient();
     when(() => clientA.delete(any(), body: any(named: 'body')))
@@ -130,40 +214,67 @@ void main() {
     when(() => clientB.delete(any(), body: any(named: 'body')))
         .thenAnswer((_) async {});
     when(() => push.getToken()).thenAnswer((_) async => 'tok-1');
-    when(store.loadAll).thenAnswer((_) async => [server('a'), server('b')]);
+
+    final h = host('h1');
+    final pair = [ws('a', hostId: 'h1'), ws('b', hostId: 'h1')];
+    when(store.loadWorkspaces).thenAnswer((_) async => pair);
+    when(() => store.loadHost('h1')).thenAnswer((_) async => h);
+    when(() => credentials.getWorkspaceApiKey(any()))
+        .thenAnswer((_) async => 'key');
 
     final registrar = PushTokenRegistrar(
       push: push,
-      serverStore: store,
-      clientFactory: (s) => s.id == 'a' ? clientA : clientB,
+      store: store,
+      credentials: credentials,
+      clientFactory: (_, w) => w.id == 'a' ? clientA : clientB,
       deviceId: 'dev-1',
     );
 
-    await registrar.unregisterFromServer('a');
+    await registrar.unregisterWorkspace('a');
 
     final captured = verify(
-      () => clientA.delete(
-        '/api/notifications/push-token',
-        body: captureAny(named: 'body'),
-      ),
+      () => clientA.delete(_pushTokenPath, body: captureAny(named: 'body')),
     ).captured.single as Map<String, dynamic>;
     expect(captured['token'], 'tok-1');
     verifyNever(() => clientB.delete(any(), body: any(named: 'body')));
   });
 
-  test('unregisterFromServer is a no-op when getToken returns null', () async {
+  test('unregisterWorkspace is a no-op when getToken returns null', () async {
     final clientA = _MockClient();
     when(() => push.getToken()).thenAnswer((_) async => null);
-    when(store.loadAll).thenAnswer((_) async => [server('a')]);
 
     final registrar = PushTokenRegistrar(
       push: push,
-      serverStore: store,
-      clientFactory: (_) => clientA,
+      store: store,
+      credentials: credentials,
+      clientFactory: (_, __) => clientA,
       deviceId: 'dev-1',
     );
 
-    await registrar.unregisterFromServer('a');
+    await registrar.unregisterWorkspace('a');
+
+    verifyNever(() => clientA.delete(any(), body: any(named: 'body')));
+    // Token was null, so we never even touched the store.
+    verifyNever(store.loadWorkspaces);
+  });
+
+  test('unregisterWorkspace is a no-op when the workspace has no API key',
+      () async {
+    final clientA = _MockClient();
+    when(() => push.getToken()).thenAnswer((_) async => 'tok-1');
+    when(store.loadWorkspaces).thenAnswer((_) async => [ws('a', hostId: 'h1')]);
+    when(() => credentials.getWorkspaceApiKey('a'))
+        .thenAnswer((_) async => null);
+
+    final registrar = PushTokenRegistrar(
+      push: push,
+      store: store,
+      credentials: credentials,
+      clientFactory: (_, __) => clientA,
+      deviceId: 'dev-1',
+    );
+
+    await registrar.unregisterWorkspace('a');
 
     verifyNever(() => clientA.delete(any(), body: any(named: 'body')));
   });
@@ -172,8 +283,9 @@ void main() {
     when(() => push.initialize()).thenAnswer((_) async => false);
     final registrar = PushTokenRegistrar(
       push: push,
-      serverStore: store,
-      clientFactory: (_) => throw UnimplementedError(),
+      store: store,
+      credentials: credentials,
+      clientFactory: (_, __) => throw UnimplementedError(),
       deviceId: 'dev-1',
     );
     expect(await registrar.start(), isFalse);

@@ -5,8 +5,9 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:remote_dev/application/ports/server_config_store.dart';
-import 'package:remote_dev/domain/server_config.dart';
+import 'package:remote_dev/application/state/active_connection.dart';
+import 'package:remote_dev/domain/host_config.dart';
+import 'package:remote_dev/domain/workspace_config.dart';
 import 'package:remote_dev/infrastructure/auth/mobile_credentials.dart';
 import 'package:remote_dev/infrastructure/webview/navigation_policy.dart';
 import 'package:remote_dev/infrastructure/webview/webview_cookie_seeder.dart';
@@ -14,11 +15,9 @@ import 'package:remote_dev/infrastructure/webview/webview_factory.dart';
 import 'package:remote_dev/presentation/screens/recording/recording_screen.dart';
 import 'package:remote_dev/presentation/screens/webview_host/session_route_host.dart'
     show
+        activeWorkspaceProvider,
         mobileCredentialsStoreProvider,
-        serverConfigStoreProvider,
         webViewCookieSeederProvider;
-
-class _MockStore extends Mock implements ServerConfigStore {}
 
 class _MockCredentialsStore extends Mock implements MobileCredentialsStore {}
 
@@ -54,23 +53,45 @@ class _RecordingWebViewFactory implements WebViewFactory {
   }
 }
 
-ServerConfig _config({
-  String id = 'srv-1',
-  String url = 'https://dev.example.com',
-}) =>
-    ServerConfig(
-      id: id,
+/// A connection: host owns the origin, workspace owns the basePath. For a
+/// migrated single-workspace install [basePath] is '' (so the navigated URL
+/// is `<origin>/m/recording/<id>`); for a path-prefixed workspace it is
+/// `/<slug>`.
+ActiveConnection _conn({
+  String hostId = 'h_srv-1',
+  String workspaceId = 'w_srv-1',
+  String origin = 'https://dev.example.com',
+  String basePath = '',
+}) {
+  final now = DateTime.utc(2025, 1, 1);
+  return ActiveConnection(
+    host: HostConfig(
+      id: hostId,
       label: 'Work',
-      url: url,
-      lastUsedAt: DateTime.utc(2025, 1, 1),
-    );
+      origin: origin,
+      kind: basePath.isEmpty
+          ? HostKind.singleWorkspace
+          : HostKind.multiWorkspace,
+      createdAt: now,
+      lastUsedAt: now,
+    ),
+    workspace: WorkspaceConfig(
+      id: workspaceId,
+      hostId: hostId,
+      slug: basePath.isEmpty ? '' : basePath.substring(1),
+      basePath: basePath,
+      displayName: 'Work',
+      lastUsedAt: now,
+    ),
+  );
+}
 
-/// Stubs a [MobileCredentialsStore] whose `readCfToken` resolves to a
+/// Stubs a [MobileCredentialsStore] whose `getHostCfToken` resolves to a
 /// fixed dummy token. Used to keep tests that don't care about the seed
 /// path from blocking on the real platform secure-storage channel.
 _MockCredentialsStore _fastCredentials() {
   final m = _MockCredentialsStore();
-  when(() => m.readCfToken(any())).thenAnswer((_) async => 'cf-jwt-stub');
+  when(() => m.getHostCfToken(any())).thenAnswer((_) async => 'cf-jwt-stub');
   return m;
 }
 
@@ -134,10 +155,6 @@ void main() {
     (tester) async {
       suppressInAppWebViewErrors(tester);
 
-      final store = _MockStore();
-      when(store.loadActive).thenAnswer(
-        (_) async => _config(url: 'https://dev.example.com'),
-      );
       // After the FutureBuilder gate, the WebView only mounts once the
       // seed future resolves. Stub the credentials + seeder so it
       // resolves immediately under flutter_test (the real secure-storage
@@ -149,7 +166,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            serverConfigStoreProvider.overrideWithValue(store),
+            activeWorkspaceProvider.overrideWith((ref) async => _conn()),
             mobileCredentialsStoreProvider.overrideWithValue(credentials),
             webViewCookieSeederProvider.overrideWithValue(seeder),
           ],
@@ -205,6 +222,73 @@ void main() {
   );
 
   testWidgets(
+    'a /demo workspace base-paths the WebView URL AND the nav allow list',
+    (tester) async {
+      // Task B: when the active workspace carries a basePath, the WebView
+      // target becomes `<origin>/demo/m/recording/<id>`, the policy origin
+      // gate stays the bare host origin (cookies are host-scoped), and the
+      // allow list / `/m/` gate are base-path-aware.
+      suppressInAppWebViewErrors(tester);
+
+      final credentials = _fastCredentials();
+      final seeder = _fastSeeder();
+      final factory = _RecordingWebViewFactory();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            activeWorkspaceProvider.overrideWith(
+              (ref) async => _conn(origin: 'https://h', basePath: '/demo'),
+            ),
+            mobileCredentialsStoreProvider.overrideWithValue(credentials),
+            webViewCookieSeederProvider.overrideWithValue(seeder),
+          ],
+          child: MaterialApp(
+            home: RecordingScreen(
+              recordingId: 'rec-demo-1',
+              webViewFactory: factory,
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      // The navigated URL carries the basePath.
+      expect(factory.capturedUrl, isNotNull);
+      expect(
+        factory.capturedUrl!.toString(),
+        equals('https://h/demo/m/recording/rec-demo-1'),
+      );
+
+      final policy = factory.capturedPolicy!;
+      // The base-path-prefixed in-surface route is allowed…
+      expect(
+        policy.decide(Uri.parse('https://h/demo/m/recording/rec-demo-1')),
+        equals(NavigationDecision.allow),
+      );
+      // …a bare /m/* path (missing the basePath) is intercepted…
+      expect(
+        policy.decide(Uri.parse('https://h/m/recording/rec-demo-1')),
+        equals(NavigationDecision.intercept),
+      );
+      // …and a sister surface under the same basePath is intercepted.
+      expect(
+        policy.decide(Uri.parse('https://h/demo/m/channel/x')),
+        equals(NavigationDecision.intercept),
+      );
+      // Cookie seeding still targets the bare HOST origin (host-scoped).
+      verify(
+        () => seeder.seedCfCookie(
+          serverOrigin: Uri.parse('https://h'),
+          value: any(named: 'value'),
+        ),
+      ).called(1);
+    },
+  );
+
+  testWidgets(
     'AppBar LinearProgressIndicator shows on partial progress and hides at 100',
     (tester) async {
       // Verifies the bd remote-dev-72dh wiring: WebViewFactory.build receives an
@@ -212,10 +296,6 @@ void main() {
       // the AppBar bottom; 100 hides it.
       suppressInAppWebViewErrors(tester);
 
-      final store = _MockStore();
-      when(store.loadActive).thenAnswer(
-        (_) async => _config(url: 'https://dev.example.com'),
-      );
       // Same seed-gate workaround as the previous test — see comment there.
       final credentials = _fastCredentials();
       final seeder = _fastSeeder();
@@ -224,7 +304,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            serverConfigStoreProvider.overrideWithValue(store),
+            activeWorkspaceProvider.overrideWith((ref) async => _conn()),
             mobileCredentialsStoreProvider.overrideWithValue(credentials),
             webViewCookieSeederProvider.overrideWithValue(seeder),
           ],
@@ -280,13 +360,8 @@ void main() {
       // the factory to fire.
       suppressInAppWebViewErrors(tester);
 
-      final store = _MockStore();
-      when(store.loadActive).thenAnswer(
-        (_) async => _config(url: 'https://dev.example.com'),
-      );
-
       final credentials = _MockCredentialsStore();
-      when(() => credentials.readCfToken(any()))
+      when(() => credentials.getHostCfToken(any()))
           .thenAnswer((_) async => 'cf-jwt-token');
 
       final seeder = _MockCookieSeeder();
@@ -303,7 +378,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            serverConfigStoreProvider.overrideWithValue(store),
+            activeWorkspaceProvider.overrideWith((ref) async => _conn()),
             mobileCredentialsStoreProvider.overrideWithValue(credentials),
             webViewCookieSeederProvider.overrideWithValue(seeder),
           ],
