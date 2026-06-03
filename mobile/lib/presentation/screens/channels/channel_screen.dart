@@ -4,12 +4,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../application/state/appearance_provider.dart';
 import '../../../domain/appearance_settings.dart';
+import '../../../infrastructure/url/workspace_urls.dart';
 import '../../../infrastructure/webview/bridge_controller.dart';
 import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
 import '../webview_host/session_route_host.dart'
     show
-        activeServerProvider,
         activeWorkspaceProvider,
         mobileCredentialsStoreProvider,
         webViewCookieSeederProvider;
@@ -136,7 +136,7 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final asyncServer = ref.watch(activeServerProvider);
+    final asyncServer = ref.watch(activeWorkspaceProvider);
     // Channel embed visually scales markdown text via --rdv-font-scale;
     // push updates whenever the user changes the slider on the profile
     // appearance screen. cursorBlink is intentionally skipped — no
@@ -176,8 +176,8 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
             style: const TextStyle(color: Colors.white70),
           ),
         ),
-        data: (server) {
-          if (server == null) {
+        data: (conn) {
+          if (conn == null) {
             return const Center(
               child: Text(
                 'No active server.',
@@ -185,8 +185,13 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
               ),
             );
           }
-          final origin = Uri.parse(server.url);
-          final url = origin.replace(path: '/m/channel/${widget.channelId}');
+          final basePath = conn.workspace.basePath;
+          // Cookie scope + policy origin gate are the bare HOST origin (CF
+          // cookies are host/domain-scoped); the navigated URL + allow list
+          // carry the workspace basePath.
+          final origin = Uri.parse(conn.host.origin);
+          final urls = WorkspaceUrls(conn.host.origin, basePath);
+          final url = Uri.parse(urls.web('/m/channel/${widget.channelId}'));
           final factory = widget.webViewFactory ?? const WebViewFactory();
           // Gate the WebView mount on cookie-seed completion. The
           // InAppWebView fires its initial GET as soon as it mounts; if
@@ -209,7 +214,8 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
                 initialUrl: url,
                 policy: NavigationPolicy(
                   serverOrigin: origin,
-                  allowedPathPrefixes: const ['/m/channel/'],
+                  basePath: basePath,
+                  allowedPathPrefixes: ['$basePath/m/channel/'],
                 ),
                 onLinkOpen: (_) {},
                 onWebViewCreated: _onWebViewCreated,

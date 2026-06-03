@@ -53,12 +53,15 @@ class _RecordingWebViewFactory implements WebViewFactory {
   }
 }
 
-/// A migrated single-workspace connection: host owns the origin, workspace
-/// has an empty basePath (so the activeServerProvider shim's URL == origin).
+/// A connection: host owns the origin, workspace owns the basePath. For a
+/// migrated single-workspace install [basePath] is '' (so the navigated URL
+/// is `<origin>/m/recording/<id>`); for a path-prefixed workspace it is
+/// `/<slug>`.
 ActiveConnection _conn({
   String hostId = 'h_srv-1',
   String workspaceId = 'w_srv-1',
   String origin = 'https://dev.example.com',
+  String basePath = '',
 }) {
   final now = DateTime.utc(2025, 1, 1);
   return ActiveConnection(
@@ -66,15 +69,17 @@ ActiveConnection _conn({
       id: hostId,
       label: 'Work',
       origin: origin,
-      kind: HostKind.singleWorkspace,
+      kind: basePath.isEmpty
+          ? HostKind.singleWorkspace
+          : HostKind.multiWorkspace,
       createdAt: now,
       lastUsedAt: now,
     ),
     workspace: WorkspaceConfig(
       id: workspaceId,
       hostId: hostId,
-      slug: '',
-      basePath: '',
+      slug: basePath.isEmpty ? '' : basePath.substring(1),
+      basePath: basePath,
       displayName: 'Work',
       lastUsedAt: now,
     ),
@@ -213,6 +218,73 @@ void main() {
         ),
         equals(NavigationDecision.allow),
       );
+    },
+  );
+
+  testWidgets(
+    'a /demo workspace base-paths the WebView URL AND the nav allow list',
+    (tester) async {
+      // Task B: when the active workspace carries a basePath, the WebView
+      // target becomes `<origin>/demo/m/recording/<id>`, the policy origin
+      // gate stays the bare host origin (cookies are host-scoped), and the
+      // allow list / `/m/` gate are base-path-aware.
+      suppressInAppWebViewErrors(tester);
+
+      final credentials = _fastCredentials();
+      final seeder = _fastSeeder();
+      final factory = _RecordingWebViewFactory();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            activeWorkspaceProvider.overrideWith(
+              (ref) async => _conn(origin: 'https://h', basePath: '/demo'),
+            ),
+            mobileCredentialsStoreProvider.overrideWithValue(credentials),
+            webViewCookieSeederProvider.overrideWithValue(seeder),
+          ],
+          child: MaterialApp(
+            home: RecordingScreen(
+              recordingId: 'rec-demo-1',
+              webViewFactory: factory,
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      // The navigated URL carries the basePath.
+      expect(factory.capturedUrl, isNotNull);
+      expect(
+        factory.capturedUrl!.toString(),
+        equals('https://h/demo/m/recording/rec-demo-1'),
+      );
+
+      final policy = factory.capturedPolicy!;
+      // The base-path-prefixed in-surface route is allowed…
+      expect(
+        policy.decide(Uri.parse('https://h/demo/m/recording/rec-demo-1')),
+        equals(NavigationDecision.allow),
+      );
+      // …a bare /m/* path (missing the basePath) is intercepted…
+      expect(
+        policy.decide(Uri.parse('https://h/m/recording/rec-demo-1')),
+        equals(NavigationDecision.intercept),
+      );
+      // …and a sister surface under the same basePath is intercepted.
+      expect(
+        policy.decide(Uri.parse('https://h/demo/m/channel/x')),
+        equals(NavigationDecision.intercept),
+      );
+      // Cookie seeding still targets the bare HOST origin (host-scoped).
+      verify(
+        () => seeder.seedCfCookie(
+          serverOrigin: Uri.parse('https://h'),
+          value: any(named: 'value'),
+        ),
+      ).called(1);
     },
   );
 

@@ -4,12 +4,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../application/state/appearance_provider.dart';
 import '../../../domain/appearance_settings.dart';
+import '../../../infrastructure/url/workspace_urls.dart';
 import '../../../infrastructure/webview/bridge_controller.dart';
 import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
 import '../webview_host/session_route_host.dart'
     show
-        activeServerProvider,
         activeWorkspaceProvider,
         mobileCredentialsStoreProvider,
         webViewCookieSeederProvider;
@@ -121,7 +121,7 @@ class _RecordingScreenState extends ConsumerState<RecordingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final asyncServer = ref.watch(activeServerProvider);
+    final asyncServer = ref.watch(activeWorkspaceProvider);
     // Recording embed has no terminal, so we skip cursorBlink; we still
     // forward fontScale so the bridge surface stays uniform across
     // routes (and so future content scaling on the player can hook in).
@@ -160,8 +160,8 @@ class _RecordingScreenState extends ConsumerState<RecordingScreen> {
             style: const TextStyle(color: Colors.white70),
           ),
         ),
-        data: (server) {
-          if (server == null) {
+        data: (conn) {
+          if (conn == null) {
             return const Center(
               child: Text(
                 'No active server.',
@@ -169,8 +169,13 @@ class _RecordingScreenState extends ConsumerState<RecordingScreen> {
               ),
             );
           }
-          final origin = Uri.parse(server.url);
-          final url = origin.replace(path: '/m/recording/${widget.recordingId}');
+          final basePath = conn.workspace.basePath;
+          // Cookie scope + policy origin gate are the bare HOST origin (CF
+          // cookies are host/domain-scoped); the navigated URL + allow list
+          // carry the workspace basePath.
+          final origin = Uri.parse(conn.host.origin);
+          final urls = WorkspaceUrls(conn.host.origin, basePath);
+          final url = Uri.parse(urls.web('/m/recording/${widget.recordingId}'));
           final factory = widget.webViewFactory ?? const WebViewFactory();
           // Gate the WebView mount on cookie-seed completion. The
           // InAppWebView's initial GET fires the moment it mounts; if we
@@ -193,7 +198,8 @@ class _RecordingScreenState extends ConsumerState<RecordingScreen> {
                 initialUrl: url,
                 policy: NavigationPolicy(
                   serverOrigin: origin,
-                  allowedPathPrefixes: const ['/m/recording/'],
+                  basePath: basePath,
+                  allowedPathPrefixes: ['$basePath/m/recording/'],
                 ),
                 onLinkOpen: (_) {},
                 onWebViewCreated: _onWebViewCreated,

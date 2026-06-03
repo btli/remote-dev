@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../application/state/appearance_provider.dart';
 import '../../../domain/appearance_settings.dart';
 import '../../../domain/session_summary.dart';
+import '../../../infrastructure/url/workspace_urls.dart';
 import '../../../infrastructure/webview/bridge_controller.dart';
 import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
@@ -423,11 +424,11 @@ class _Webview extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return FutureBuilder<Uri?>(
-      future: _resolveOrigin(ref),
+    return FutureBuilder<_WebviewTarget?>(
+      future: _resolveTarget(ref),
       builder: (context, snap) {
-        final origin = snap.data;
-        if (origin == null) {
+        final target = snap.data;
+        if (target == null) {
           return const ColoredBox(
             color: Color(0xFF1A1B26),
             child: Center(
@@ -441,12 +442,16 @@ class _Webview extends ConsumerWidget {
             ),
           );
         }
-        final url = origin.replace(path: '/m/session/$sessionId');
+        final origin = target.origin;
+        final basePath = target.basePath;
+        final urls = WorkspaceUrls(origin.toString(), basePath);
+        final url = Uri.parse(urls.web('/m/session/$sessionId'));
         return WebViewFactory().build(
           initialUrl: url,
           policy: NavigationPolicy(
             serverOrigin: origin,
-            allowedPathPrefixes: const ['/m/session/'],
+            basePath: basePath,
+            allowedPathPrefixes: ['$basePath/m/session/'],
           ),
           onLinkOpen: (uri) {
             // NavigationPolicy classifies cross-origin / non-/m navigations
@@ -475,17 +480,18 @@ class _Webview extends ConsumerWidget {
     );
   }
 
-  /// Resolves the active server's origin AND best-effort seeds the
-  /// platform CookieManager with the persisted CF JWT before the WebView
-  /// mounts. Seeding failures are swallowed so they don't block the
-  /// WebView (the WebView will hit a CF Access challenge instead, and
-  /// the user re-auths via /reauth).
-  Future<Uri?> _resolveOrigin(WidgetRef ref) async {
+  /// Resolves the active connection into the WebView's host [origin] +
+  /// workspace [basePath], AND best-effort seeds the platform CookieManager
+  /// with the persisted CF JWT before the WebView mounts. Seeding failures
+  /// are swallowed so they don't block the WebView (the WebView will hit a
+  /// CF Access challenge instead, and the user re-auths via /reauth).
+  Future<_WebviewTarget?> _resolveTarget(WidgetRef ref) async {
     final conn = await ref.read(activeWorkspaceProvider.future);
     if (conn == null) return null;
-    // The WebView loads `<origin>/m/session/<id>`. base-path prefixing is
-    // Task B; for a migrated single-workspace config basePath is '' so the
-    // origin is exactly the host origin.
+    // The WebView loads `<origin><basePath>/m/session/<id>`. The cookie is
+    // seeded against the bare HOST origin (CF cookies are host/domain-
+    // scoped); for a migrated single-workspace config basePath is '' so the
+    // navigated URL is exactly `<origin>/m/session/<id>`.
     final origin = Uri.parse(conn.host.origin);
     try {
       final credentials = ref.read(mobileCredentialsStoreProvider);
@@ -499,8 +505,18 @@ class _Webview extends ConsumerWidget {
     } catch (_) {
       // intentional: see seeder rationale in ChannelScreen._seedCookie.
     }
-    return origin;
+    return _WebviewTarget(origin: origin, basePath: conn.workspace.basePath);
   }
+}
+
+/// The resolved WebView target: the bare host [origin] (used for cookie
+/// scoping and the [NavigationPolicy] origin gate) plus the workspace
+/// [basePath] (`''` or `/<slug>`) that prefixes the navigated `/m/*` URL and
+/// the in-surface allow list.
+class _WebviewTarget {
+  const _WebviewTarget({required this.origin, required this.basePath});
+  final Uri origin;
+  final String basePath;
 }
 
 /// Hands tapped links off to the OS browser sheet (Custom Tabs on

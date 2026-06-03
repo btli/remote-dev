@@ -10,6 +10,7 @@ import '../../../infrastructure/auth/mobile_credentials.dart';
 import '../../../infrastructure/storage/flutter_secure_storage_port.dart';
 import '../../../infrastructure/storage/host_workspace_store_impl.dart';
 import '../../../infrastructure/storage/server_config_store_impl.dart';
+import '../../../infrastructure/url/workspace_urls.dart';
 import '../../../infrastructure/webview/webview_cookie_seeder.dart';
 import 'webview_host_screen.dart';
 
@@ -96,8 +97,8 @@ class SessionRouteHost extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final asyncServer = ref.watch(activeServerProvider);
-    return asyncServer.when(
+    final asyncConn = ref.watch(activeWorkspaceProvider);
+    return asyncConn.when(
       loading: () => const Scaffold(
         backgroundColor: Color(0xFF1A1B26),
         body: Center(child: CircularProgressIndicator()),
@@ -111,8 +112,8 @@ class SessionRouteHost extends ConsumerWidget {
           ),
         ),
       ),
-      data: (server) {
-        if (server == null) {
+      data: (conn) {
+        if (conn == null) {
           return Scaffold(
             backgroundColor: const Color(0xFF1A1B26),
             body: Center(
@@ -136,11 +137,17 @@ class SessionRouteHost extends ConsumerWidget {
             ),
           );
         }
-        final origin = Uri.parse(server.url);
+        final basePath = conn.workspace.basePath;
+        // Cookie scope + NavigationPolicy origin gate are the bare HOST
+        // origin (CF cookies are host/domain-scoped); the navigated URL and
+        // the in-surface allow list carry the workspace basePath.
+        final origin = Uri.parse(conn.host.origin);
+        final urls = WorkspaceUrls(conn.host.origin, basePath);
         return WebViewHostScreen(
-          initialUrl: Uri.parse('${server.url}/m/session/$sessionId'),
+          initialUrl: Uri.parse(urls.web('/m/session/$sessionId')),
           serverOrigin: origin,
-          allowedPathPrefixes: const ['/m/session/'],
+          basePath: basePath,
+          allowedPathPrefixes: ['$basePath/m/session/'],
         );
       },
     );

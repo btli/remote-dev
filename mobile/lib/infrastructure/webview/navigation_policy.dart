@@ -2,16 +2,24 @@ enum NavigationDecision { allow, interceptAndOpenExternally, intercept }
 
 class NavigationPolicy {
   /// Default policy used by the in-session WebView (Phase 2). Locks the
-  /// WebView to `<serverOrigin>/m/*` plus the CF Access challenge — every
-  /// other URL is intercepted and opened externally.
+  /// WebView to `<serverOrigin><basePath>/m/*` plus the CF Access challenge
+  /// — every other URL is intercepted and opened externally.
   ///
-  /// When [allowedPathPrefixes] is supplied, the `/m/*` allow list is
-  /// further narrowed to paths starting with one of the listed prefixes.
+  /// [basePath] is `''` (single-workspace) or `/<slug>` (a path-prefixed
+  /// workspace). The in-surface gate becomes `<basePath>/m/`, so for `/demo`
+  /// a URL like `https://h/demo/m/session/x` is recognised as same-surface.
+  /// With the default empty [basePath] the gate is exactly `/m/`, byte-
+  /// identical to the pre-base-path policy.
+  ///
+  /// When [allowedPathPrefixes] is supplied, the `<basePath>/m/*` allow list
+  /// is further narrowed to paths starting with one of the listed prefixes
+  /// (which callers build base-path-aware, e.g. `<basePath>/m/session/`).
   /// This lets per-surface hosts (recording, channel, session) pin the
   /// WebView to a single PWA route so a same-origin redirect to a sister
   /// surface is intercepted instead of silently navigating in-place.
   const NavigationPolicy({
     required this.serverOrigin,
+    this.basePath = '',
     this.allowedPathPrefixes,
   }) : _allowSsoProviders = false;
 
@@ -25,9 +33,16 @@ class NavigationPolicy {
   /// that we'd then accidentally load in-place.
   const NavigationPolicy.forLogin({required this.serverOrigin})
       : _allowSsoProviders = true,
+        basePath = '',
         allowedPathPrefixes = null;
 
   final Uri serverOrigin;
+
+  /// `''` or `/<slug>`. Prepended to the `/m/` in-surface gate so a path-
+  /// prefixed workspace's `<basePath>/m/*` URLs are treated as same-surface.
+  /// Ignored by [NavigationPolicy.forLogin] (the login flow needs broad
+  /// origin access on any path).
+  final String basePath;
 
   /// Optional narrower allow list. When non-null, a same-origin path must
   /// match one of these prefixes (in addition to the `/m/*` requirement)
@@ -50,7 +65,7 @@ class NavigationPolicy {
       // post lands on `/`, not `/m/*`).
       return NavigationDecision.allow;
     }
-    if (!uri.path.startsWith('/m/')) {
+    if (!uri.path.startsWith('$basePath/m/')) {
       return NavigationDecision.intercept;
     }
     final prefixes = allowedPathPrefixes;
