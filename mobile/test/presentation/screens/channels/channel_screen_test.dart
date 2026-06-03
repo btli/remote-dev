@@ -97,10 +97,13 @@ _MockCookieSeeder _fastSeeder() {
   return m;
 }
 
-/// Same shape as `_RecordingWebViewFactory` — captures the
-/// `onProgressChanged` callback the screen wires into [WebViewFactory.build]
-/// so the test can simulate page-load progress events.
+/// Same shape as `_RecordingWebViewFactory` — captures the URL + policy it was
+/// asked to build (for the base-path assertions) and the `onProgressChanged`
+/// callback the screen wires into [WebViewFactory.build] so the test can
+/// simulate page-load progress events.
 class _ChannelWebViewFactory implements WebViewFactory {
+  Uri? capturedUrl;
+  NavigationPolicy? capturedPolicy;
   ValueChanged<int>? capturedOnProgressChanged;
 
   @override
@@ -113,6 +116,8 @@ class _ChannelWebViewFactory implements WebViewFactory {
     ValueChanged<int>? onProgressChanged,
     void Function(ConsoleMessage message)? onConsoleMessage,
   }) {
+    capturedUrl = initialUrl;
+    capturedPolicy = policy;
     capturedOnProgressChanged = onProgressChanged;
     // SizedBox stand-in — the real InAppWebView's platform plugin isn't
     // available under flutter_test and would replace the host subtree
@@ -121,11 +126,14 @@ class _ChannelWebViewFactory implements WebViewFactory {
   }
 }
 
-/// A migrated single-workspace connection (empty basePath).
+/// A connection: host owns the origin, workspace owns the basePath. For a
+/// migrated single-workspace install [basePath] is '' (so the navigated URL is
+/// `<origin>/m/channel/<id>`); for a path-prefixed workspace it is `/<slug>`.
 ActiveConnection _conn({
   String hostId = 'h_srv-1',
   String workspaceId = 'w_srv-1',
   String origin = 'https://dev.example.com',
+  String basePath = '',
 }) {
   final now = DateTime.utc(2025, 1, 1);
   return ActiveConnection(
@@ -133,15 +141,17 @@ ActiveConnection _conn({
       id: hostId,
       label: 'Work',
       origin: origin,
-      kind: HostKind.singleWorkspace,
+      kind: basePath.isEmpty
+          ? HostKind.singleWorkspace
+          : HostKind.multiWorkspace,
       createdAt: now,
       lastUsedAt: now,
     ),
     workspace: WorkspaceConfig(
       id: workspaceId,
       hostId: hostId,
-      slug: '',
-      basePath: '',
+      slug: basePath.isEmpty ? '' : basePath.substring(1),
+      basePath: basePath,
       displayName: 'Work',
       lastUsedAt: now,
     ),
@@ -451,6 +461,83 @@ void main() {
       await tester.pump();
 
       expect(find.text('#random'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a /demo workspace base-paths the WebView URL AND the nav allow list',
+    (tester) async {
+      // Mirrors the recording_screen `/demo` base-path test: when the active
+      // workspace carries a basePath, the channel WebView target becomes
+      // `<origin>/demo/m/channel/<id>`, the policy origin gate stays the bare
+      // host origin (cookies are host-scoped), and the allow list / `/m/` gate
+      // are base-path-aware. Closes the channel-vs-recording coverage gap.
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.exceptionAsString().contains('InAppWebViewPlatform')) {
+          return;
+        }
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
+
+      final credentials = _fastCredentials();
+      final seeder = _fastSeeder();
+      final factory = _ChannelWebViewFactory();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            activeWorkspaceProvider.overrideWith(
+              (ref) async => _conn(origin: 'https://h', basePath: '/demo'),
+            ),
+            mobileCredentialsStoreProvider.overrideWithValue(credentials),
+            webViewCookieSeederProvider.overrideWithValue(seeder),
+          ],
+          child: MaterialApp(
+            home: ChannelScreen(
+              channelId: 'chan-demo-1',
+              webViewFactory: factory,
+            ),
+          ),
+        ),
+      );
+      // Don't pumpAndSettle — InAppWebView never settles. A bounded number of
+      // pumps flushes the FutureProvider + seed-gate microtasks.
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      // The navigated URL carries the basePath.
+      expect(factory.capturedUrl, isNotNull);
+      expect(
+        factory.capturedUrl!.toString(),
+        equals('https://h/demo/m/channel/chan-demo-1'),
+      );
+
+      final policy = factory.capturedPolicy!;
+      // The base-path-prefixed in-surface route is allowed…
+      expect(
+        policy.decide(Uri.parse('https://h/demo/m/channel/chan-demo-1')),
+        equals(NavigationDecision.allow),
+      );
+      // …a bare /m/* path (missing the basePath) is intercepted…
+      expect(
+        policy.decide(Uri.parse('https://h/m/channel/chan-demo-1')),
+        equals(NavigationDecision.intercept),
+      );
+      // …and a sister surface under the same basePath is intercepted.
+      expect(
+        policy.decide(Uri.parse('https://h/demo/m/session/x')),
+        equals(NavigationDecision.intercept),
+      );
+      // Cookie seeding still targets the bare HOST origin (host-scoped).
+      verify(
+        () => seeder.seedCfCookie(
+          serverOrigin: Uri.parse('https://h'),
+          value: any(named: 'value'),
+        ),
+      ).called(1);
     },
   );
 }

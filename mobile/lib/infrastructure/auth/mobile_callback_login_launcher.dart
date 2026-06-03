@@ -198,6 +198,13 @@ class MobileCallbackLoginLauncher {
       throw const MobileCallbackLaunchException(
         'The browser could not be opened to sign in.',
       );
+    } on TimeoutException {
+      // Parity with [login]'s timeout logging. Unlike [login] (which maps a
+      // timeout to a null/cancel result), the host bootstrap MUST yield a CF
+      // token, so we log here and rethrow to preserve the documented
+      // `throws TimeoutException` contract.
+      debugPrint('[MobileCallbackLogin] loginHost timed out after $_timeout');
+      rethrow;
     }
 
     final result = parseMobileCallback(callbackUri);
@@ -216,6 +223,14 @@ class MobileCallbackLoginLauncher {
   /// [loginHost]. Subscribes to the deep-link stream BEFORE launching (so a
   /// fast callback is never missed), opens `<baseUrl>/auth/mobile-callback`,
   /// and completes with the first matching `remotedev://auth/callback` URI.
+  ///
+  /// SINGLE IN-FLIGHT LOGIN ASSUMPTION: callers ([login] / [loginHost], and
+  /// their UI screens) run at most one sign-in at a time. The shared
+  /// `deepLinkStream` carries no correlation id, so this completes on the FIRST
+  /// matching callback regardless of which login started it — two concurrent
+  /// logins against different hosts could cross-bind credentials. Every call
+  /// site (AddHost, reauth, the workspace refresh closure) enforces this by
+  /// awaiting one flow before starting another.
   ///
   /// Throws [_LaunchFailed] if the launcher reports failure, [TimeoutException]
   /// on no callback within [_timeout], or rethrows a stream error. The

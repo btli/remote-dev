@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
@@ -158,10 +160,23 @@ class _AddHostScreenState extends ConsumerState<AddHostScreen> {
     try {
       hostCb = await _runHostLogin(Uri.parse(origin));
     } on MobileCallbackException catch (e) {
+      // Browser-launch / wrong-callback-shape failures already carry a
+      // user-facing message.
       if (mounted) setState(() => _error = e.message);
       return null;
+    } on TimeoutException {
+      // No `remotedev://auth/callback` arrived within the launcher's window —
+      // surface a friendly message instead of the raw
+      // `Instance of 'TimeoutException'` toString.
+      if (mounted) {
+        setState(
+          () => _error = 'Sign-in timed out. Please try again.',
+        );
+      }
+      return null;
     } catch (e) {
-      if (mounted) setState(() => _error = 'Sign-in failed: $e');
+      // Any other unexpected failure. Keep it generic but non-raw.
+      if (mounted) setState(() => _error = 'Sign-in failed. Please try again.');
       return null;
     }
     if (!mounted) return null;

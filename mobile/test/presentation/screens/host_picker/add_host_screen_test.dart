@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show HttpHeaders;
 import 'dart:typed_data';
@@ -236,9 +237,13 @@ void main() {
         ),
         apiFactory: (host) => _apiWithAdapter(
           host,
-          // 404 with a valid JSON body → InstancesApi maps it to
-          // NotASupervisorException. (A non-JSON body would surface as a
-          // parse-level DioException instead, which is the network-error path.)
+          // ANY 404 → InstancesApi maps it to NotASupervisorException,
+          // independent of the body. The body here is incidental: a 404 is a
+          // definitive "no discovery here" regardless of whether it carries a
+          // JSON `{error}`, an HTML page, or nothing. (dio only attempts JSON
+          // decoding when the response Content-Type is JSON, so a non-JSON 404
+          // does NOT surface as a parse error — it still maps to
+          // NotASupervisorException.)
           _CannedAdapter(
             body: jsonEncode(<String, dynamic>{'error': 'Not found'}),
             statusCode: 404,
@@ -360,6 +365,68 @@ void main() {
         findsOneWidget,
       );
       expect(hostLoginCalls, 0);
+    },
+  );
+
+  testWidgets(
+    'host login TimeoutException → friendly "timed out" message (not a raw '
+    "Instance of 'TimeoutException'), nothing persisted",
+    (tester) async {
+      var detectCalls = 0;
+
+      final ctx = await pumpAddHost(
+        tester,
+        // The real launcher raises TimeoutException when no callback arrives.
+        hostLogin: (origin) async =>
+            throw TimeoutException('no callback', const Duration(minutes: 2)),
+        apiFactory: (host) {
+          detectCalls += 1;
+          return _apiWithAdapter(
+            host,
+            _CannedAdapter(
+              body: jsonEncode(<String, dynamic>{'instances': <dynamic>[]}),
+            ),
+          );
+        },
+      );
+
+      await fillAndSubmit(tester);
+
+      // Friendly, non-raw copy.
+      expect(find.text('Sign-in timed out. Please try again.'), findsOneWidget);
+      expect(find.textContaining('TimeoutException'), findsNothing);
+
+      // Bootstrap failed before detect ran → nothing persisted/activated.
+      expect(detectCalls, 0);
+      expect(await ctx.store.loadHosts(), isEmpty);
+      expect(await ctx.store.loadWorkspaces(), isEmpty);
+      expect(await ctx.store.loadActiveWorkspace(), isNull);
+    },
+  );
+
+  testWidgets(
+    'host login MobileCallbackLaunchException → its message surfaces inline',
+    (tester) async {
+      final ctx = await pumpAddHost(
+        tester,
+        hostLogin: (origin) async => throw const MobileCallbackLaunchException(
+          'The browser could not be opened to sign in.',
+        ),
+        apiFactory: (host) => _apiWithAdapter(
+          host,
+          _CannedAdapter(
+            body: jsonEncode(<String, dynamic>{'instances': <dynamic>[]}),
+          ),
+        ),
+      );
+
+      await fillAndSubmit(tester);
+
+      expect(
+        find.text('The browser could not be opened to sign in.'),
+        findsOneWidget,
+      );
+      expect(await ctx.store.loadHosts(), isEmpty);
     },
   );
 }

@@ -86,12 +86,22 @@ class InstancesApi {
       response = await _dio.get<dynamic>(_path);
     } on DioException catch (err) {
       // A 404 is the one status we reinterpret: it means this origin is a plain
-      // single-workspace server, not a Supervisor. Everything else (401/403,
-      // 5xx, timeouts, connection-refused) stays a normal error to retry.
+      // single-workspace server, not a Supervisor — regardless of the response
+      // body (an HTML 404 page, a JSON `{error}`, or an empty body all mean the
+      // same thing here). Everything else (401/403, 5xx, timeouts,
+      // connection-refused) stays a normal error to retry.
       if (err.response?.statusCode == 404) {
         throw NotASupervisorException(_origin);
       }
       rethrow;
+    }
+
+    // Defense-in-depth: the default Dio `validateStatus` already routes a 404
+    // into the catch above, but if a caller ever relaxes it (so a 404 surfaces
+    // as a "successful" response) we MUST still treat it as "not a supervisor"
+    // rather than trying to parse the body as an instances list.
+    if (response.statusCode == 404) {
+      throw NotASupervisorException(_origin);
     }
 
     final data = response.data;

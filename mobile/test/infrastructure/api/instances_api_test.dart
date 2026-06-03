@@ -66,6 +66,33 @@ class _CannedAdapter implements HttpClientAdapter {
   }
 }
 
+/// Returns a non-JSON (HTML) 404 page. Used to prove the 404→NotASupervisor
+/// mapping is independent of the response body: a plain server's 404 is often
+/// an HTML page, not JSON.
+class _Html404Adapter implements HttpClientAdapter {
+  _Html404Adapter(this.body);
+
+  final String body;
+
+  @override
+  void close({bool force = false}) {}
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<dynamic>? cancelFuture,
+  ) async {
+    return ResponseBody.fromString(
+      body,
+      404,
+      headers: {
+        HttpHeaders.contentTypeHeader: ['text/html; charset=utf-8'],
+      },
+    );
+  }
+}
+
 /// Simulates a transport failure (timeout / connection-refused) by throwing the
 /// kind of [DioException] Dio raises when the socket never completes.
 class _ThrowingAdapter implements HttpClientAdapter {
@@ -195,6 +222,30 @@ void main() {
         statusCode: 404,
       );
       final dio = Dio()..httpClientAdapter = adapter;
+
+      await expectLater(
+        _api(dio, origin: 'https://plain.example.com', storage: storage).list(),
+        throwsA(
+          isA<NotASupervisorException>().having(
+            (e) => e.origin,
+            'origin',
+            'https://plain.example.com',
+          ),
+        ),
+      );
+    });
+
+    test('a non-JSON (HTML) 404 ALSO throws NotASupervisorException '
+        '(body/content-type is irrelevant to the 404 mapping)', () async {
+      final storage = _FakeStorage();
+      await MobileCredentialsStore(storage).setHostCfToken('h_1', 'host-jwt');
+
+      // A plain Remote Dev server typically answers an unknown route with an
+      // HTML 404 page, not a JSON body. It must still map to "not a supervisor"
+      // rather than blowing up as a parse error.
+      final dio = Dio()
+        ..httpClientAdapter =
+            _Html404Adapter('<!doctype html><title>404</title>Not Found');
 
       await expectLater(
         _api(dio, origin: 'https://plain.example.com', storage: storage).list(),

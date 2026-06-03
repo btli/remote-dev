@@ -34,12 +34,24 @@ class InstanceSummary with _$InstanceSummary {
 
   const InstanceSummary._();
 
+  /// Strict json_serializable deserializer. It requires BOTH `slug` and
+  /// `displayName` to be present (the generated code throws on a missing
+  /// `displayName`) and does NOT apply the [displayName] → [slug] fallback.
+  ///
+  /// DUAL-FACTORY GUARD: for real server payloads from `GET /api/instances`
+  /// (where `displayName` is nullable/blank) use [fromInstanceJson] instead —
+  /// it is the only safe parser for the wire shape. This factory exists so
+  /// json_serializable can round-trip the DTO and is marked
+  /// `@visibleForTesting` so any production call site that should have used
+  /// [fromInstanceJson] trips the analyzer instead of failing at runtime on a
+  /// blank `displayName`.
+  @visibleForTesting
   factory InstanceSummary.fromJson(Map<String, dynamic> json) =>
       _$InstanceSummaryFromJson(json);
 
   /// Build from one element of the Supervisor's `instances` array, applying the
   /// [displayName] → [slug] fallback when the server value is absent or blank.
-  /// Use this (not [fromJson]) when parsing the real `/api/instances` payload.
+  /// Use this (NOT [fromJson]) when parsing the real `/api/instances` payload.
   factory InstanceSummary.fromInstanceJson(Map<String, dynamic> json) {
     final slug = json['slug'] as String;
     final rawDisplayName = json['displayName'] as String?;

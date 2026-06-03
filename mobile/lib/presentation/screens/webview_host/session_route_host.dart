@@ -18,9 +18,13 @@ final secureStorageProvider = Provider<FlutterSecureStoragePort>(
   (_) => FlutterSecureStoragePort(),
 );
 
-/// Legacy per-server store. Retained for the server add/edit/picker flows
-/// (Task D will migrate those to the Host/Workspace model) and for the
-/// push-token registrar, which still iterates legacy [ServerConfig] rows.
+/// Legacy per-server store. The add/edit/picker flows and the push-token
+/// registrar have all migrated to the Host/Workspace model, so nothing in the
+/// app reads this provider on the hot path anymore. It is retained because the
+/// one-time legacy→Host/Workspace migration still reads the old `servers` /
+/// `active_server_id` keys (via [HostWorkspaceStoreImpl]) on installs that
+/// predate the migration, and the boot tests stub it. Safe to remove once the
+/// migration window has fully closed.
 final serverConfigStoreProvider = Provider<ServerConfigStore>(
   (ref) => ServerConfigStoreImpl(ref.watch(secureStorageProvider)),
 );
