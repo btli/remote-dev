@@ -10,7 +10,7 @@ permissions:
 
 env:
   BUN_VERSION: "latest"
-  NODE_VERSION: "22"
+  NODE_VERSION: "24"
 
 jobs:
   # ─── Build web application (shared across platforms) ──────────────────────
