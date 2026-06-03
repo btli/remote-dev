@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../domain/server_config.dart';
+import '../../domain/host_config.dart';
+import '../../domain/instance_summary.dart';
 import '../../domain/session_summary.dart';
+import '../../infrastructure/api/instances_api.dart';
 import '../../infrastructure/push/push_token_registrar.dart';
 import '../screens/biometric/biometric_settings_screen.dart';
 import '../screens/bridge_spike/bridge_spike_screen.dart';
@@ -17,7 +19,7 @@ import '../screens/profile/github_accounts_screen.dart';
 import '../screens/profile/servers_screen.dart';
 import '../screens/recording/recording_screen.dart';
 import '../screens/server_picker/add_server_screen.dart';
-import '../screens/server_picker/edit_server_screen.dart';
+import '../screens/server_picker/edit_host_screen.dart';
 import '../screens/server_picker/server_picker_screen.dart';
 import '../screens/session_view/session_view_screen.dart';
 import '../screens/shell/adaptive_bottom_bar.dart';
@@ -92,6 +94,39 @@ class AppRouter {
     _config.push(loc);
   }
 
+  /// "Open another workspace" on an already-linked multi-workspace host:
+  /// re-discover its instances via the Supervisor (`GET /api/instances`, using
+  /// the stored host CF token) and push the [WorkspacePickerScreen]. If the
+  /// re-list fails (network, expired token) we surface a snackbar but still
+  /// push the picker with an empty list so the user can pull-to-refresh / retry
+  /// from there rather than being dead-ended.
+  Future<void> _openAnotherWorkspace(
+    BuildContext context,
+    WidgetRef ref,
+    HostConfig host,
+  ) async {
+    List<InstanceSummary> instances = const [];
+    try {
+      final api = InstancesApi(
+        origin: host.origin,
+        hostId: host.id,
+        storage: ref.read(secureStorageProvider),
+      );
+      instances = await api.list();
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not refresh workspaces: $e')),
+        );
+      }
+    }
+    if (!context.mounted) return;
+    context.push(
+      '/hosts/workspaces',
+      extra: WorkspacePickerArgs(host: host, instances: instances),
+    );
+  }
+
   GoRouter _buildRouter() {
     return GoRouter(
       initialLocation: const ServerPickerRoute().toPath(),
@@ -139,34 +174,33 @@ class AppRouter {
           path: '/servers',
           builder: (context, state) => Consumer(
             builder: (context, ref, _) => ServerPickerScreen(
-              onSelect: (server) async {
-                // NOTE: the picker still writes the LEGACY server store
-                // (Task D migrates it to the Host/Workspace model). We
-                // invalidate the workspace provider (which the
-                // activeServerProvider shim derives from) so downstream
-                // rebinds, but the legacy `setActive` won't change the
-                // active *workspace* until Task D wires the picker through
-                // the Host/Workspace store.
+              // D3: select/switch now drives the Host/Workspace store. Setting
+              // the active workspace + invalidating activeWorkspaceProvider
+              // (which the display-only activeServerProvider shim derives from)
+              // is what actually makes switching between connections work.
+              onSelectWorkspace: (ws) async {
                 await ref
-                    .read(serverConfigStoreProvider)
-                    .setActive(server.id);
+                    .read(hostWorkspaceStoreProvider)
+                    .setActiveWorkspace(ws.id);
                 ref.invalidate(activeWorkspaceProvider);
-                ref.invalidate(serversListProvider);
+                ref.invalidate(serverPickerDataProvider);
                 if (context.mounted) {
                   context.go('/home');
                 }
               },
               // push sub-routes so the server picker stays on the back
               // stack and the AppBar shows an implicit back arrow.
-              //
-              // D2: the add entry point now drives the host/workspace
-              // onboarding flow ([AddHostScreen]) rather than the legacy
-              // [AddServerScreen]. D3 rewires the LIST itself.
-              onAdd: () => context.push('/hosts/add'),
-              onEdit: (server) => context.push(
+              onAddHost: () => context.push('/hosts/add'),
+              onEditHost: (host, soleWorkspace) => context.push(
                 '/servers/edit',
-                extra: server,
+                extra: EditHostArgs(host: host, workspace: soleWorkspace),
               ),
+              onEditWorkspace: (host, ws) => context.push(
+                '/servers/edit',
+                extra: EditHostArgs(host: host, workspace: ws),
+              ),
+              onOpenAnotherWorkspace: (host) =>
+                  _openAnotherWorkspace(context, ref, host),
               onTestBridge: () => context.push('/spike'),
             ),
           ),
@@ -176,10 +210,10 @@ class AppRouter {
           builder: (context, state) => Consumer(
             builder: (context, ref, _) => AddServerScreen(
               onSaved: (server) {
-                ref.invalidate(serversListProvider);
-                // Legacy add path (Task D). Invalidate the workspace
-                // provider so the shim re-derives.
+                // Legacy add path (kept for the bridge-spike POC). Invalidate
+                // the workspace provider so the shim re-derives.
                 ref.invalidate(activeWorkspaceProvider);
+                ref.invalidate(serverPickerDataProvider);
                 // Prefer pop so the picker beneath us survives. Fall back
                 // to go for direct deep-link cold-starts where add is
                 // the root of the stack.
@@ -195,21 +229,19 @@ class AppRouter {
         GoRoute(
           path: '/servers/edit',
           builder: (context, state) {
-            final server = state.extra;
-            if (server is! ServerConfig) {
+            final args = state.extra;
+            if (args is! EditHostArgs) {
               // Direct deep-link without state — bounce back to the picker.
               return _EditMissingExtraScreen(
                 onBack: () => context.go('/servers'),
               );
             }
             return Consumer(
-              builder: (context, ref, _) => EditServerScreen(
-                initial: server,
-                onSaved: (_) {
-                  ref.invalidate(serversListProvider);
-                  // Legacy edit path (Task D). Invalidate the workspace
-                  // provider so the shim re-derives.
-                  ref.invalidate(activeWorkspaceProvider);
+              builder: (context, ref, _) => EditHostScreen(
+                args: args,
+                onSaved: () {
+                  // EditHostScreen already invalidated the picker data + the
+                  // active-connection shim.
                   if (context.canPop()) {
                     context.pop();
                   } else {
@@ -389,7 +421,7 @@ class _EditMissingExtraScreen extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: const Color(0xFF1A1B26),
         title: const Text(
-          'Edit server',
+          'Edit host',
           style: TextStyle(color: Colors.white),
         ),
         iconTheme: const IconThemeData(color: Colors.white),
@@ -401,7 +433,7 @@ class _EditMissingExtraScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               const Text(
-                'No server selected.',
+                'No host selected.',
                 style: TextStyle(color: Colors.white, fontSize: 16),
               ),
               const SizedBox(height: 16),

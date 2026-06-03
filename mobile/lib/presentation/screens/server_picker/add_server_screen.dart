@@ -9,7 +9,7 @@ import '../../../infrastructure/auth/mobile_credentials.dart';
 import '../../../infrastructure/deep_link/deep_link_stream_provider.dart';
 import '../webview_host/session_route_host.dart'
     show mobileCredentialsStoreProvider, serverConfigStoreProvider;
-import 'server_picker_screen.dart' show serversListProvider;
+import 'server_picker_screen.dart' show serverPickerDataProvider;
 
 /// Probes a candidate server URL with a short-timeout unauthenticated GET
 /// against `/api/health` (and falls back to `/`). Returns true on a 2xx
@@ -153,7 +153,7 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
       final store = ref.read(serverConfigStoreProvider);
       await store.upsert(config);
       await store.setActive(config.id);
-      ref.invalidate(serversListProvider);
+      ref.invalidate(serverPickerDataProvider);
       if (mounted) widget.onSaved(config);
     } finally {
       if (mounted) setState(() => _saving = false);
