@@ -39,7 +39,8 @@
  */
 
 import { NextResponse } from "next/server";
-import { withAuth } from "@/lib/api";
+import type { NextRequest } from "next/server";
+import { withAuth, type RouteContext } from "@/lib/api";
 import { BASE_PATH, INSTANCE_SLUG } from "@/lib/base-path";
 import {
   isPortProxyable,
@@ -289,10 +290,31 @@ async function handler(
 
 const wrapped = withAuth(handler);
 
-export const GET = wrapped;
-export const POST = wrapped;
-export const PUT = wrapped;
-export const PATCH = wrapped;
-export const DELETE = wrapped;
-export const HEAD = wrapped;
-export const OPTIONS = wrapped;
+/**
+ * Next's generated route validator types this `[...path]` catch-all's context as
+ * `{ params: Promise<{ port: string; path: string[] }> }` (the `path` segment is
+ * a REQUIRED `string[]`). The shared `withAuth`/`RouteContext` types params as
+ * `Promise<Record<string, string>>`, whose index signature yields `path: string`
+ * — so the wrapped handler doesn't satisfy the generated constraint. We bridge
+ * the two LOCALLY here (rather than widening the shared `RouteContext`, which
+ * would cascade onto every `[id]` route) with a thin per-method export that
+ * carries Next's expected signature and delegates to the wrapped handler. The
+ * handler already normalizes `params.path` at runtime (array / absent → joined
+ * path), so the local cast is sound.
+ */
+type ProxyRouteContext = { params: Promise<{ port: string; path: string[] }> };
+
+function proxyRoute(
+  request: NextRequest,
+  context: ProxyRouteContext,
+): Promise<NextResponse> {
+  return wrapped(request, context as unknown as RouteContext);
+}
+
+export const GET = proxyRoute;
+export const POST = proxyRoute;
+export const PUT = proxyRoute;
+export const PATCH = proxyRoute;
+export const DELETE = proxyRoute;
+export const HEAD = proxyRoute;
+export const OPTIONS = proxyRoute;

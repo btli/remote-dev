@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { RouteContext } from "@/lib/api";
+import type { NextRequest } from "next/server";
 
 vi.mock("@/lib/auth-utils", () => ({
   getAuthSession: vi.fn().mockResolvedValue({ user: { id: "user-1" } }),
@@ -10,26 +10,35 @@ vi.mock("@/lib/auth-utils", () => ({
 // proxy URLs are rewritten to "/proxy/<port>/…" with no slug prefix.
 
 /**
+ * The exported handlers carry Next's generated catch-all signature: a context
+ * of `{ params: Promise<{ port: string; path: string[] }> }`. We mirror that
+ * shape here so the test typechecks against the real export.
+ */
+type ProxyRouteContext = { params: Promise<{ port: string; path: string[] }> };
+
+/**
  * Build the dynamic-route context the way Next.js invokes the handler.
  *
  * A `[...path]` catch-all resolves to a `string[]` (one entry per URL segment),
  * or is absent entirely when the proxied path is empty (`/proxy/<port>/`). The
- * harness mirrors that real shape: pass an array of segments, or omit `path` for
- * the root case.
+ * harness mirrors that real runtime shape: pass an array of segments, or omit
+ * `path` for the root case — the handler normalizes a missing/array `path` at
+ * runtime, so we bridge the genuine runtime value through `unknown` rather than
+ * fabricating a `string[]` that Next's TYPE claims but the RUNTIME omits.
  */
-function ctx(port: string, path?: string[]): RouteContext {
-  // The real runtime params: `port` is a string, `path` is the catch-all's
-  // `string[]` (or absent). `RouteContext` deliberately types params as
-  // `Record<string, string>` (a lie for catch-alls — the very mismatch FIX 1
-  // handles at runtime), so we bridge the genuine runtime shape through
-  // `unknown` rather than widening the shared type.
+function ctx(port: string, path?: string[]): ProxyRouteContext {
   const params: Record<string, unknown> = {
     port,
     ...(path ? { path } : {}),
   };
   return {
-    params: Promise.resolve(params) as RouteContext["params"],
+    params: Promise.resolve(params) as ProxyRouteContext["params"],
   };
+}
+
+/** The exports type `request` as `NextRequest`; tests build plain `Request`s. */
+function req(input: string, init?: RequestInit): NextRequest {
+  return new Request(input, init) as unknown as NextRequest;
 }
 
 const fetchMock = vi.fn();
@@ -47,7 +56,7 @@ describe("port proxy route", () => {
   it("rejects a non-numeric port with 400 INVALID_PORT", async () => {
     const { GET } = await import("./route");
     const res = await GET(
-      new Request("http://localhost/proxy/abc/"),
+      req("http://localhost/proxy/abc/"),
       ctx("abc"),
     );
     expect(res.status).toBe(400);
@@ -58,7 +67,7 @@ describe("port proxy route", () => {
   it("rejects a hard-blocked instance port (6001) with 403 PORT_BLOCKED", async () => {
     const { GET } = await import("./route");
     const res = await GET(
-      new Request("http://localhost/proxy/6001/"),
+      req("http://localhost/proxy/6001/"),
       ctx("6001"),
     );
     expect(res.status).toBe(403);
@@ -68,7 +77,7 @@ describe("port proxy route", () => {
 
   it("rejects a privileged port (<1024) with 403", async () => {
     const { GET } = await import("./route");
-    const res = await GET(new Request("http://localhost/proxy/80/"), ctx("80"));
+    const res = await GET(req("http://localhost/proxy/80/"), ctx("80"));
     expect(res.status).toBe(403);
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -82,7 +91,7 @@ describe("port proxy route", () => {
     );
     const { GET } = await import("./route");
     const res = await GET(
-      new Request("http://localhost/proxy/3000/foo?x=1"),
+      req("http://localhost/proxy/3000/foo?x=1"),
       ctx("3000", ["foo"]),
     );
     expect(res.status).toBe(200);
@@ -106,7 +115,7 @@ describe("port proxy route", () => {
     );
     const { GET } = await import("./route");
     const res = await GET(
-      new Request("http://localhost/proxy/6000/api/data?q=1"),
+      req("http://localhost/proxy/6000/api/data?q=1"),
       ctx("6000", ["api", "data"]),
     );
     expect(res.status).toBe(200);
@@ -126,7 +135,7 @@ describe("port proxy route", () => {
     );
     const { GET } = await import("./route");
     const res = await GET(
-      new Request("http://localhost/proxy/6000/?z=9"),
+      req("http://localhost/proxy/6000/?z=9"),
       ctx("6000"),
     );
     expect(res.status).toBe(200);
@@ -147,7 +156,7 @@ describe("port proxy route", () => {
     );
     const { GET } = await import("./route");
     const res = await GET(
-      new Request("http://localhost/proxy/3000/", {
+      req("http://localhost/proxy/3000/", {
         headers: {
           cookie: "authjs.session-token=secret; CF_Authorization=jwt",
           authorization: "Bearer api-key-123",
@@ -181,7 +190,7 @@ describe("port proxy route", () => {
     );
     const { GET } = await import("./route");
     const res = await GET(
-      new Request("http://localhost/proxy/3000/"),
+      req("http://localhost/proxy/3000/"),
       ctx("3000"),
     );
     expect(res.status).toBe(200);
@@ -198,7 +207,7 @@ describe("port proxy route", () => {
     );
     const { GET } = await import("./route");
     const res = await GET(
-      new Request("http://localhost/proxy/3000/"),
+      req("http://localhost/proxy/3000/"),
       ctx("3000"),
     );
     expect(res.status).toBe(502);
@@ -212,7 +221,7 @@ describe("port proxy route", () => {
     fetchMock.mockRejectedValue(err);
     const { GET } = await import("./route");
     const res = await GET(
-      new Request("http://localhost/proxy/3000/"),
+      req("http://localhost/proxy/3000/"),
       ctx("3000"),
     );
     expect(res.status).toBe(502);
@@ -224,7 +233,7 @@ describe("port proxy route", () => {
     fetchMock.mockRejectedValue(new TypeError("something else broke"));
     const { GET } = await import("./route");
     const res = await GET(
-      new Request("http://localhost/proxy/3000/"),
+      req("http://localhost/proxy/3000/"),
       ctx("3000"),
     );
     expect(res.status).toBe(502);
@@ -241,7 +250,7 @@ describe("port proxy route", () => {
     );
     const { GET } = await import("./route");
     const res = await GET(
-      new Request("http://localhost/proxy/3000/"),
+      req("http://localhost/proxy/3000/"),
       ctx("3000"),
     );
     expect(res.status).toBe(302);
