@@ -154,7 +154,6 @@ class HostWorkspaceStoreImpl implements HostWorkspaceStore {
 
     for (final server in legacyServers) {
       final uri = Uri.parse(server.url);
-      // TODO(taskD): apply HostConfig.normalizeOrigin in the add-host flow too.
       final origin = HostConfig.normalizeOrigin(server.url);
       // Strip any trailing slash from the path; "" when at the root.
       var path = uri.path;
