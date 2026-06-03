@@ -10,6 +10,12 @@ import { cn } from "@/lib/utils";
 interface PathInputProps {
   value: string;
   onChange: (value: string) => void;
+  /**
+   * Called when the value should be persisted: on the inner input's `onBlur`
+   * and immediately after a browse selection. Lets callers debounce/save
+   * without wiring their own blur handler.
+   */
+  onCommit?: (value: string) => void;
   placeholder?: string;
   id?: string;
   className?: string;
@@ -17,6 +23,11 @@ interface PathInputProps {
   browserTitle?: string;
   browserDescription?: string;
   disabled?: boolean;
+  /**
+   * Directory the browser opens at when the field is empty. Falls back to the
+   * current value, then the browser's default (HOME).
+   */
+  initialPath?: string;
   /** Mode: 'directory' for folder selection, 'file' for file selection */
   mode?: "directory" | "file";
   /** Show hidden files/folders in browser */
@@ -32,6 +43,7 @@ interface PathInputProps {
 export function PathInput({
   value,
   onChange,
+  onCommit,
   placeholder,
   id,
   className,
@@ -39,6 +51,7 @@ export function PathInput({
   browserTitle,
   browserDescription,
   disabled = false,
+  initialPath,
   mode = "directory",
   showHidden = false,
 }: PathInputProps) {
@@ -46,6 +59,7 @@ export function PathInput({
 
   const handleBrowseSelect = (path: string) => {
     onChange(path);
+    onCommit?.(path);
   };
 
   const isFileMode = mode === "file";
@@ -60,6 +74,7 @@ export function PathInput({
           id={id}
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onBlur={() => onCommit?.(value)}
           placeholder={placeholder || defaultPlaceholder}
           disabled={disabled}
           className={cn(
@@ -84,7 +99,7 @@ export function PathInput({
         open={browserOpen}
         onClose={() => setBrowserOpen(false)}
         onSelect={handleBrowseSelect}
-        initialPath={value || undefined}
+        initialPath={value || initialPath || undefined}
         title={browserTitle}
         description={browserDescription}
         mode={mode}
