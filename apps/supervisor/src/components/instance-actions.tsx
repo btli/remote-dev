@@ -5,12 +5,15 @@
  *
  * Surfaces the lifecycle controls a detail page offers, gated by the instance's
  * current status + the viewer's role:
- *   - Suspend (ready) / Resume (suspended)        — operator, POST suspend/resume
+ *   - Stop (ready) / Start (suspended)            — operator, POST suspend/resume
  *   - Image rollout (ready/suspended)             — operator, PATCH imageTag
  *   - Grow storage (ready/suspended)              — operator, PATCH storageRequest
  *   - Delete (any non-terminal)                   — admin, DELETE
+ *   - Remove permanently (deleted)                — admin, DELETE ?purge=true
  *
- * All actions hit the JSON API and refresh the page on success. Uses `fetch` +
+ * "Stop"/"Start" are the user-facing labels for suspend/resume — the underlying
+ * statuses (`ready`/`suspended`) and audit actions are unchanged. All actions
+ * hit the JSON API and refresh the page on success. Uses `fetch` +
  * `console.error` (the structured server logger is server-only).
  */
 
@@ -26,6 +29,8 @@ const buttonClass =
 
 interface InstanceActionsProps {
   instanceId: string;
+  /** The instance slug — shown in the permanent-remove confirm + freed on purge. */
+  slug: string;
   status: string;
   storageRequest: string | null;
   imageTag: string | null;
@@ -37,6 +42,7 @@ interface InstanceActionsProps {
 
 export function InstanceActions({
   instanceId,
+  slug,
   status,
   storageRequest,
   imageTag,
@@ -96,6 +102,38 @@ export function InstanceActions({
     void run(() => fetch(`/api/instances/${instanceId}`, { method: "DELETE" }), "delete");
   }
 
+  function removePermanently(): void {
+    if (
+      !confirm(
+        `Permanently remove this record? The slug "${slug}" will be freed for reuse. This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    // The detail page no longer exists after a purge → redirect to the dashboard
+    // rather than refresh. A 404 (already purged) is also treated as success.
+    setBusy(true);
+    setError(null);
+    void (async () => {
+      try {
+        const res = await fetch(`/api/instances/${instanceId}?purge=true`, {
+          method: "DELETE",
+        });
+        if (res.ok || res.status === 404) {
+          router.push("/");
+          return;
+        }
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(data.error ?? `Remove failed (${res.status})`);
+        setBusy(false);
+      } catch (err) {
+        console.error("permanent remove failed", err);
+        setError("Network error during permanent remove.");
+        setBusy(false);
+      }
+    })();
+  }
+
   if (!canOperate && !canDelete) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -114,26 +152,25 @@ export function InstanceActions({
 
       {canOperate ? (
         <div className="flex flex-wrap items-center gap-3">
-          {status === "ready" ? (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => post("suspend", "suspend")}
-              className={cn(buttonClass, "bg-secondary text-secondary-foreground hover:bg-secondary/80")}
-            >
-              Suspend
-            </button>
-          ) : null}
-          {status === "suspended" ? (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => post("resume", "resume")}
-              className={cn(buttonClass, "bg-primary text-primary-foreground hover:bg-primary/90")}
-            >
-              Resume
-            </button>
-          ) : null}
+          {/* Stop / Start are always rendered, each enabled only for its
+              applicable status (Stop ← ready; Start ← suspended). They POST to
+              the existing suspend/resume routes (the canonical actions). */}
+          <button
+            type="button"
+            disabled={busy || status !== "ready"}
+            onClick={() => post("suspend", "stop")}
+            className={cn(buttonClass, "bg-secondary text-secondary-foreground hover:bg-secondary/80")}
+          >
+            Stop
+          </button>
+          <button
+            type="button"
+            disabled={busy || status !== "suspended"}
+            onClick={() => post("resume", "start")}
+            className={cn(buttonClass, "bg-primary text-primary-foreground hover:bg-primary/90")}
+          >
+            Start
+          </button>
         </div>
       ) : null}
 
@@ -199,10 +236,19 @@ export function InstanceActions({
         </div>
       ) : null}
 
-      {canDelete ? (
+      {canDelete && status === "deleted" ? (
         <button
           type="button"
           disabled={busy}
+          onClick={removePermanently}
+          className={cn(buttonClass, "bg-destructive text-destructive-foreground hover:bg-destructive/90")}
+        >
+          Remove permanently
+        </button>
+      ) : canDelete ? (
+        <button
+          type="button"
+          disabled={busy || status === "terminating"}
           onClick={del}
           className={cn(buttonClass, "bg-destructive text-destructive-foreground hover:bg-destructive/90")}
         >

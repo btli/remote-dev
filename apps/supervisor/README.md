@@ -9,13 +9,13 @@ offers an operator dashboard to spin up instances, choose where their persistent
 data lives (storage targets), and manage their lifecycle. It talks to the
 Kubernetes API directly via `@kubernetes/client-node`.
 
-> **Status: Phase 1 in progress.** Provisioning has landed (remote-dev-jvcx.4):
-> `POST`/`DELETE /api/instances` now create/terminate real instances via the
-> reconciler. Storage targets have landed (remote-dev-jvcx.5): live discovery +
-> the 4-backend PVC translation + a create-instance form with a storage-target
-> dropdown. Still pending: the router (jvcx.6) and RBAC/Deployments (jvcx.7).
-> Suspend/resume (`POST /api/instances/:id/{suspend,resume}`) are defined in the
-> state machine but return `501 { code: "PHASE1_PENDING" }` until Phase 2 (jvcx.8).
+> **Status: Phases 1–2 landed.** Provisioning (remote-dev-jvcx.4),
+> storage targets (jvcx.5), the router (jvcx.6), RBAC/Deployments (jvcx.7), and
+> lifecycle depth (jvcx.8 — suspend/resume scale 0↔1, image rollout, grow-only
+> PVC resize, logs/events) are all in. Newest additions: **permanent delete**
+> (purge a `deleted` record, jvcx.14), **Start/Stop** terminology for
+> suspend/resume (jvcx.15), and a read-only **storage browser** (jvcx.16) — see
+> the sections below.
 
 ## Architecture
 
@@ -69,12 +69,65 @@ cluster state:
 - Readiness is gated on the StatefulSet's `readyReplicas ≥ 1` (which itself
   requires the pod's `/<slug>/api/readyz` readiness probe to pass); not-ready past
   a 120s budget → `error`.
-- `DELETE /api/instances/:id` (operator; admin **or** owner) marks the row
-  `terminating` and returns `202`; the reconciler deletes the namespace and
-  confirms it's gone before marking `deleted`.
+- `DELETE /api/instances/:id` (admin) marks the row `terminating` and returns
+  `202`; the reconciler deletes the namespace and confirms it's gone before
+  marking `deleted`.
 
 If no cluster is reachable (local dev without `KUBECONFIG`), the reconcile tick
 logs a warning and returns without erroring any instance.
+
+### Start / Stop (suspend / resume)
+
+The dashboard surfaces suspend/resume as **Stop** and **Start** (a terminology
+change only — the canonical statuses `ready`/`suspended` and audit actions
+`suspend`/`resume` are unchanged; `suspended` simply *displays* as **Stopped**).
+`POST /api/instances/:id/suspend` and `…/resume` are the canonical routes;
+`…/stop` and `…/start` are exact behavioral **aliases** (same operator role,
+owner-scoping, and audit actions). All four record desired state + an audit row
+and return `202`; the reconciler scales the StatefulSet `1 → 0` (Stop, PVC
+retained) or `0 → 1` (Start) on its next tick.
+
+### Permanent delete (purge)
+
+A soft `DELETE` leaves the row at `deleted` forever (so the slug stays reserved
+and the dashboard accumulates tombstones). An admin can **purge** a record with
+`DELETE /api/instances/:id?purge=true`: it requires `status === "deleted"` (the
+reconciler already confirmed the namespace is gone; otherwise `409
+INVALID_STATE`) and **hard-deletes the DB row**, which cascades away its
+`instance_audit_log` + `instance_seed` rows and **frees the slug for reuse**.
+Because the audit trail is erased by design, the purge writes no audit row (it
+would be deleted) — it is logged instead. The detail page's **"Remove
+permanently"** button (shown only for a `deleted` instance) does this and
+redirects to the dashboard.
+
+### Storage browser (read-only)
+
+Operators (owner-scoped; admins included) can browse an instance's persistent
+data volume (PVC `data-rdv-0`) **read-only** and download files from the detail
+page's **Storage** section, **even when the instance is Stopped**.
+
+How it works: each listing/download dispatches an **ephemeral, self-deleting
+Kubernetes Job** (`rdv-inspect-<id>`) in the instance namespace that mounts the
+PVC **read-only** at `/inspect` (both the volumeMount and the PVC source are
+`readOnly`) and runs a tiny Node script emitting one JSON line (a directory
+listing or a single base64-encoded file). The Supervisor polls the Job, reads
+its pod log, parses the result, and deletes the Job (a TTL is a backstop). This
+does **not** touch instance lifecycle state, so creating it from the API process
+is fine (it's analogous to the logs route's read — see the inspector-service and
+storage-route header comments). No new RBAC is needed: it reuses the existing
+`jobs: create,delete` + `pods/log: get` grants.
+
+- `GET /api/instances/:id/storage?path=<p>` → `{ listing }` (dirs + files).
+- `GET /api/instances/:id/storage/file?path=<p>` → streams the file as an
+  attachment.
+
+**Limitations**: read-only (no upload/delete); a **few-second latency** per
+action (the Job round-trip); files over **5 MiB** can't be downloaded here (use a
+terminal → `413`); and if a **Stopped** workspace's storage is **node-pinned**
+(local-path), the inspector can't mount it — the UI shows a note telling the
+operator to **Start** the instance first (NFS/RWX volumes schedule anywhere, so
+they browse fine while stopped). Like the logs/events surfaces, the list endpoint
+degrades to an empty listing + a `note` when no cluster is reachable (never 500).
 
 ## Storage targets
 
