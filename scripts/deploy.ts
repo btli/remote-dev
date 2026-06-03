@@ -601,6 +601,15 @@ function runMigration(): boolean {
     "GitHub account metadata backfill"
   );
 
+  // Backfill the user_email resolution index: every existing user without a
+  // primary user_email row gets one (idempotent). Runs after db:push created
+  // the table, so multi-email resolution works for pre-existing accounts.
+  runCommand(
+    ["bun", "run", "db:backfill-user-emails"],
+    PROJECT_ROOT,
+    "user_email index backfill"
+  );
+
   return true;
 }
 
