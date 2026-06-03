@@ -6,7 +6,6 @@ import type { IPty } from "node-pty";
 import { execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
-import { tmpdir } from "node:os";
 import { resolve as pathResolve } from "node:path";
 import { promisify } from "node:util";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
@@ -22,7 +21,6 @@ const agentStatusLog = createLogger("AgentStatus");
 /** In-memory store for proxy state reported by agent sessions (apiKey never broadcast to WS). */
 const proxyStateStore = new Map<string, { baseUrl: string; keyPrefix: string; apiKey: string }>();
 const notifyLog = createLogger("Notify");
-const voiceLog = createLogger("Voice");
 const internalLog = createLogger("InternalAPI");
 const ptyLog = createLogger("PtyControl");
 const peerLog = createLogger("PeerAPI");
@@ -135,12 +133,6 @@ interface TerminalConnection {
   // Last-focus bookkeeping for primary-connection election (focus-based promotion).
   lastFocusAt: number;
   isVisible: boolean;
-  // Voice mode state
-  voiceFifoPath: string | null;
-  voiceFifoFd: number | null;
-  voiceAudioBuffer: Buffer[];
-  voiceFifoReady: boolean;
-  voiceSpaceInterval: ReturnType<typeof setInterval> | null;
 }
 
 // All active connections, keyed by connectionId (UUID)
@@ -275,7 +267,7 @@ async function pushMcpEventToFolderPeers(
   }
 }
 
-/** Whether a terminal type has agent-like behavior (exit handling, restart, voice). */
+/** Whether a terminal type has agent-like behavior (exit handling, restart). */
 function isAgentTerminalType(type: string): boolean {
   return type === "agent" || type === "loop";
 }
@@ -453,73 +445,7 @@ function cleanupConnection(connectionId: string): void {
 
   // Per-connection cleanup
   if (conn.resizeTimeout) clearTimeout(conn.resizeTimeout);
-  if (conn.voiceSpaceInterval) {
-    clearInterval(conn.voiceSpaceInterval);
-    conn.voiceSpaceInterval = null;
-  }
-  cleanupVoiceFifo(conn);
   safeDestroyPty(conn.pty);
-}
-
-// Re-import would create circular deps with types/terminal.ts in server context,
-// so keep a local constant matching the shared VOICE_AUDIO_PREFIX from @/types/terminal
-const VOICE_AUDIO_PREFIX = 0x01;
-/** Max buffered voice chunks before FIFO reader connects (~25 seconds at 256ms/chunk) */
-const MAX_VOICE_BUFFER_CHUNKS = 100;
-
-/**
- * Create a named FIFO pipe for streaming voice audio to the sox shim.
- * Opens the FIFO for writing asynchronously (blocks until a reader opens it),
- * buffering any audio chunks received before the reader connects.
- */
-function createVoiceFifo(conn: TerminalConnection): string {
-  // Use sessionId (not connectionId) — the sox shim inside tmux looks up
-  // the FIFO by $RDV_SESSION_ID: /tmp/rdv-voice-${RDV_SESSION_ID}.fifo
-  const fifoPath = `${tmpdir()}/rdv-voice-${conn.sessionId}.fifo`;
-  try { fs.unlinkSync(fifoPath); } catch { /* may not exist */ }
-  execFileSync("mkfifo", ["-m", "0600", fifoPath]);
-  conn.voiceFifoPath = fifoPath;
-  conn.voiceAudioBuffer = [];
-  conn.voiceFifoReady = false;
-
-  // Open FIFO for writing asynchronously — blocks until reader opens
-  fs.open(fifoPath, fs.constants.O_WRONLY, (err, fd) => {
-    if (err) {
-      voiceLog.error("Failed to open FIFO for writing", { error: err.message });
-      return;
-    }
-    conn.voiceFifoFd = fd;
-    // Flush buffered audio before marking ready
-    for (const chunk of conn.voiceAudioBuffer) {
-      try {
-        fs.writeSync(fd, chunk);
-      } catch (flushErr) {
-        voiceLog.warn("Failed to flush buffered chunk", { error: String(flushErr) });
-        break;
-      }
-    }
-    conn.voiceAudioBuffer = [];
-    conn.voiceFifoReady = true;
-    voiceLog.debug("FIFO writer connected", { connectionId: conn.connectionId, sessionId: conn.sessionId });
-  });
-
-  return fifoPath;
-}
-
-/**
- * Clean up voice FIFO resources: close file descriptor, remove pipe, reset state.
- */
-function cleanupVoiceFifo(conn: TerminalConnection): void {
-  if (conn.voiceFifoFd !== null) {
-    try { fs.closeSync(conn.voiceFifoFd); } catch { /* may be closed */ }
-    conn.voiceFifoFd = null;
-  }
-  if (conn.voiceFifoPath) {
-    try { fs.unlinkSync(conn.voiceFifoPath); } catch { /* may be deleted */ }
-    conn.voiceFifoPath = null;
-  }
-  conn.voiceFifoReady = false;
-  conn.voiceAudioBuffer = [];
 }
 
 /**
@@ -2035,11 +1961,6 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       userId,
       lastFocusAt: Date.now(),
       isVisible: true,
-      voiceFifoPath: null,
-      voiceFifoFd: null,
-      voiceAudioBuffer: [],
-      voiceFifoReady: false,
-      voiceSpaceInterval: null,
     };
 
     // Register connection in both maps
@@ -2093,26 +2014,8 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       cleanupConnection(connectionId);
     });
 
-    ws.on("message", (message, isBinary) => {
+    ws.on("message", (message) => {
       try {
-        // Handle binary voice audio frames
-        if (isBinary) {
-          const buf = Buffer.isBuffer(message) ? message : Buffer.from(message as ArrayBuffer);
-          if (buf.length > 1 && buf[0] === VOICE_AUDIO_PREFIX) {
-            const pcmData = buf.subarray(1);
-            if (connection.voiceFifoReady && connection.voiceFifoFd !== null) {
-              fs.write(connection.voiceFifoFd, pcmData, (writeErr) => {
-                if (writeErr) {
-                  voiceLog.warn("FIFO write error", { error: writeErr.message });
-                }
-              });
-            } else if (connection.voiceAudioBuffer.length < MAX_VOICE_BUFFER_CHUNKS) {
-              connection.voiceAudioBuffer.push(pcmData);
-            }
-            return;
-          }
-        }
-
         const msg = JSON.parse(message.toString());
 
         switch (msg.type) {
@@ -2304,54 +2207,9 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             }
             break;
           }
-
-          case "voice_start": {
-            if (!isAgentTerminalType(connection.terminalType)) {
-              ws.send(JSON.stringify({ type: "voice_error", message: "Voice mode is only available for agent sessions" }));
-              break;
-            }
-            try {
-              const fifoPath = createVoiceFifo(connection);
-              voiceLog.debug("Created FIFO", { connectionId, sessionId, fifoPath });
-              // Simulate holding SPACE to trigger Claude Code voice recording.
-              // Send initial space immediately, then repeat at 50ms to mimic key-hold.
-              // Server-side avoids round-trip latency from browser -> WS -> server.
-              connection.pty.write(" ");
-              connection.voiceSpaceInterval = setInterval(() => {
-                if (connections.has(connectionId)) {
-                  connection.pty.write(" ");
-                } else {
-                  clearInterval(connection.voiceSpaceInterval!);
-                  connection.voiceSpaceInterval = null;
-                }
-              }, 50);
-              ws.send(JSON.stringify({ type: "voice_ready", sessionId }));
-            } catch (error) {
-              voiceLog.error("Failed to create FIFO", { connectionId, sessionId, error: String(error) });
-              ws.send(JSON.stringify({ type: "voice_error", message: `Voice setup failed: ${(error as Error).message}` }));
-            }
-            break;
-          }
-
-          case "voice_stop": {
-            voiceLog.debug("Stopping voice", { connectionId, sessionId });
-            // Stop simulating SPACE hold
-            if (connection.voiceSpaceInterval) {
-              clearInterval(connection.voiceSpaceInterval);
-              connection.voiceSpaceInterval = null;
-            }
-            if (connection.voiceFifoFd !== null) {
-              try {
-                const silencePadding = Buffer.alloc(3200); // 100ms silence at 16kHz/16bit
-                fs.writeSync(connection.voiceFifoFd, silencePadding);
-              } catch { /* ignore */ }
-            }
-            cleanupVoiceFifo(connection);
-            break;
-          }
         }
       } catch {
-        // JSON parse error on non-binary message — forward raw text to PTY
+        // JSON parse error — forward raw text to PTY
         if (connections.has(connectionId)) {
           connection.pty.write(message.toString());
         }
@@ -2393,7 +2251,6 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 export function shutdownTerminalConnections(): void {
   log.info("Shutting down terminal server (tmux sessions preserved)...");
   for (const [id, conn] of connections) {
-    cleanupVoiceFifo(conn);
     safeDestroyPty(conn.pty);
     conn.ws.close();
     log.debug("Closed PTY wrapper", { connectionId: id, sessionId: conn.sessionId });

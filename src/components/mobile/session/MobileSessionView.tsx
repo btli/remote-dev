@@ -384,8 +384,8 @@ export function MobileSessionView({
           tappable without false positives.
 
           TerminalWithKeyboard with `mobileChrome="external"` renders only
-          the xterm.js viewport (plus the agent voice button + session
-          ended overlay). The wrapper still owns the WebSocket, FitAddon,
+          the xterm.js viewport (plus the agent session-ended overlay).
+          The wrapper still owns the WebSocket, FitAddon,
           and resize handling, so we don't compute cols/rows ourselves;
           AuthErrorOverlay is rendered internally by Terminal as well.
           We forward smart-keys / input bar text via the ref's

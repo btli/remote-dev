@@ -85,7 +85,6 @@ vi.mock("@/services/preferences-service", () => ({
   getFolderGitIdentity: vi.fn(async () => ({ env: {} })),
 }));
 vi.mock("@/services/api-key-service", () => ({ createApiKey: vi.fn() }));
-vi.mock("@/services/voice-shim-service", () => ({ ensureSoxShim: vi.fn() }));
 vi.mock("@/infrastructure/container", () => ({
   githubAccountRepository: {
     findByProject: vi.fn(),
