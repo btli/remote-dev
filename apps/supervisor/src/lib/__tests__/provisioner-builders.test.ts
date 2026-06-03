@@ -8,6 +8,7 @@ import {
   buildService,
   buildStatefulSet,
   buildSeedJob,
+  buildInspectorJob,
   buildInstanceEnv,
   authSecretName,
   MANAGED_BY,
@@ -17,6 +18,8 @@ import {
   WS_PORT,
   RUN_AS_ID,
   DATA_DIR,
+  INSPECT_DIR,
+  INSPECTOR_ROLE,
 } from "@/lib/provisioner-builders";
 
 const SLUG = "alpha";
@@ -306,5 +309,74 @@ describe("buildSeedJob", () => {
     const plain = buildSeedJob(SLUG, { authorizedEmails: ["a@example.com"], image: "img" });
     expect(plain.spec?.template.spec?.imagePullSecrets).toBeUndefined();
     expect(plain.spec?.template.spec?.nodeSelector).toBeUndefined();
+  });
+});
+
+describe("buildInspectorJob (storage browser, jvcx.16)", () => {
+  const base = {
+    slug: SLUG,
+    name: "rdv-inspect-abc12345",
+    image: "ghcr.io/btli/remote-dev@sha256:abc",
+    command: ["node", "-e", "process.stdout.write('{}')"],
+  };
+
+  it("is a one-shot, read-only, self-deleting Job in the instance namespace", () => {
+    const job = buildInspectorJob(base);
+    expect(job.metadata?.name).toBe("rdv-inspect-abc12345");
+    expect(job.metadata?.namespace).toBe("rdv-alpha");
+    // No retries, hard deadline, TTL backstop, restartPolicy Never.
+    expect(job.spec?.backoffLimit).toBe(0);
+    expect(job.spec?.activeDeadlineSeconds).toBeGreaterThan(0);
+    expect(job.spec?.ttlSecondsAfterFinished).toBeGreaterThan(0);
+    expect(job.spec?.template.spec?.restartPolicy).toBe("Never");
+  });
+
+  it("labels the Job managed-by + rdv-role:inspector + rdv-slug (NOT rdv.io/slug)", () => {
+    const job = buildInspectorJob(base);
+    const labels = job.metadata?.labels ?? {};
+    expect(labels["managed-by"]).toBe(MANAGED_BY);
+    expect(labels["rdv-role"]).toBe(INSPECTOR_ROLE);
+    expect(labels["rdv-slug"]).toBe(SLUG);
+    // Must NOT carry the Service selector label, or it'd receive instance traffic.
+    expect(labels["rdv.io/slug"]).toBeUndefined();
+  });
+
+  it("mounts the bound data-rdv-0 PVC READ-ONLY at /inspect (mount + source both readOnly)", () => {
+    const job = buildInspectorJob(base);
+    const c = job.spec?.template.spec?.containers?.[0];
+    expect(c?.image).toBe(base.image);
+    expect(c?.command).toEqual(base.command);
+    expect(c?.volumeMounts).toEqual([
+      { name: "data", mountPath: INSPECT_DIR, readOnly: true },
+    ]);
+    const vol = job.spec?.template.spec?.volumes?.[0];
+    expect(vol?.name).toBe("data");
+    expect(vol?.persistentVolumeClaim).toEqual({
+      claimName: "data-rdv-0",
+      readOnly: true,
+    });
+  });
+
+  it("runs as the fixed non-root uid/gid", () => {
+    const job = buildInspectorJob(base);
+    expect(job.spec?.template.spec?.securityContext).toMatchObject({
+      runAsUser: RUN_AS_ID,
+      runAsNonRoot: true,
+    });
+  });
+
+  it("pins nodeName ONLY when provided (RWO share with a running pod)", () => {
+    const pinned = buildInspectorJob({ ...base, nodeName: "node-7" });
+    expect(pinned.spec?.template.spec?.nodeName).toBe("node-7");
+    const unpinned = buildInspectorJob(base);
+    expect(unpinned.spec?.template.spec?.nodeName).toBeUndefined();
+  });
+
+  it("references an imagePullSecret only when provided", () => {
+    const withPull = buildInspectorJob({ ...base, imagePullSecretName: "harbor-registry" });
+    expect(withPull.spec?.template.spec?.imagePullSecrets).toEqual([
+      { name: "harbor-registry" },
+    ]);
+    expect(buildInspectorJob(base).spec?.template.spec?.imagePullSecrets).toBeUndefined();
   });
 });

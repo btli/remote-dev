@@ -58,7 +58,11 @@ rules:
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "list", "patch", "update"]
   # Pod status + logs (read-only): readiness checks and the logs/events API
-  # surface (§6.7). NO pods/exec (seed runs via a Job, §6.4).
+  # surface (§6.7). NO pods/exec (seed runs via a Job, §6.4). The READ-ONLY
+  # storage browser (remote-dev-jvcx.16) reuses these too — it dispatches an
+  # ephemeral inspector Job and reads its pod's log — so it needs NO new verbs:
+  # `jobs: create,delete,get,list` (below) + `pods: get,list` + `pods/log: get`
+  # already cover it. Do NOT add verbs for the inspector.
   - apiGroups: [""]
     resources: ["pods", "pods/log"]
     verbs: ["get", "list"]
@@ -78,8 +82,10 @@ rules:
   - apiGroups: ["apps"]
     resources: ["statefulsets"]
     verbs: ["get", "list", "create", "patch", "update", "delete"]
-  # Jobs (§15 B3): the first-boot seed Job (buildSeedJob). Dispatch lands fully
-  # in Phase 2, but B3 says to grant the verbs now so the ClusterRole is stable.
+  # Jobs (§15 B3): the first-boot seed Job (buildSeedJob) AND the ephemeral
+  # read-only storage-inspector Job (buildInspectorJob, remote-dev-jvcx.16) —
+  # both create/get/list/delete; the inspector also self-deletes after reading
+  # its pod's log. No new verbs are required for the inspector.
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list", "create", "delete"]

@@ -45,6 +45,9 @@ export const RUN_AS_ID = 10001;
 /** RDV_DATA_DIR — the PVC mount point inside the container. */
 export const DATA_DIR = "/var/lib/rdv";
 
+/** Read-only mount point the inspector Job mounts the data PVC at (§ storage browser). */
+export const INSPECT_DIR = "/inspect";
+
 /** StatefulSet termination grace (matches the app's graceful tmux shutdown). */
 const TERMINATION_GRACE_SECONDS = 30;
 
@@ -422,6 +425,117 @@ export function buildSeedJob(
                 { name: "RDV_INSTANCE_SLUG", value: slug },
                 { name: "RDV_DATA_DIR", value: DATA_DIR },
               ],
+            },
+          ],
+        },
+      },
+    },
+  };
+}
+
+/** Role label marking an object as an ephemeral storage-inspector. */
+export const INSPECTOR_ROLE = "inspector";
+
+/**
+ * Labels every inspector Job/pod carries: the standard managed-by, the
+ * `rdv-role: inspector` marker (so a label selector can find/clean them), and
+ * `rdv-slug: <slug>` (note the bare key — NOT the `rdv.io/slug` the StatefulSet
+ * uses — so an inspector pod is NEVER matched by the headless Service selector
+ * and can't receive instance traffic).
+ */
+export function inspectorLabels(slug: string): Record<string, string> {
+  return {
+    "managed-by": MANAGED_BY,
+    "rdv-role": INSPECTOR_ROLE,
+    "rdv-slug": slug,
+  };
+}
+
+export interface BuildInspectorJobOptions {
+  /** Instance slug — names the namespace + the `rdv-slug` label. */
+  slug: string;
+  /** Job name (e.g. `rdv-inspect-<short-uuid>`) — caller-supplied for cleanup. */
+  name: string;
+  /** Instance image (readProvisionEnv().image) — Node-based; runs the script. */
+  image: string;
+  /** The container command/args that emit ONE JSON line to stdout. */
+  command: string[];
+  /** Optional private-registry pull Secret (reuse the instance's). */
+  imagePullSecretName?: string;
+  /**
+   * When the instance pod is RUNNING and holds an RWO volume, pin the inspector
+   * to its node so a read-only mount can share it. Omitted when the instance is
+   * stopped (rely on PV nodeAffinity for node-pinned local-path; NFS schedules
+   * anywhere).
+   */
+  nodeName?: string;
+}
+
+/**
+ * V1Job — an EPHEMERAL, self-deleting, read-only storage inspector
+ * (remote-dev-jvcx.16). It mounts the instance's bound data PVC `data-rdv-0`
+ * READ-ONLY at {@link INSPECT_DIR} and runs a short script (the instance image
+ * is Node-based) that emits exactly one JSON line describing a listing or a
+ * single file's bytes, then exits.
+ *
+ * Single-writer note: this Job does NOT touch instance LIFECYCLE state
+ * (status/StatefulSet/namespace lifecycle) — it is namespaced, ephemeral, and
+ * self-deleting, so creating it from the API process is acceptable (analogous to
+ * the logs route's read). It is NOT a single-writer violation.
+ *
+ * Hardening: `backoffLimit: 0` (no retries — a failure is final), `restartPolicy:
+ * Never`, `activeDeadlineSeconds` (kills a stuck Job), and `ttlSecondsAfterFinished`
+ * as a backstop so a leaked Job is GC'd even if explicit cleanup is missed. Both
+ * the volumeMount AND the PVC volume source are `readOnly: true` (defence in
+ * depth — the mount can never write through to the workspace).
+ */
+export function buildInspectorJob(opts: BuildInspectorJobOptions): V1Job {
+  // The StatefulSet's volumeClaimTemplate binds `<volume>-<sts>-<ordinal>` for
+  // the sole replica → `data-rdv-0`. Defined locally to keep this builder pure
+  // (no import of the db-backed storage module).
+  const PVC_NAME = "data-rdv-0";
+  const labels = inspectorLabels(opts.slug);
+  return {
+    metadata: {
+      name: opts.name,
+      namespace: namespaceForSlug(opts.slug),
+      labels,
+    },
+    spec: {
+      backoffLimit: 0,
+      activeDeadlineSeconds: 60,
+      // Backstop GC in case explicit cleanup is missed (the service deletes the
+      // Job after reading its log; this is belt-and-suspenders).
+      ttlSecondsAfterFinished: 120,
+      template: {
+        metadata: { labels },
+        spec: {
+          restartPolicy: "Never",
+          securityContext: {
+            fsGroup: RUN_AS_ID,
+            runAsUser: RUN_AS_ID,
+            runAsNonRoot: true,
+          },
+          ...(opts.imagePullSecretName
+            ? { imagePullSecrets: [{ name: opts.imagePullSecretName }] }
+            : {}),
+          // Pin to the instance pod's node ONLY when it is running (RWO share).
+          ...(opts.nodeName ? { nodeName: opts.nodeName } : {}),
+          containers: [
+            {
+              name: "inspect",
+              image: opts.image,
+              command: opts.command,
+              // Read-only mount (defence in depth: also readOnly on the source).
+              volumeMounts: [
+                { name: "data", mountPath: INSPECT_DIR, readOnly: true },
+              ],
+            },
+          ],
+          volumes: [
+            {
+              name: "data",
+              persistentVolumeClaim: { claimName: PVC_NAME, readOnly: true },
             },
           ],
         },
