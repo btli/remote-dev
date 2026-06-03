@@ -53,11 +53,18 @@ vi.mock("@/lib/auth", () => ({
   resolveSupervisorUser: (email: string) => resolveSpy(email),
 }));
 
-// NextAuth auth() seam — needed by the OIDC path in resolveSupervisorMobileCallback.
-const oidcState: { email: string | null } = { email: null };
+// NextAuth seam — needed by the OIDC path in resolveSupervisorMobileCallback.
+//   - `oidcState.email`   = the email a valid NextAuth session yields.
+//   - `oidcState.allowed` = closed-allowlist re-check (isOidcSignInAllowed) result;
+//     defaults true so existing OIDC tests pass.
+const oidcState: { email: string | null; allowed: boolean } = {
+  email: null,
+  allowed: true,
+};
 vi.mock("@/auth", () => ({
   auth: async () =>
     oidcState.email ? { user: { email: oidcState.email } } : null,
+  isOidcSignInAllowed: async () => oidcState.allowed,
 }));
 
 // Import AFTER mocks are registered.
@@ -76,6 +83,7 @@ beforeEach(() => {
   redirectState.target = null;
   cfState.user = null;
   oidcState.email = null;
+  oidcState.allowed = true;
   userState.row = { id: "sup-user-1", email: "host@example.com", role: "admin" };
   resolveSpy.mockClear();
 });

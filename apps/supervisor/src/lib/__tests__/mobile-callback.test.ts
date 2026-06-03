@@ -42,11 +42,19 @@ vi.mock("@/lib/auth", () => ({
   resolveSupervisorUser: (email: string) => resolveSpy(email),
 }));
 
-// NextAuth auth() seam
-const oidcState: { email: string | null } = { email: null };
+// NextAuth seam.
+//   - `oidcState.email`   = the email a valid NextAuth session yields (null = no session).
+//   - `oidcState.allowed` = what the closed-allowlist re-check (isOidcSignInAllowed)
+//     returns for that email. Defaults true; set false to model an email whose
+//     supervisor_user row was deleted (revocation-on-next-request).
+const oidcState: { email: string | null; allowed: boolean } = {
+  email: null,
+  allowed: true,
+};
 vi.mock("@/auth", () => ({
   auth: async () =>
     oidcState.email ? { user: { email: oidcState.email } } : null,
+  isOidcSignInAllowed: async () => oidcState.allowed,
 }));
 
 // ---------------------------------------------------------------------------
@@ -65,6 +73,7 @@ beforeEach(() => {
   clearCookies();
   cfState.user = null;
   oidcState.email = null;
+  oidcState.allowed = true;
   userState.id = "sup-user-1";
   userState.email = "host@example.com";
   userState.role = "admin";
@@ -349,6 +358,28 @@ describe("resolveSupervisorMobileCallback — OIDC user resolved, cookie missing
     expect(result.kind).toBe("error");
     if (result.kind !== "error") return;
     expect(result.message).toMatch(/missing its authentication cookie/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveSupervisorMobileCallback — OIDC allowlist gate (revocation)
+// ---------------------------------------------------------------------------
+
+describe("resolveSupervisorMobileCallback — OIDC allowlist gate", () => {
+  it("returns login (NOT a credential) for a non-allowlisted email", async () => {
+    // A valid NextAuth session whose email is NO LONGER in the supervisor
+    // allowlist (e.g. its supervisor_user row was deleted). Even with a valid
+    // session cookie present, the mobile callback must NOT mint a host
+    // credential — it must treat the request as unauthenticated.
+    setCookie("__Secure-authjs.session-token", "jwe-value");
+    oidcState.email = "revoked@example.com";
+    oidcState.allowed = false; // isOidcSignInAllowed → false
+
+    const result = await resolveSupervisorMobileCallback();
+    expect(result.kind).toBe("login");
+    // The gate runs BEFORE resolveSupervisorUser, so the user is never resolved
+    // (resolveSupervisorUser auto-creates a viewer — that must not happen here).
+    expect(resolveSpy).not.toHaveBeenCalled();
   });
 });
 

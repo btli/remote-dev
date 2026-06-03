@@ -18,11 +18,11 @@
  *   3. No identity → `{ kind: "login" }`.
  */
 
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import { validateAccessJWT } from "@/lib/cf-access";
 import { resolveSupervisorUser } from "@/lib/auth";
 import { createLogger } from "@/lib/logger";
-import { auth } from "@/auth";
+import { auth, isOidcSignInAllowed } from "@/auth";
 
 const log = createLogger("auth/mobile-callback");
 
@@ -152,14 +152,13 @@ function resolveSessionCookieBaseName(
 /**
  * Core logic for the supervisor host-scope mobile-callback route.
  *
- * Uses `cookies()` and `headers()` from `next/headers` (server component / Route
- * Handler context). Does NOT accept a `NextRequest` — this is a Server Component.
+ * Uses `cookies()` from `next/headers` (server component / Route Handler
+ * context). Does NOT accept a `NextRequest` — this is a Server Component.
  *
  * @see `apps/supervisor/src/app/auth/mobile-callback/page.tsx` (thin wrapper)
  */
 export async function resolveSupervisorMobileCallback(): Promise<MobileCallbackResult> {
   const cookieStore = await cookies();
-  void headers; // imported but `headers()` called indirectly via auth() internals
 
   // ------------------------------------------------------------------
   // Path 1: Cloudflare Access (preserve current behavior)
@@ -200,6 +199,23 @@ export async function resolveSupervisorMobileCallback(): Promise<MobileCallbackR
   const sessionEmail = session?.user?.email ?? null;
 
   if (sessionEmail) {
+    // AUTHORIZATION GATE (must mirror resolveAuthenticatedEmail in
+    // src/lib/auth.ts, NOT just trust the session). The signIn callback in
+    // src/auth.ts enforces isOidcSignInAllowed at LOGIN time, but sessions are
+    // JWT and resolveSupervisorUser auto-creates a `viewer` on first sight — so
+    // a session whose supervisor_user row was later deleted would otherwise be
+    // silently re-admitted here. resolveAuthenticatedEmail therefore re-applies
+    // the SAME closed-allowlist predicate per-request for revocation; the mobile
+    // callback bypasses that path, so we re-apply it ourselves BEFORE minting a
+    // host credential. A failing check is treated as unauthenticated → login
+    // (never grant a host credential to a user the supervisor app would reject).
+    if (!(await isOidcSignInAllowed(sessionEmail))) {
+      log.warn(
+        "OIDC session email not in supervisor allowlist; treating as unauthenticated",
+      );
+      return { kind: "login" };
+    }
+
     const user = await resolveSupervisorUser(sessionEmail);
 
     // Resolve session-cookie base name robustly by scanning the cookie store
