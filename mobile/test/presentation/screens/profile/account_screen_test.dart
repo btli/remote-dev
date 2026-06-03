@@ -8,13 +8,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:remote_dev/application/state/active_connection.dart';
 import 'package:remote_dev/domain/account.dart';
+import 'package:remote_dev/domain/host_config.dart';
 import 'package:remote_dev/domain/server_config.dart';
+import 'package:remote_dev/domain/workspace_config.dart';
 import 'package:remote_dev/infrastructure/api/account_api.dart';
 import 'package:remote_dev/infrastructure/storage/flutter_secure_storage_port.dart';
 import 'package:remote_dev/presentation/screens/profile/account_screen.dart';
 import 'package:remote_dev/presentation/screens/webview_host/session_route_host.dart'
-    show activeServerProvider, secureStorageProvider;
+    show activeServerProvider, activeWorkspaceProvider, secureStorageProvider;
 
 class _MockAccountApi extends Mock implements AccountApi {}
 
@@ -28,6 +31,31 @@ ServerConfig _server() => ServerConfig(
       url: 'https://rdv.example',
       lastUsedAt: DateTime.utc(2026, 1, 1),
     );
+
+/// Migrated single-workspace connection matching `_server()`: the host owns
+/// the origin and the workspace has an empty basePath (so the shim's
+/// `effectiveUrl == host.origin`).
+ActiveConnection _conn() {
+  final now = DateTime.utc(2026, 1, 1);
+  return ActiveConnection(
+    host: HostConfig(
+      id: 'h_srv-1',
+      label: 'My Server',
+      origin: 'https://rdv.example',
+      kind: HostKind.singleWorkspace,
+      createdAt: now,
+      lastUsedAt: now,
+    ),
+    workspace: WorkspaceConfig(
+      id: 'w_srv-1',
+      hostId: 'h_srv-1',
+      slug: '',
+      basePath: '',
+      displayName: 'My Server',
+      lastUsedAt: now,
+    ),
+  );
+}
 
 Widget _wrap({
   required AccountApi api,
@@ -78,6 +106,13 @@ Widget _wrap({
       accountApiProvider.overrideWithValue(api),
       activeServerProvider.overrideWith(
         (ref) => SynchronousFuture<ServerConfig?>(server),
+      ),
+      // Sign-out reads the active connection to clear the right host +
+      // workspace credential namespaces.
+      activeWorkspaceProvider.overrideWith(
+        (ref) => SynchronousFuture<ActiveConnection?>(
+          server == null ? null : _conn(),
+        ),
       ),
       secureStorageProvider.overrideWithValue(storage),
       cookieManagerProvider.overrideWithValue(cookieManager),
@@ -182,14 +217,16 @@ void main() {
   });
 
   testWidgets(
-      'sign-out: deletes per-server cf_authorization, scopes cookie '
-      'deletion to active server, invalidates active server, navigates '
-      'to /servers', (tester) async {
+      'sign-out: clears host + workspace credential namespaces, scopes '
+      'cookie deletion to the host origin, invalidates the active '
+      'connection, navigates to /servers', (tester) async {
     when(() => api.me()).thenAnswer(
       (_) async => const Account(email: 'jane@example.com'),
     );
     final storage = _MockSecureStorage();
     when(() => storage.delete(any(), any())).thenAnswer((_) async {});
+    // clearWorkspace / clearHost call deleteAll(namespace).
+    when(() => storage.deleteAll(any())).thenAnswer((_) async {});
     final cookies = _MockCookieManager();
     when(
       () => cookies.deleteCookies(
@@ -215,13 +252,14 @@ void main() {
     await tester.tap(find.widgetWithText(TextButton, 'Sign out'));
     await tester.pumpAndSettle();
 
-    // Secure storage entry for THIS server's CF cookie was deleted with
-    // the conventional ('cf_authorization') key namespaced under serverId.
-    verify(() => storage.delete('srv-1', 'cf_authorization')).called(1);
+    // Both credential namespaces were cleared: the per-workspace API key
+    // and the host-wide CF token. MobileCredentialsStore namespaces these
+    // as `workspace.<id>` / `host.<id>`.
+    verify(() => storage.deleteAll('workspace.w_srv-1')).called(1);
+    verify(() => storage.deleteAll('host.h_srv-1')).called(1);
 
-    // Cookie deletion was scoped to the active server's URL — NOT a
-    // global wipe. Capture the WebUri argument and assert its origin
-    // matches the server we configured.
+    // Cookie deletion was scoped to the host origin — NOT a global wipe.
+    // Capture the WebUri argument and assert its origin matches the host.
     final captured = verify(
       () => cookies.deleteCookies(
         url: captureAny(named: 'url'),

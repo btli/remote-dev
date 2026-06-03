@@ -5,8 +5,9 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:remote_dev/application/ports/server_config_store.dart';
-import 'package:remote_dev/domain/server_config.dart';
+import 'package:remote_dev/application/state/active_connection.dart';
+import 'package:remote_dev/domain/host_config.dart';
+import 'package:remote_dev/domain/workspace_config.dart';
 import 'package:remote_dev/infrastructure/auth/mobile_credentials.dart';
 import 'package:remote_dev/infrastructure/webview/navigation_policy.dart';
 import 'package:remote_dev/infrastructure/webview/webview_cookie_seeder.dart';
@@ -14,11 +15,9 @@ import 'package:remote_dev/infrastructure/webview/webview_factory.dart';
 import 'package:remote_dev/presentation/screens/recording/recording_screen.dart';
 import 'package:remote_dev/presentation/screens/webview_host/session_route_host.dart'
     show
+        activeWorkspaceProvider,
         mobileCredentialsStoreProvider,
-        serverConfigStoreProvider,
         webViewCookieSeederProvider;
-
-class _MockStore extends Mock implements ServerConfigStore {}
 
 class _MockCredentialsStore extends Mock implements MobileCredentialsStore {}
 
@@ -54,23 +53,40 @@ class _RecordingWebViewFactory implements WebViewFactory {
   }
 }
 
-ServerConfig _config({
-  String id = 'srv-1',
-  String url = 'https://dev.example.com',
-}) =>
-    ServerConfig(
-      id: id,
+/// A migrated single-workspace connection: host owns the origin, workspace
+/// has an empty basePath (so the activeServerProvider shim's URL == origin).
+ActiveConnection _conn({
+  String hostId = 'h_srv-1',
+  String workspaceId = 'w_srv-1',
+  String origin = 'https://dev.example.com',
+}) {
+  final now = DateTime.utc(2025, 1, 1);
+  return ActiveConnection(
+    host: HostConfig(
+      id: hostId,
       label: 'Work',
-      url: url,
-      lastUsedAt: DateTime.utc(2025, 1, 1),
-    );
+      origin: origin,
+      kind: HostKind.singleWorkspace,
+      createdAt: now,
+      lastUsedAt: now,
+    ),
+    workspace: WorkspaceConfig(
+      id: workspaceId,
+      hostId: hostId,
+      slug: '',
+      basePath: '',
+      displayName: 'Work',
+      lastUsedAt: now,
+    ),
+  );
+}
 
-/// Stubs a [MobileCredentialsStore] whose `readCfToken` resolves to a
+/// Stubs a [MobileCredentialsStore] whose `getHostCfToken` resolves to a
 /// fixed dummy token. Used to keep tests that don't care about the seed
 /// path from blocking on the real platform secure-storage channel.
 _MockCredentialsStore _fastCredentials() {
   final m = _MockCredentialsStore();
-  when(() => m.readCfToken(any())).thenAnswer((_) async => 'cf-jwt-stub');
+  when(() => m.getHostCfToken(any())).thenAnswer((_) async => 'cf-jwt-stub');
   return m;
 }
 
@@ -134,10 +150,6 @@ void main() {
     (tester) async {
       suppressInAppWebViewErrors(tester);
 
-      final store = _MockStore();
-      when(store.loadActive).thenAnswer(
-        (_) async => _config(url: 'https://dev.example.com'),
-      );
       // After the FutureBuilder gate, the WebView only mounts once the
       // seed future resolves. Stub the credentials + seeder so it
       // resolves immediately under flutter_test (the real secure-storage
@@ -149,7 +161,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            serverConfigStoreProvider.overrideWithValue(store),
+            activeWorkspaceProvider.overrideWith((ref) async => _conn()),
             mobileCredentialsStoreProvider.overrideWithValue(credentials),
             webViewCookieSeederProvider.overrideWithValue(seeder),
           ],
@@ -212,10 +224,6 @@ void main() {
       // the AppBar bottom; 100 hides it.
       suppressInAppWebViewErrors(tester);
 
-      final store = _MockStore();
-      when(store.loadActive).thenAnswer(
-        (_) async => _config(url: 'https://dev.example.com'),
-      );
       // Same seed-gate workaround as the previous test — see comment there.
       final credentials = _fastCredentials();
       final seeder = _fastSeeder();
@@ -224,7 +232,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            serverConfigStoreProvider.overrideWithValue(store),
+            activeWorkspaceProvider.overrideWith((ref) async => _conn()),
             mobileCredentialsStoreProvider.overrideWithValue(credentials),
             webViewCookieSeederProvider.overrideWithValue(seeder),
           ],
@@ -280,13 +288,8 @@ void main() {
       // the factory to fire.
       suppressInAppWebViewErrors(tester);
 
-      final store = _MockStore();
-      when(store.loadActive).thenAnswer(
-        (_) async => _config(url: 'https://dev.example.com'),
-      );
-
       final credentials = _MockCredentialsStore();
-      when(() => credentials.readCfToken(any()))
+      when(() => credentials.getHostCfToken(any()))
           .thenAnswer((_) async => 'cf-jwt-token');
 
       final seeder = _MockCookieSeeder();
@@ -303,7 +306,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            serverConfigStoreProvider.overrideWithValue(store),
+            activeWorkspaceProvider.overrideWith((ref) async => _conn()),
             mobileCredentialsStoreProvider.overrideWithValue(credentials),
             webViewCookieSeederProvider.overrideWithValue(seeder),
           ],

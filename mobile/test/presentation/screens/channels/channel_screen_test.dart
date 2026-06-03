@@ -5,10 +5,11 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:remote_dev/application/ports/server_config_store.dart';
+import 'package:remote_dev/application/state/active_connection.dart';
 import 'package:remote_dev/domain/active_node.dart';
 import 'package:remote_dev/domain/channel.dart';
-import 'package:remote_dev/domain/server_config.dart';
+import 'package:remote_dev/domain/host_config.dart';
+import 'package:remote_dev/domain/workspace_config.dart';
 import 'package:remote_dev/infrastructure/api/channels_api.dart';
 import 'package:remote_dev/infrastructure/api/preferences_api.dart';
 import 'package:remote_dev/infrastructure/auth/mobile_credentials.dart';
@@ -20,8 +21,8 @@ import 'package:remote_dev/presentation/screens/channels/channel_screen.dart';
 import 'package:remote_dev/presentation/screens/channels/channels_tab_screen.dart';
 import 'package:remote_dev/presentation/screens/webview_host/session_route_host.dart'
     show
+        activeWorkspaceProvider,
         mobileCredentialsStoreProvider,
-        serverConfigStoreProvider,
         webViewCookieSeederProvider;
 
 /// `ChannelScreen` is a thin native wrapper around an embedded WebView
@@ -75,15 +76,13 @@ class _DelayedChannelsApi extends Fake implements ChannelsApi {
   Future<void> archive(String id) async {}
 }
 
-class _MockStore extends Mock implements ServerConfigStore {}
-
 class _MockCredentialsStore extends Mock implements MobileCredentialsStore {}
 
 class _MockCookieSeeder extends Mock implements WebViewCookieSeeder {}
 
 _MockCredentialsStore _fastCredentials() {
   final m = _MockCredentialsStore();
-  when(() => m.readCfToken(any())).thenAnswer((_) async => 'cf-jwt-stub');
+  when(() => m.getHostCfToken(any())).thenAnswer((_) async => 'cf-jwt-stub');
   return m;
 }
 
@@ -122,16 +121,32 @@ class _ChannelWebViewFactory implements WebViewFactory {
   }
 }
 
-ServerConfig _serverConfig({
-  String id = 'srv-1',
-  String url = 'https://dev.example.com',
-}) =>
-    ServerConfig(
-      id: id,
+/// A migrated single-workspace connection (empty basePath).
+ActiveConnection _conn({
+  String hostId = 'h_srv-1',
+  String workspaceId = 'w_srv-1',
+  String origin = 'https://dev.example.com',
+}) {
+  final now = DateTime.utc(2025, 1, 1);
+  return ActiveConnection(
+    host: HostConfig(
+      id: hostId,
       label: 'Work',
-      url: url,
-      lastUsedAt: DateTime.utc(2025, 1, 1),
-    );
+      origin: origin,
+      kind: HostKind.singleWorkspace,
+      createdAt: now,
+      lastUsedAt: now,
+    ),
+    workspace: WorkspaceConfig(
+      id: workspaceId,
+      hostId: hostId,
+      slug: '',
+      basePath: '',
+      displayName: 'Work',
+      lastUsedAt: now,
+    ),
+  );
+}
 
 void main() {
   setUpAll(() {
@@ -354,8 +369,6 @@ void main() {
       };
       addTearDown(() => FlutterError.onError = originalOnError);
 
-      final store = _MockStore();
-      when(store.loadActive).thenAnswer((_) async => _serverConfig());
       // After the FutureBuilder gate, the WebView only mounts once the
       // seed future resolves. Stub credentials + seeder so it resolves
       // immediately under flutter_test (real platform plugins missing).
@@ -366,7 +379,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            serverConfigStoreProvider.overrideWithValue(store),
+            activeWorkspaceProvider.overrideWith((ref) async => _conn()),
             mobileCredentialsStoreProvider.overrideWithValue(credentials),
             webViewCookieSeederProvider.overrideWithValue(seeder),
           ],
