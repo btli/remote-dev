@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import { getIssueComments, getIssueEvents } from "@/services/beads-service";
 import { validateProjectPath } from "@/lib/beads-auth";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/beads/[id]/comments");
 
 export const GET = withApiAuth(async (request, { userId, params }) => {
   const id = params?.id;
@@ -16,14 +21,30 @@ export const GET = withApiAuth(async (request, { userId, params }) => {
 
   const includeEvents = url.searchParams.get("includeEvents") === "true";
 
-  if (includeEvents) {
-    const [comments, events] = await Promise.all([
-      getIssueComments(resolved, id),
-      getIssueEvents(resolved, id),
-    ]);
-    return NextResponse.json({ comments, events });
+  // An authorized path without a .beads/ directory has no comments/events.
+  if (!existsSync(join(resolved, ".beads"))) {
+    return NextResponse.json(includeEvents ? { comments: [], events: [] } : []);
   }
 
-  const comments = await getIssueComments(resolved, id);
-  return NextResponse.json(comments);
+  try {
+    if (includeEvents) {
+      const [comments, events] = await Promise.all([
+        getIssueComments(resolved, id),
+        getIssueEvents(resolved, id),
+      ]);
+      return NextResponse.json({ comments, events });
+    }
+
+    const comments = await getIssueComments(resolved, id);
+    return NextResponse.json(comments);
+  } catch (err) {
+    const msg = String(err);
+    // Dolt server not running is expected — return empty rather than 500
+    if (msg.includes("ECONNREFUSED") || msg.includes("ETIMEDOUT")) {
+      log.debug("Dolt server not reachable, returning empty comments", { error: msg });
+      return NextResponse.json(includeEvents ? { comments: [], events: [] } : []);
+    }
+    log.error("getIssueComments failed", { error: msg });
+    return errorResponse(err instanceof Error ? err.message : "Unknown error", 500);
+  }
 });
