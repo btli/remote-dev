@@ -1,7 +1,5 @@
 import 'dart:convert';
 
-import 'package:uuid/uuid.dart';
-
 import '../../application/ports/host_workspace_store.dart';
 import '../../application/ports/secure_storage_port.dart';
 import '../../domain/host_config.dart';
@@ -16,13 +14,11 @@ import '../auth/mobile_credentials.dart';
 /// Credentials are delegated to [MobileCredentialsStore] (`host.<id>` /
 /// `workspace.<id>` namespaces).
 class HostWorkspaceStoreImpl implements HostWorkspaceStore {
-  HostWorkspaceStoreImpl(this._storage, {Uuid? uuid})
-      : _creds = MobileCredentialsStore(_storage),
-        _uuid = uuid ?? const Uuid();
+  HostWorkspaceStoreImpl(this._storage)
+      : _creds = MobileCredentialsStore(_storage);
 
   final SecureStoragePort _storage;
   final MobileCredentialsStore _creds;
-  final Uuid _uuid;
 
   // Meta namespace + keys (mirrors ServerConfigStoreImpl).
   static const _metaId = '__meta__';
@@ -158,8 +154,8 @@ class HostWorkspaceStoreImpl implements HostWorkspaceStore {
 
     for (final server in legacyServers) {
       final uri = Uri.parse(server.url);
-      final origin =
-          '${uri.scheme}://${uri.host}${uri.hasPort ? ':${uri.port}' : ''}';
+      // TODO(taskD): apply HostConfig.normalizeOrigin in the add-host flow too.
+      final origin = HostConfig.normalizeOrigin(server.url);
       // Strip any trailing slash from the path; "" when at the root.
       var path = uri.path;
       while (path.endsWith('/')) {
@@ -168,8 +164,13 @@ class HostWorkspaceStoreImpl implements HostWorkspaceStore {
       final basePath = path; // "" or "/<slug>"
       final slug = path.startsWith('/') ? path.substring(1) : path;
 
-      final hostId = _uuid.v4();
-      final workspaceId = _uuid.v4();
+      // Deterministic IDs derived from the legacy server id make every re-run
+      // a true idempotent upsert over BOTH the host/workspace lists AND the
+      // `host.<id>` / `workspace.<id>` credential namespaces. Random IDs would
+      // strand secret material under abandoned namespaces on a partial-failure
+      // re-run.
+      final hostId = 'h_${server.id}';
+      final workspaceId = 'w_${server.id}';
 
       hosts.add(
         HostConfig(

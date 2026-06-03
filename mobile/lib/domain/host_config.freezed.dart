@@ -24,6 +24,7 @@ mixin _$HostConfig {
   String get label => throw _privateConstructorUsedError;
 
   /// `scheme://host[:port]` — NO trailing slash, NO path.
+  /// Build with [normalizeOrigin] to guarantee that invariant.
   String get origin => throw _privateConstructorUsedError;
   HostKind get kind => throw _privateConstructorUsedError;
   DateTime get createdAt => throw _privateConstructorUsedError;
@@ -173,14 +174,15 @@ class __$$HostConfigImplCopyWithImpl<$Res>
 
 /// @nodoc
 @JsonSerializable()
-class _$HostConfigImpl implements _HostConfig {
+class _$HostConfigImpl extends _HostConfig {
   const _$HostConfigImpl(
       {required this.id,
       required this.label,
       required this.origin,
       required this.kind,
       required this.createdAt,
-      required this.lastUsedAt});
+      required this.lastUsedAt})
+      : super._();
 
   factory _$HostConfigImpl.fromJson(Map<String, dynamic> json) =>
       _$$HostConfigImplFromJson(json);
@@ -191,6 +193,7 @@ class _$HostConfigImpl implements _HostConfig {
   final String label;
 
   /// `scheme://host[:port]` — NO trailing slash, NO path.
+  /// Build with [normalizeOrigin] to guarantee that invariant.
   @override
   final String origin;
   @override
@@ -241,7 +244,7 @@ class _$HostConfigImpl implements _HostConfig {
   }
 }
 
-abstract class _HostConfig implements HostConfig {
+abstract class _HostConfig extends HostConfig {
   const factory _HostConfig(
       {required final String id,
       required final String label,
@@ -249,6 +252,7 @@ abstract class _HostConfig implements HostConfig {
       required final HostKind kind,
       required final DateTime createdAt,
       required final DateTime lastUsedAt}) = _$HostConfigImpl;
+  const _HostConfig._() : super._();
 
   factory _HostConfig.fromJson(Map<String, dynamic> json) =
       _$HostConfigImpl.fromJson;
@@ -259,6 +263,7 @@ abstract class _HostConfig implements HostConfig {
   String get label;
 
   /// `scheme://host[:port]` — NO trailing slash, NO path.
+  /// Build with [normalizeOrigin] to guarantee that invariant.
   @override
   String get origin;
   @override
