@@ -26,6 +26,7 @@ vi.mock("@/lib/auth", () => ({
 
 const dbState: { row: Record<string, unknown> | undefined } = { row: undefined };
 const updates: Record<string, unknown>[] = [];
+const deletes: { count: number } = { count: 0 };
 
 vi.mock("@/db", () => ({
   db: {
@@ -41,14 +42,23 @@ vi.mock("@/db", () => ({
       }),
     }),
     insert: () => ({ values: () => Promise.resolve(undefined) }),
+    delete: () => ({
+      where: async () => {
+        deletes.count += 1;
+        return undefined;
+      },
+    }),
   },
 }));
 
 import { DELETE } from "@/app/api/instances/[id]/route";
 
-function delReq(id: string): [Request, { params: Promise<{ id: string }> }] {
+function delReq(
+  id: string,
+  qs = "",
+): [Request, { params: Promise<{ id: string }> }] {
   return [
-    new Request(`https://sup.example.com/api/instances/${id}`, { method: "DELETE" }),
+    new Request(`https://sup.example.com/api/instances/${id}${qs}`, { method: "DELETE" }),
     { params: Promise.resolve({ id }) },
   ];
 }
@@ -61,6 +71,7 @@ beforeEach(() => {
     status: "ready",
   };
   updates.length = 0;
+  deletes.count = 0;
 });
 
 describe("DELETE /api/instances/:id — admin-only (Fix 5)", () => {
@@ -93,5 +104,46 @@ describe("DELETE /api/instances/:id — admin-only (Fix 5)", () => {
     const res = await DELETE(...delReq("inst-1"));
     expect(res.status).toBe(202);
     expect(updates.length).toBe(0); // no transition write
+  });
+});
+
+describe("DELETE /api/instances/:id?purge=true — permanent remove (jvcx.14)", () => {
+  beforeEach(() => {
+    authState.user = { id: "admin-1", email: "admin@example.com", role: "admin" };
+  });
+
+  it("purge on a NON-deleted instance → 409 INVALID_STATE, no hard delete", async () => {
+    dbState.row = { id: "inst-1", slug: "alpha", ownerId: "op-1", status: "ready" };
+    const res = await DELETE(...delReq("inst-1", "?purge=true"));
+    expect(res.status).toBe(409);
+    const data = await res.json();
+    expect(data.code).toBe("INVALID_STATE");
+    expect(data.error).toContain('status "ready"');
+    expect(deletes.count).toBe(0);
+    expect(updates.length).toBe(0);
+  });
+
+  it("purge on a DELETED instance → 200 { purged, slug } and hard-deletes the row", async () => {
+    dbState.row = { id: "inst-1", slug: "alpha", ownerId: "op-1", status: "deleted" };
+    const res = await DELETE(...delReq("inst-1", "?purge=true"));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data).toEqual({ purged: true, slug: "alpha" });
+    expect(deletes.count).toBe(1);
+  });
+
+  it("purge on a missing row → 404 (idempotent already-purged)", async () => {
+    dbState.row = undefined;
+    const res = await DELETE(...delReq("missing", "?purge=true"));
+    expect(res.status).toBe(404);
+    expect(deletes.count).toBe(0);
+  });
+
+  it("a non-admin (operator) purge → 403 (role gate), no hard delete", async () => {
+    authState.user = { id: "op-1", email: "op@example.com", role: "operator" };
+    dbState.row = { id: "inst-1", slug: "alpha", ownerId: "op-1", status: "deleted" };
+    const res = await DELETE(...delReq("inst-1", "?purge=true"));
+    expect(res.status).toBe(403);
+    expect(deletes.count).toBe(0);
   });
 });
