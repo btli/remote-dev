@@ -32,6 +32,7 @@ Documentation for Remote Dev. For agent-initialization guidance, see the root [`
 | Doc | Description |
 |-----|-------------|
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Production deploy: blue/green slot swap, HMAC auto-deploy webhook, rollback, operator gotchas |
+| [POSTGRES_MIGRATION.md](POSTGRES_MIGRATION.md) | Runbook for migrating an existing SQLite install to the optional PostgreSQL backend (offline `db:migrate-to-postgres` CLI) |
 | [MULTI_INSTANCE.md](MULTI_INSTANCE.md) | Multi-instance hosting — the two deployment shapes (Shape A routerless; Shape B supervisor + router single front door) and the hand-rolled k8s manifests |
 | [SUPERVISOR_DEPLOY.md](SUPERVISOR_DEPLOY.md) | k3s supervisor-platform deploy runbook (Shape B): the Supervisor + router single front door |
 

@@ -125,7 +125,7 @@ Full architecture: `docs/ARCHITECTURE.md`.
 |------|---------|
 | `src/proxy.ts` | Route protection / auth boundary (Next.js 16) |
 | `src/auth.ts` | NextAuth v5 configuration |
-| `src/db/schema.ts` | Drizzle schema (all tables) |
+| `src/db/schema.def.ts` | Drizzle schema source of truth (generates `schema.{sqlite,pg}.ts` + the `schema.ts` barrel — see "Database schema codegen") |
 | `src/server/terminal.ts` | WebSocket + PTY + tmux terminal server |
 | `src/lib/base-path.ts` | Single source of truth for `RDV_BASE_PATH` |
 | `src/lib/terminal-plugins/` | Terminal type plugin registry + built-in plugins |
@@ -133,6 +133,27 @@ Full architecture: `docs/ARCHITECTURE.md`.
 | `src/services/` | Business logic services |
 | `crates/rdv/` | Rust CLI for agent interaction |
 | `src/contexts/` | React contexts (session, project tree, preferences, …) |
+
+### Database schema codegen (dual SQLite / PostgreSQL backend)
+
+The DB supports two backends (SQLite default, optional PostgreSQL via
+`DATABASE_URL`). The schema has a **single source of truth**:
+`src/db/schema.def.ts`. Do **not** edit the generated files
+(`schema.sqlite.ts`, `schema.pg.ts`, or the `schema.ts` barrel).
+
+To change the schema:
+
+1. Edit `src/db/schema.def.ts`.
+2. Regenerate the dialect files: `bun run db:codegen`.
+3. Generate **both** migration sets when the schema changes:
+   - `bun run db:generate` (SQLite, `drizzle/`)
+   - `bun run db:generate:pg` (PostgreSQL, `drizzle/pg/`)
+
+A `codegen-in-sync` test fails if the committed generated files don't match the
+def (so always run `db:codegen` after editing). `apps/supervisor` has the **same
+setup** — its own `schema.def.ts` + `db:codegen`, with `drizzle.config.ts` /
+`drizzle.pg.config.ts` for its two migration folders. Full details:
+`docs/ARCHITECTURE.md` ("Dual database backend").
 
 ## Environment Variables
 

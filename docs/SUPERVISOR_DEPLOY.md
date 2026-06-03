@@ -249,6 +249,21 @@ kubectl apply -f deploy/k8s/supervisor/router.yaml
 
 ---
 
+## 3b. (Optional) PostgreSQL via CloudNativePG
+
+By default instances use per-PVC SQLite. To run the fleet on **PostgreSQL** with
+a **database-per-instance** model instead, stand up one shared HA CloudNativePG
+cluster and set the `CNPG_*` keys in the supervisor config Secret. With those
+set, the provisioner creates a role + database `rdv_<slug>` per instance and
+injects its `DATABASE_URL` (pointed at the PgBouncer Pooler). Leave the `CNPG_*`
+keys unset to keep SQLite.
+
+- Cluster setup: [`deploy/k8s/cnpg/`](../deploy/k8s/cnpg/) (+ its `README.md`).
+- Config keys + soft-teardown/purge runbook: the "CloudNativePG
+  (database-per-instance)" section in [`docs/MULTI_INSTANCE.md`](./MULTI_INSTANCE.md).
+
+---
+
 ## 4. Verify
 
 ```bash
