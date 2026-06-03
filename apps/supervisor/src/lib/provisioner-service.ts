@@ -95,6 +95,31 @@ export class ProvisioningError extends Error {
   }
 }
 
+/**
+ * Surface an ORPHANED CNPG database + role to operators.
+ *
+ * The soft-teardown policy (see {@link terminateInstance}) intentionally does
+ * NOT auto-DROP the instance's database/role — a mis-fire would destroy user
+ * data irreversibly. So when provisioning fails AFTER the role+database were
+ * created, the rollback deletes the namespace but the DB+role survive. Log a
+ * clear, actionable warning naming the orphan and the manual purge command so
+ * the leftover is visible. We do NOT drop it automatically.
+ */
+function warnOrphanedDatabase(slug: string): void {
+  const name = instanceDbName(slug);
+  log.warn(
+    "orphaned CNPG database + role left after provisioning failure " +
+      "(rollback deletes the namespace but intentionally does NOT drop the DB); " +
+      "purge manually if the instance is abandoned",
+    {
+      slug,
+      orphanedDatabase: name,
+      orphanedRole: name,
+      manualPurge: `DROP DATABASE ${name}; DROP ROLE ${name};`,
+    },
+  );
+}
+
 /** HTTP status of an ApiException, or undefined for non-API errors. */
 function statusCode(err: unknown): number | undefined {
   return err instanceof ApiException ? err.code : undefined;
@@ -213,14 +238,42 @@ export async function provisionInstance(
     throw new ProvisioningError("database", err);
   }
   const withDatabase = dbPassword !== null;
-  const dbConfigSnapshot: DbConfigSnapshot | null = withDatabase
-    ? {
-        type: "postgres",
-        dbName: instanceDbName(slug),
-        roleName: instanceDbName(slug),
-        poolerHost: process.env.CNPG_POOLER_HOST ?? "",
-      }
-    : null;
+
+  // EARLY env validation (A1): the instance's DATABASE_URL points at the CNPG
+  // PgBouncer Pooler, so CNPG_POOLER_HOST / CNPG_POOLER_PORT MUST be present
+  // before we create ANY k8s object. Validate immediately after the DB+role
+  // exist (withDatabase) and BEFORE the namespace is created, so a missing
+  // pooler config fails fast (rather than after partial k8s creation) — and so
+  // the snapshot is built from a verified host (never `?? ""`). The orphaned
+  // DB+role left by this early throw is surfaced inline (warnOrphanedDatabase),
+  // since this throws BEFORE the try block whose catch handles later stages.
+  let poolerHost: string | undefined;
+  let poolerPort: string | undefined;
+  if (withDatabase) {
+    poolerHost = process.env.CNPG_POOLER_HOST;
+    poolerPort = process.env.CNPG_POOLER_PORT;
+    if (!poolerHost || !poolerPort) {
+      // The DB+role already exist (bootstrap ran) but no k8s object has been
+      // created yet, so there is nothing to roll back — surface the orphan here.
+      warnOrphanedDatabase(slug);
+      throw new ProvisioningError(
+        "db-secret",
+        new Error(
+          "CNPG_POOLER_HOST / CNPG_POOLER_PORT not set (required for instance DATABASE_URL)",
+        ),
+      );
+    }
+  }
+
+  const dbConfigSnapshot: DbConfigSnapshot | null =
+    withDatabase && poolerHost
+      ? {
+          type: "postgres",
+          dbName: instanceDbName(slug),
+          roleName: instanceDbName(slug),
+          poolerHost,
+        }
+      : null;
 
   try {
     // 1. Namespace.
@@ -270,22 +323,16 @@ export async function provisionInstance(
     // 3b. Per-instance DATABASE_URL Secret (Postgres dual-backend, Unit 8) —
     //     ONLY when the instance was bootstrapped with its own CNPG database.
     //     Points at the PgBouncer Pooler (CNPG_POOLER_HOST), NOT the RW Service.
+    //     poolerHost/poolerPort were validated up-front (A1) before any k8s
+    //     object was created, so they are guaranteed present here.
     //     SECURITY: never log the built Secret / dbPassword.
     if (withDatabase) {
-      const poolerHost = process.env.CNPG_POOLER_HOST;
-      const poolerPort = process.env.CNPG_POOLER_PORT;
-      if (!poolerHost || !poolerPort) {
-        throw new ProvisioningError(
-          "db-secret",
-          new Error("CNPG_POOLER_HOST / CNPG_POOLER_PORT not set (required for instance DATABASE_URL)"),
-        );
-      }
       await createStep("db-secret", () =>
         core.createNamespacedSecret({
           namespace,
           body: buildDbSecret(slug, {
-            host: poolerHost,
-            port: poolerPort,
+            host: poolerHost!,
+            port: poolerPort!,
             dbName: instanceDbName(slug),
             roleName: instanceDbName(slug),
             password: dbPassword!,
@@ -352,6 +399,12 @@ export async function provisionInstance(
         namespace,
         error: String(rollbackErr),
       });
+    }
+    // If the DB+role were already created (withDatabase) and the failure was at
+    // a stage AFTER "database", the namespace rollback above leaves the CNPG
+    // database/role orphaned (soft-teardown policy). Surface it for the operator.
+    if (withDatabase && stage !== "database") {
+      warnOrphanedDatabase(slug);
     }
     throw err;
   }

@@ -33,6 +33,13 @@ export function getSidecarPool(): Pool {
   }
 
   _pool = new Pool({ connectionString, max: 5 });
+  // An idle client error emits 'error' on the Pool; without a listener Node
+  // crashes the process. This pool BACKS the logging/analytics sink, so we use
+  // console.error directly — routing through the structured logger here would
+  // recurse (the logger writes through this very pool on the Postgres path).
+  _pool.on("error", (err) => {
+    console.error("[sidecar-db] idle pg client error:", String(err));
+  });
   return _pool;
 }
 

@@ -3,11 +3,44 @@
  * @see https://nextjs.org/docs/app/building-your-application/optimizing/instrumentation
  */
 
+/**
+ * Guard so the shutdown flush is registered at most once and runs at most once
+ * even if both SIGTERM and SIGINT fire. Plain module-scope primitives — no
+ * edge-incompatible imports.
+ */
+let shutdownHandlersRegistered = false;
+let shutdownFlushed = false;
+
 export async function register() {
   // Only run on server (not edge runtime)
   if (process.env.NEXT_RUNTIME === "nodejs") {
     const { createLogger } = await import("@/lib/logger");
     const log = createLogger("Startup");
+
+    // Drain the sidecar write buffers (logger + litellm webhook) that live in
+    // THIS Next.js process on shutdown — they would otherwise lose buffered rows
+    // (the terminal server drains its own copies in src/server/index.ts). The
+    // flush logic lives in a separate module loaded lazily on signal so its
+    // Node-only deps (pg / better-sqlite3) never enter the edge bundle. We do
+    // NOT process.exit — Next.js owns its shutdown; we only drain. Idempotent:
+    // handlers register once; the flush runs at most once across signals.
+    if (!shutdownHandlersRegistered) {
+      shutdownHandlersRegistered = true;
+      const onShutdown = async (signal: string): Promise<void> => {
+        if (shutdownFlushed) return;
+        shutdownFlushed = true;
+        try {
+          const { flushSidecarsOnShutdown } = await import(
+            "@/infrastructure/persistence/sidecar-shutdown"
+          );
+          await flushSidecarsOnShutdown(signal);
+        } catch (error) {
+          log.error("Sidecar shutdown flush failed", { error: String(error) });
+        }
+      };
+      process.once("SIGTERM", () => void onShutdown("SIGTERM"));
+      process.once("SIGINT", () => void onShutdown("SIGINT"));
+    }
 
     // Apply PostgreSQL migrations BEFORE any DB-touching startup work below.
     // On SQLite this is a no-op (the SQLite path uses `db:push`), so existing

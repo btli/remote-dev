@@ -346,6 +346,32 @@ describe("provisionInstance — Postgres dual-backend (Unit 8)", () => {
     expect(order).not.toContain("statefulset");
     expect(order).not.toContain("secret:rdv-alpha-db");
   });
+
+  it("throws EARLY (db-secret) when CNPG_POOLER_HOST is missing, BEFORE any k8s object is created (A1)", async () => {
+    delete process.env.CNPG_POOLER_HOST;
+    const { clients, order } = makeClients();
+
+    await expect(provisionInstance(row(), OPTS, clients)).rejects.toMatchObject({
+      name: "ProvisioningError",
+      stage: "db-secret",
+    });
+
+    // The validation happens immediately after the DB bootstrap and BEFORE any
+    // k8s object — so NOTHING (not even the namespace) was created.
+    expect(order).toEqual([]);
+    expect(clients.core.createNamespace).not.toHaveBeenCalled();
+  });
+
+  it("throws EARLY (db-secret) when CNPG_POOLER_PORT is missing", async () => {
+    delete process.env.CNPG_POOLER_PORT;
+    const { clients, order } = makeClients();
+
+    await expect(provisionInstance(row(), OPTS, clients)).rejects.toMatchObject({
+      name: "ProvisioningError",
+      stage: "db-secret",
+    });
+    expect(order).toEqual([]);
+  });
 });
 
 describe("provisionInstance — rollback on failure", () => {

@@ -10,7 +10,10 @@
  *     (default 5000). When the queue is full, new items are dropped and the
  *     drop is reported via `console.error` — NOT the structured logger, which
  *     itself routes through a PgWriteBuffer on the Postgres path and would
- *     cause unbounded recursion.
+ *     cause unbounded recursion. Each drop reports both the per-event count and
+ *     a monotonic cumulative total (`dropped N this event, M total`) so a
+ *     sustained outage is obvious; the buffer's `name` (e.g. "logs" /
+ *     "analytics") labels every line.
  *   - Flushing happens on two triggers:
  *       1. size-based: once the queue reaches `maxBatchSize` (default 500),
  *          a flush is kicked off immediately.
@@ -45,6 +48,14 @@ export class PgWriteBuffer<T> {
   private flushing = false;
   private timer: ReturnType<typeof setInterval> | null = null;
 
+  /**
+   * Monotonic count of items dropped over this buffer's lifetime (queue-full
+   * enqueue drops + flush-error drops). Every drop logs the per-event count AND
+   * this cumulative total so a sustained outage is visible at a glance —
+   * analytics drops in particular are lost cost data.
+   */
+  private droppedTotal = 0;
+
   private readonly maxQueueDepth: number;
   private readonly maxBatchSize: number;
   private readonly flushIntervalMs: number;
@@ -76,8 +87,9 @@ export class PgWriteBuffer<T> {
 
     const capacity = this.maxQueueDepth - this.queue.length;
     if (capacity <= 0) {
+      this.droppedTotal += items.length;
       console.error(
-        `[${this.name}] write buffer full (depth=${this.maxQueueDepth}); dropped ${items.length} item(s)`
+        `[${this.name}] write buffer full (depth=${this.maxQueueDepth}); dropped ${items.length} this event, ${this.droppedTotal} total`
       );
       return;
     }
@@ -85,8 +97,9 @@ export class PgWriteBuffer<T> {
     if (items.length > capacity) {
       this.queue.push(...items.slice(0, capacity));
       const dropped = items.length - capacity;
+      this.droppedTotal += dropped;
       console.error(
-        `[${this.name}] write buffer full (depth=${this.maxQueueDepth}); dropped ${dropped} item(s)`
+        `[${this.name}] write buffer full (depth=${this.maxQueueDepth}); dropped ${dropped} this event, ${this.droppedTotal} total`
       );
     } else {
       this.queue.push(...items);
@@ -114,8 +127,9 @@ export class PgWriteBuffer<T> {
         } catch (err) {
           // Drop the in-flight batch and stop; do NOT rethrow, do NOT requeue
           // (requeuing under a persistent PG outage would grow unbounded).
+          this.droppedTotal += batch.length;
           console.error(
-            `[${this.name}] flush failed; dropped ${batch.length} item(s):`,
+            `[${this.name}] flush failed; dropped ${batch.length} this event, ${this.droppedTotal} total:`,
             String(err)
           );
           return;

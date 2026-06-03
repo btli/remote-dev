@@ -434,10 +434,24 @@ async function attemptProvision(
     if (dbConfigSnapshot) {
       const serialized = JSON.stringify(dbConfigSnapshot);
       if (row.dbConfigSnapshot !== serialized) {
-        await deps.db
-          .update(instance)
-          .set({ dbConfigSnapshot: serialized })
-          .where(eq(instance.id, row.id));
+        try {
+          await deps.db
+            .update(instance)
+            .set({ dbConfigSnapshot: serialized })
+            .where(eq(instance.id, row.id));
+        } catch (persistErr) {
+          // The k8s objects AND the CNPG database already EXIST (provisionInstance
+          // succeeded) — we just failed to record the snapshot. Do NOT rethrow:
+          // tearing down a live, running instance over a metadata-write blip would
+          // be far worse than a missing snapshot (it self-heals on a later tick,
+          // since the snapshot is re-derived and re-written when it still differs).
+          // Log LOUDLY so the live-but-unrecorded state is visible for manual repair.
+          log.error(
+            "CRITICAL: k8s objects and CNPG database EXIST but dbConfigSnapshot was " +
+              "not persisted; reconcile may need manual repair",
+            { slug: row.slug, instanceId: row.id, error: String(persistErr) },
+          );
+        }
       }
     }
     return true;

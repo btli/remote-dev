@@ -167,6 +167,26 @@ function printHelp(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Secret masking
+// ---------------------------------------------------------------------------
+
+/**
+ * Mask the password in a postgres connection URL for logging. Robustly parses
+ * via `new URL()` and replaces `.password`, then prints the re-serialized URL.
+ * Falls back to a conservative regex only if URL parsing throws (e.g. a libsql
+ * file: path or an otherwise non-URL string).
+ */
+function maskPassword(url: string): string {
+  try {
+    const u = new URL(url);
+    if (u.password) u.password = "****";
+    return u.toString();
+  } catch {
+    return url.replace(/:[^:@/]+@/, ":****@");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Source URL resolution
 // ---------------------------------------------------------------------------
 
@@ -272,7 +292,7 @@ async function main(): Promise<void> {
   const fromUrl = await resolveFromUrl(flags.from);
   log.info("SQLite → Postgres migration");
   log.info(`  from: ${fromUrl}`);
-  log.info(`  to:   ${flags.to.replace(/:[^:@/]+@/, ":****@")}`);
+  log.info(`  to:   ${maskPassword(flags.to)}`);
   if (flags.dryRun) log.info("  mode: DRY RUN (no writes)");
   if (flags.truncate) log.info("  mode: TRUNCATE CASCADE before copy");
   if (flags.resume) log.info("  mode: RESUME (skip completed watermarks)");
@@ -340,17 +360,29 @@ async function main(): Promise<void> {
               skipped: true,
             } satisfies TableResult;
           }
-          const r = await copyTable(
-            sqliteDb,
-            pgDb,
-            info,
-            {
-              batchSize: flags.batchSize,
-              truncate: flags.truncate,
-              dryRun: flags.dryRun,
-            },
-            log
-          );
+          let r: TableResult;
+          try {
+            r = await copyTable(
+              sqliteDb,
+              pgDb,
+              info,
+              {
+                batchSize: flags.batchSize,
+                truncate: flags.truncate,
+                dryRun: flags.dryRun,
+              },
+              log
+            );
+          } catch (err) {
+            // Identify the FAILING table before the error propagates / the run
+            // exits nonzero, and remind the operator that --resume can continue
+            // from the already-completed tables. Re-throw — do NOT swallow.
+            log.error(
+              `  ${info.sqlName}: copy FAILED — ${String(err)}; ` +
+                `re-run with --resume to continue from completed tables`
+            );
+            throw err;
+          }
           if (!flags.dryRun)
             markComplete(flags.watermarkDir, info.sqlName, r.sourceRows);
           return r;

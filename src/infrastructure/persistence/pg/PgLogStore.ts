@@ -34,7 +34,7 @@ export class PgLogStore implements LogRepository {
   constructor() {
     this.buffer = new PgWriteBuffer<BufferedLog>(
       (items) => this.flushBatch(items),
-      { name: "PgLogStore" }
+      { name: "logs" }
     );
   }
 

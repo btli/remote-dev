@@ -172,12 +172,17 @@ export async function copyTable(
   for (const batch of chunk(rows, opts.batchSize)) {
     // onConflictDoNothing() with no target → ignore PK/unique conflicts. Safe
     // for re-runs (idempotent) and after a TRUNCATE (no conflicts to ignore).
-    await pgDb
+    // Use the result's rowCount (rows ACTUALLY inserted) rather than the batch
+    // length so the summary is accurate under ON CONFLICT DO NOTHING (a re-run
+    // over already-present rows inserts 0). rowCount can be null in pg's typing;
+    // fall back to the batch length only then.
+    const result = await pgDb
       .insert(pgTable)
       .values(batch as never)
       .onConflictDoNothing();
-    inserted += batch.length;
-    log.debug(`    ${info.sqlName}: +${batch.length} (${inserted}/${sourceRows})`);
+    const affected = result.rowCount ?? batch.length;
+    inserted += affected;
+    log.debug(`    ${info.sqlName}: +${affected} (${inserted}/${sourceRows})`);
   }
 
   log.info(`  ${info.sqlName}: ${sourceRows} row(s) → ${pgName}`);

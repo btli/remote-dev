@@ -130,7 +130,7 @@ export class PgAnalyticsStore implements AnalyticsStore {
   constructor() {
     this.buffer = new PgWriteBuffer<RequestLogRow>(
       (items) => this.flushBatch(items),
-      { name: "PgAnalyticsStore" }
+      { name: "analytics" }
     );
   }
 
