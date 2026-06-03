@@ -37,10 +37,18 @@ import {
   closeSync,
   renameSync,
 } from "fs";
-import { join } from "path";
+import { join, sep } from "path";
 import { homedir, hostname as osHostname } from "os";
 import http from "http";
-import { SSR_PROBE_PATHS, isAcceptableSsrStatus, restoreStandalone } from "./deploy-lib";
+import {
+  SSR_PROBE_PATHS,
+  isAcceptableSsrStatus,
+  restoreStandalone,
+  deploySourceDir,
+  gitSyncCommands,
+  ancestryGuardDecision,
+  isSafeDeploySrcToRemove,
+} from "./deploy-lib";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -50,6 +58,10 @@ const PROJECT_ROOT = join(import.meta.dir, "..");
 const DATA_DIR = process.env.RDV_DATA_DIR || join(homedir(), ".remote-dev");
 const DEPLOY_DIR = join(DATA_DIR, "deploy");
 const BUILDS_DIR = join(DATA_DIR, "builds");
+// Deploy-owned, persistent detached git worktree pinned to origin/master. Builds
+// run HERE, never in PROJECT_ROOT, so a deploy can't wipe a developer/agent's
+// in-progress edits in the live tree (remote-dev-yxvy). Lives outside the repo.
+const DEPLOY_SRC = deploySourceDir(DATA_DIR);
 const SOCKET_DIR = join(DATA_DIR, "run");
 const SERVER_DIR = join(DATA_DIR, "server");
 const STATE_FILE = join(DEPLOY_DIR, "state.json");
@@ -444,18 +456,169 @@ function runCommand(
   return true;
 }
 
-function getGitCommit(): string {
-  const result = spawnSync(["git", "rev-parse", "--short", "HEAD"], {
-    cwd: PROJECT_ROOT,
-  });
+// Commit helpers default to PROJECT_ROOT but accept an explicit cwd. The
+// post-build "what did we actually ship" reads MUST use DEPLOY_SRC (the
+// origin/master tree we built from) — PROJECT_ROOT's HEAD is no longer reset to
+// origin/master per deploy (remote-dev-yxvy), so reading the deployed commit
+// from PROJECT_ROOT would be stale and break the CI activeCommit==pushed-SHA
+// check. Pre-build fallbacks and `init` legitimately read PROJECT_ROOT.
+function getGitCommit(cwd: string = PROJECT_ROOT): string {
+  const result = spawnSync(["git", "rev-parse", "--short", "HEAD"], { cwd });
   return result.stdout?.toString().trim() || "unknown";
 }
 
-function getGitCommitFull(): string {
-  const result = spawnSync(["git", "rev-parse", "HEAD"], {
-    cwd: PROJECT_ROOT,
-  });
+function getGitCommitFull(cwd: string = PROJECT_ROOT): string {
+  const result = spawnSync(["git", "rev-parse", "HEAD"], { cwd });
   return result.stdout?.toString().trim() || "unknown";
+}
+
+// Is DEPLOY_SRC a USABLE git worktree right now? We validate with git, NOT with
+// `existsSync(DEPLOY_SRC/.git)`: a worktree's `.git` is a FILE that lingers after
+// `git worktree prune` (its registration removed, the file dangling), and a
+// half-removed/corrupt checkout can also leave that file behind — file presence
+// would send such a path down the refresh path and abort with a confusing
+// `git fetch failed`. `git rev-parse --is-inside-work-tree` exiting 0 is the
+// authoritative "this is a working tree git can operate on" signal.
+function deploySrcIsWorktree(): boolean {
+  if (!existsSync(DEPLOY_SRC)) return false;
+  const res = spawnSync(
+    ["git", "-C", DEPLOY_SRC, "rev-parse", "--is-inside-work-tree"],
+    { cwd: DEPLOY_SRC, stdout: "pipe", stderr: "pipe" },
+  );
+  return res.exitCode === 0;
+}
+
+// Remove a pruned/corrupt DEPLOY_SRC so it can be recreated cleanly. DEPLOY_SRC is
+// a deploy-OWNED, fully reproducible path (just a detached checkout of
+// origin/master + a cloned node_modules), so removing it is safe. Defense in
+// depth: refuse to rm anything whose path is not exactly the derived
+// `…/deploy-src`, so a future refactor that mis-wires DATA_DIR can never delete
+// an unintended directory.
+function removeStaleDeploySrc(): boolean {
+  if (!isSafeDeploySrcToRemove(DEPLOY_SRC, sep)) {
+    logError(
+      `Refusing to remove unexpected deploy-src path '${DEPLOY_SRC}' ` +
+        `(does not end with '${sep}deploy-src') — leaving it in place.`,
+    );
+    return false;
+  }
+  try {
+    rmSync(DEPLOY_SRC, { recursive: true, force: true });
+    return true;
+  } catch (err) {
+    logError(`Failed to remove stale deploy-src '${DEPLOY_SRC}': ${String(err)}`);
+    return false;
+  }
+}
+
+// Warm DEPLOY_SRC/node_modules from PROJECT_ROOT so the first build isn't a cold
+// 5-10min `bun install`. Uses APFS clonefile (`cp -cR`) — the same copy-on-write
+// trick as scripts/worktree-warm.sh, whose relative-symlink layout stays valid
+// after the clone. We deliberately do NOT symlink node_modules (Turbopack 16
+// rejects a node_modules symlink pointing out of the worktree root — see
+// CLAUDE.md). On any failure we just warn: the subsequent `bun install
+// --frozen-lockfile` will materialize node_modules itself, only slower.
+function warmDeploySrcNodeModules(): void {
+  const srcModules = join(PROJECT_ROOT, "node_modules");
+  const destModules = join(DEPLOY_SRC, "node_modules");
+  if (!existsSync(srcModules) || existsSync(destModules)) {
+    return;
+  }
+  logDeploy("Warming deploy-src node_modules via clonefile...");
+  // `cp -cR` = APFS copy-on-write clone (near-instant); falls back below.
+  const cloned = runCommand(
+    ["cp", "-cR", srcModules, destModules],
+    PROJECT_ROOT,
+    "clone node_modules into deploy-src",
+  );
+  if (!cloned) {
+    logDeploy(
+      "WARNING: node_modules clonefile failed; bun install --frozen-lockfile will populate it (slower)",
+    );
+  }
+}
+
+// Ensure the deploy-owned source worktree exists and is pinned to origin/master,
+// then return true on success. Building from this isolated, detached worktree
+// (instead of PROJECT_ROOT) is what guarantees a deploy NEVER touches the live
+// dev/agent tree (remote-dev-yxvy). Idempotent: creates the worktree on first
+// run (and warms its node_modules), otherwise fetches + hard-resets it.
+function ensureDeploySrcAtOrigin(): boolean {
+  const firstCreate = !deploySrcIsWorktree();
+
+  if (firstCreate) {
+    // SELF-HEAL: a path exists at DEPLOY_SRC but git doesn't recognize it as a
+    // working tree (pruned registration with a dangling .git file, or a
+    // corrupt/half-removed checkout). DEPLOY_SRC is deploy-owned and fully
+    // reproducible, so wipe it and recreate from scratch instead of wedging
+    // every future deploy with a confusing `git fetch failed`.
+    if (existsSync(DEPLOY_SRC)) {
+      logDeploy(
+        `WARNING: deploy-src is not a valid worktree (pruned/corrupt); recreating: ${DEPLOY_SRC}`,
+      );
+      if (!removeStaleDeploySrc()) {
+        return false;
+      }
+    }
+    // Drop any stale .git/worktrees/<name> registration so the re-add below
+    // isn't blocked by "<path> already registered" after we removed the dir.
+    runCommand(
+      ["git", "-C", PROJECT_ROOT, "worktree", "prune"],
+      PROJECT_ROOT,
+      "git worktree prune (clear stale deploy-src registration)",
+    );
+    logDeploy(`Creating deploy source worktree at ${DEPLOY_SRC} (detached @ origin/master)...`);
+  } else {
+    logDeploy(`Refreshing deploy source worktree ${DEPLOY_SRC} to origin/master...`);
+  }
+
+  // fetch (+ worktree add on first create) — see gitSyncCommands for the exact
+  // ordered argv arrays per branch.
+  const [fetchCmd, secondCmd] = gitSyncCommands(PROJECT_ROOT, DEPLOY_SRC, firstCreate);
+  const cwd = firstCreate ? PROJECT_ROOT : DEPLOY_SRC;
+
+  if (!runCommand(fetchCmd, cwd, "git fetch origin (deploy-src)")) {
+    return false;
+  }
+
+  if (firstCreate) {
+    if (!runCommand(secondCmd, PROJECT_ROOT, "git worktree add deploy-src @ origin/master")) {
+      return false;
+    }
+    // First materialization: clone node_modules so the first build is fast.
+    warmDeploySrcNodeModules();
+    return true;
+  }
+
+  // Existing worktree refresh. Preserve the "only ever build origin/master"
+  // safety property: confirm DEPLOY_SRC's HEAD is an ancestor of origin/master
+  // before the hard reset. DEPLOY_SRC is detached at origin/master so this is
+  // trivially true, but we keep + log the guard so a surprise (e.g. someone
+  // committed into the deploy worktree by hand) is refused rather than silently
+  // discarded — mirroring the original PROJECT_ROOT divergence guard.
+  const ancestry = spawnSync(
+    ["git", "-C", DEPLOY_SRC, "merge-base", "--is-ancestor", "HEAD", "origin/master"],
+    { cwd: DEPLOY_SRC, stdout: "pipe", stderr: "pipe" },
+  );
+  const decision = ancestryGuardDecision(ancestry.exitCode ?? -1);
+  if (decision === "diverged") {
+    logError(
+      "deploy-src HEAD has diverged from origin/master (commits not on origin?). " +
+        "Refusing to hard-reset and risk losing them; resolve deploy-src manually.",
+    );
+    return false;
+  }
+  if (decision === "git-error") {
+    logError(
+      `git merge-base --is-ancestor failed in deploy-src (exit ${ancestry.exitCode}): ` +
+        (ancestry.stderr?.toString().trim() ||
+          "unknown git error (origin/master ref missing after a bad fetch?)"),
+    );
+    return false;
+  }
+
+  // Safe now — DEPLOY_SRC is the deploy's OWN detached tree, no dev work lives here.
+  return runCommand(secondCmd, DEPLOY_SRC, "git reset --hard origin/master (deploy-src)");
 }
 
 function buildSlot(slot: Slot): boolean {
@@ -465,61 +628,21 @@ function buildSlot(slot: Slot): boolean {
 
   logDeploy(`Building into ${slot} slot...`);
 
-  // Step 1: Sync PROJECT_ROOT to origin/master, robust against a dirty/untracked
-  // working tree. A plain `git merge --ff-only` aborts the whole deploy if any
-  // untracked file collides with an incoming tracked file (e.g. a stray
-  // docs/*.md — see remote-dev-1oxx) or if a tracked file is dirty (e.g.
-  // .beads/issues.jsonl, which bd auto-flushes). We keep the fast-forward
-  // SAFETY — never silently discard divergent local commits — via an ancestry
-  // check, then `git reset --hard` to force the tree to match origin/master.
-  // reset --hard discards dirty tracked changes and deletes only untracked
-  // files in the way of incoming tracked files; gitignored runtime data
-  // (.env.local, sqlite.db, node_modules, build slots) is left untouched.
-  if (!runCommand(["git", "fetch", "origin"], PROJECT_ROOT, "git fetch")) {
-    return false;
-  }
-  // Refuse to deploy if PROJECT_ROOT/HEAD has diverged from origin/master
-  // (local commits not on origin) — a hard reset would silently lose them.
-  // This preserves the protection the old `--ff-only` gave us.
-  // `git merge-base --is-ancestor` exits 0 when HEAD is an ancestor of
-  // origin/master (fast-forwardable or already equal), 1 when it is NOT
-  // (PROJECT_ROOT has diverged — local commits not on origin), and a different
-  // non-zero (typically 128) on a git error such as a missing origin/master ref
-  // after a bad fetch. Distinguish the two so the log isn't misleading.
-  const ancestry = spawnSync(
-    ["git", "merge-base", "--is-ancestor", "HEAD", "origin/master"],
-    { cwd: PROJECT_ROOT, stdout: "pipe", stderr: "pipe" }
-  );
-  if (ancestry.exitCode === 1) {
-    logError(
-      "PROJECT_ROOT HEAD has diverged from origin/master (local commits not on " +
-        "origin?). Refusing to hard-reset and risk losing them; resolve PROJECT_ROOT manually."
-    );
-    return false;
-  }
-  if (ancestry.exitCode !== 0) {
-    logError(
-      `git merge-base --is-ancestor failed (exit ${ancestry.exitCode}): ` +
-        (ancestry.stderr?.toString().trim() ||
-          "unknown git error (origin/master ref missing after a bad fetch?)")
-    );
-    return false;
-  }
-  if (
-    !runCommand(
-      ["git", "reset", "--hard", "origin/master"],
-      PROJECT_ROOT,
-      "git reset --hard origin/master"
-    )
-  ) {
+  // Step 1: Sync the deploy-owned source worktree (DEPLOY_SRC) to origin/master.
+  // This is an ISOLATED, persistent detached worktree outside the repo — NOT
+  // PROJECT_ROOT — so the hard reset can never wipe a developer/agent's
+  // in-progress edits in the live tree (remote-dev-yxvy). The divergence guard
+  // is preserved (see ensureDeploySrcAtOrigin) so we still only ever build
+  // origin/master.
+  if (!ensureDeploySrcAtOrigin()) {
     return false;
   }
 
-  // Step 2: Install dependencies
+  // Step 2: Install dependencies (in the deploy-src worktree)
   if (
     !runCommand(
       ["bun", "install", "--frozen-lockfile"],
-      PROJECT_ROOT,
+      DEPLOY_SRC,
       "bun install"
     )
   ) {
@@ -531,20 +654,20 @@ function buildSlot(slot: Slot): boolean {
   const cargoBin = existsSync(cargoPath) ? cargoPath : "cargo";
   if (
     !runCommand(
-      [cargoBin, "install", "--path", join(PROJECT_ROOT, "crates", "rdv")],
-      PROJECT_ROOT,
+      [cargoBin, "install", "--path", join(DEPLOY_SRC, "crates", "rdv")],
+      DEPLOY_SRC,
       "cargo install rdv CLI"
     )
   ) {
     logDeploy("WARNING: rdv CLI build failed (cargo not available?), continuing without it");
   }
 
-  // Step 4: Build Next.js
-  if (!runCommand(["bun", "run", "build"], PROJECT_ROOT, "bun run build")) {
+  // Step 4: Build Next.js (in the deploy-src worktree)
+  if (!runCommand(["bun", "run", "build"], DEPLOY_SRC, "bun run build")) {
     return false;
   }
 
-  // Step 5: Copy build output to slot directory
+  // Step 5: Copy build output to slot directory (from DEPLOY_SRC, not PROJECT_ROOT)
   logDeploy(`Copying build to ${slot} slot...`);
 
   // Clean previous build in this slot
@@ -554,7 +677,7 @@ function buildSlot(slot: Slot): boolean {
   mkdirSync(standaloneDir, { recursive: true });
 
   // Copy .next/standalone
-  const srcStandalone = join(PROJECT_ROOT, ".next", "standalone");
+  const srcStandalone = join(DEPLOY_SRC, ".next", "standalone");
   if (!existsSync(srcStandalone)) {
     logError("No .next/standalone directory found after build");
     return false;
@@ -562,21 +685,21 @@ function buildSlot(slot: Slot): boolean {
   cpSync(srcStandalone, standaloneDir, { recursive: true });
 
   // Copy static assets into standalone
-  const srcStatic = join(PROJECT_ROOT, ".next", "static");
+  const srcStatic = join(DEPLOY_SRC, ".next", "static");
   const destStatic = join(standaloneDir, ".next", "static");
   if (existsSync(srcStatic)) {
     cpSync(srcStatic, destStatic, { recursive: true });
   }
 
   // Copy public directory
-  const srcPublic = join(PROJECT_ROOT, "public");
+  const srcPublic = join(DEPLOY_SRC, "public");
   const destPublic = join(standaloneDir, "public");
   if (existsSync(srcPublic)) {
     cpSync(srcPublic, destPublic, { recursive: true });
   }
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  logDeploy(`Build completed in ${elapsed}s (commit: ${getGitCommit()})`);
+  logDeploy(`Build completed in ${elapsed}s (commit: ${getGitCommit(DEPLOY_SRC)})`);
 
   return true;
 }
@@ -586,9 +709,37 @@ function buildSlot(slot: Slot): boolean {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function runMigration(): boolean {
+  // Migrations run from DEPLOY_SRC, NOT PROJECT_ROOT (remote-dev-yxvy). The live
+  // prod DB is selected by ENV (DATABASE_URL / the ~/.remote-dev libsql path),
+  // not by cwd — so running here still targets the live DB; only the SCHEMA
+  // SOURCE changes. db:push reads drizzle.config → src/db/schema.ts relative to
+  // cwd, and the backfill scripts likewise import schema/code relative to cwd.
+  // Post-yxvy PROJECT_ROOT is intentionally NEVER synced to origin/master, so
+  // pushing from PROJECT_ROOT would migrate the live DB to the dev checkout's
+  // STALE/mid-edit schema while the served build is origin/master — a schema/code
+  // mismatch on the live DB. Running from DEPLOY_SRC (pinned to origin/master)
+  // keeps the pushed schema in lockstep with the built+served code.
+  //
+  // In the normal deploy flow buildSlot() runs first, so DEPLOY_SRC already
+  // exists and has its node_modules. Be defensive anyway: ALWAYS re-pin it to
+  // origin/master before migrating — ensureDeploySrcAtOrigin() is idempotent
+  // (fetch + reset --hard origin/master, a cheap no-op when already pinned), so
+  // calling it again here GUARANTEES we never push from a present-but-stale or
+  // diverged worktree. (A bare `existsSync(DEPLOY_SRC)` short-circuit would skip
+  // the pin and migrate from an unvalidated schema.) If it can't be materialized
+  // or pinned, refuse rather than silently fall back to PROJECT_ROOT's stale
+  // schema.
+  if (!ensureDeploySrcAtOrigin()) {
+    logError(
+      "Migration aborted: deploy-src worktree could not be pinned to origin/master, " +
+        "refusing to push PROJECT_ROOT's (unsynced) schema to the live DB.",
+    );
+    return false;
+  }
+
   if (!runCommand(
     ["bun", "run", "db:push"],
-    PROJECT_ROOT,
+    DEPLOY_SRC,
     "database migration"
   )) {
     return false;
@@ -597,7 +748,7 @@ function runMigration(): boolean {
   // Backfill github_account_metadata for any OAuth accounts missing metadata
   runCommand(
     ["bun", "run", "db:migrate-github-accounts"],
-    PROJECT_ROOT,
+    DEPLOY_SRC,
     "GitHub account metadata backfill"
   );
 
@@ -613,7 +764,7 @@ function runMigration(): boolean {
   // problem instead of silently degrading to per-request lazy heals.
   if (!runCommand(
     ["bun", "run", "db:backfill-user-emails"],
-    PROJECT_ROOT,
+    DEPLOY_SRC,
     "user_email index backfill"
   )) {
     return false;
@@ -917,7 +1068,11 @@ async function deploy(): Promise<void> {
       process.exit(1);
     }
 
-    const newCommit = getGitCommitFull();
+    // The commit we actually built/shipped is DEPLOY_SRC's HEAD (origin/master),
+    // NOT PROJECT_ROOT's — PROJECT_ROOT is no longer reset per deploy. Recording
+    // this is what keeps state.json's activeCommit == the pushed SHA so the CI
+    // poll (GET /api/deploy/status) can confirm the right commit went live.
+    const newCommit = getGitCommitFull(DEPLOY_SRC);
     logDeploy(`Swapping from ${activeSlot} to ${inactiveSlot}...`);
 
     // Stop current servers, run migration, restart via rdv.ts.
@@ -980,7 +1135,7 @@ async function deploy(): Promise<void> {
     });
 
     logDeploy(
-      `=== Deploy successful === (${activeSlot} -> ${inactiveSlot}, commit: ${getGitCommit()})`
+      `=== Deploy successful === (${activeSlot} -> ${inactiveSlot}, commit: ${getGitCommit(DEPLOY_SRC)})`
     );
   } finally {
     releaseLock();
