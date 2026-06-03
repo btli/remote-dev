@@ -409,6 +409,63 @@ body in the 503 response identifies which check failed.
 
 ---
 
+## Per-instance package provisioning
+
+Each instance is a real dev environment, so agents install their own toolchains
+at runtime. By default those installs land on the container's ephemeral layer and
+are wiped on the next restart. The entrypoint fixes this by pointing every
+language tool's global prefix at the PVC under `${RDV_DATA_DIR}/provision`:
+
+| Tool   | Env exported          | Persists where                       |
+|--------|-----------------------|--------------------------------------|
+| npm    | `NPM_CONFIG_PREFIX`   | `${RDV_DATA_DIR}/provision/npm-global` |
+| cargo  | `CARGO_HOME`          | `${RDV_DATA_DIR}/provision/cargo`    |
+| rustup | `RUSTUP_HOME`         | `${RDV_DATA_DIR}/provision/rustup`   |
+| pipx   | `PIPX_HOME` / `PIPX_BIN_DIR` | `${RDV_DATA_DIR}/provision/pipx` |
+
+Their `bin/` dirs are prepended to `PATH` for both servers and every agent PTY
+(the terminal server copies the process env into each session). So an ad-hoc
+`npm i -g <pkg>`, `pipx install <pkg>`, or `cargo install <pkg>` an agent runs
+**persists across restarts with no manifest required** (`rustup` is bootstrapped
+into the PVC on first `cargo install`). The baked agent CLIs stay in the system
+prefix `/usr/local` — the boot auto-update targets them explicitly with
+`npm update -g --prefix /usr/local`, so they are never duplicated onto the PVC.
+
+### Declarative manifest (two layers)
+
+For reproducible instances, declare packages in a manifest. Two layers are merged
++ de-duped at boot:
+
+1. **Supervisor baseline** — `SUPERVISOR_INSTANCE_BASELINE_PACKAGES` in the
+   supervisor config Secret, an OPTIONAL JSON manifest string injected into every
+   instance it provisions as `RDV_PROVISION_BASELINE`. Malformed JSON fails that
+   instance's provision loudly.
+2. **Per-instance** — `${RDV_DATA_DIR}/provision/packages.yaml` (or
+   `packages.json`), user/agent-editable and persisted on the PVC.
+
+Manifest schema (all keys optional; each an array of package names):
+
+```yaml
+apt:   [ ripgrep, fd-find ]   # system pkgs — re-applied each boot (ephemeral)
+npm:   [ typescript, prettier ] # npm install -g — persists (NPM_CONFIG_PREFIX)
+pip:   [ ruff, httpie ]       # pipx install (one venv each) — persists (PIPX_HOME)
+cargo: [ ripgrep, just ]      # cargo install — persists (CARGO_HOME)
+```
+
+Provisioning runs in the **background after the servers are up**, so it never
+delays readiness; all errors are swallowed and logged to `/tmp/provision.log`.
+Every entry is validated against a conservative token allowlist
+(`/^[A-Za-z0-9._@/+-]+$/`) and de-duped; invalid entries are skipped + logged.
+Installs are idempotent (the package managers skip already-installed packages), so
+because the npm/pip/cargo prefixes live on the PVC, warm reboots only re-run the
+ephemeral `apt` layer.
+
+> **`cargo` packages that compile native code need a C toolchain** — list
+> `build-essential` under `apt:` in the same manifest (apt is applied before
+> cargo in the entrypoint, so it will be present in time).
+
+---
+
 ## Known limitations
 
 - **Instance lock is advisory.** `src/lib/instance-lock.ts` writes a PID

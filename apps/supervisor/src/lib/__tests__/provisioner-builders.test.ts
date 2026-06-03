@@ -182,6 +182,20 @@ describe("buildInstanceEnv", () => {
     // The client SECRET must NOT leak into the non-secret env.
     expect(env.OIDC_CLIENT_SECRET).toBeUndefined();
   });
+
+  it("omits RDV_PROVISION_BASELINE unless a baseline is provided (remote-dev-uobt)", () => {
+    const env = buildInstanceEnv(SLUG, { host: "dev.example.com" });
+    expect(env.RDV_PROVISION_BASELINE).toBeUndefined();
+  });
+
+  it("injects RDV_PROVISION_BASELINE verbatim when provisionBaseline is set (remote-dev-uobt)", () => {
+    const baseline = '{"npm":["typescript"],"pip":["ruff"]}';
+    const env = buildInstanceEnv(SLUG, {
+      host: "dev.example.com",
+      provisionBaseline: baseline,
+    });
+    expect(env.RDV_PROVISION_BASELINE).toBe(baseline);
+  });
 });
 
 describe("buildStatefulSet", () => {

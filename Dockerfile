@@ -30,10 +30,33 @@
 #   TERMINAL_PORT          6002   (terminal WebSocket)
 #   NEXT_PUBLIC_TERMINAL_PORT  6002
 
-# Auto-updating base image tags per global Docker policy.
-# Node major (22) is pinned to match the project's engines; minor + patch auto-update.
-# Bun tracks the latest debian-based release.
-ARG NODE_VERSION=22-slim
+# Auto-updating base image tags per global Docker policy. Bun tracks the latest
+# debian-based release; the runtime Node tag tracks the codename + major below.
+#
+# RUNTIME BASE = node:24-trixie-slim (remote-dev-nxbv). The runtime base must
+# satisfy BOTH the native-module ABI and the glibc that the BUILD stage compiles
+# against — they are two distinct skews that bit us in sequence:
+#
+#   1. Node-ABI skew (better-sqlite3 + node-pty). These are compiled FROM SOURCE
+#      under bun in the build stage (root `trustedDependencies`). `oven/bun:debian`
+#      is now bun 1.3.14, which reports as Node 24.3.0 / NODE_MODULE_VERSION 137,
+#      so the addons are built for ABI 137. A Node 22 runtime is ABI 127 and
+#      CANNOT load them — the standalone server's better-sqlite3 copy throws
+#      "compiled against ... NODE_MODULE_VERSION 137. This version of Node.js
+#      requires NODE_MODULE_VERSION 127". (better-sqlite3@12.8.0 ships no N-API
+#      prebuild for this platform, so the copy is ABI-version-specific.) The
+#      runtime Node MAJOR therefore MUST match bun's reported Node major → 24.
+#
+#   2. glibc skew (the Rust `rdv` binary). The build stage compiles `rdv` against
+#      trixie's glibc; an older runtime fails with "GLIBC_2.39 not found" (rc=1),
+#      so the agent hooks fall back to curl. node:24-trixie-slim is Debian trixie
+#      (glibc 2.41), which satisfies rdv's GLIBC_2.39.
+#
+# node:24-trixie-slim covers both: Node 24 (ABI 137) + Debian trixie (glibc 2.41).
+# Codename + major track the latest per the Docker auto-update policy (NOT a patch
+# pin); the build-time smoke test below catches any FUTURE bun ABI drift (e.g. a
+# bump to Node 26) by failing the build instead of shipping a broken image.
+ARG NODE_VERSION=24-trixie-slim
 ARG BUN_VERSION=debian
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -161,6 +184,11 @@ FROM node:${NODE_VERSION} AS runtime
 #                  fully functional (keyring + sources intact); the package
 #                  index is pruned (`rm -rf /var/lib/apt/lists/*`) to keep the
 #                  image small — agents run `sudo apt-get update` first.
+#   python3, python3-venv, pipx — Python provisioning (remote-dev-uobt): pipx
+#                  installs each pip-ecosystem manifest package into its own venv
+#                  under PIPX_HOME (a PVC dir), so they persist across restarts.
+#                  npm ships with node; the Rust toolchain is bootstrapped onto
+#                  the PVC on demand by the entrypoint (NOT baked here).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         tmux \
         git \
@@ -171,6 +199,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         jq \
         less \
         sudo \
+        python3 \
+        python3-venv \
+        pipx \
     && (curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
           | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
         && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
@@ -315,7 +346,28 @@ USER rdv
 # request time). `@libsql/client/node` is included so a future packaging
 # regression (the platform-native binding missing from /app/node_modules/@libsql)
 # fails the build instead of CrashLooping the terminal server at startup.
-RUN node -e "require('@libsql/linux-x64-gnu'); require('@libsql/client/node'); require('better-sqlite3'); require('node-pty'); console.log('native modules OK')"
+#
+# DRIFT GUARD (remote-dev-nxbv): this test historically MISSED two distinct
+# build/runtime skews because it (a) never exec'd the Rust `rdv` binary and
+# (b) only loaded the LEAF /app/node_modules/better-sqlite3 copy — never the copy
+# the Next standalone server actually resolves. The `COPY .next/standalone ./`
+# above FLATTENS the standalone output into /app (there is no /app/.next/standalone
+# at runtime), and the copy the server loads is the bun-layout one under
+# /app/node_modules/.bun/better-sqlite3@<ver>/node_modules/better-sqlite3/build/Release/better_sqlite3.node.
+# Both gaps are now closed so ANY future glibc OR Node-ABI drift fails the build
+# HERE, not at runtime:
+#   1. `rdv --version` — exercises the Rust binary's glibc deps (the original
+#      "GLIBC_2.39 not found" symptom from the bookworm runtime).
+#   2. EVERY better-sqlite3 copy under /app/node_modules is `require`'d (more
+#      robust than process.dlopen for N-API/native addons). This catches a glibc
+#      mismatch AND a Node-ABI mismatch — if bun's reported Node major drifts away
+#      from the runtime base (e.g. bun starts emitting ABI 145 while the runtime is
+#      Node 24/ABI 137), `require` throws "compiled against ... NODE_MODULE_VERSION
+#      …" and the build fails instead of shipping a server whose better-sqlite3
+#      copy cannot load.
+RUN node -e "require('@libsql/linux-x64-gnu'); require('@libsql/client/node'); require('better-sqlite3'); require('node-pty'); console.log('native modules OK (leaf)')"
+RUN rdv --version
+RUN node -e "const{execSync}=require('node:child_process');const path=require('node:path');const out=execSync('find node_modules -path \"*better-sqlite3*/build/Release/better_sqlite3.node\"',{encoding:'utf8'}).trim();const files=out?out.split('\n'):[];if(files.length===0){throw new Error('no standalone better-sqlite3 binding found to smoke-test');}for(const f of files){const dir=path.resolve(f.replace(/\/build\/Release\/better_sqlite3\.node$/,''));require(dir);console.log('require OK: '+dir);}console.log('standalone better-sqlite3 OK ('+files.length+' copies)')"
 
 # NOTE: RDV_BASE_PATH is intentionally NOT set here. The build stage baked the
 # `/rdvslug` sentinel into the static output; the entrypoint rewrites it to the

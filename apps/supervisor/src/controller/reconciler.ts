@@ -149,6 +149,31 @@ export function parseNodeSelector(
 }
 
 /**
+ * Validate `SUPERVISOR_INSTANCE_BASELINE_PACKAGES` — an OPTIONAL JSON manifest
+ * string injected verbatim into every provisioned instance as RDV_PROVISION_BASELINE
+ * (remote-dev-uobt). The instance entrypoint merges it with the per-instance PVC
+ * manifest, so the supervisor side only needs to confirm it parses as JSON and
+ * pass the ORIGINAL string through unchanged.
+ *
+ * undefined/empty/whitespace → undefined (no baseline). Malformed JSON THROWS
+ * (mirroring {@link parseNodeSelector}) so a typo surfaces loudly as a per-instance
+ * `error` rather than silently shipping a broken baseline. Returns the original,
+ * untouched string (NOT a re-serialized object) so instances see exactly what the
+ * operator configured.
+ */
+export function parseProvisionBaseline(raw: string | undefined): string | undefined {
+  if (!raw || raw.trim() === "") return undefined;
+  try {
+    JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `SUPERVISOR_INSTANCE_BASELINE_PACKAGES is not valid JSON: ${String(err)}`,
+    );
+  }
+  return raw;
+}
+
+/**
  * Read the instance image/host/CF-Access config from env (validated lazily).
  *
  * SUPERVISOR_INSTANCE_IMAGE / SUPERVISOR_INSTANCE_HOST are always required.
@@ -168,6 +193,7 @@ export function readProvisionEnv(): {
   oidc?: { issuer: string; clientId: string; clientSecret: string; name: string };
   imagePullSecret?: { name: string; dockerConfigJson?: string };
   nodeSelector?: Record<string, string>;
+  provisionBaseline?: string;
 } {
   const image = process.env.SUPERVISOR_INSTANCE_IMAGE;
   const host = process.env.SUPERVISOR_INSTANCE_HOST;
@@ -238,6 +264,12 @@ export function readProvisionEnv(): {
     process.env.SUPERVISOR_INSTANCE_NODE_SELECTOR,
   );
 
+  // Optional supervisor-wide package baseline injected into every instance
+  // (remote-dev-uobt). Malformed JSON → throws (caught upstream).
+  const provisionBaseline = parseProvisionBaseline(
+    process.env.SUPERVISOR_INSTANCE_BASELINE_PACKAGES,
+  );
+
   return {
     image,
     host,
@@ -246,6 +278,7 @@ export function readProvisionEnv(): {
     oidc,
     imagePullSecret,
     nodeSelector,
+    provisionBaseline,
   };
 }
 
@@ -361,6 +394,7 @@ function buildProvisionOptions(row: InstanceRow): ProvisionOptions {
     oidc: env.oidc,
     imagePullSecret: env.imagePullSecret,
     nodeSelector: env.nodeSelector,
+    provisionBaseline: env.provisionBaseline,
   };
 }
 

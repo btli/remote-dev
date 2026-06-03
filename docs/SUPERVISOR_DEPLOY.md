@@ -224,6 +224,13 @@ kubectl -n rdv-system create secret generic rdv-supervisor-config \
 #   --from-literal=SUPERVISOR_INSTANCE_IMAGE_PULL_SECRET_NAME=harbor-registry
 #   --from-literal=SUPERVISOR_INSTANCE_IMAGE_PULL_DOCKERCONFIGJSON="$(cat ~/.docker/config.json)"
 #   --from-literal=SUPERVISOR_INSTANCE_NODE_SELECTOR=kubernetes.io/arch=amd64
+# Optional — a fleet-wide package BASELINE applied to every instance on boot
+# (see "Per-instance package provisioning" in docs/MULTI_INSTANCE.md). A JSON
+# manifest string injected as the instance's RDV_PROVISION_BASELINE; malformed
+# JSON fails that instance's provision loudly. NOTE: `cargo` packages that compile
+# native code need a C toolchain, so include "build-essential" in the same
+# manifest's `apt` list (apt is applied before cargo in the entrypoint):
+#   --from-literal=SUPERVISOR_INSTANCE_BASELINE_PACKAGES='{"apt":["build-essential"],"npm":["typescript"],"pip":["ruff"]}'
 
 # 3c. RBAC (ServiceAccount + ClusterRole + ClusterRoleBinding)
 kubectl apply -f deploy/k8s/supervisor/rbac.yaml

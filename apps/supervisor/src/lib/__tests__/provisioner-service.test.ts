@@ -210,6 +210,30 @@ describe("provisionInstance — image-pull secret + nodeSelector (remote-dev-2xh
   });
 });
 
+describe("provisionInstance — provision baseline (remote-dev-uobt)", () => {
+  function baselineEnv(clients: K8sClients): string | undefined {
+    const stsBody = (
+      clients.apps.createNamespacedStatefulSet as ReturnType<typeof vi.fn>
+    ).mock.calls[0][0].body;
+    const env: Array<{ name: string; value?: string }> =
+      stsBody.spec.template.spec.containers[0].env;
+    return env.find((e) => e.name === "RDV_PROVISION_BASELINE")?.value;
+  }
+
+  it("threads provisionBaseline into the STS env as RDV_PROVISION_BASELINE", async () => {
+    const { clients } = makeClients();
+    const baseline = '{"apt":["jq"],"npm":["typescript"]}';
+    await provisionInstance(row(), { ...OPTS, provisionBaseline: baseline }, clients);
+    expect(baselineEnv(clients)).toBe(baseline);
+  });
+
+  it("omits RDV_PROVISION_BASELINE when no baseline is provided", async () => {
+    const { clients } = makeClients();
+    await provisionInstance(row(), OPTS, clients);
+    expect(baselineEnv(clients)).toBeUndefined();
+  });
+});
+
 describe("provisionInstance — rollback on failure", () => {
   it("a Service failure rolls back (deletes namespace) and throws ProvisioningError(service)", async () => {
     const { clients, order } = makeClients();

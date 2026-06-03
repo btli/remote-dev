@@ -210,12 +210,18 @@ export function buildService(slug: string): V1Service {
  * OIDC client SECRET is deliberately NOT here — it is a secretKeyRef. We also set
  * AUTH_TRUST_HOST=true because NextAuth sits behind the supervisor router /
  * Traefik and must trust the forwarded host to build correct callback URLs.
+ *
+ * When `opts.provisionBaseline` is set, the supervisor-wide package baseline
+ * (a JSON manifest string) is injected as RDV_PROVISION_BASELINE (remote-dev-uobt)
+ * so the instance entrypoint can merge it with the per-instance PVC manifest at
+ * boot. Spread in ONLY when set so existing callers/tests stay byte-identical.
  */
 export function buildInstanceEnv(
   slug: string,
   opts: {
     host: string;
     oidc?: { issuer: string; clientId: string; name: string };
+    provisionBaseline?: string;
   },
 ): Record<string, string> {
   const env: Record<string, string> = {
@@ -235,6 +241,9 @@ export function buildInstanceEnv(
     env.NEXT_PUBLIC_OIDC_NAME = opts.oidc.name;
     // NextAuth behind the router/Traefik must trust the forwarded host.
     env.AUTH_TRUST_HOST = "true";
+  }
+  if (opts.provisionBaseline) {
+    env.RDV_PROVISION_BASELINE = opts.provisionBaseline;
   }
   return env;
 }

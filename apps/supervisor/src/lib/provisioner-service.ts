@@ -145,6 +145,13 @@ export interface ProvisionOptions {
    * instance pods to compatible nodes on a mixed-arch cluster (remote-dev-389c).
    */
   nodeSelector?: Record<string, string>;
+  /**
+   * Optional supervisor-wide package baseline (a JSON manifest string) injected
+   * into the instance as the non-secret env `RDV_PROVISION_BASELINE`
+   * (remote-dev-uobt). The instance entrypoint merges it with the per-instance
+   * PVC manifest at boot. Validated as JSON upstream (parseProvisionBaseline).
+   */
+  provisionBaseline?: string;
   // NOTE: first-boot seed emails are intentionally NOT a provisioning input in
   // Phase 1 — the seed Job dispatch is deferred to Phase 2 (jvcx.8). See the
   // comment at the end of provisionInstance.
@@ -229,6 +236,7 @@ export async function provisionInstance(
       oidc: opts.oidc
         ? { issuer: opts.oidc.issuer, clientId: opts.oidc.clientId, name: opts.oidc.name }
         : undefined,
+      provisionBaseline: opts.provisionBaseline,
     });
     await createStep("statefulset", () =>
       apps.createNamespacedStatefulSet({
