@@ -211,9 +211,9 @@ export interface PortContextValue extends PortState {
    * Build the in-pod proxy URL for a port (the seam consumed by chips,
    * allocation rows, and the mobile Ports screen).
    *
-   * STUB in this PR (A5): always returns `null`, so every "open" affordance
-   * renders inert/disabled. Track B (issue B2 / remote-dev-kmrx) implements
-   * the real path — `prefixPath('/proxy/<port>/')` with the runtime base path.
+   * Returns the same-origin `<basePath>/proxy/<port>/` path (runtime base path
+   * via `prefixApiPath`, trailing slash to match the B1 route's injected
+   * `<base>` tag). Returns `null` only for an obviously-invalid port number.
    */
   getProxyUrl: (port: number) => string | null;
   /** Detect frameworks for a folder */

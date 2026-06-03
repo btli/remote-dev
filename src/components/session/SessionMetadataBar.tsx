@@ -18,9 +18,10 @@ interface SessionMetadataBarProps {
   session: TerminalSession;
   isCollapsed?: boolean;
   /**
-   * Seam (A5): when provided, a live/listening port chip becomes a clickable
-   * button that calls `onOpenPort(port)`. Track B (B2 / remote-dev-kmrx) passes
-   * a handler that opens the in-pod proxy URL; until then the chip stays inert.
+   * Optional override (B2): when provided, a live/listening port chip calls
+   * `onOpenPort(port)` instead of the default behavior. The default — used by
+   * every current call site — consumes `getProxyUrl` from `PortContext` and
+   * opens the in-pod proxy URL in a new tab.
    */
   onOpenPort?: (port: number) => void;
 }
@@ -31,7 +32,21 @@ export function SessionMetadataBar({
   onOpenPort,
 }: SessionMetadataBarProps) {
   const { gitStatus } = useSessionGitStatus(session.id, !isCollapsed);
-  const { allocations, isPortActive } = usePortContext();
+  const { allocations, isPortActive, getProxyUrl } = usePortContext();
+
+  // Open a live port via the seam. Prefer an explicit `onOpenPort` override (B2);
+  // otherwise build the proxy URL from the context and open it in a new tab.
+  // `noopener,noreferrer` so the proxied app can't reach back via `window.opener`.
+  const handleOpenPort = (port: number) => {
+    if (onOpenPort) {
+      onOpenPort(port);
+      return;
+    }
+    const url = getProxyUrl?.(port);
+    if (url) {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+  };
 
   // Get ports for this session's project
   const sessionPorts = session.projectId
@@ -109,7 +124,10 @@ export function SessionMetadataBar({
       {sessionPorts.map((port) => {
         // `isPortActive` may be absent under stubbed contexts; treat as idle.
         const active = isPortActive?.(port.port) ?? false;
-        const canOpen = active && Boolean(onOpenPort);
+        // Openable only when live AND a real target exists: an explicit
+        // `onOpenPort` override, or a non-null `getProxyUrl` for this port.
+        const canOpen =
+          active && (Boolean(onOpenPort) || getProxyUrl?.(port.port) != null);
 
         const chipClasses = cn(
           "inline-flex items-center gap-0.5 text-[10px] rounded px-1 py-0.5",
@@ -123,7 +141,7 @@ export function SessionMetadataBar({
             <button
               key={port.port}
               type="button"
-              onClick={() => onOpenPort?.(port.port)}
+              onClick={() => handleOpenPort(port.port)}
               title={`Open port ${port.port}`}
               aria-label={`Open port ${port.port}`}
               className={cn(

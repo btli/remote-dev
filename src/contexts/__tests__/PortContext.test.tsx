@@ -4,7 +4,7 @@
  * Focused on the A4 seam wiring added in A5:
  *  - `livePorts` is populated from `GET /api/ports/proxyable`.
  *  - `isPortActive` reflects the live listening set.
- *  - `getProxyUrl` is the A5 stub (always returns `null`).
+ *  - `getProxyUrl` (B2) returns the prefixed `/proxy/<port>/` proxy path.
  *
  * The global `tests/setup.ts` mocks `@/contexts/PortContext`, so we unmock it
  * here to exercise the real provider, and mock `@/lib/api-fetch` instead.
@@ -18,8 +18,11 @@ import type { ProxyablePort } from "@/types/port";
 vi.unmock("@/contexts/PortContext");
 
 const apiFetchMock = vi.fn();
+// `prefixApiPath` is the client-safe base-path prefixer `getProxyUrl` uses.
+// The test env has no `RDV_BASE_PATH`, so it is an identity pass-through here.
 vi.mock("@/lib/api-fetch", () => ({
   apiFetch: (...args: unknown[]) => apiFetchMock(...args),
+  prefixApiPath: (input: string) => input,
 }));
 
 // Imported after the mocks above are registered.
@@ -108,14 +111,28 @@ describe("PortContext (A5 seam wiring)", () => {
     expect(result.current.isPortActive(9999)).toBe(false);
   });
 
-  it("getProxyUrl is the A5 stub and always returns null", async () => {
+  it("getProxyUrl returns the prefixed /proxy/<port>/ path", async () => {
     const { result } = renderHook(() => usePortContext(), { wrapper });
 
     await waitFor(() => {
       expect(result.current.livePorts.length).toBeGreaterThan(0);
     });
 
-    expect(result.current.getProxyUrl(3000)).toBeNull();
-    expect(result.current.getProxyUrl(5173)).toBeNull();
+    // No RDV_BASE_PATH in the test env → bare `/proxy/<port>/` (trailing slash).
+    expect(result.current.getProxyUrl(6000)).toBe("/proxy/6000/");
+    expect(result.current.getProxyUrl(3000)).toBe("/proxy/3000/");
+    expect(result.current.getProxyUrl(5173)).toBe("/proxy/5173/");
+  });
+
+  it("getProxyUrl returns null for an invalid port", async () => {
+    const { result } = renderHook(() => usePortContext(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.livePorts.length).toBeGreaterThan(0);
+    });
+
+    expect(result.current.getProxyUrl(0)).toBeNull();
+    expect(result.current.getProxyUrl(70000)).toBeNull();
+    expect(result.current.getProxyUrl(3.5)).toBeNull();
   });
 });

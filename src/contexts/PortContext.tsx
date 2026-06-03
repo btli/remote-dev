@@ -25,7 +25,7 @@ import type {
 // Context
 // ============================================================================
 
-import { apiFetch } from "@/lib/api-fetch";
+import { apiFetch, prefixApiPath } from "@/lib/api-fetch";
 
 const PortContext = createContext<PortContextValue | null>(null);
 
@@ -325,15 +325,29 @@ export function PortProvider({ children }: PortProviderProps) {
   );
 
   /**
-   * Build the in-pod proxy URL for a port.
+   * Build the in-pod proxy URL for a port (B2 / remote-dev-kmrx).
    *
-   * STUB (A5): always returns `null` so every "open" affordance stays inert.
-   * Track B (B2 / remote-dev-kmrx) replaces this with the real
-   * `prefixPath('/proxy/<port>/')` path. The argument is intentionally unused
-   * for now; it is part of the frozen seam signature B2 implements against.
+   * Returns the same-origin path served by the B1 proxy route:
+   * `<basePath>/proxy/<port>/`. The TRAILING SLASH matters — the route injects
+   * a `<base href="<basePath>/proxy/<port>/">` tag, so the proxied app's
+   * relative asset URLs resolve correctly only when the document was loaded at
+   * the slash-terminated path.
+   *
+   * Client-safety: we prefix with `prefixApiPath` (NOT `prefixPath` from
+   * `@/lib/base-path`). `prefixPath` captures `BASE_PATH` at import time, which
+   * is empty in the browser bundle (basePath is not baked in — spec NF-4).
+   * `prefixApiPath` reads the SSR-injected runtime base path
+   * (`window.__RDV_BASE_PATH__`), matching every other client URL-builder in the
+   * app (e.g. the GitHub-link `window.location.href` redirects).
+   *
+   * Returns `null` only for an obviously-invalid port; the normal case always
+   * returns a string so the "open" affordances light up for live ports.
    */
-  const getProxyUrl = useCallback((_port: number): string | null => {
-    return null;
+  const getProxyUrl = useCallback((port: number): string | null => {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return null;
+    }
+    return prefixApiPath(`/proxy/${port}/`);
   }, []);
 
   // ============================================================================
