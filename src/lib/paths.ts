@@ -238,6 +238,62 @@ export function getAnalyticsDatabasePath(): string {
 }
 
 /**
+ * Get the per-instance package-provisioning directory path (remote-dev-uobt).
+ *
+ * Rooted on the data dir (a PVC under the supervisor), this holds the persistent
+ * language-tool prefixes (npm-global/cargo/rustup/pipx) and the editable package
+ * manifest. The container entrypoint exports RDV_PROVISION_DIR =
+ * `${RDV_DATA_DIR}/provision` and points NPM_CONFIG_PREFIX / CARGO_HOME /
+ * RUSTUP_HOME / PIPX_HOME at the matching subdirs so runtime installs persist
+ * across restarts. These helpers document that layout (single source of truth)
+ * and let a future settings UI read/write the manifest.
+ */
+export function getProvisionDir(): string {
+  return join(getDataDir(), "provision");
+}
+
+/**
+ * Get the per-instance package manifest path (remote-dev-uobt).
+ * User/agent-editable; merged with the supervisor baseline at boot. YAML is the
+ * canonical form (`packages.yaml`); the entrypoint also accepts `packages.json`.
+ */
+export function getProvisionManifestPath(): string {
+  return join(getProvisionDir(), "packages.yaml");
+}
+
+/**
+ * Get the persistent npm global prefix path (remote-dev-uobt).
+ * `npm install -g` lands here (NPM_CONFIG_PREFIX); binaries in its `bin/` subdir.
+ */
+export function getProvisionNpmPrefixDir(): string {
+  return join(getProvisionDir(), "npm-global");
+}
+
+/**
+ * Get the persistent Cargo home path (remote-dev-uobt).
+ * `cargo install` lands here (CARGO_HOME); binaries in its `bin/` subdir.
+ */
+export function getProvisionCargoDir(): string {
+  return join(getProvisionDir(), "cargo");
+}
+
+/**
+ * Get the persistent rustup home path (remote-dev-uobt).
+ * The on-demand rustup bootstrap installs toolchains here (RUSTUP_HOME).
+ */
+export function getProvisionRustupDir(): string {
+  return join(getProvisionDir(), "rustup");
+}
+
+/**
+ * Get the persistent pipx home path (remote-dev-uobt).
+ * `pipx install` creates one venv per package here (PIPX_HOME); shims in `bin/`.
+ */
+export function getProvisionPipxDir(): string {
+  return join(getProvisionDir(), "pipx");
+}
+
+/**
  * Ensure the data directory and essential subdirectories exist.
  * Called during application startup.
  */
@@ -342,6 +398,24 @@ export const AppPaths = {
   },
   get sshConnectionsDir() {
     return getSshConnectionsDir();
+  },
+  get provisionDir() {
+    return getProvisionDir();
+  },
+  get provisionManifestPath() {
+    return getProvisionManifestPath();
+  },
+  get provisionNpmPrefixDir() {
+    return getProvisionNpmPrefixDir();
+  },
+  get provisionCargoDir() {
+    return getProvisionCargoDir();
+  },
+  get provisionRustupDir() {
+    return getProvisionRustupDir();
+  },
+  get provisionPipxDir() {
+    return getProvisionPipxDir();
   },
   ensureDirectories: ensureDataDirectories,
 } as const;

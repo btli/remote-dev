@@ -10,8 +10,9 @@
  * names the namespace; pod/Service selectors use the `rdv.io/slug` label.
  *
  * Env injection (§6.4): non-secret env is set inline via `buildInstanceEnv`;
- * secret-backed env (AUTH_SECRET, CF_ACCESS_*, GITHUB_*) is wired as
- * `valueFrom.secretKeyRef` in `buildStatefulSet`, NEVER inlined as plaintext.
+ * secret-backed env (AUTH_SECRET, CF_ACCESS_*, GITHUB_*, OIDC_CLIENT_SECRET) is
+ * wired as `valueFrom.secretKeyRef` in `buildStatefulSet`, NEVER inlined as
+ * plaintext.
  */
 
 import type {
@@ -106,16 +107,19 @@ export function buildSharedSecret(
 
 /**
  * V1Secret `rdv-<slug>` — the instance's UNIQUE AUTH_SECRET (+ optional GitHub
- * OAuth creds). AUTH_SECRET is the only isolation guarantee for the `__Host-`
- * CSRF cookie (§10), so it must be unique per instance.
+ * OAuth creds + optional OIDC client secret). AUTH_SECRET is the only isolation
+ * guarantee for the `__Host-` CSRF cookie (§10), so it must be unique per
+ * instance.
  *
- * SECURITY: callers MUST NOT log the returned object or `opts.authSecret`.
+ * SECURITY: callers MUST NOT log the returned object, `opts.authSecret`, or
+ * `opts.oidc.clientSecret`.
  */
 export function buildAuthSecret(
   slug: string,
   opts: {
     authSecret: string;
     github?: { clientId: string; clientSecret: string };
+    oidc?: { clientSecret: string };
   },
 ): V1Secret {
   const stringData: Record<string, string> = {
@@ -124,6 +128,9 @@ export function buildAuthSecret(
   if (opts.github) {
     stringData.GITHUB_CLIENT_ID = opts.github.clientId;
     stringData.GITHUB_CLIENT_SECRET = opts.github.clientSecret;
+  }
+  if (opts.oidc) {
+    stringData.OIDC_CLIENT_SECRET = opts.oidc.clientSecret;
   }
   return {
     metadata: {
@@ -197,14 +204,30 @@ export function buildService(slug: string): V1Service {
 /**
  * The exact NON-SECRET env injected per instance (spec §6.4).
  *
- * Secret-backed vars (AUTH_SECRET, CF_ACCESS_*, GITHUB_*) are NOT here — they are
- * wired as secretKeyRefs in {@link buildStatefulSet}.
+ * Secret-backed vars (AUTH_SECRET, CF_ACCESS_*, GITHUB_*, OIDC_CLIENT_SECRET) are
+ * NOT here — they are wired as secretKeyRefs in {@link buildStatefulSet}.
+ *
+ * When `opts.oidc` is set, the NON-SECRET OIDC config (issuer, client id, display
+ * name) is injected so the instance registers the OIDC provider and shows the
+ * "Sign in with <name>" button (the base app's src/auth.ts reads these). The
+ * OIDC client SECRET is deliberately NOT here — it is a secretKeyRef. We also set
+ * AUTH_TRUST_HOST=true because NextAuth sits behind the supervisor router /
+ * Traefik and must trust the forwarded host to build correct callback URLs.
+ *
+ * When `opts.provisionBaseline` is set, the supervisor-wide package baseline
+ * (a JSON manifest string) is injected as RDV_PROVISION_BASELINE (remote-dev-uobt)
+ * so the instance entrypoint can merge it with the per-instance PVC manifest at
+ * boot. Spread in ONLY when set so existing callers/tests stay byte-identical.
  */
 export function buildInstanceEnv(
   slug: string,
-  opts: { host: string },
+  opts: {
+    host: string;
+    oidc?: { issuer: string; clientId: string; name: string };
+    provisionBaseline?: string;
+  },
 ): Record<string, string> {
-  return {
+  const env: Record<string, string> = {
     RDV_BASE_PATH: `/${slug}`,
     RDV_INSTANCE_SLUG: slug,
     RDV_DATA_DIR: DATA_DIR,
@@ -214,6 +237,18 @@ export function buildInstanceEnv(
     AUTH_URL: `https://${opts.host}/${slug}`,
     ENABLE_LOCAL_CREDENTIALS: "false",
   };
+  if (opts.oidc) {
+    env.OIDC_ISSUER = opts.oidc.issuer;
+    env.OIDC_CLIENT_ID = opts.oidc.clientId;
+    env.OIDC_NAME = opts.oidc.name;
+    env.NEXT_PUBLIC_OIDC_NAME = opts.oidc.name;
+    // NextAuth behind the router/Traefik must trust the forwarded host.
+    env.AUTH_TRUST_HOST = "true";
+  }
+  if (opts.provisionBaseline) {
+    env.RDV_PROVISION_BASELINE = opts.provisionBaseline;
+  }
+  return env;
 }
 
 /** Convert a plain env record into V1EnvVar[] (stable, sorted by name). */
@@ -248,6 +283,12 @@ export interface BuildStatefulSetOptions {
   /** Wire GITHUB_* secretKeyRefs (optional) when the instance has GitHub creds. */
   withGithub?: boolean;
   /**
+   * Wire the OIDC_CLIENT_SECRET secretKeyRef (optional) when the instance has
+   * OIDC creds. The non-secret OIDC config (issuer/client id/name) rides in
+   * `env` via buildInstanceEnv; only the client SECRET is secret-backed.
+   */
+  withOidc?: boolean;
+  /**
    * Name of an image-pull Secret in the instance namespace, referenced in the
    * pod's `imagePullSecrets` (private-registry instance images; remote-dev-2xhg).
    * Omitted when unset, preserving current output for public-registry instances.
@@ -268,7 +309,8 @@ export interface BuildStatefulSetOptions {
  * /var/lib/rdv.
  *
  * Secret-backed env is appended as secretKeyRefs (AUTH_SECRET from `rdv-<slug>`;
- * CF_ACCESS_* from `rdv-shared`; GITHUB_* optional from `rdv-<slug>`).
+ * CF_ACCESS_* from `rdv-shared`; GITHUB_* + OIDC_CLIENT_SECRET optional from
+ * `rdv-<slug>`).
  */
 export function buildStatefulSet(
   slug: string,
@@ -294,6 +336,11 @@ export function buildStatefulSet(
         "GITHUB_CLIENT_SECRET",
         true,
       ),
+    );
+  }
+  if (opts.withOidc) {
+    env.push(
+      secretEnv("OIDC_CLIENT_SECRET", authSecretName(slug), "OIDC_CLIENT_SECRET"),
     );
   }
 

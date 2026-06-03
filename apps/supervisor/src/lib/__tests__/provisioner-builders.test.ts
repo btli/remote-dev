@@ -74,6 +74,17 @@ describe("buildAuthSecret", () => {
     expect(s.stringData?.GITHUB_CLIENT_ID).toBe("gh-id");
     expect(s.stringData?.GITHUB_CLIENT_SECRET).toBe("gh-secret");
   });
+
+  it("includes OIDC_CLIENT_SECRET only when oidc is provided", () => {
+    const without = buildAuthSecret(SLUG, { authSecret: "x" });
+    expect(without.stringData?.OIDC_CLIENT_SECRET).toBeUndefined();
+
+    const s = buildAuthSecret(SLUG, {
+      authSecret: "x",
+      oidc: { clientSecret: "oidc-secret" },
+    });
+    expect(s.stringData?.OIDC_CLIENT_SECRET).toBe("oidc-secret");
+  });
 });
 
 describe("buildImagePullSecret", () => {
@@ -142,6 +153,51 @@ describe("buildInstanceEnv", () => {
       AUTH_URL: "https://dev.example.com/alpha",
       ENABLE_LOCAL_CREDENTIALS: "false",
     });
+  });
+
+  it("omits OIDC env unless oidc is provided", () => {
+    const env = buildInstanceEnv(SLUG, { host: "dev.example.com" });
+    expect(env.OIDC_ISSUER).toBeUndefined();
+    expect(env.OIDC_CLIENT_ID).toBeUndefined();
+    expect(env.OIDC_NAME).toBeUndefined();
+    expect(env.NEXT_PUBLIC_OIDC_NAME).toBeUndefined();
+    expect(env.AUTH_TRUST_HOST).toBeUndefined();
+    // The client SECRET is NEVER a non-secret env value.
+    expect(env.OIDC_CLIENT_SECRET).toBeUndefined();
+  });
+
+  it("injects the non-secret OIDC config + AUTH_TRUST_HOST when oidc is set", () => {
+    const env = buildInstanceEnv(SLUG, {
+      host: "dev.example.com",
+      oidc: {
+        issuer: "https://authentik.example.com/application/o/rdv-instances/",
+        clientId: "oidc-client-id",
+        name: "Authentik",
+      },
+    });
+    expect(env.OIDC_ISSUER).toBe(
+      "https://authentik.example.com/application/o/rdv-instances/",
+    );
+    expect(env.OIDC_CLIENT_ID).toBe("oidc-client-id");
+    expect(env.OIDC_NAME).toBe("Authentik");
+    expect(env.NEXT_PUBLIC_OIDC_NAME).toBe("Authentik");
+    expect(env.AUTH_TRUST_HOST).toBe("true");
+    // The client SECRET must NOT leak into the non-secret env.
+    expect(env.OIDC_CLIENT_SECRET).toBeUndefined();
+  });
+
+  it("omits RDV_PROVISION_BASELINE unless a baseline is provided (remote-dev-uobt)", () => {
+    const env = buildInstanceEnv(SLUG, { host: "dev.example.com" });
+    expect(env.RDV_PROVISION_BASELINE).toBeUndefined();
+  });
+
+  it("injects RDV_PROVISION_BASELINE verbatim when provisionBaseline is set (remote-dev-uobt)", () => {
+    const baseline = '{"npm":["typescript"],"pip":["ruff"]}';
+    const env = buildInstanceEnv(SLUG, {
+      host: "dev.example.com",
+      provisionBaseline: baseline,
+    });
+    expect(env.RDV_PROVISION_BASELINE).toBe(baseline);
   });
 });
 
@@ -217,6 +273,24 @@ describe("buildStatefulSet", () => {
     const ghId = ghEnv?.find((e) => e.name === "GITHUB_CLIENT_ID");
     expect(ghId?.valueFrom?.secretKeyRef?.name).toBe("rdv-alpha");
     expect(ghId?.valueFrom?.secretKeyRef?.optional).toBe(true);
+  });
+
+  it("wires OIDC_CLIENT_SECRET as a secretKeyRef only when withOidc", () => {
+    // Default options (top-of-describe `sts`) have no OIDC.
+    expect(envByName(container?.env, "OIDC_CLIENT_SECRET")).toBeUndefined();
+
+    const withOidc = buildStatefulSet(SLUG, {
+      image: "img",
+      env: buildInstanceEnv(SLUG, { host: "h" }),
+      volumeClaimTemplate: PVC,
+      withOidc: true,
+    });
+    const oidcEnv = withOidc.spec?.template.spec?.containers[0].env;
+    const secret = oidcEnv?.find((e) => e.name === "OIDC_CLIENT_SECRET");
+    // Secret-backed, never an inline value.
+    expect(secret?.value).toBeUndefined();
+    expect(secret?.valueFrom?.secretKeyRef?.name).toBe("rdv-alpha");
+    expect(secret?.valueFrom?.secretKeyRef?.key).toBe("OIDC_CLIENT_SECRET");
   });
 
   it("mounts the data volume at /var/lib/rdv and includes the volumeClaimTemplate", () => {

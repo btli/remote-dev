@@ -37,6 +37,28 @@ export TMUX_TMPDIR="${RDV_DATA_DIR}/tmux"
 mkdir -p "$TMUX_TMPDIR"
 
 # ──────────────────────────────────────────────────────────────────────────
+# Persistent package prefixes (remote-dev-uobt)
+#
+# Anything an agent installs at runtime normally lands on the EPHEMERAL container
+# layer and is wiped on the next restart. Point every language tool's global
+# prefix at the PVC ($RDV_DATA_DIR/provision) so `npm i -g X`, `pipx install Y`,
+# and `cargo install Z` persist across restarts with NO manifest required.
+#
+# These are exported BEFORE the servers start so BOTH the Next.js and terminal
+# servers inherit them — and every child PTY (agent session) inherits them too,
+# because src/server/terminal.ts getCleanEnvironment() copies all of process.env
+# (minus __NEXT_/__VITE_/__TURBOPACK_ internals) into each PTY, and the agent
+# profile env (src/services/agent-profile-service.ts) never overrides PATH/HOME.
+export RDV_PROVISION_DIR="${RDV_DATA_DIR}/provision"
+export NPM_CONFIG_PREFIX="${RDV_PROVISION_DIR}/npm-global"
+export CARGO_HOME="${RDV_PROVISION_DIR}/cargo"
+export RUSTUP_HOME="${RDV_PROVISION_DIR}/rustup"
+export PIPX_HOME="${RDV_PROVISION_DIR}/pipx"
+export PIPX_BIN_DIR="${RDV_PROVISION_DIR}/pipx/bin"
+mkdir -p "$NPM_CONFIG_PREFIX/bin" "$CARGO_HOME/bin" "$PIPX_BIN_DIR" "$HOME/.local/bin"
+export PATH="${NPM_CONFIG_PREFIX}/bin:${CARGO_HOME}/bin:${PIPX_BIN_DIR}:${HOME}/.local/bin:${PATH}"
+
+# ──────────────────────────────────────────────────────────────────────────
 # basePath materialization (slug-aware single image)
 #
 # Next.js bakes `basePath`/`assetPrefix` at BUILD time, so the image was built
@@ -117,6 +139,17 @@ echo "[entrypoint] basePath materialization complete"
 # We deliberately do not run it from the entrypoint because the seed script
 # lives at src/db/seed.ts and is not shipped in the standalone runtime image.
 
+# Bootstrap the instance DB schema (remote-dev-fmcq) on a fresh per-instance PVC.
+# Idempotent (CREATE ... IF NOT EXISTS) so it is a no-op on an existing DB. MUST
+# use node, not bun (bun crashes loading the @libsql native binding). Fail the
+# boot loudly on error rather than serving a schemaless instance that never
+# reaches readyz.
+echo "[entrypoint] bootstrapping instance DB schema"
+if ! node /app/scripts/instance-bootstrap-db.mjs; then
+  echo "[entrypoint] FATAL: instance DB schema bootstrap failed" >&2
+  exit 1
+fi
+
 # Start the terminal server in the background.
 echo "[entrypoint] starting terminal server on port ${TERMINAL_PORT}"
 node ./dist-terminal/index.js &
@@ -126,6 +159,86 @@ TERMINAL_PID=$!
 echo "[entrypoint] starting next.js on port ${PORT}"
 node ./server.js &
 NEXT_PID=$!
+
+# Best-effort, NON-BLOCKING agent-CLI auto-update + per-instance package
+# provisioning. The user wants provisioned instances to keep their agents current
+# AND to (re)apply a declarative package manifest on each boot. We do BOTH here,
+# AFTER the servers are up so neither delays readiness — fully backgrounded, with
+# every error swallowed: a registry hiccup or offline box must NEVER fail or stall
+# the boot. Output goes to /tmp/provision.log for debugging. Runs in a
+# backgrounded, `set +e` subshell so nothing inside it can trip the script's
+# `set -euo pipefail` or affect the foreground boot path.
+echo "[entrypoint] kicking off background agent-CLI auto-update + provisioning (non-blocking)"
+(
+    set +e
+    {
+        # ── Agent-CLI auto-update ──────────────────────────────────────────
+        # The agent CLIs are BAKED into the SYSTEM prefix /usr/local (image
+        # layer), NOT the new PVC prefix. NPM_CONFIG_PREFIX now points at the PVC,
+        # so the update MUST be prefix-EXPLICIT (`--prefix /usr/local`) or it would
+        # either no-op against the empty PVC prefix or duplicate the agents onto
+        # the PVC. (`sudo` resets env, so the exported NPM_CONFIG_PREFIX would not
+        # apply anyway — the explicit flag is what makes this correct.)
+        sudo npm update -g --prefix /usr/local \
+            @anthropic-ai/claude-code \
+            @openai/codex \
+            @google/gemini-cli \
+            opencode-ai
+        # Antigravity: best-effort. Use its own updater if present, else try the
+        # installer (whose URL is currently 404 — this will simply no-op until it
+        # is restored). All errors are swallowed by the enclosing `set +e`.
+        if command -v agy >/dev/null 2>&1 && agy update --help >/dev/null 2>&1; then
+            agy update
+        else
+            curl -fsSL https://google.dev/antigravity/install | sh
+        fi
+
+        # ── Per-instance package provisioning (remote-dev-uobt) ────────────
+        # Merge the supervisor baseline (RDV_PROVISION_BASELINE, optional JSON)
+        # with the per-instance manifest (${RDV_PROVISION_DIR}/packages.yaml or
+        # .json, user/agent-editable, persists on the PVC) into newline-delimited
+        # per-ecosystem lists under /tmp, then apply each ecosystem independently.
+        # The merge helper validates every entry against a conservative token
+        # allowlist (shell-injection safe) and de-dupes. npm/pipx/cargo installs
+        # land on the PVC prefixes exported above, so they persist; apt is
+        # ephemeral and re-applied each boot. All steps are idempotent (the package
+        # managers skip already-installed packages), so warm reboots only re-run
+        # apt.
+        node /app/scripts/instance-provision-merge.mjs
+
+        # apt: system packages — ephemeral (re-applied each boot). Needs sudo +
+        # a fresh index (the image prunes /var/lib/apt/lists).
+        if [ -s /tmp/provision.apt ]; then
+            sudo apt-get update -qq \
+                && xargs -a /tmp/provision.apt -r sudo apt-get install -y --no-install-recommends
+        fi
+
+        # npm: global installs onto the PVC prefix (NO sudo — NPM_CONFIG_PREFIX
+        # points at a PVC dir the rdv user owns). `-n1` installs one package per
+        # invocation so a single bad package fails only itself, not the whole
+        # batch (matching the pip while-loop and cargo `-I{}` isolation).
+        if [ -s /tmp/provision.npm ]; then
+            xargs -a /tmp/provision.npm -r -n1 npm install -g
+        fi
+
+        # pip: one isolated pipx venv per package (persists under PIPX_HOME).
+        if [ -s /tmp/provision.pip ]; then
+            while IFS= read -r pkg; do
+                [ -n "$pkg" ] && pipx install "$pkg"
+            done < /tmp/provision.pip
+        fi
+
+        # cargo: bootstrap rustup into CARGO_HOME/RUSTUP_HOME (both on the PVC)
+        # the first time a cargo package is requested, then `cargo install` each
+        # (persists under CARGO_HOME; the cargo bin dir is already on PATH).
+        if [ -s /tmp/provision.cargo ]; then
+            command -v cargo >/dev/null 2>&1 \
+                || curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal
+            xargs -a /tmp/provision.cargo -r -I{} sh -c 'cargo install "$1"' _ {}
+        fi
+    } >/tmp/provision.log 2>&1
+) &
+disown 2>/dev/null || true
 
 # Propagate signals to both children with a hard timeout. K8s default
 # terminationGracePeriodSeconds=30 sends SIGTERM, waits, then SIGKILLs at

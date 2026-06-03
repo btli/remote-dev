@@ -126,6 +126,12 @@ export interface ProvisionOptions {
   /** Optional GitHub OAuth creds for the instance. */
   github?: { clientId: string; clientSecret: string };
   /**
+   * Optional OIDC (e.g. Authentik) creds injected so the instance is loginable
+   * via the IdP on the LAN. issuer/clientId/name ride in the non-secret env;
+   * clientSecret is secret-backed. SECURITY: never log `clientSecret`.
+   */
+  oidc?: { issuer: string; clientId: string; clientSecret: string; name: string };
+  /**
    * Optional image-pull credential for PRIVATE instance images (remote-dev-2xhg).
    * When `name` is set it is referenced in the StatefulSet's `imagePullSecrets`;
    * when `dockerConfigJson` is ALSO set, the provisioner materializes the
@@ -139,6 +145,13 @@ export interface ProvisionOptions {
    * instance pods to compatible nodes on a mixed-arch cluster (remote-dev-389c).
    */
   nodeSelector?: Record<string, string>;
+  /**
+   * Optional supervisor-wide package baseline (a JSON manifest string) injected
+   * into the instance as the non-secret env `RDV_PROVISION_BASELINE`
+   * (remote-dev-uobt). The instance entrypoint merges it with the per-instance
+   * PVC manifest at boot. Validated as JSON upstream (parseProvisionBaseline).
+   */
+  provisionBaseline?: string;
   // NOTE: first-boot seed emails are intentionally NOT a provisioning input in
   // Phase 1 — the seed Job dispatch is deferred to Phase 2 (jvcx.8). See the
   // comment at the end of provisionInstance.
@@ -207,6 +220,7 @@ export async function provisionInstance(
         body: buildAuthSecret(slug, {
           authSecret: opts.authSecret,
           github: opts.github,
+          oidc: opts.oidc ? { clientSecret: opts.oidc.clientSecret } : undefined,
         }),
       }),
     );
@@ -217,7 +231,13 @@ export async function provisionInstance(
     );
 
     // 5. StatefulSet.
-    const env = buildInstanceEnv(slug, { host: opts.host });
+    const env = buildInstanceEnv(slug, {
+      host: opts.host,
+      oidc: opts.oidc
+        ? { issuer: opts.oidc.issuer, clientId: opts.oidc.clientId, name: opts.oidc.name }
+        : undefined,
+      provisionBaseline: opts.provisionBaseline,
+    });
     await createStep("statefulset", () =>
       apps.createNamespacedStatefulSet({
         namespace,
@@ -226,6 +246,7 @@ export async function provisionInstance(
           env,
           volumeClaimTemplate: toVolumeClaimTemplate(opts.storage),
           withGithub: Boolean(opts.github),
+          withOidc: Boolean(opts.oidc),
           // Referenced whenever the name is set — even without a dockerConfigJson
           // (operator-provisioned pull Secret); the nodeSelector pins arch.
           imagePullSecretName: opts.imagePullSecret?.name,

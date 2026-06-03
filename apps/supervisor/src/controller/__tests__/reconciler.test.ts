@@ -3,6 +3,7 @@ import {
   reconcileInstances,
   readProvisionEnv,
   parseNodeSelector,
+  parseProvisionBaseline,
   type ReconcilerDeps,
 } from "@/controller/reconciler";
 import { ProvisioningError } from "@/lib/provisioner-service";
@@ -133,6 +134,7 @@ afterEach(() => {
   delete process.env.SUPERVISOR_INSTANCE_IMAGE_PULL_SECRET_NAME;
   delete process.env.SUPERVISOR_INSTANCE_IMAGE_PULL_DOCKERCONFIGJSON;
   delete process.env.SUPERVISOR_INSTANCE_NODE_SELECTOR;
+  delete process.env.SUPERVISOR_INSTANCE_BASELINE_PACKAGES;
   setNodeEnv(ORIGINAL_NODE_ENV);
   vi.clearAllMocks();
 });
@@ -723,5 +725,50 @@ describe("readProvisionEnv — image-pull secret + nodeSelector (remote-dev-2xhg
   it("nodeSelector undefined when the env var is unset", () => {
     delete process.env.SUPERVISOR_INSTANCE_NODE_SELECTOR;
     expect(readProvisionEnv().nodeSelector).toBeUndefined();
+  });
+});
+
+describe("parseProvisionBaseline (remote-dev-uobt)", () => {
+  it("undefined/empty/whitespace → undefined", () => {
+    expect(parseProvisionBaseline(undefined)).toBeUndefined();
+    expect(parseProvisionBaseline("")).toBeUndefined();
+    expect(parseProvisionBaseline("   ")).toBeUndefined();
+  });
+
+  it("returns the ORIGINAL string unchanged when it is valid JSON", () => {
+    const raw = '{"npm":["typescript"],"pip":["ruff"]}';
+    expect(parseProvisionBaseline(raw)).toBe(raw);
+  });
+
+  it("throws on malformed JSON", () => {
+    expect(() => parseProvisionBaseline("{not json")).toThrow(
+      /SUPERVISOR_INSTANCE_BASELINE_PACKAGES is not valid JSON/,
+    );
+  });
+});
+
+describe("readProvisionEnv — provision baseline (remote-dev-uobt)", () => {
+  beforeEach(() => {
+    process.env.SUPERVISOR_INSTANCE_IMAGE = "ghcr.io/x@sha256:abc";
+    process.env.SUPERVISOR_INSTANCE_HOST = "dev.example.com";
+    setNodeEnv("development");
+  });
+
+  it("reads SUPERVISOR_INSTANCE_BASELINE_PACKAGES verbatim into provisionBaseline", () => {
+    const raw = '{"apt":["jq"],"npm":["typescript"]}';
+    process.env.SUPERVISOR_INSTANCE_BASELINE_PACKAGES = raw;
+    expect(readProvisionEnv().provisionBaseline).toBe(raw);
+  });
+
+  it("provisionBaseline undefined when the env var is unset", () => {
+    delete process.env.SUPERVISOR_INSTANCE_BASELINE_PACKAGES;
+    expect(readProvisionEnv().provisionBaseline).toBeUndefined();
+  });
+
+  it("throws when the baseline is malformed JSON", () => {
+    process.env.SUPERVISOR_INSTANCE_BASELINE_PACKAGES = "{nope";
+    expect(() => readProvisionEnv()).toThrow(
+      /SUPERVISOR_INSTANCE_BASELINE_PACKAGES is not valid JSON/,
+    );
   });
 });

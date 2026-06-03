@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useSyncExternalStore } from "react";
-import { signIn } from "next-auth/react";
+import { signIn, SessionProvider } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { prefixPath } from "@/lib/base-path";
+import { runtimeBasePath } from "@/lib/api-fetch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,7 +24,26 @@ interface LoginClientProps {
   oidcName: string;
 }
 
-export default function LoginClient({ oidcEnabled, oidcName }: LoginClientProps) {
+/**
+ * Pin the NextAuth client basePath to THIS instance before any sign-in call.
+ * `next-auth/react`'s signIn/csrf/providers default to `/api/auth` at the bare
+ * origin; under the single-front-door router that path is the SUPERVISOR, so
+ * OIDC sign-in would complete against the supervisor's client and set a session
+ * cookie the instance can't decode ("Invalid Compact JWE"), looping back to
+ * /login. Scoping the client basePath to `${slug}/api/auth` routes sign-in to
+ * this instance. Mirrors src/components/layout/AppShell.tsx for authed pages.
+ * The login route intentionally skips AppShell (bundle size), so it sets its
+ * own lightweight SessionProvider here.
+ */
+export default function LoginClient(props: LoginClientProps) {
+  return (
+    <SessionProvider basePath={`${runtimeBasePath()}/api/auth`}>
+      <LoginForm {...props} />
+    </SessionProvider>
+  );
+}
+
+function LoginForm({ oidcEnabled, oidcName }: LoginClientProps) {
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -71,7 +92,9 @@ export default function LoginClient({ oidcEnabled, oidcName }: LoginClientProps)
               />
             </div>
             {error && (
-              <p className="text-sm text-destructive" role="alert">{error}</p>
+              <p className="text-sm text-destructive" role="alert">
+                {error}
+              </p>
             )}
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Signing in..." : "Sign in"}
@@ -91,7 +114,7 @@ export default function LoginClient({ oidcEnabled, oidcName }: LoginClientProps)
                 type="button"
                 variant="outline"
                 className="w-full"
-                onClick={() => signIn("oidc")}
+                onClick={() => signIn("oidc", { callbackUrl: prefixPath("/") })}
               >
                 Sign in with {oidcName}
               </Button>
@@ -104,16 +127,18 @@ export default function LoginClient({ oidcEnabled, oidcName }: LoginClientProps)
   );
 }
 
-const APK_DOWNLOAD_URL =
-  "https://github.com/btli/remote-dev/releases/latest";
+const APK_DOWNLOAD_URL = "https://github.com/btli/remote-dev/releases/latest";
 
 const subscribe = () => () => {};
-const getIsMobile = () =>
-  /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const getIsMobile = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 const getServerSnapshot = () => false;
 
 function MobileAppBanner() {
-  const isMobile = useSyncExternalStore(subscribe, getIsMobile, getServerSnapshot);
+  const isMobile = useSyncExternalStore(
+    subscribe,
+    getIsMobile,
+    getServerSnapshot,
+  );
 
   if (!isMobile) return null;
 

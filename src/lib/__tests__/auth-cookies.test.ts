@@ -316,3 +316,79 @@ describe("getSessionCookieName", () => {
     expect(mod.getSessionCookieName()).toBe("__Secure-authjs.session-token");
   });
 });
+
+describe("getSessionCookieNameCandidates", () => {
+  // The proxy realm has neither the secret nor AUTH_URL, so it can't pick the
+  // single right cookie name. getSessionCookieNameCandidates() returns BOTH the
+  // __Secure- and bare scoped names so the proxy can presence-gate on whichever
+  // the auth handler actually set. (For the unscoped/single-server case it
+  // returns just the one default name, preserving AC-1.)
+  afterEach(() => {
+    restoreEnv("RDV_BASE_PATH", ORIGINAL_BASE_PATH);
+    restoreEnv("RDV_INSTANCE_SLUG", ORIGINAL_INSTANCE_SLUG);
+    restoreEnv("AUTH_URL", ORIGINAL_AUTH_URL);
+    restoreEnv("NEXTAUTH_URL", ORIGINAL_NEXTAUTH_URL);
+    vi.resetModules();
+  });
+
+  it("returns BOTH the __Secure- and bare scoped names when scoped", async () => {
+    // AUTH_URL is intentionally absent (the proxy realm has no AUTH_URL); the
+    // candidate list must NOT depend on it — both prefixes are returned.
+    const mod = await loadCookies({
+      RDV_BASE_PATH: "/dev",
+      RDV_INSTANCE_SLUG: undefined,
+      AUTH_URL: undefined,
+      NEXTAUTH_URL: undefined,
+    });
+    expect(mod.getSessionCookieNameCandidates()).toEqual([
+      "__Secure-rdv-dev-session-token",
+      "rdv-dev-session-token",
+    ]);
+  });
+
+  it("returns both scoped names regardless of scheme (https env present)", async () => {
+    const mod = await loadCookies({
+      RDV_BASE_PATH: "/dev",
+      RDV_INSTANCE_SLUG: undefined,
+      AUTH_URL: "https://example.com/dev",
+    });
+    expect(mod.getSessionCookieNameCandidates()).toEqual([
+      "__Secure-rdv-dev-session-token",
+      "rdv-dev-session-token",
+    ]);
+  });
+
+  it("honors an explicit RDV_INSTANCE_SLUG override in both candidates", async () => {
+    const mod = await loadCookies({
+      RDV_BASE_PATH: "/alpha",
+      RDV_INSTANCE_SLUG: "custom",
+      AUTH_URL: undefined,
+    });
+    expect(mod.getSessionCookieNameCandidates()).toEqual([
+      "__Secure-rdv-custom-session-token",
+      "rdv-custom-session-token",
+    ]);
+  });
+
+  it("returns a single AuthJS https default when unscoped (single-server, AC-1)", async () => {
+    const mod = await loadCookies({
+      RDV_BASE_PATH: "",
+      RDV_INSTANCE_SLUG: undefined,
+      AUTH_URL: "https://example.com",
+    });
+    expect(mod.getSessionCookieNameCandidates()).toEqual([
+      "__Secure-authjs.session-token",
+    ]);
+  });
+
+  it("returns a single AuthJS http default when unscoped under http", async () => {
+    const mod = await loadCookies({
+      RDV_BASE_PATH: "",
+      RDV_INSTANCE_SLUG: undefined,
+      AUTH_URL: "http://localhost:6001",
+    });
+    expect(mod.getSessionCookieNameCandidates()).toEqual([
+      "authjs.session-token",
+    ]);
+  });
+});

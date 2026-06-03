@@ -87,6 +87,27 @@ describe("base-path module", () => {
     expect(mod.INSTANCE_SLUG).toBe("custom-slug");
   });
 
+  it("derives slug from BASE_PATH last segment when RDV_INSTANCE_SLUG is absent (standalone proxy)", async () => {
+    // The Next standalone proxy realm has no runtime process.env.RDV_INSTANCE_SLUG
+    // but DOES have BASE_PATH (build-inlined via the /rdvslug sentinel), so the
+    // derive below covers it.
+    const mod = await loadBasePath({
+      RDV_BASE_PATH: "/alpha",
+      RDV_INSTANCE_SLUG: undefined,
+    });
+    expect(mod.INSTANCE_SLUG).toBe("alpha");
+  });
+
+  it("falls through to the derive when RDV_INSTANCE_SLUG is an empty string (|| guard)", async () => {
+    // We use `||` not `??` so an explicitly-empty slug doesn't pin INSTANCE_SLUG
+    // to "" — it falls back to the BASE_PATH last-segment derive.
+    const mod = await loadBasePath({
+      RDV_BASE_PATH: "/alpha",
+      RDV_INSTANCE_SLUG: "",
+    });
+    expect(mod.INSTANCE_SLUG).toBe("alpha");
+  });
+
   it("rejects malformed prefix missing leading slash", async () => {
     await expect(
       loadBasePath({ RDV_BASE_PATH: "alpha", RDV_INSTANCE_SLUG: undefined }),

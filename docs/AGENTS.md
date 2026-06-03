@@ -48,10 +48,15 @@ commands and documentation links:
 | Provider | Install (npm) | Docs |
 |----------|---------------|------|
 | `claude` | `npm install -g @anthropic-ai/claude-code` | https://docs.anthropic.com/claude-code |
-| `codex` | `npm install -g @openai/codex-cli` | https://platform.openai.com/docs/codex-cli |
+| `codex` | `npm install -g @openai/codex` | https://platform.openai.com/docs/codex-cli |
 | `gemini` | `npm install -g @google/gemini-cli` | https://geminicli.com/docs/ |
-| `antigravity` | `curl -sSL https://google.dev/antigravity/install \| sh` | https://antigravity.google/docs/cli-overview |
-| `opencode` | `npm install -g opencode` | https://opencode.ai/docs/ |
+| `antigravity` | _CLI install currently unavailable — the documented `https://google.dev/antigravity/install` installer URL is 404 (TBD)_ | https://antigravity.google/docs/cli-overview |
+| `opencode` | `npm install -g opencode-ai` | https://opencode.ai/docs/ |
+
+> **Package names ≠ binary names.** The npm packages `@openai/codex` and
+> `opencode-ai` install the binaries `codex` and `opencode` respectively (the
+> bare `@openai/codex-cli` / `opencode` package names are 404 on the registry).
+> Antigravity's `agy` CLI has no working published installer at present.
 
 ---
 

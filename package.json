@@ -132,6 +132,10 @@
     "ws": "^8.18.3",
     "zod": "^4.2.1"
   },
+  "_comment_optionalDependencies": "Pin the linux-x64 libsql native binding to the SAME version as `libsql` (a transitive dep of @libsql/client). bun does NOT hoist this transitive platform-optional binding to top-level node_modules/@libsql/ in this workspace under --frozen-lockfile, so the esbuild-bundled terminal server's bare require('@libsql/linux-x64-gnu') fails at runtime. Declaring it a direct optionalDependency forces the hoist; the Dockerfile then stages it into the runtime image. Bump in lockstep with `libsql` (the Dockerfile native-module smoke test fails the build on a mismatch).",
+  "optionalDependencies": {
+    "@libsql/linux-x64-gnu": "0.5.29"
+  },
   "devDependencies": {
     "@electron/rebuild": "^4.0.2",
     "@tailwindcss/postcss": "^4",

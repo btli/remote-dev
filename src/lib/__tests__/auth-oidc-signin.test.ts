@@ -83,6 +83,7 @@ type ProviderLike = {
   type?: string;
   name?: string;
   authorization?: { params?: { scope?: string } };
+  allowDangerousEmailAccountLinking?: boolean;
 };
 
 function findProvider(config: NextAuthConfig | undefined, id: string): ProviderLike | undefined {
@@ -142,6 +143,22 @@ describe("OIDC provider registration", () => {
     // The `email` scope must be requested so the allowlist gate has an email
     // to check (otherwise the hardened gate would lock out everyone).
     expect(oidc?.authorization?.params?.scope).toContain("email");
+    // Pre-existing/seeded user rows with the same (IdP-verified) email must be
+    // auto-linked instead of erroring with OAuthAccountNotLinked. Safe here:
+    // single trusted IdP + the signIn allowlist still gates access.
+    expect(oidc?.allowDangerousEmailAccountLinking).toBe(true);
+  });
+
+  it("does NOT enable allowDangerousEmailAccountLinking on the GitHub provider", async () => {
+    // Auto-linking is scoped to the single-trusted-IdP OIDC provider only.
+    // GitHub participates in the separate multi-GitHub-account feature and must
+    // keep NextAuth's default (no dangerous email linking).
+    setOidcEnv();
+    await import("@/auth");
+
+    const github = findProvider(capturedConfig, "github");
+    expect(github).toBeDefined();
+    expect(github?.allowDangerousEmailAccountLinking).toBeUndefined();
   });
 
   it("does NOT register the OIDC provider when env is unconfigured", async () => {

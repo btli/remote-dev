@@ -5,8 +5,14 @@ import {
   validateAccessJWT,
   getAccessToken,
 } from "@/lib/cloudflare-access";
-import { getSessionCookieName } from "@/lib/auth-cookies";
+import {
+  getSessionCookieName,
+  getSessionCookieNameCandidates,
+} from "@/lib/auth-cookies";
 import { INSTANCE_SLUG, prefixPath } from "@/lib/base-path";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("proxy");
 
 /**
  * Proxy handler for authentication at the network boundary.
@@ -86,21 +92,50 @@ export async function proxy(request: NextRequest) {
     );
   }
 
-  // No CF Access token - fall back to NextAuth for local development.
+  // No CF Access token - fall back to NextAuth.
   //
-  // `getToken()` reads its cookie by name; under `RDV_BASE_PATH` we rename the
-  // session cookie (see src/lib/auth-cookies.ts) so the default name
-  // `__Secure-authjs.session-token` is no longer present and `getToken()` would
-  // silently return null — every API call would 401. Always pass the configured
-  // name so this path keeps working in both single-server and multi-instance
-  // deployments. (Gemini review: critical.)
-  const token = await getToken({
-    req: request,
-    secret: process.env.AUTH_SECRET,
-    cookieName: getSessionCookieName(),
-  });
+  // We branch on whether we're running SCOPED (a standalone instance pod under
+  // `RDV_BASE_PATH`) or UNSCOPED (single-server / local dev / single-host prod).
+  // The discriminator is `INSTANCE_SLUG` (derived from the build-inlined
+  // BASE_PATH, so it IS reliable in the proxy realm). This matches
+  // `isUnscopedMode()` in src/lib/auth-cookies.ts: unscoped ⇔ INSTANCE_SLUG === "".
+  //
+  // 1. UNSCOPED (single-server): do the full cryptographic validation via
+  //    `getToken()`. It reads its cookie by name; we always pass the configured
+  //    name. The main Node server captured `process.env.AUTH_SECRET`/`AUTH_URL`,
+  //    so the secret and the cookie-name prefix are both correct here and crypto
+  //    validation works. This path is byte-identical to before (AC-1).
+  //
+  // 2. SCOPED (the Next standalone *instance proxy* realm): the middleware realm
+  //    cannot reliably run `getToken()`. It has neither the container's runtime
+  //    `process.env.AUTH_SECRET` (it is absent — or, worse, spuriously truthy —
+  //    and not the value the Node server actually signed with) nor a usable
+  //    `process.env.AUTH_URL` (empty → it would compute the UNPREFIXED cookie
+  //    name while the real cookie is `__Secure-`-prefixed). Either way
+  //    `getToken()` returns null for a valid session and OIDC login loops
+  //    (proven in-pod). So gate on session-cookie PRESENCE instead: treat the
+  //    request as logged-in if EITHER candidate scoped cookie name is present.
+  //    Real authorization is still enforced server-side (route handlers / server
+  //    components via `getCurrentUser()`), which DO have the secret — the edge
+  //    only needs a presence gate here.
+  const scoped = INSTANCE_SLUG.length > 0;
+  let isLoggedIn: boolean;
+  if (scoped) {
+    const candidates = getSessionCookieNameCandidates();
+    isLoggedIn = candidates.some((name) => request.cookies.has(name));
+    log.debug(
+      "scoped instance proxy realm; using session-cookie presence gate (getToken is unreliable here)",
+      { isLoggedIn, candidateCount: candidates.length, pathname },
+    );
+  } else {
+    const token = await getToken({
+      req: request,
+      secret: process.env.AUTH_SECRET,
+      cookieName: getSessionCookieName(),
+    });
+    isLoggedIn = !!token;
+  }
 
-  const isLoggedIn = !!token;
   const isLoginPage = pathname === "/login";
   const isApiRoute = pathname.startsWith("/api");
 
@@ -130,7 +165,13 @@ export async function proxy(request: NextRequest) {
     );
   }
 
-  if (isLoggedIn && isLoginPage) {
+  // Only auto-redirect away from /login when isLoggedIn is a REAL validation
+  // signal (unscoped/single-server getToken). In scoped instance mode isLoggedIn
+  // is mere cookie-PRESENCE, so a stale/invalid session cookie would bounce
+  // /login→/ while the Home page's real getAuthSession() bounces /→/login → an
+  // infinite loop. Let /login render instead; re-authenticating overwrites the
+  // stale cookie. (Unauthenticated /dev→/login redirect above is unaffected.)
+  if (isLoggedIn && isLoginPage && !scoped) {
     return tagInstance(
       NextResponse.redirect(new URL(prefixPath("/"), request.url))
     );
@@ -140,7 +181,9 @@ export async function proxy(request: NextRequest) {
   // heavy providers on /login. See src/app/layout.tsx.
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-pathname", pathname);
-  return tagInstance(NextResponse.next({ request: { headers: requestHeaders } }));
+  return tagInstance(
+    NextResponse.next({ request: { headers: requestHeaders } })
+  );
 }
 
 export const config = {

@@ -149,6 +149,31 @@ export function parseNodeSelector(
 }
 
 /**
+ * Validate `SUPERVISOR_INSTANCE_BASELINE_PACKAGES` — an OPTIONAL JSON manifest
+ * string injected verbatim into every provisioned instance as RDV_PROVISION_BASELINE
+ * (remote-dev-uobt). The instance entrypoint merges it with the per-instance PVC
+ * manifest, so the supervisor side only needs to confirm it parses as JSON and
+ * pass the ORIGINAL string through unchanged.
+ *
+ * undefined/empty/whitespace → undefined (no baseline). Malformed JSON THROWS
+ * (mirroring {@link parseNodeSelector}) so a typo surfaces loudly as a per-instance
+ * `error` rather than silently shipping a broken baseline. Returns the original,
+ * untouched string (NOT a re-serialized object) so instances see exactly what the
+ * operator configured.
+ */
+export function parseProvisionBaseline(raw: string | undefined): string | undefined {
+  if (!raw || raw.trim() === "") return undefined;
+  try {
+    JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `SUPERVISOR_INSTANCE_BASELINE_PACKAGES is not valid JSON: ${String(err)}`,
+    );
+  }
+  return raw;
+}
+
+/**
  * Read the instance image/host/CF-Access config from env (validated lazily).
  *
  * SUPERVISOR_INSTANCE_IMAGE / SUPERVISOR_INSTANCE_HOST are always required.
@@ -165,8 +190,10 @@ export function readProvisionEnv(): {
   host: string;
   cfAccess: { team: string; aud: string };
   github?: { clientId: string; clientSecret: string };
+  oidc?: { issuer: string; clientId: string; clientSecret: string; name: string };
   imagePullSecret?: { name: string; dockerConfigJson?: string };
   nodeSelector?: Record<string, string>;
+  provisionBaseline?: string;
 } {
   const image = process.env.SUPERVISOR_INSTANCE_IMAGE;
   const host = process.env.SUPERVISOR_INSTANCE_HOST;
@@ -198,6 +225,23 @@ export function readProvisionEnv(): {
         }
       : undefined;
 
+  // Optional OIDC (e.g. Authentik) injected into every provisioned instance so
+  // instances are loginable via the IdP on the LAN (the base app's src/auth.ts
+  // reads OIDC_ISSUER/OIDC_CLIENT_ID/OIDC_CLIENT_SECRET, label OIDC_NAME). Present
+  // ONLY when issuer + clientId + clientSecret are all set; NAME defaults to
+  // "Authentik". The clientSecret is a SECRET — never logged.
+  const oidc =
+    process.env.SUPERVISOR_INSTANCE_OIDC_ISSUER &&
+    process.env.SUPERVISOR_INSTANCE_OIDC_CLIENT_ID &&
+    process.env.SUPERVISOR_INSTANCE_OIDC_CLIENT_SECRET
+      ? {
+          issuer: process.env.SUPERVISOR_INSTANCE_OIDC_ISSUER,
+          clientId: process.env.SUPERVISOR_INSTANCE_OIDC_CLIENT_ID,
+          clientSecret: process.env.SUPERVISOR_INSTANCE_OIDC_CLIENT_SECRET,
+          name: process.env.SUPERVISOR_INSTANCE_OIDC_NAME || "Authentik",
+        }
+      : undefined;
+
   // Optional image-pull credential for PRIVATE instance images (remote-dev-2xhg).
   // The dockerconfigjson is a SECRET — never logged. A dockerconfigjson with no
   // name can be neither created nor referenced, so that combination throws loud.
@@ -220,13 +264,21 @@ export function readProvisionEnv(): {
     process.env.SUPERVISOR_INSTANCE_NODE_SELECTOR,
   );
 
+  // Optional supervisor-wide package baseline injected into every instance
+  // (remote-dev-uobt). Malformed JSON → throws (caught upstream).
+  const provisionBaseline = parseProvisionBaseline(
+    process.env.SUPERVISOR_INSTANCE_BASELINE_PACKAGES,
+  );
+
   return {
     image,
     host,
     cfAccess: { team, aud },
     github,
+    oidc,
     imagePullSecret,
     nodeSelector,
+    provisionBaseline,
   };
 }
 
@@ -339,8 +391,10 @@ function buildProvisionOptions(row: InstanceRow): ProvisionOptions {
     authSecret: crypto.randomBytes(32).toString("base64"),
     cfAccess: env.cfAccess,
     github: env.github,
+    oidc: env.oidc,
     imagePullSecret: env.imagePullSecret,
     nodeSelector: env.nodeSelector,
+    provisionBaseline: env.provisionBaseline,
   };
 }
 
