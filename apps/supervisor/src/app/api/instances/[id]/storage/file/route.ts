@@ -38,6 +38,23 @@ function baseName(p: string): string {
   return parts[parts.length - 1] || "download";
 }
 
+/**
+ * Sanitize a base name for safe use in the Content-Disposition header.
+ * `safeRelativePath` only rejects `\0` and `..`, so a segment can still carry
+ * CR/LF/`;`/`"`/`\` — which would split or corrupt the header (and on a strict
+ * runtime throw, breaking this route's never-500 contract). We strip every
+ * non-printable-ASCII char (incl. \x00-\x1F and \x7F) and the quoting-sensitive
+ * `"`/`\`, then fall back to "download" if nothing usable remains. The returned
+ * value is safe to embed in BOTH the `filename="…"` token and (URI-encoded) the
+ * RFC 5987 `filename*` form.
+ */
+function safeDownloadName(p: string): string {
+  const sanitized = baseName(p)
+    .replace(/[^\x20-\x7E]/g, "_")
+    .replace(/["\\]/g, "");
+  return sanitized.trim() || "download";
+}
+
 export const GET = withSupervisorAuth("operator", async (request, { user, params }) => {
   const id = params?.id;
   if (!id) {
@@ -120,13 +137,16 @@ export const GET = withSupervisorAuth("operator", async (request, { user, params
     );
   }
 
-  const filename = baseName(file.path || path).replace(/"/g, "");
+  const filename = safeDownloadName(file.path || path);
   return new NextResponse(new Uint8Array(file.content), {
     status: 200,
     headers: {
       "content-type": "application/octet-stream",
       "content-length": String(file.size),
-      "content-disposition": `attachment; filename="${filename}"`,
+      // RFC 6266: the `filename="…"` token is the ASCII-safe fallback;
+      // `filename*=UTF-8''…` is the encoded canonical form. Both derive from the
+      // sanitized name (no control chars / quotes reach the header).
+      "content-disposition": `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
     },
   });
 });

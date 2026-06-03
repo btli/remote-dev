@@ -4,6 +4,7 @@ import {
   readFile,
   safeRelativePath,
   InspectorTimeoutError,
+  InspectorPendingError,
   InspectorPathError,
   InspectorError,
   type InspectorDeps,
@@ -155,6 +156,58 @@ describe("listVolume", () => {
     await expect(
       listVolume("alpha", "/", clients, fakeDeps(10_000)),
     ).rejects.toBeInstanceOf(InspectorTimeoutError);
+    expect(deleted).toHaveLength(1);
+  });
+
+  it("a stuck-Pending pod surfaces InspectorPendingError within the pending budget (not a timeout)", async () => {
+    const { clients } = makeClients({
+      podPhase: "Pending",
+      jobStatus: { succeeded: 0, failed: 0 },
+    });
+    // 5s/step → elapsed crosses the 20s PENDING_BUDGET before the 45s COMPLETION
+    // budget, so the more-useful pending error wins.
+    await expect(
+      listVolume("alpha", "/", clients, fakeDeps(5_000)),
+    ).rejects.toBeInstanceOf(InspectorPendingError);
+  });
+
+  it("a stuck-Pending pod STILL surfaces InspectorPendingError after a transient list failure (Issue 2 regression)", async () => {
+    // The first two listNamespacedPod calls throw (transient), then the pod is
+    // steadily Pending. The `sawNonPending` latch must NOT be set by the failed
+    // list calls (which report pending:false because the phase is unreadable),
+    // so the pending guard must still fire — NOT a generic timeout.
+    const deleted: string[] = [];
+    let listCalls = 0;
+    const clients = {
+      core: {
+        readNamespacedPod: vi.fn(async () => ({
+          status: { phase: "Running" },
+          spec: { nodeName: undefined },
+        })),
+        listNamespacedPod: vi.fn(async () => {
+          listCalls += 1;
+          if (listCalls <= 2) throw new Error("transient list failure");
+          return {
+            items: [{ metadata: { name: "rdv-inspect-pod" }, status: { phase: "Pending" } }],
+          };
+        }),
+        readNamespacedPodLog: vi.fn(async () => "{}"),
+      },
+      batch: {
+        createNamespacedJob: vi.fn(async () => ({})),
+        readNamespacedJob: vi.fn(async () => ({ status: { succeeded: 0, failed: 0 } })),
+        deleteNamespacedJob: vi.fn(async ({ name }: { name: string }) => {
+          deleted.push(name);
+          return {};
+        }),
+      },
+      apps: {},
+    } as unknown as K8sClients;
+
+    await expect(
+      listVolume("alpha", "/", clients, fakeDeps(5_000)),
+    ).rejects.toBeInstanceOf(InspectorPendingError);
+    // Still cleaned up despite the failure.
     expect(deleted).toHaveLength(1);
   });
 

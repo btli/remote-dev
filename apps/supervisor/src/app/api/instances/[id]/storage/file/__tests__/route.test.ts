@@ -85,6 +85,41 @@ describe("GET /api/instances/:id/storage/file", () => {
     expect((await res.json()).code).toBe("INVALID_PATH");
   });
 
+  it("sanitizes CR/LF/quote/non-ASCII out of the Content-Disposition filename (no header split, still 200)", async () => {
+    // A base name with an embedded \r\n (header-splitting attempt), a quote, a
+    // backslash, and a non-ASCII char. safeRelativePath only blocks \0 and ..,
+    // so these reach the route — the header must come out sanitized, not 500.
+    svc.readFile = vi.fn(async () => ({
+      path: 'dir/ev\r\nil"\\é.txt',
+      size: 5,
+      content: Buffer.from("hello"),
+    }));
+    const res = await GET(...req("inst-1", "?path=/dir/x"));
+    expect(res.status).toBe(200);
+    const cd = res.headers.get("content-disposition") ?? "";
+    // No control chars or quote/backslash leaked into the header value.
+    expect(cd).not.toMatch(/[\r\n]/);
+    expect(cd).not.toContain('il"');
+    expect(cd).not.toContain("\\");
+    // Sanitized fallback token + the RFC 5987 encoded form are both present.
+    expect(cd).toMatch(/filename="[^"\r\n]*"/);
+    expect(cd).toContain("filename*=UTF-8''");
+    // The non-ASCII char became an underscore in the ASCII token.
+    expect(cd).toContain('filename="ev__il_.txt"');
+    expect(await res.text()).toBe("hello");
+  });
+
+  it("falls back to 'download' when the base name sanitizes to empty", async () => {
+    svc.readFile = vi.fn(async () => ({
+      path: 'dir/  "\\"  ', // only quotes/backslashes + spaces → empty after sanitize
+      size: 5,
+      content: Buffer.from("hello"),
+    }));
+    const res = await GET(...req("inst-1", "?path=/weird"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-disposition")).toContain('filename="download"');
+  });
+
   it("too-large → 413 FILE_TOO_LARGE", async () => {
     svc.readFile = vi.fn(async () => {
       throw new InspectorError("file too large (9999999 bytes); use a terminal");

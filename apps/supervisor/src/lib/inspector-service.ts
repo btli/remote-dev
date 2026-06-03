@@ -274,6 +274,14 @@ interface JobPodState {
   failed: boolean;
   /** The pod is still Pending (likely an unmountable / node-pinned volume). */
   pending: boolean;
+  /**
+   * True only when the listNamespacedPod call SUCCEEDED this tick. A transient
+   * list failure leaves `pending: false` (we can't read the phase), so the poll
+   * loop must NOT treat that as positive evidence the pod left Pending — else it
+   * would latch off the PENDING_BUDGET guard and mis-report a stuck-Pending pod
+   * as a generic timeout. Gate the `sawNonPending` latch on this.
+   */
+  listSucceeded: boolean;
   /** The resolved pod name, when one exists. */
   podName?: string;
 }
@@ -290,11 +298,13 @@ async function readJobPodState(
   let pending = false;
   let podSucceeded = false;
   let podFailed = false;
+  let listSucceeded = false;
   try {
     const pods = await clients.core.listNamespacedPod({
       namespace,
       labelSelector: `job-name=${jobName}`,
     });
+    listSucceeded = true;
     const pod = pods.items[0];
     podName = pod?.metadata?.name;
     const phase = pod?.status?.phase;
@@ -327,6 +337,7 @@ async function readJobPodState(
     succeeded: jobSucceeded || podSucceeded,
     failed: jobFailed || podFailed,
     pending,
+    listSucceeded,
     podName,
   };
 }
@@ -416,7 +427,12 @@ async function runInspectorJob(
         throw new InspectorError("inspector job failed");
       }
 
-      if (!state.pending) sawNonPending = true;
+      // Only treat the pod as positively non-Pending when the list call actually
+      // succeeded. A transient list failure reports `pending: false` because we
+      // couldn't read the phase — NOT because the pod left Pending — so latching
+      // off the PENDING_BUDGET guard on it would mis-report a genuinely
+      // stuck-Pending pod as a generic timeout.
+      if (state.listSucceeded && !state.pending) sawNonPending = true;
 
       const elapsed = deps.now() - start;
       // A pod stuck Pending past the short budget → unmountable volume. The most
