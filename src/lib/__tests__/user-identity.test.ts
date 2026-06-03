@@ -218,6 +218,65 @@ describe("resolveUserIdByEmail", () => {
   });
 });
 
+describe("resolveUserIdByEmail — self-healing user.email fallback (legacy/unbackfilled)", () => {
+  it("resolves a legacy user (user.email but NO user_email row) and self-heals the index", async () => {
+    // Simulates a row that predates the feature, or one the backfill missed:
+    // a `user` with an email but no `user_email` index row.
+    seedUser("legacy-1", "legacy@example.com", "Legacy");
+
+    const userId = await resolveUserIdByEmail("legacy@example.com");
+
+    // Resolves to the SAME user — no new account.
+    expect(userId).toBe("legacy-1");
+    expect(usersTable).toHaveLength(1);
+    // Side effect: the missing primary user_email row was lazily created.
+    expect(userEmailTable).toHaveLength(1);
+    expect(userEmailTable[0]).toMatchObject({
+      userId: "legacy-1",
+      email: "legacy@example.com",
+      isPrimary: true,
+    });
+  });
+
+  it("is a no-op on a second resolution (heal already done, fast path)", async () => {
+    seedUser("legacy-1", "legacy@example.com", "Legacy");
+
+    const first = await resolveUserIdByEmail("legacy@example.com");
+    const second = await resolveUserIdByEmail("legacy@example.com");
+
+    expect(first).toBe("legacy-1");
+    expect(second).toBe("legacy-1");
+    // Still exactly one healed row — no duplicate from the repeat call.
+    expect(userEmailTable).toHaveLength(1);
+  });
+
+  it("getOrCreateUserByEmail resolves (and heals) a legacy user instead of re-creating", async () => {
+    // THE regression the security review flagged: without the fallback this
+    // would attempt a create and hit the user.email UNIQUE constraint, 500-ing
+    // the user during the transition. With it, the legacy user is returned.
+    seedUser("legacy-1", "legacy@example.com", "Legacy");
+
+    const user = await getOrCreateUserByEmail("legacy@example.com");
+
+    expect(user.id).toBe("legacy-1");
+    expect(user.name).toBe("Legacy");
+    // No new user row, and the index row was healed (exactly one).
+    expect(usersTable).toHaveLength(1);
+    expect(userEmailTable).toHaveLength(1);
+    expect(userEmailTable[0]).toMatchObject({
+      userId: "legacy-1",
+      email: "legacy@example.com",
+      isPrimary: true,
+    });
+  });
+
+  it("still returns null when neither user_email NOR user.email matches", async () => {
+    seedUser("u1", "someone@example.com");
+    seedUserEmail("u1", "someone@example.com", true);
+    await expect(resolveUserIdByEmail("stranger@example.com")).resolves.toBeNull();
+  });
+});
+
 describe("getOrCreateUserByEmail — CF Access / credentials resolution", () => {
   it("resolves a SECONDARY email to the EXISTING user (not a new account)", async () => {
     // Primary A + secondary B both point at u1.

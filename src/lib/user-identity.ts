@@ -53,12 +53,25 @@ export interface DbUser {
 }
 
 /**
- * Resolve an email address to the owning user id via the `user_email` index.
- * Returns `null` when the email is not registered to any user.
+ * Resolve an email address to the owning user id.
  *
- * This is the single read-side resolver: it intentionally consults ONLY
- * `user_email` (which contains every user's primary email after backfill), so
- * both primary and secondary emails resolve identically.
+ * Resolution order:
+ *  1. The `user_email` index (the all-emails index — primary AND secondary
+ *     emails resolve identically here once present).
+ *  2. SELF-HEALING FALLBACK to `user.email`: a legacy `user` row that predates
+ *     this feature (or whose backfill silently failed) has no `user_email` row,
+ *     so step 1 misses. Rather than treat that user as unknown — which would
+ *     make `getOrCreateUserByEmail` attempt a re-create and hit the `user.email`
+ *     UNIQUE constraint, 500-ing the user during the transition — we look the
+ *     email up directly in `user`. On a hit we lazily create the missing
+ *     primary `user_email` row (idempotent / onConflictDoNothing) so the next
+ *     resolution takes the fast path, then return that user id.
+ *
+ * Returns `null` only when NEITHER `user_email` NOR `user.email` matches.
+ *
+ * Net effect: resolution is correct regardless of backfill state — the deploy/
+ * boot backfill becomes an optimization (avoids the lazy heal on first touch),
+ * not a load-bearing prerequisite for correctness.
  */
 export async function resolveUserIdByEmail(
   email: string,
@@ -68,25 +81,40 @@ export async function resolveUserIdByEmail(
     where: eq(userEmails.email, email),
     columns: { userId: true },
   });
-  return row?.userId ?? null;
+  if (row) return row.userId;
+
+  // Self-heal: fall back to the canonical `user.email` for legacy/unbackfilled
+  // rows. eq(users.email, email) is backed by the UNIQUE index on user.email.
+  const legacyUser = await handle.query.users.findFirst({
+    where: eq(users.email, email),
+  });
+  if (!legacyUser) return null;
+
+  await ensurePrimaryUserEmail(legacyUser.id, email, handle);
+  log.info("Self-healed missing user_email index row", { userId: legacyUser.id });
+  return legacyUser.id;
 }
 
 /**
  * Resolve an email to its user, creating the user (and its primary
  * `user_email` row) when the email is not yet known.
  *
- * Resolution order:
+ * Resolution order (via `findUserByAnyEmail` → `resolveUserIdByEmail`, so it
+ * inherits the self-healing `user.email` fallback):
  *  1. Look the email up in `user_email`; if found, return that user.
- *  2. Otherwise create a `user` row (email as the canonical/primary email) AND
- *     a matching `user_email` row (`isPrimary = true`) atomically.
+ *  2. Else fall back to `user.email` — a legacy/unbackfilled user is RESOLVED
+ *     (and its missing `user_email` row lazily healed), never re-created.
+ *  3. Only when neither matches do we create a `user` row (email as the
+ *     canonical/primary email) AND a matching `user_email` row
+ *     (`isPrimary = true`) atomically.
  *
  * `presetId` lets callers preserve an externally-issued id (e.g. the id baked
  * into a still-valid NextAuth JWT) so creating the missing row does not
  * invalidate the caller's session.
  *
- * Fail-safe on races/uniqueness: `user_email.email` is UNIQUE, so a concurrent
- * insert of the same email cannot silently reassign it to a different user —
- * the loser re-reads and returns the winning user.
+ * Fail-safe on races/uniqueness: both `user.email` and `user_email.email` are
+ * UNIQUE, so a concurrent insert of the same email cannot silently reassign it
+ * to a different user — the loser re-reads and returns the winning user.
  */
 export async function getOrCreateUserByEmail(
   email: string,
