@@ -231,11 +231,12 @@ void main() {
           userId: 'u1',
           authCookies: const [],
         ),
-        instanceLogin: (serverUrl) async => const MobileCredentials(
+        instanceLogin: (serverUrl) async => InstanceCallback(
           apiKey: 'sk-single',
           cfToken: 'fresh-host-jwt',
           userId: 'u1',
           email: 'a@b.com',
+          authCookies: const [],
         ),
         apiFactory: (host) => _apiWithAdapter(
           host,
@@ -300,7 +301,13 @@ void main() {
         ),
         instanceLogin: (_) async {
           singleCalls += 1;
-          return const MobileCredentials(apiKey: 'x');
+          return InstanceCallback(
+            apiKey: 'x',
+            cfToken: '',
+            email: '',
+            userId: '',
+            authCookies: const [],
+          );
         },
         onSupervisor: (_, __) => supervisorCalls += 1,
       );

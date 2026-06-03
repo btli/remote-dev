@@ -26,6 +26,7 @@ class RemoteDevClient implements ApiClientPort {
       authReader: (id) async {
         final apiKey = await _credentials.readApiKey(id);
         final cfToken = await _credentials.readCfToken(id);
+        // Legacy per-server client uses the old cfCookie field for compat.
         return AuthMaterial(apiKey: apiKey, cfCookie: cfToken);
       },
       refreshAuth: refreshAuth ?? ((_) async => null),
@@ -65,8 +66,21 @@ class RemoteDevClient implements ApiClientPort {
       scopeId: workspaceId,
       authReader: (_) async {
         final apiKey = await _credentials.getWorkspaceApiKey(workspaceId);
-        final cfToken = await _credentials.getHostCfToken(hostId);
-        return AuthMaterial(apiKey: apiKey, cfCookie: cfToken);
+        // Workspace auth cookies (OIDC session, CF JWT, …) are the union of
+        // workspace-scoped cookies (e.g. per-instance OIDC session-token) with
+        // any host-scoped cookies (e.g. CF Access JWT from the host login).
+        // Workspace cookies take priority; host cookies fill in anything missing.
+        final wsCookies =
+            await _credentials.getWorkspaceAuthCookies(workspaceId);
+        final hostCookies = await _credentials.getHostAuthCookies(hostId);
+        // Merge: workspace cookies first, then host cookies that are not already
+        // represented (by name) in the workspace set.
+        final wsNames = wsCookies.map((c) => c.name).toSet();
+        final merged = [
+          ...wsCookies,
+          ...hostCookies.where((c) => !wsNames.contains(c.name)),
+        ];
+        return AuthMaterial(apiKey: apiKey, cookies: merged);
       },
       // The interceptor passes its captured scope id; the workspace refresh
       // closure ignores it (it already closes over the right host/workspace),

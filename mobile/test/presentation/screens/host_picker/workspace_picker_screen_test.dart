@@ -5,6 +5,7 @@ import 'package:remote_dev/application/ports/secure_storage_port.dart';
 import 'package:remote_dev/domain/host_config.dart';
 import 'package:remote_dev/domain/instance_summary.dart';
 import 'package:remote_dev/domain/workspace_config.dart';
+import 'package:remote_dev/infrastructure/auth/mobile_callback_login_launcher.dart';
 import 'package:remote_dev/infrastructure/auth/mobile_credentials.dart';
 import 'package:remote_dev/infrastructure/storage/host_workspace_store_impl.dart';
 import 'package:remote_dev/presentation/screens/host_picker/workspace_picker_screen.dart';
@@ -91,9 +92,12 @@ void main() {
         ],
         login: (url) async {
           capturedLoginUrl = url;
-          return const MobileCredentials(
+          return InstanceCallback(
             apiKey: 'sk-demo',
             cfToken: 'fresh-jwt',
+            email: '',
+            userId: '',
+            authCookies: const [],
           );
         },
         onActivated: (ws) => activated = ws,
@@ -142,7 +146,13 @@ void main() {
         ],
         login: (_) async {
           loginCalls += 1;
-          return const MobileCredentials(apiKey: 'x');
+          return InstanceCallback(
+            apiKey: 'x',
+            cfToken: '',
+            email: '',
+            userId: '',
+            authCookies: const [],
+          );
         },
         onActivated: (ws) => activated = ws,
       );

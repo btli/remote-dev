@@ -237,11 +237,44 @@ class MobileCallbackLoginLauncher {
   /// `remotedev://auth/callback` deep-link emitted by the server, or
   /// `null` on timeout / user cancel / malformed callback.
   ///
-  /// PUBLIC SIGNATURE IS LOAD-BEARING: reauth (and Add Server) call
-  /// `login(serverUrl: ...)` and rely on the `MobileCredentials?` return +
-  /// null-on-cancel semantics. A host-shaped callback (no `apiKey`) is
-  /// treated here as a malformed instance login → `null`.
+  /// DEPRECATED for new call sites: prefer [loginInstance], which returns
+  /// the richer [InstanceCallback] that carries `authCookies` and treats
+  /// `apiKey` as optional (supporting OIDC flows). This method is kept for
+  /// legacy callers (reauth path in `main.dart`) that still expect
+  /// `MobileCredentials?` with a non-null `apiKey`.
+  ///
+  /// A host-shaped callback (no `apiKey`) or an OIDC callback (empty `apiKey`)
+  /// is treated here as a malformed instance login → `null`.
   Future<MobileCredentials?> login({required Uri serverUrl}) async {
+    final result = await loginInstance(serverUrl: serverUrl);
+    if (result == null) return null;
+    final apiKey = result.apiKey;
+    if (apiKey == null || apiKey.isEmpty) {
+      // OIDC instance callback — no API key. Legacy callers cannot build a
+      // MobileCredentials without an apiKey; use loginInstance() instead.
+      debugPrint(
+        '[MobileCallbackLogin] OIDC instance callback (no apiKey) at '
+        '${serverUrl.path} — callers should use loginInstance()',
+      );
+      return null;
+    }
+    return MobileCredentials(
+      apiKey: apiKey,
+      cfToken: result.cfToken.isNotEmpty ? result.cfToken : null,
+      userId: result.userId.isNotEmpty ? result.userId : null,
+      email: result.email.isNotEmpty ? result.email : null,
+    );
+  }
+
+  /// Opens the system browser at `<serverUrl>/auth/mobile-callback` and
+  /// resolves with the [InstanceCallback] parsed from the server's
+  /// `remotedev://auth/callback` deep-link, or `null` on timeout / user
+  /// cancel / malformed callback / host-shaped callback.
+  ///
+  /// Unlike the legacy [login], `apiKey` is treated as optional — OIDC
+  /// instance callbacks carry `authCookies` without an `apiKey`. Callers
+  /// must persist both `authCookies` (always) and `apiKey` (when non-null).
+  Future<InstanceCallback?> loginInstance({required Uri serverUrl}) async {
     final Uri callbackUri;
     try {
       callbackUri = await _awaitCallback(serverUrl);
@@ -257,35 +290,15 @@ class MobileCallbackLoginLauncher {
 
     final result = parseMobileCallback(callbackUri);
     if (result is! InstanceCallback) {
-      // Missing/empty apiKey (or an explicitly host-scoped callback) — not a
-      // valid instance login. Redact the query string before logging: it can
-      // carry a `cfToken` we don't want to leak into release logs.
+      // Host-scoped callback or completely unparseable — not a valid instance
+      // login. Redact the query string before logging.
       debugPrint(
-        '[MobileCallbackLogin] callback missing apiKey at '
+        '[MobileCallbackLogin] expected instance callback at '
         '${callbackUri.path}',
       );
       return null;
     }
-
-    final apiKey = result.apiKey;
-    if (apiKey == null || apiKey.isEmpty) {
-      // OIDC instance callback — no API key. Callers that need an API key
-      // must handle this via the OIDC credential store (later unit); here
-      // we cannot build a legacy MobileCredentials without an apiKey, so
-      // return null (same semantics as the host-shape guard above).
-      debugPrint(
-        '[MobileCallbackLogin] OIDC instance callback (no apiKey) at '
-        '${callbackUri.path} — use OIDC credential path',
-      );
-      return null;
-    }
-
-    return MobileCredentials(
-      apiKey: apiKey,
-      cfToken: result.cfToken.isNotEmpty ? result.cfToken : null,
-      userId: result.userId.isNotEmpty ? result.userId : null,
-      email: result.email.isNotEmpty ? result.email : null,
-    );
+    return result;
   }
 
   /// Host (Supervisor) login for workspace discovery.

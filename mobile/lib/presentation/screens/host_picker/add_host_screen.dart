@@ -9,7 +9,6 @@ import '../../../domain/instance_summary.dart';
 import '../../../domain/workspace_config.dart';
 import '../../../infrastructure/api/instances_api.dart';
 import '../../../infrastructure/auth/mobile_callback_login_launcher.dart';
-import '../../../infrastructure/auth/mobile_credentials.dart';
 import '../../../infrastructure/deep_link/deep_link_stream_provider.dart';
 import '../webview_host/session_route_host.dart'
     show
@@ -24,9 +23,9 @@ import '../webview_host/session_route_host.dart'
 typedef HostLoginLauncher = Future<HostCallback> Function(Uri origin);
 
 /// Test seam — replaces the per-workspace system-browser login
-/// (`launcher.login`) used on the single-workspace branch. Returns the minted
-/// [MobileCredentials], or `null` if the user cancelled.
-typedef InstanceLoginLauncher = Future<MobileCredentials?> Function(
+/// (`launcher.loginInstance`) used on the single-workspace branch. Returns the
+/// [InstanceCallback], or `null` if the user cancelled.
+typedef InstanceLoginLauncher = Future<InstanceCallback?> Function(
   Uri serverUrl,
 );
 
@@ -100,13 +99,13 @@ class _AddHostScreenState extends ConsumerState<AddHostScreen> {
     return launcher.loginHost(origin: origin);
   }
 
-  Future<MobileCredentials?> _runInstanceLogin(Uri serverUrl) {
+  Future<InstanceCallback?> _runInstanceLogin(Uri serverUrl) {
     final override = widget.instanceLoginLauncher;
     if (override != null) return override(serverUrl);
     final launcher = MobileCallbackLoginLauncher(
       deepLinkStream: ref.read(deepLinkStreamProvider),
     );
-    return launcher.login(serverUrl: serverUrl);
+    return launcher.loginInstance(serverUrl: serverUrl);
   }
 
   InstancesApi _buildApi(HostConfig host) {
@@ -196,7 +195,13 @@ class _AddHostScreenState extends ConsumerState<AddHostScreen> {
     final store = ref.read(hostWorkspaceStoreProvider);
     final credentials = ref.read(mobileCredentialsStoreProvider);
     await store.upsertHost(host);
-    await credentials.setHostCfToken(host.id, hostCb.cfToken);
+    // Persist host-wide auth cookies (OIDC session-token, CF JWT, etc.).
+    await credentials.setHostAuthCookies(host.id, hostCb.authCookies);
+    // Legacy compat: also persist cfToken individually so older code paths
+    // that read getHostCfToken() directly remain functional.
+    if (hostCb.cfToken.isNotEmpty) {
+      await credentials.setHostCfToken(host.id, hostCb.cfToken);
+    }
     _bootstrappedHost = host;
     return host;
   }
@@ -256,9 +261,9 @@ class _AddHostScreenState extends ConsumerState<AddHostScreen> {
       _bootstrappedHost = host;
     }
 
-    final creds = await _runInstanceLogin(Uri.parse(host.origin));
+    final instanceCb = await _runInstanceLogin(Uri.parse(host.origin));
     if (!mounted) return;
-    if (creds == null) {
+    if (instanceCb == null) {
       setState(() => _error = 'Sign-in cancelled.');
       return;
     }
@@ -275,9 +280,16 @@ class _AddHostScreenState extends ConsumerState<AddHostScreen> {
 
     final credentials = ref.read(mobileCredentialsStoreProvider);
     // Persist credentials BEFORE the workspace row + active pointer.
-    await credentials.setWorkspaceApiKey(ws.id, creds.apiKey);
-    final cf = creds.cfToken;
-    if (cf != null && cf.isNotEmpty) {
+    // authCookies is always persisted (OIDC session-token or CF JWT).
+    await credentials.setWorkspaceAuthCookies(ws.id, instanceCb.authCookies);
+    // apiKey is optional (null for OIDC callbacks).
+    final apiKey = instanceCb.apiKey;
+    if (apiKey != null && apiKey.isNotEmpty) {
+      await credentials.setWorkspaceApiKey(ws.id, apiKey);
+    }
+    // Legacy compat: refresh host cfToken when present in callback.
+    final cf = instanceCb.cfToken;
+    if (cf.isNotEmpty) {
       await credentials.setHostCfToken(host.id, cf);
     }
     await store.upsertWorkspace(ws);
