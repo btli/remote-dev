@@ -54,6 +54,31 @@ class AppRouter {
     _config.go(route.toPath());
   }
 
+  /// Navigate to a deep-linked target (notification tap / app-link) such that
+  /// a back target always exists.
+  ///
+  /// [navigateTo] / [GoRouter.go] REPLACE the whole navigation stack, so when
+  /// the app is cold-started from a notification there is nothing beneath the
+  /// target to pop back to and the system/back button does nothing. This
+  /// roots the navigation at `/home` and then PUSHES the target on top, so
+  /// back returns to the home shell instead of being a dead end.
+  ///
+  /// `/home` and the deep-link targets (`/home/session/:id`,
+  /// `/home/channel/:id`, `/notifications`, …) are sibling top-level
+  /// `GoRoute`s — not a `StatefulShellRoute` — so `go('/home')` + `push(...)`
+  /// yields a genuinely poppable two-entry stack.
+  void navigateDeepLink(AppRoute route) {
+    final loc = route.toPath();
+    final homeLoc = const AppRoute.home().toPath();
+    if (loc == homeLoc) {
+      _config.go(loc);
+      return;
+    }
+    // Ensure the home shell is beneath the target so back returns to it.
+    _config.go(homeLoc);
+    _config.push(loc);
+  }
+
   GoRouter _buildRouter() {
     return GoRouter(
       initialLocation: const ServerPickerRoute().toPath(),

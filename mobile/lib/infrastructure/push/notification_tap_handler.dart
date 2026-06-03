@@ -61,14 +61,17 @@ class NotificationTapHandler {
 
     final sessionId = data['sessionId']?.toString();
     final channelId = data['channelId']?.toString();
+    // Use navigateDeepLink (root /home, then push) so the back button works
+    // when the app is cold-started from a notification tap. A plain
+    // navigateTo/go would replace the whole stack and leave nothing to pop.
     if (sessionId != null && sessionId.isNotEmpty) {
-      router.navigateTo(AppRoute.session(sessionId));
+      router.navigateDeepLink(AppRoute.session(sessionId));
       return;
     }
     if (channelId != null && channelId.isNotEmpty) {
-      router.navigateTo(AppRoute.channel(channelId));
+      router.navigateDeepLink(AppRoute.channel(channelId));
       return;
     }
-    router.navigateTo(const AppRoute.notifications());
+    router.navigateDeepLink(const AppRoute.notifications());
   }
 }

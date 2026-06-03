@@ -22,7 +22,7 @@ void main() {
   test('payload with sessionId routes to SessionRoute', () {
     handler.navigateForPayload({'sessionId': 'sess-1'});
     final captured =
-        verify(() => router.navigateTo(captureAny())).captured.single
+        verify(() => router.navigateDeepLink(captureAny())).captured.single
             as AppRoute;
     expect(captured, isA<SessionRoute>());
     expect((captured as SessionRoute).id, 'sess-1');
@@ -31,7 +31,7 @@ void main() {
   test('payload with channelId routes to ChannelRoute', () {
     handler.navigateForPayload({'channelId': 'chan-1'});
     final captured =
-        verify(() => router.navigateTo(captureAny())).captured.single
+        verify(() => router.navigateDeepLink(captureAny())).captured.single
             as AppRoute;
     expect(captured, isA<ChannelRoute>());
     expect((captured as ChannelRoute).id, 'chan-1');
@@ -40,7 +40,7 @@ void main() {
   test('payload with both prefers sessionId', () {
     handler.navigateForPayload({'sessionId': 's', 'channelId': 'c'});
     final captured =
-        verify(() => router.navigateTo(captureAny())).captured.single
+        verify(() => router.navigateDeepLink(captureAny())).captured.single
             as AppRoute;
     expect(captured, isA<SessionRoute>());
   });
@@ -48,7 +48,7 @@ void main() {
   test('payload with neither routes to NotificationsRoute', () {
     handler.navigateForPayload({'kind': 'agent_idle'});
     final captured =
-        verify(() => router.navigateTo(captureAny())).captured.single
+        verify(() => router.navigateDeepLink(captureAny())).captured.single
             as AppRoute;
     expect(captured, isA<NotificationsRoute>());
   });
@@ -56,7 +56,7 @@ void main() {
   test('empty sessionId is treated as absent', () {
     handler.navigateForPayload({'sessionId': '', 'channelId': 'c'});
     final captured =
-        verify(() => router.navigateTo(captureAny())).captured.single
+        verify(() => router.navigateDeepLink(captureAny())).captured.single
             as AppRoute;
     expect(captured, isA<ChannelRoute>());
   });
@@ -76,7 +76,7 @@ void main() {
     // onMarkRead is fire-and-forget — let the microtask drain.
     await Future<void>.delayed(Duration.zero);
     expect(calls, ['notif-42']);
-    verify(() => router.navigateTo(any())).called(1);
+    verify(() => router.navigateDeepLink(any())).called(1);
   });
 
   test('payload without notificationId does not call onMarkRead', () async {
@@ -90,7 +90,7 @@ void main() {
     h.navigateForPayload({'sessionId': 'sess-1'});
     await Future<void>.delayed(Duration.zero);
     expect(called, isFalse);
-    verify(() => router.navigateTo(any())).called(1);
+    verify(() => router.navigateDeepLink(any())).called(1);
   });
 
   test('empty notificationId does not call onMarkRead', () async {
@@ -121,7 +121,7 @@ void main() {
     });
     await Future<void>.delayed(Duration.zero);
     final captured =
-        verify(() => router.navigateTo(captureAny())).captured.single
+        verify(() => router.navigateDeepLink(captureAny())).captured.single
             as AppRoute;
     expect(captured, isA<SessionRoute>());
   });
