@@ -146,7 +146,10 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
       });
 
       if (!issuesRes.ok) {
-        throw new Error("Failed to fetch beads issues");
+        const errorData = await issuesRes.json().catch(() => ({}));
+        throw new Error(
+          errorData.error || `Failed to fetch beads issues (${issuesRes.status})`
+        );
       }
 
       const data = await issuesRes.json();
