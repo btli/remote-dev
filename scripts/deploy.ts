@@ -1091,6 +1091,21 @@ async function deploy(): Promise<void> {
       process.exit(1);
     }
 
+    // Activate the freshly-built slot AFTER migration: copy it over the live
+    // serving dir (PROJECT_ROOT/.next/standalone) before restart, so the new
+    // code only goes live once the schema is migrated. The build now happens in
+    // an isolated deploy-src worktree → slot (remote-dev-yxvy), so unlike the
+    // pre-#342 in-place builds the live dir is NOT updated by buildSlot. Without
+    // this copy the restart re-serves the previous build and the deploy ships
+    // stale code while still reporting success (remote-dev-4vmm).
+    if (!restoreSlotToLive(inactiveSlot)) {
+      logError("Failed to activate built slot over live dir, rolling back...");
+      writeFailure("activate", `Could not restore ${inactiveSlot} slot to live dir`);
+      await rollbackTo(activeSlot);
+      releaseLock();
+      process.exit(1);
+    }
+
     // Restart servers via rdv.ts (known working server startup path)
     restartViaRdvAsync();
 
@@ -1150,10 +1165,10 @@ function restoreSlotToLive(slot: Slot): boolean {
   const liveStandalone = join(PROJECT_ROOT, ".next", "standalone");
   const res = restoreStandalone(slotStandalone, liveStandalone);
   if (!res.ok) {
-    logError(`Rollback: could not restore ${slot} slot build (${res.reason})`);
+    logError(`Could not restore ${slot} slot build to live .next/standalone (${res.reason})`);
     return false;
   }
-  logDeploy(`Rollback: restored ${slot} slot build -> live .next/standalone`);
+  logDeploy(`Activated ${slot} slot build -> live .next/standalone`);
   return true;
 }
 
