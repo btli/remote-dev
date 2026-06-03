@@ -7,7 +7,7 @@ import {
 } from "@/lib/cloudflare-access";
 import {
   getSessionCookieName,
-  getSessionCookieNameCandidates,
+  hasSessionCookie,
 } from "@/lib/auth-cookies";
 import { INSTANCE_SLUG, prefixPath } from "@/lib/base-path";
 import { resolveExternalOrigin } from "@/lib/request-origin";
@@ -122,11 +122,11 @@ export async function proxy(request: NextRequest) {
   const scoped = INSTANCE_SLUG.length > 0;
   let isLoggedIn: boolean;
   if (scoped) {
-    const candidates = getSessionCookieNameCandidates();
-    isLoggedIn = candidates.some((name) => request.cookies.has(name));
+    const presentNames = request.cookies.getAll().map((c) => c.name);
+    isLoggedIn = hasSessionCookie(presentNames);
     log.debug(
       "scoped instance proxy realm; using session-cookie presence gate (getToken is unreliable here)",
-      { isLoggedIn, candidateCount: candidates.length, pathname },
+      { isLoggedIn, presentCount: presentNames.length, pathname },
     );
   } else {
     const token = await getToken({
