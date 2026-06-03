@@ -16,10 +16,11 @@ import { existsSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { getRdvDir } from "./paths";
 import { db } from "@/db";
-import { apiKeys, users } from "@/db/schema";
+import { apiKeys } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { createApiKey, validateApiKey } from "@/services/api-key-service";
 import { createLogger } from "@/lib/logger";
+import { resolveUserIdByEmail } from "@/lib/user-identity";
 
 const log = createLogger("LocalAPIKey");
 
@@ -59,10 +60,11 @@ export async function ensureLocalApiKey(): Promise<void> {
     return;
   }
 
-  const user = await db.query.users.findFirst({
-    where: eq(users.email, authorized.email),
-  });
-  if (!user) {
+  // Resolve via the multi-email index (consistent with the auth paths) so the
+  // authorized email maps to the owning user regardless of which of their
+  // emails is canonical.
+  const userId = await resolveUserIdByEmail(authorized.email);
+  if (!userId) {
     log.info("Skipped - user hasn't logged in yet", { email: authorized.email });
     return;
   }
@@ -70,10 +72,10 @@ export async function ensureLocalApiKey(): Promise<void> {
   // Delete any stale local-access keys before creating a new one
   await db
     .delete(apiKeys)
-    .where(and(eq(apiKeys.userId, user.id), eq(apiKeys.name, KEY_NAME)));
+    .where(and(eq(apiKeys.userId, userId), eq(apiKeys.name, KEY_NAME)));
 
   // Create a new API key and write to disk
-  const { key } = await createApiKey(user.id, KEY_NAME);
+  const { key } = await createApiKey(userId, KEY_NAME);
   writeFileSync(keyFile, key + "\n", { mode: 0o600 });
   chmodSync(keyFile, 0o600); // Ensure permissions even if umask interfered
   log.info("Local API key written", { path: keyFile });

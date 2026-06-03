@@ -11,7 +11,8 @@ import { createLogger } from "@/lib/logger";
 import { GITHUB_SCOPE_STRING } from "@/lib/github-scopes";
 import { buildScopedCookies } from "@/lib/auth-cookies";
 import { BASE_PATH } from "@/lib/base-path";
-import type { Adapter, AdapterAccount } from "next-auth/adapters";
+import { getOrCreateUserByEmail, ensurePrimaryUserEmail } from "@/lib/user-identity";
+import type { Adapter, AdapterAccount, AdapterUser } from "next-auth/adapters";
 import type { Provider } from "next-auth/providers";
 
 const log = createLogger("Auth");
@@ -141,6 +142,17 @@ function createEncryptedAdapter(): Adapter {
 
   return {
     ...baseAdapter,
+    // Override createUser to seed the primary user_email row alongside the
+    // user the base adapter inserts (OAuth/OIDC first sign-in). Keeps the
+    // multi-email resolution index complete for users created by NextAuth, not
+    // just the CF-Access / credentials paths. Idempotent via UNIQUE(email).
+    createUser: async (user: AdapterUser): Promise<AdapterUser> => {
+      const created = await baseAdapter.createUser!(user);
+      if (created.email) {
+        await ensurePrimaryUserEmail(created.id, created.email);
+      }
+      return created;
+    },
     // Override linkAccount to encrypt tokens before storage
     linkAccount: async (account: AdapterAccount): Promise<void> => {
       const encryptedAccount = {
@@ -286,20 +298,10 @@ const providers: Provider[] = [
         return null;
       }
 
-      let user = await db.query.users.findFirst({
-        where: eq(users.email, email),
-      });
-
-      if (!user) {
-        const [newUser] = await db
-          .insert(users)
-          .values({
-            email,
-            name: email.split("@")[0],
-          })
-          .returning();
-        user = newUser;
-      }
+      // Resolve via the multi-email index (consistent with the CF Access path)
+      // so any of a user's emails maps back to the same account, and a primary
+      // user_email row is seeded when a brand-new user is created.
+      const user = await getOrCreateUserByEmail(email);
 
       return {
         id: user.id,
