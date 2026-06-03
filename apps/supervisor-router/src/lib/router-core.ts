@@ -151,6 +151,25 @@ export function decideRoute(
     if (entry) {
       const authority = upstreamAuthority(entry);
 
+      // Port-proxy WebSocket (HMR/live-reload): `/<slug>/proxy/<port>/…` upgrades
+      // go to the instance terminal server (`:wsPort`), which bridges them to
+      // `ws://127.0.0.1:<port>` inside the pod. Path forwarded UNCHANGED so the
+      // terminal server's proxy-WS gate (`^/<slug>/proxy/<port>(/|$)`) matches.
+      // `segment` is an already-validated slug (`isValidSlug`), so it is safe to
+      // interpolate into the RegExp. HTTP for the same paths already works (B1)
+      // and is unaffected — only upgrades are diverted here.
+      if (
+        isUpgrade &&
+        new RegExp(`^/${segment}/proxy/\\d+(?:/|$)`).test(pathname)
+      ) {
+        return {
+          kind: "proxy-ws",
+          upstreamWsBase: `ws://${authority}:${entry.wsPort}`,
+          path: pathname,
+          slug: segment,
+        };
+      }
+
       // The terminal WebSocket: exactly `/<slug>/ws` AND a real upgrade →
       // proxy the upgrade to the instance's ws port. Path forwarded UNCHANGED
       // so the instance's `WS_PATH_PREFIX` (`/<slug>/ws`) gate matches.

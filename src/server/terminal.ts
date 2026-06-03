@@ -13,6 +13,10 @@ import { getSchedulerHealth } from "./scheduler-health.js";
 import { validateWsToken, getAuthSecret } from "../lib/ws-token.js";
 import { createLogger } from "../lib/logger.js";
 import { WS_PATH_PREFIX } from "../lib/base-path.js";
+import {
+  PROXY_WS_PATH_PATTERN,
+  handleProxyWsUpgrade,
+} from "./proxy-ws-bridge.js";
 
 const log = createLogger("Terminal");
 const agentLog = createLogger("AgentExit");
@@ -1828,8 +1832,29 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
   // `/alpha/ws-evil`, which we explicitly reject.
   const wss = new WebSocketServer({ noServer: true });
 
+  // Second `noServer` WebSocketServer for the in-pod PORT PROXY (HMR/live-reload,
+  // B3). Upgrades for `<basePath>/proxy/<port>/…` (forwarded UNCHANGED by the
+  // k3s router) are handshaked here and bridged to `ws://127.0.0.1:<port>` — they
+  // are deliberately kept OUT of the terminal-session `wss` (a different auth +
+  // payload contract). See `src/server/proxy-ws-bridge.ts`.
+  const proxyWss = new WebSocketServer({ noServer: true });
+  proxyWss.on("connection", (ws, req) => {
+    handleProxyWsUpgrade(ws, req);
+  });
+
   server.on("upgrade", (req, socket, head) => {
     const pathOnly = (req.url || "").split("?", 1)[0] ?? "";
+
+    // Port-proxy WS first: `<basePath>/proxy/<port>/…` → bridge to loopback.
+    // Checked before the terminal `/ws` allow-gate so these never fall into the
+    // terminal-session handler (and are not rejected by the 404 below).
+    if (PROXY_WS_PATH_PATTERN.test(pathOnly)) {
+      proxyWss.handleUpgrade(req, socket, head, (ws) => {
+        proxyWss.emit("connection", ws, req);
+      });
+      return;
+    }
+
     const allowed =
       pathOnly === WS_PATH_PREFIX || pathOnly.startsWith(WS_PATH_PREFIX + "/");
     if (!allowed) {
