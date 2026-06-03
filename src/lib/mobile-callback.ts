@@ -4,7 +4,21 @@
  * Provides utilities for collecting session cookies (including NextAuth's
  * chunked-cookie layout) and encoding them as a base64url JSON payload
  * suitable for the `remotedev://` deep link.
+ *
+ * Also exposes `resolveInstanceMobileCallback`, the core business logic for
+ * the `/auth/mobile-callback` page — testable without rendering Next.js pages.
  */
+
+import { cookies } from "next/headers";
+import { validateAccessJWT } from "@/lib/cloudflare-access";
+import { getAuthSession } from "@/lib/auth-utils";
+import { getOrCreateUserByEmail } from "@/lib/user-identity";
+import { createApiKey } from "@/services/api-key-service";
+import { getSessionCookieName } from "@/lib/auth-cookies";
+import { COOKIE_PATH } from "@/lib/base-path";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("auth/mobile-callback");
 
 export type AuthCookie = { name: string; value: string; path: string };
 
@@ -54,6 +68,89 @@ export function collectSessionCookies(
  * Serialize a list of `AuthCookie` entries to a base64url-encoded JSON string
  * (no `+`, `/`, or `=` characters) suitable for use as a URL query parameter.
  */
-export function encodeAuthCookies(cookies: AuthCookie[]): string {
-  return Buffer.from(JSON.stringify(cookies)).toString("base64url");
+export function encodeAuthCookies(authCookies: AuthCookie[]): string {
+  return Buffer.from(JSON.stringify(authCookies)).toString("base64url");
+}
+
+// ─── resolveInstanceMobileCallback ───────────────────────────────────────────
+
+export type MobileCallbackResult =
+  | { kind: "redirect"; url: string }
+  | { kind: "login" }
+  | { kind: "error"; message: string };
+
+/** Build a `remotedev://auth/callback?…` deep link from the supplied params. */
+function deepLink(params: Record<string, string | undefined>): string {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v != null && v !== "") q.set(k, v);
+  }
+  return `remotedev://auth/callback?${q.toString()}`;
+}
+
+/**
+ * Core business logic for the `/auth/mobile-callback` page.
+ *
+ * Returns a discriminated union describing what the page should do:
+ *
+ *   - `{ kind: "redirect", url }` — redirect the user to the deep link
+ *   - `{ kind: "login" }` — redirect the user to the login page
+ *   - `{ kind: "error", message }` — render an error page
+ *
+ * Preferred auth paths (checked in order):
+ *  1. Cloudflare Access JWT (`CF_Authorization` cookie) — issues a fresh API
+ *     key plus sends the CF token for subsequent API requests.
+ *  2. NextAuth OIDC session cookie — sends the session cookie(s) so the app
+ *     can replay them on subsequent requests.  No API key is created.
+ */
+export async function resolveInstanceMobileCallback(): Promise<MobileCallbackResult> {
+  const store = await cookies();
+
+  // ── Path 1: Cloudflare Access JWT ─────────────────────────────────────────
+  const cfToken = store.get("CF_Authorization")?.value;
+  if (cfToken) {
+    const cfUser = await validateAccessJWT(cfToken);
+    if (cfUser) {
+      const user = await getOrCreateUserByEmail(cfUser.email);
+      const apiKeyResult = await createApiKey(user.id, "Mobile App");
+      log.info("Mobile API key issued via callback (CF)", { userId: user.id });
+      return {
+        kind: "redirect",
+        url: deepLink({
+          scope: "instance",
+          apiKey: apiKeyResult.key,
+          cfToken,
+          authCookies: encodeAuthCookies([
+            { name: "CF_Authorization", value: cfToken, path: "/" },
+          ]),
+          userId: user.id,
+          email: user.email ?? "",
+        }),
+      };
+    }
+  }
+
+  // ── Path 2: NextAuth OIDC session ─────────────────────────────────────────
+  const session = await getAuthSession();
+  if (session?.user?.id) {
+    const name = getSessionCookieName();
+    const authCookies = collectSessionCookies(store, name, COOKIE_PATH);
+    if (authCookies.length > 0) {
+      log.info("Mobile session credential issued via callback (OIDC)", {
+        userId: session.user.id,
+      });
+      return {
+        kind: "redirect",
+        url: deepLink({
+          scope: "instance",
+          authCookies: encodeAuthCookies(authCookies),
+          userId: session.user.id,
+          email: session.user.email ?? "",
+        }),
+      };
+    }
+    log.warn("OIDC session resolved but session cookie not found in store", { name });
+  }
+
+  return { kind: "login" };
 }
