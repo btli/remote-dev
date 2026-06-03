@@ -3,6 +3,7 @@
  */
 
 import { db } from "@/db";
+import { ltDate } from "@/db/sql-helpers";
 import { agentPeerMessages, terminalSessions } from "@/db/schema";
 import { eq, and, or, isNull, gt, inArray, sql, desc } from "drizzle-orm";
 import { createLogger } from "@/lib/logger";
@@ -400,7 +401,7 @@ export async function listChannelMessages(
   ];
 
   if (params.before) {
-    conditions.push(sql`${agentPeerMessages.createdAt} < ${params.before.getTime()}`);
+    conditions.push(ltDate(agentPeerMessages.createdAt, params.before));
   }
 
   const rows = await db

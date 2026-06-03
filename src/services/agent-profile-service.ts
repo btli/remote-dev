@@ -9,6 +9,7 @@
  */
 
 import { db } from "@/db";
+import { affectedRows } from "@/db/sql-helpers";
 import {
   agentProfiles,
   projectProfileLinks,
@@ -324,7 +325,7 @@ export async function deleteProfile(
       and(eq(agentProfiles.id, profileId), eq(agentProfiles.userId, userId))
     );
 
-  return result.rowsAffected > 0;
+  return affectedRows(result) > 0;
 }
 
 /**
@@ -1021,7 +1022,7 @@ export async function deleteProfileSecretsConfig(
       )
     );
 
-  return (result.rowsAffected ?? 0) > 0;
+  return affectedRows(result) > 0;
 }
 
 /**

@@ -8,6 +8,7 @@
  * - Integration with TmuxService for command execution
  */
 import { db } from "@/db";
+import { affectedRows } from "@/db/sql-helpers";
 import {
   sessionSchedules,
   scheduleCommands,
@@ -514,7 +515,7 @@ export async function deleteSchedule(
     );
 
   // Check if anything was deleted
-  if (result.rowsAffected === 0) {
+  if (affectedRows(result) === 0) {
     throw new ScheduleServiceError(
       "Schedule not found",
       "SCHEDULE_NOT_FOUND",
@@ -544,7 +545,7 @@ export async function setScheduleEnabled(
       )
     );
 
-  if (result.rowsAffected === 0) {
+  if (affectedRows(result) === 0) {
     throw new ScheduleServiceError(
       "Schedule not found",
       "SCHEDULE_NOT_FOUND",
@@ -1011,7 +1012,7 @@ export async function disableSessionSchedules(sessionId: string): Promise<number
     })
     .where(eq(sessionSchedules.sessionId, sessionId));
 
-  return result.rowsAffected ?? 0;
+  return affectedRows(result);
 }
 
 /**
@@ -1026,7 +1027,7 @@ export async function reEnableSessionSchedules(sessionId: string): Promise<numbe
     })
     .where(eq(sessionSchedules.sessionId, sessionId));
 
-  return result.rowsAffected ?? 0;
+  return affectedRows(result);
 }
 
 // =============================================================================

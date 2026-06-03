@@ -6,6 +6,7 @@
  * More specific (child) folders override less specific (parent) folders.
  */
 import { db } from "@/db";
+import { affectedRows } from "@/db/sql-helpers";
 import { users, userSettings, nodePreferences, projects, projectGroups } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import type {
@@ -362,7 +363,7 @@ export async function deleteFolderPreferences(
       )
     );
 
-  return result.rowsAffected > 0;
+  return affectedRows(result) > 0;
 }
 
 // ============================================================================

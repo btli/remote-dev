@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db, client } from "@/db";
+import { parseRawTimestamp } from "@/db/sql-helpers";
 import { projectGroups } from "@/db/schema";
 import { ProjectGroup } from "@/domain/entities/ProjectGroup";
 import { ProjectGroupRepository } from "@/application/ports/ProjectGroupRepository";
@@ -40,8 +41,8 @@ export class DrizzleProjectGroupRepository implements ProjectGroupRepository {
   async listAncestry(groupId: string): Promise<ProjectGroup[]> {
     // Recursive CTE walking parentGroupId upward.
     // Use UNION (not UNION ALL) so cycles terminate; depth guard caps pathological data.
-    const result = await client.execute({
-      sql: `
+    const result = await client.execute(
+      `
         WITH RECURSIVE ancestry(id, parent_group_id, user_id, name, collapsed, sort_order, created_at, updated_at, depth) AS (
           SELECT id, parent_group_id, user_id, name, collapsed, sort_order, created_at, updated_at, 0
             FROM project_group WHERE id = ?
@@ -52,8 +53,8 @@ export class DrizzleProjectGroupRepository implements ProjectGroupRepository {
         )
         SELECT * FROM ancestry ORDER BY depth ASC
       `,
-      args: [groupId],
-    });
+      [groupId]
+    );
     return result.rows.map((r) =>
       ProjectGroup.create({
         id: r.id as string,
@@ -62,8 +63,8 @@ export class DrizzleProjectGroupRepository implements ProjectGroupRepository {
         name: r.name as string,
         collapsed: Boolean(r.collapsed),
         sortOrder: Number(r.sort_order),
-        createdAt: new Date(Number(r.created_at) * 1000),
-        updatedAt: new Date(Number(r.updated_at) * 1000),
+        createdAt: parseRawTimestamp(r.created_at, "s"),
+        updatedAt: parseRawTimestamp(r.updated_at, "s"),
       })
     );
   }
@@ -79,8 +80,8 @@ export class DrizzleProjectGroupRepository implements ProjectGroupRepository {
    * it in separately.
    */
   async listDescendantGroupIds(groupId: string): Promise<string[]> {
-    const result = await client.execute({
-      sql: `
+    const result = await client.execute(
+      `
         WITH RECURSIVE descendants(id, depth) AS (
           SELECT id, 0 FROM project_group WHERE id = ?
           UNION
@@ -91,8 +92,8 @@ export class DrizzleProjectGroupRepository implements ProjectGroupRepository {
         )
         SELECT id FROM descendants
       `,
-      args: [groupId],
-    });
+      [groupId]
+    );
     return result.rows.map((r) => r.id as string);
   }
 }

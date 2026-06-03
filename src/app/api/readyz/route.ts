@@ -17,8 +17,7 @@
 
 import { NextResponse } from "next/server";
 import http from "node:http";
-import { sql } from "drizzle-orm";
-import { db } from "@/db";
+import { runProbe } from "@/db";
 import { execFile } from "@/lib/exec";
 
 // Disable static optimization — probes must run fresh per request.
@@ -120,9 +119,9 @@ export async function GET(): Promise<NextResponse> {
   const checks: Record<string, CheckResult> = {};
   let ready = true;
 
-  // DB probe — proves the SQLite file is openable and queryable.
+  // DB probe — proves the database is openable and queryable (dialect-neutral).
   try {
-    await db.run(sql`SELECT 1`);
+    await runProbe();
     checks.db = { ok: true };
   } catch (err) {
     checks.db = { ok: false, error: String(err) };

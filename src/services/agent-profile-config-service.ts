@@ -9,6 +9,7 @@
 
 import { eq, and } from "drizzle-orm";
 import { db } from "@/db";
+import { affectedRows } from "@/db/sql-helpers";
 import { agentProfileJsonConfigs } from "@/db/schema";
 import type { AgentProvider } from "@/types/agent";
 import type {
@@ -232,7 +233,7 @@ export class AgentProfileConfigService {
         )
       );
 
-    return result.rowsAffected > 0;
+    return affectedRows(result) > 0;
   }
 
   /**
@@ -243,7 +244,7 @@ export class AgentProfileConfigService {
       .delete(agentProfileJsonConfigs)
       .where(eq(agentProfileJsonConfigs.profileId, profileId));
 
-    return result.rowsAffected;
+    return affectedRows(result);
   }
 
   /**
