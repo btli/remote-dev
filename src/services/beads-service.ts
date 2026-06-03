@@ -40,7 +40,7 @@ interface LabelRow extends RowDataPacket {
 
 interface DependencyRow extends RowDataPacket {
   issue_id: string;
-  depends_on_id: string;
+  depends_on_issue_id: string | null;
   type: string;
   created_at: Date;
   created_by: string | null;
@@ -113,7 +113,8 @@ function mapIssue(
 function mapDependency(row: DependencyRow): BeadsDependency {
   return {
     issueId: row.issue_id,
-    dependsOnId: row.depends_on_id,
+    // Callers exclude null-target (wisp/external) rows before mapping, so depends_on_issue_id is effectively set here; ?? "" only satisfies the string type.
+    dependsOnId: row.depends_on_issue_id ?? "",
     type: row.type,
     createdAt: row.created_at,
     createdBy: row.created_by ?? "",
@@ -195,7 +196,7 @@ export async function getIssues(
     const ph = epicIds.map(() => "?").join(",");
     const childDeps = await beadsQuery<DependencyRow>(
       projectPath,
-      `SELECT * FROM dependencies WHERE type = 'child-of' AND depends_on_id IN (${ph})`,
+      `SELECT * FROM dependencies WHERE type IN ('child-of', 'parent-child') AND depends_on_issue_id IN (${ph})`,
       epicIds
     );
     const missingChildIds = childDeps
@@ -247,14 +248,14 @@ export async function getIssues(
       ),
       beadsQuery<DependencyRow>(
         projectPath,
-        `SELECT * FROM dependencies WHERE issue_id IN (${ph}) OR depends_on_id IN (${ph})`,
+        `SELECT * FROM dependencies WHERE issue_id IN (${ph}) OR depends_on_issue_id IN (${ph})`,
         [...chunk, ...chunk]
       ),
     ]);
     labels.push(...labelChunk);
     // Deduplicate dependency rows that span chunk boundaries
     for (const d of depChunk) {
-      const key = `${d.issue_id}:${d.depends_on_id}:${d.type}`;
+      const key = `${d.issue_id}:${d.depends_on_issue_id}:${d.type}`;
       if (!seenDepKeys.has(key)) {
         seenDepKeys.add(key);
         deps.push(d);
@@ -274,14 +275,15 @@ export async function getIssues(
   const depsMap = new Map<string, BeadsDependency[]>();
   const dependentsMap = new Map<string, BeadsDependency[]>();
   for (const d of deps) {
+    if (!d.depends_on_issue_id) continue;
     const mapped = mapDependency(d);
     const arr = depsMap.get(d.issue_id) ?? [];
     arr.push(mapped);
     depsMap.set(d.issue_id, arr);
 
-    const arr2 = dependentsMap.get(d.depends_on_id) ?? [];
+    const arr2 = dependentsMap.get(d.depends_on_issue_id) ?? [];
     arr2.push(mapped);
-    dependentsMap.set(d.depends_on_id, arr2);
+    dependentsMap.set(d.depends_on_issue_id, arr2);
   }
 
   return issues.map((row) =>
@@ -315,16 +317,16 @@ export async function getIssue(
     ),
     beadsQuery<DependencyRow>(
       projectPath,
-      `SELECT * FROM dependencies WHERE issue_id = ? OR depends_on_id = ?`,
+      `SELECT * FROM dependencies WHERE issue_id = ? OR depends_on_issue_id = ?`,
       [issueId, issueId]
     ),
   ]);
 
   const dependencies = deps
-    .filter((d) => d.issue_id === issueId)
+    .filter((d) => d.issue_id === issueId && d.depends_on_issue_id)
     .map(mapDependency);
   const dependents = deps
-    .filter((d) => d.depends_on_id === issueId)
+    .filter((d) => d.depends_on_issue_id === issueId)
     .map(mapDependency);
 
   return mapIssue(
@@ -370,7 +372,7 @@ export async function getStats(projectPath: string): Promise<BeadsStats> {
       `SELECT COUNT(DISTINCT d.issue_id) as cnt
        FROM dependencies d
        JOIN issues blocked ON blocked.id = d.issue_id
-       JOIN issues blocker ON blocker.id = d.depends_on_id
+       JOIN issues blocker ON blocker.id = d.depends_on_issue_id
        WHERE blocked.status != 'closed' AND blocker.status != 'closed'`
     ),
   ]);
