@@ -20,6 +20,9 @@ import type { TaskPriority, TaskStatus, TaskSource } from "@/types/task";
 import type { NotificationType } from "@/types/notification";
 import type { ChannelType } from "@/types/channels";
 
+// Re-exported so the verbatim import block above (consumed by the codegen extractor) is not flagged as unused.
+export type { AdapterAccountType, SessionStatus, CIStatusState, PRState, ScheduleType, ScheduleStatus, ExecutionStatus, AgentProvider, AgentConfigType, MCPTransport, AgentProviderType, WorktreeType, TerminalType, AgentExitState, AppearanceMode, ColorSchemeCategory, ColorSchemeId, TaskPriority, TaskStatus, TaskSource, NotificationType, ChannelType };
+
 export type ColumnKind =
   | "text"
   | "integer"
@@ -79,6 +82,17 @@ export interface IndexDefinition {
   /** JS field names. */
   columns: string[];
   unique?: boolean;
+  /**
+   * Skip emitting this explicit index for the Postgres dialect.
+   *
+   * Use only when a column-level `unique: true` on the same column already
+   * auto-creates a backing index with the IDENTICAL name in Postgres — there,
+   * emitting an explicit `CREATE UNIQUE INDEX` of the same name collides
+   * (Postgres error 42P07). On SQLite an inline UNIQUE plus a named index
+   * coexist harmlessly, and the live SQLite DBs already carry both, so the
+   * SQLite output keeps emitting this index unchanged.
+   */
+  omitForPg?: boolean;
 }
 
 export interface TableDefinition {
@@ -117,7 +131,10 @@ export const schema: SchemaDefinition = [
       { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
     ],
     indexes: [
-      { name: "user_email_email_unique", columns: ["email"], unique: true },
+      // SQLite keeps this explicit named index (matches the live DBs). On PG the
+      // column-level `unique` on `email` already creates an identically-named
+      // backing index, so emit it only for SQLite to avoid a 42P07 collision.
+      { name: "user_email_email_unique", columns: ["email"], unique: true, omitForPg: true },
       { name: "user_email_user_idx", columns: ["userId"] },
     ],
   },

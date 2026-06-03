@@ -9,6 +9,13 @@ export async function register() {
     const { createLogger } = await import("@/lib/logger");
     const log = createLogger("Startup");
 
+    // Apply PostgreSQL migrations BEFORE any DB-touching startup work below.
+    // On SQLite this is a no-op (the SQLite path uses `db:push`), so existing
+    // behavior is unchanged. On Postgres a failure rethrows to fail the boot
+    // loudly rather than serving a tableless app.
+    const { runMigrations } = await import("@/db/migrate");
+    await runMigrations();
+
     // Prune old log entries (7-day retention)
     try {
       const { pruneLogsUseCase } = await import("@/infrastructure/container");

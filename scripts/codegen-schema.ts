@@ -153,13 +153,18 @@ function emitColumnLine(
 // ---------------------------------------------------------------------------
 // Table extras callback (indexes + composite PK)
 // ---------------------------------------------------------------------------
-function emitExtras(table: TableDefinition): string {
+function emitExtras(table: TableDefinition, dialect: "sqlite" | "pg"): string {
   const lines: string[] = [];
   if (table.primaryKey) {
     const cols = table.primaryKey.map((c) => `table.${c}`).join(", ");
     lines.push(`    primaryKey({ columns: [${cols}] }),`);
   }
   for (const idx of table.indexes ?? []) {
+    // Per-index dialect skip: a column-level `unique` auto-creates an
+    // identically-named backing index in Postgres, so emitting an explicit
+    // index of the same name would collide (42P07). SQLite tolerates both, and
+    // the live SQLite DBs already carry the explicit index, so it stays there.
+    if (dialect === "pg" && idx.omitForPg) continue;
     const fn = idx.unique ? "uniqueIndex" : "index";
     const cols = idx.columns.map((c) => `table.${c}`).join(", ");
     lines.push(`    ${fn}(${JSON.stringify(idx.name)}).on(${cols}),`);
@@ -175,12 +180,13 @@ function emitTable(
   table: TableDefinition,
   tableFn: string,
   builder: (c: ColumnDefinition) => string,
-  anyColumnType: string
+  anyColumnType: string,
+  dialect: "sqlite" | "pg"
 ): string {
   const cols = table.columns
     .map((c) => emitColumnLine(c, builder, anyColumnType))
     .join("\n");
-  const extras = emitExtras(table);
+  const extras = emitExtras(table, dialect);
   return `export const ${table.exportName} = ${tableFn}(\n  ${JSON.stringify(
     table.sqlName
   )},\n  {\n${cols}\n  }${extras}\n);`;
@@ -198,7 +204,7 @@ function generateSqlite(schema: SchemaDefinition, typeImports: string): string {
     "",
   ].join("\n");
   const tables = schema
-    .map((t) => emitTable(t, "sqliteTable", sqliteColumnBuilder, "AnySQLiteColumn"))
+    .map((t) => emitTable(t, "sqliteTable", sqliteColumnBuilder, "AnySQLiteColumn", "sqlite"))
     .join("\n\n");
   return `${imports}\n${tables}\n`;
 }
@@ -212,7 +218,7 @@ function generatePg(schema: SchemaDefinition, typeImports: string): string {
     "",
   ].join("\n");
   const tables = schema
-    .map((t) => emitTable(t, "pgTable", pgColumnBuilder, "AnyPgColumn"))
+    .map((t) => emitTable(t, "pgTable", pgColumnBuilder, "AnyPgColumn", "pg"))
     .join("\n\n");
   return `${imports}\n${tables}\n`;
 }

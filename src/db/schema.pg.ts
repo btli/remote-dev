@@ -36,7 +36,6 @@ export const userEmails = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
   },
   (table) => [
-    uniqueIndex("user_email_email_unique").on(table.email),
     index("user_email_user_idx").on(table.userId),
   ]
 );
