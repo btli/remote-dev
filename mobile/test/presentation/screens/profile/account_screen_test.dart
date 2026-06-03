@@ -8,22 +8,34 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:remote_dev/application/ports/host_workspace_store.dart';
 import 'package:remote_dev/application/state/active_connection.dart';
 import 'package:remote_dev/domain/account.dart';
 import 'package:remote_dev/domain/host_config.dart';
 import 'package:remote_dev/domain/server_config.dart';
 import 'package:remote_dev/domain/workspace_config.dart';
 import 'package:remote_dev/infrastructure/api/account_api.dart';
+import 'package:remote_dev/infrastructure/push/push_token_registrar.dart';
 import 'package:remote_dev/infrastructure/storage/flutter_secure_storage_port.dart';
+import 'package:remote_dev/presentation/router/app_router.dart'
+    show pushTokenRegistrarProvider;
 import 'package:remote_dev/presentation/screens/profile/account_screen.dart';
 import 'package:remote_dev/presentation/screens/webview_host/session_route_host.dart'
-    show activeServerProvider, activeWorkspaceProvider, secureStorageProvider;
+    show
+        activeServerProvider,
+        activeWorkspaceProvider,
+        hostWorkspaceStoreProvider,
+        secureStorageProvider;
 
 class _MockAccountApi extends Mock implements AccountApi {}
 
 class _MockSecureStorage extends Mock implements FlutterSecureStoragePort {}
 
 class _MockCookieManager extends Mock implements CookieManager {}
+
+class _MockHostWorkspaceStore extends Mock implements HostWorkspaceStore {}
+
+class _MockPushRegistrar extends Mock implements PushTokenRegistrar {}
 
 ServerConfig _server() => ServerConfig(
       id: 'srv-1',
@@ -89,6 +101,8 @@ Widget _wrap({
   required AccountApi api,
   required FlutterSecureStoragePort storage,
   required CookieManager cookieManager,
+  required HostWorkspaceStore store,
+  required PushTokenRegistrar registrar,
   ServerConfig? server,
 }) {
   final router = GoRouter(
@@ -116,11 +130,39 @@ Widget _wrap({
       ),
       secureStorageProvider.overrideWithValue(storage),
       cookieManagerProvider.overrideWithValue(cookieManager),
+      // Sign-out checks the host's remaining workspaces (to gate the
+      // host-wide CF-token/cookie teardown) and unregisters the workspace's
+      // push token. Both are stubbed so the flow is deterministic.
+      hostWorkspaceStoreProvider.overrideWithValue(store),
+      pushTokenRegistrarProvider.overrideWithValue(registrar),
     ],
     child: MaterialApp.router(routerConfig: router),
   );
   return (widget: widget, router: router);
 }
+
+/// A [HostWorkspaceStore] stub whose `loadWorkspaces(hostId:)` returns a fixed
+/// list — the sign-out flow reads it to decide whether the host-wide token +
+/// cookies should be wiped (only when no sibling workspace remains).
+_MockHostWorkspaceStore _storeWithWorkspaces(List<WorkspaceConfig> onHost) {
+  final store = _MockHostWorkspaceStore();
+  when(() => store.loadWorkspaces(hostId: any(named: 'hostId')))
+      .thenAnswer((_) async => onHost);
+  return store;
+}
+
+/// A push registrar stub whose `unregisterWorkspace` records the ids it was
+/// asked to unregister and resolves successfully.
+_MockPushRegistrar _registrarRecording(List<String> unregistered) {
+  final registrar = _MockPushRegistrar();
+  when(() => registrar.unregisterWorkspace(any())).thenAnswer((inv) async {
+    unregistered.add(inv.positionalArguments.first as String);
+  });
+  return registrar;
+}
+
+/// The active workspace under test (`_conn()` → workspace `w_srv-1`).
+WorkspaceConfig _activeWs() => _conn().workspace;
 
 void main() {
   late _MockAccountApi api;
@@ -217,9 +259,10 @@ void main() {
   });
 
   testWidgets(
-      'sign-out: clears host + workspace credential namespaces, scopes '
-      'cookie deletion to the host origin, invalidates the active '
-      'connection, navigates to /servers', (tester) async {
+      'sign-out (last workspace on host): clears host + workspace credential '
+      'namespaces, unregisters the push token, scopes cookie deletion to the '
+      'host origin, invalidates the active connection, navigates to /servers',
+      (tester) async {
     when(() => api.me()).thenAnswer(
       (_) async => const Account(email: 'jane@example.com'),
     );
@@ -237,10 +280,18 @@ void main() {
       ),
     ).thenAnswer((_) async => true);
 
+    // Only the active workspace remains on the host → last-workspace path:
+    // the host-wide CF token + cookies SHOULD be wiped.
+    final store = _storeWithWorkspaces([_activeWs()]);
+    final unregistered = <String>[];
+    final registrar = _registrarRecording(unregistered);
+
     final scope = _wrapWithRouter(
       api: api,
       storage: storage,
       cookieManager: cookies,
+      store: store,
+      registrar: registrar,
       server: _server(),
     );
     await tester.pumpWidget(scope.widget);
@@ -251,6 +302,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(TextButton, 'Sign out'));
     await tester.pumpAndSettle();
+
+    // The workspace's push token was unregistered before its creds were
+    // cleared.
+    expect(unregistered, ['w_srv-1']);
 
     // Both credential namespaces were cleared: the per-workspace API key
     // and the host-wide CF token. MobileCredentialsStore namespaces these
@@ -272,6 +327,82 @@ void main() {
     expect((captured.single as WebUri).toString(), 'https://rdv.example');
 
     // Router landed on /servers.
+    expect(
+      scope.router.routerDelegate.currentConfiguration.uri.toString(),
+      '/servers',
+    );
+    expect(find.text('servers-screen'), findsOneWidget);
+  });
+
+  testWidgets(
+      'sign-out (sibling workspace remains on host): clears ONLY the '
+      'workspace key, leaves the host-wide CF token + cookies intact so the '
+      'sibling stays authenticated', (tester) async {
+    when(() => api.me()).thenAnswer(
+      (_) async => const Account(email: 'jane@example.com'),
+    );
+    final storage = _MockSecureStorage();
+    when(() => storage.delete(any(), any())).thenAnswer((_) async {});
+    when(() => storage.deleteAll(any())).thenAnswer((_) async {});
+    final cookies = _MockCookieManager();
+    when(
+      () => cookies.deleteCookies(
+        url: any(named: 'url'),
+        path: any(named: 'path'),
+        domain: any(named: 'domain'),
+        webViewController: any(named: 'webViewController'),
+      ),
+    ).thenAnswer((_) async => true);
+
+    // A sibling workspace under the same host survives the sign-out → the
+    // host-wide CF token + cookies must NOT be wiped (doing so would de-auth
+    // the sibling).
+    final sibling = WorkspaceConfig(
+      id: 'w_srv-2',
+      hostId: 'h_srv-1',
+      slug: 'demo',
+      basePath: '/demo',
+      displayName: 'Demo',
+      lastUsedAt: DateTime.utc(2026, 1, 1),
+    );
+    final store = _storeWithWorkspaces([_activeWs(), sibling]);
+    final unregistered = <String>[];
+    final registrar = _registrarRecording(unregistered);
+
+    final scope = _wrapWithRouter(
+      api: api,
+      storage: storage,
+      cookieManager: cookies,
+      store: store,
+      registrar: registrar,
+      server: _server(),
+    );
+    await tester.pumpWidget(scope.widget);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Sign out of this server'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Sign out'));
+    await tester.pumpAndSettle();
+
+    // The signed-out workspace's push token is still unregistered.
+    expect(unregistered, ['w_srv-1']);
+
+    // ONLY the per-workspace key is cleared…
+    verify(() => storage.deleteAll('workspace.w_srv-1')).called(1);
+    // …the host-wide CF token is preserved (sibling still needs it)…
+    verifyNever(() => storage.deleteAll('host.h_srv-1'));
+    // …and the host-origin cookies are NOT wiped.
+    verifyNever(
+      () => cookies.deleteCookies(
+        url: any(named: 'url'),
+        path: any(named: 'path'),
+        domain: any(named: 'domain'),
+        webViewController: any(named: 'webViewController'),
+      ),
+    );
+
+    // Sign-out still completes + navigates to the picker.
     expect(
       scope.router.routerDelegate.currentConfiguration.uri.toString(),
       '/servers',

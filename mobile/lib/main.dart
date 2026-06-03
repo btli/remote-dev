@@ -47,8 +47,7 @@ import 'presentation/screens/webview_host/session_route_host.dart'
         activeWorkspaceProvider,
         hostWorkspaceStoreProvider,
         mobileCredentialsStoreProvider,
-        secureStorageProvider,
-        serverConfigStoreProvider;
+        secureStorageProvider;
 
 /// Thrown by [_apiClientProvider] when no active server has been chosen.
 ///
@@ -171,16 +170,20 @@ List<Override> buildServerScopedOverrides({required String deviceId}) {
     pushTokenRegistrarProvider.overrideWith(
       (ref) => PushTokenRegistrar(
         push: FcmPushService(),
-        serverStore: ref.watch(serverConfigStoreProvider),
+        store: ref.watch(hostWorkspaceStoreProvider),
+        credentials: ref.watch(mobileCredentialsStoreProvider),
         // Push registration is a best-effort background POST against EVERY
-        // saved (legacy) server; it must not trigger an interactive CF
-        // refresh on a non-active server (no UI is mounted to drive the
-        // browser). The legacy constructor's default no-op refresh falls
-        // through to a logged per-server failure, which is the desired
-        // behaviour here. Task D migrates the registrar to Host/Workspace.
-        clientFactory: (server) => RemoteDevClient(
-          serverOrigin: Uri.parse(server.url),
-          serverId: server.id,
+        // saved WORKSPACE; it must not trigger an interactive CF refresh on a
+        // non-active workspace (no UI is mounted to drive the browser). We pass
+        // NO `refreshAuth`, so `forWorkspace`'s default no-op refresh falls
+        // through to a logged per-workspace failure — the desired behaviour
+        // here. The client is base-path-aware (origin + ws.basePath) and reads
+        // the per-workspace API key + host-wide CF cookie.
+        clientFactory: (host, ws) => RemoteDevClient.forWorkspace(
+          origin: host.origin,
+          basePath: ws.basePath,
+          hostId: host.id,
+          workspaceId: ws.id,
           storage: ref.read(secureStorageProvider),
           onReauthNeeded: () =>
               ref.read(reauthSignalProvider.notifier).request(),

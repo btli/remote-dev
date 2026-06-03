@@ -8,7 +8,7 @@ import '../../../infrastructure/deep_link/deep_link_stream_provider.dart';
 import 'session_route_host.dart'
     show activeWorkspaceProvider, mobileCredentialsStoreProvider;
 
-/// Test seam — mirrors [MobileCallbackLauncher] from `AddServerScreen`.
+/// Test seam — wraps a [MobileCallbackLoginLauncher.login]-shaped call.
 /// In production this is `null` and we build a real
 /// [MobileCallbackLoginLauncher] against the shared deep-link stream.
 typedef MobileCallbackLauncherForReauth = Future<MobileCredentials?> Function(
@@ -17,7 +17,7 @@ typedef MobileCallbackLauncherForReauth = Future<MobileCredentials?> Function(
 
 /// Screen we land on whenever Dio sees a 401/403 from the active server
 /// (see [reauthSignalProvider]). Runs the same system-browser flow the
-/// Add Server screen uses — opens `<server>/auth/mobile-callback` in
+/// host onboarding flow uses — opens `<server>/auth/mobile-callback` in
 /// the platform browser, waits for the `remotedev://auth/callback`
 /// deep link, persists the fresh credentials back into secure storage
 /// under the active server's id, then bounces back to `/home`.

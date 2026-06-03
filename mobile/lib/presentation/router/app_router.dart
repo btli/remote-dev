@@ -18,7 +18,6 @@ import '../screens/profile/appearance_screen.dart';
 import '../screens/profile/github_accounts_screen.dart';
 import '../screens/profile/servers_screen.dart';
 import '../screens/recording/recording_screen.dart';
-import '../screens/server_picker/add_server_screen.dart';
 import '../screens/server_picker/edit_host_screen.dart';
 import '../screens/server_picker/server_picker_screen.dart';
 import '../screens/session_view/session_view_screen.dart';
@@ -28,11 +27,12 @@ import '../screens/webview_host/reauth_screen.dart';
 import '../screens/webview_host/session_route_host.dart';
 import 'app_route.dart';
 
-/// FCM token registrar wired against the app's PushPort + ServerConfigStore +
-/// API client factory. Default impl throws — `main.dart` overrides this in the
-/// `ProviderScope` after Firebase is initialized (matching the
-/// `sessionsApiProvider` pattern). The server picker reads it best-effort so
-/// dev builds without Firebase config still allow server deletion.
+/// FCM token registrar wired against the app's PushPort + HostWorkspaceStore +
+/// MobileCredentialsStore + workspace API-client factory. Default impl throws —
+/// `main.dart` overrides this in the `ProviderScope` after Firebase is
+/// initialized (matching the `sessionsApiProvider` pattern). The server picker
+/// reads it best-effort so dev builds without Firebase config still allow
+/// workspace deletion.
 final pushTokenRegistrarProvider = Provider<PushTokenRegistrar>((ref) {
   throw UnimplementedError(
     'pushTokenRegistrarProvider must be overridden in main.dart with '
@@ -139,11 +139,12 @@ class AppRouter {
       // The launcher's own broadcast-stream subscription (via
       // `deepLinkStreamProvider`) consumes the URI for credentials in
       // parallel. We must NOT navigate away from the current screen here:
-      // `AddServerScreen._save()` is `await`-ing `_runCallbackLogin()`,
-      // and if GoRouter swaps in a different page the State is disposed,
-      // the post-await `if (!mounted) return;` aborts, and the new server
-      // is never persisted (v0.3.12 regression: CF Access succeeds, but
-      // no server appears).
+      // `AddHostScreen._bootstrapHost()` (and the single-workspace
+      // `_runInstanceLogin`) is `await`-ing the system-browser login, and if
+      // GoRouter swaps in a different page the State is disposed, the
+      // post-await `if (!mounted) return;` aborts, and the new host/workspace
+      // is never persisted (v0.3.12-class regression: CF Access succeeds, but
+      // nothing appears).
       //
       // The trick is to return the LAST-KNOWN-GOOD location from the
       // redirect. go_router treats "redirect to the current location" as
@@ -202,27 +203,6 @@ class AppRouter {
               onOpenAnotherWorkspace: (host) =>
                   _openAnotherWorkspace(context, ref, host),
               onTestBridge: () => context.push('/spike'),
-            ),
-          ),
-        ),
-        GoRoute(
-          path: '/servers/add',
-          builder: (context, state) => Consumer(
-            builder: (context, ref, _) => AddServerScreen(
-              onSaved: (server) {
-                // Legacy add path (kept for the bridge-spike POC). Invalidate
-                // the workspace provider so the shim re-derives.
-                ref.invalidate(activeWorkspaceProvider);
-                ref.invalidate(serverPickerDataProvider);
-                // Prefer pop so the picker beneath us survives. Fall back
-                // to go for direct deep-link cold-starts where add is
-                // the root of the stack.
-                if (context.canPop()) {
-                  context.pop();
-                } else {
-                  context.go('/servers');
-                }
-              },
             ),
           ),
         ),

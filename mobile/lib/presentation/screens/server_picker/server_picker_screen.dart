@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../domain/host_config.dart';
 import '../../../domain/workspace_config.dart';
+import '../../router/app_router.dart' show pushTokenRegistrarProvider;
 import '../webview_host/session_route_host.dart'
     show activeWorkspaceProvider, hostWorkspaceStoreProvider;
 
@@ -47,8 +48,9 @@ final serverPickerDataProvider =
     FutureProvider.autoDispose<ServerPickerData>((ref) async {
   final store = ref.watch(hostWorkspaceStoreProvider);
   // Depend on the active-connection provider so a switch elsewhere repaints the
-  // active marker. `.value` (not `.future`) keeps this resolving even while the
-  // active provider is reloading.
+  // active marker. A bare `watch` (not `.future`) means we re-run when it next
+  // resolves but never suspend this provider on the active one's reload — the
+  // host/workspace lists below are the real data source.
   ref.watch(activeWorkspaceProvider);
 
   final hosts = await store.loadHosts();
@@ -119,12 +121,28 @@ class ServerPickerScreen extends ConsumerWidget {
 
   final VoidCallback? onTestBridge;
 
+  /// Best-effort push-token unregister for a workspace, run BEFORE its
+  /// credentials are cleared (the registrar needs the per-workspace API key +
+  /// host CF cookie to authenticate the DELETE). Never throws: a missing
+  /// registrar override (dev builds without Firebase) or a network failure must
+  /// not block deletion. The registrar itself also swallows its own failures.
+  Future<void> _unregisterPushBestEffort(
+    WidgetRef ref,
+    String workspaceId,
+  ) async {
+    try {
+      await ref
+          .read(pushTokenRegistrarProvider)
+          .unregisterWorkspace(workspaceId);
+    } catch (_) {
+      // Intentional: push unregister is best-effort. Deletion proceeds.
+    }
+  }
+
   Future<void> _deleteWorkspace(WidgetRef ref, WorkspaceConfig ws) async {
-    // NOTE: push-token unregister is intentionally NOT called here. The
-    // PushTokenRegistrar still keys off legacy server ids; rewiring it to the
-    // Host/Workspace model (and unregistering per-workspace on delete) is
-    // Task D3b. Deleting the workspace clears its credentials + re-points the
-    // active pointer via the store.
+    // Unregister the push token FIRST, while the workspace's creds still exist
+    // (removeWorkspace clears them). Best-effort — never blocks the delete.
+    await _unregisterPushBestEffort(ref, ws.id);
     final store = ref.read(hostWorkspaceStoreProvider);
     await store.removeWorkspace(ws.id);
     ref.invalidate(activeWorkspaceProvider);
@@ -132,10 +150,19 @@ class ServerPickerScreen extends ConsumerWidget {
   }
 
   Future<void> _deleteHost(WidgetRef ref, HostConfig host) async {
-    // See _deleteWorkspace: push unregister is Task D3b. removeHost cascades to
-    // every workspace under the host, clearing creds and re-pointing/clearing
-    // the active pointer.
     final store = ref.read(hostWorkspaceStoreProvider);
+    // Unregister every child workspace's push token BEFORE removeHost cascades
+    // away their creds. Best-effort: a failed lookup/unregister must not block
+    // the host delete. removeHost then clears creds + re-points/clears the
+    // active pointer.
+    try {
+      final children = await store.loadWorkspaces(hostId: host.id);
+      for (final ws in children) {
+        await _unregisterPushBestEffort(ref, ws.id);
+      }
+    } catch (_) {
+      // Intentional: enumerating children for unregister is best-effort.
+    }
     await store.removeHost(host.id);
     ref.invalidate(activeWorkspaceProvider);
     ref.invalidate(serverPickerDataProvider);
