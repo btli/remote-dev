@@ -25,6 +25,7 @@ const hoisted = vi.hoisted(() => {
   const state = {
     inserted: [] as Row[],
     queryFindManyCalls: 0,
+    closeSessionRow: null as Row | null,
   };
   return {
     state,
@@ -36,6 +37,13 @@ const hoisted = vi.hoisted(() => {
     getResolvedPreferences: vi.fn(async () => ({
       defaultWorkingDirectory: "/tmp",
     })),
+    getPortsForFolder: vi.fn<
+      (folderId: string, userId: string) => Promise<
+        Array<{ port: number; variableName: string; projectId: string | null }>
+      >
+    >(),
+    claimPortsForSession: vi.fn(async () => undefined),
+    releasePortsForSession: vi.fn(async () => undefined),
   };
 });
 
@@ -55,6 +63,9 @@ vi.mock("@/db", () => ({
   db: {
     query: {
       terminalSessions: {
+        // closeSession's getSession() reads through findFirst — return the
+        // row stashed by the close-path tests (or null if none).
+        findFirst: vi.fn(async () => hoisted.state.closeSessionRow ?? null),
         findMany: vi.fn(async (args: unknown) => {
           hoisted.state.queryFindManyCalls += 1;
           // The dedup query's where-clause includes scopeKey; the tab-order
@@ -156,6 +167,22 @@ vi.mock("@/services/api-key-service", () => ({
   createApiKey: vi.fn(async () => ({ key: "test-api-key" })),
 }));
 
+// Port lifecycle (A3): claim-on-create reads the registry then claims; the
+// close path releases. Relative specifiers match the dynamic import() the
+// service uses to dodge the import cycle.
+vi.mock("./port-registry-service", () => ({
+  getPortsForFolder: hoisted.getPortsForFolder,
+}));
+
+vi.mock("./port-claims-service", () => ({
+  claimPortsForSession: hoisted.claimPortsForSession,
+  releasePortsForSession: hoisted.releasePortsForSession,
+}));
+
+vi.mock("@/services/task-service", () => ({
+  cancelOpenAgentTasks: vi.fn(async () => undefined),
+}));
+
 vi.mock("@/infrastructure/container", () => ({
   githubAccountRepository: {
     findByProject: vi.fn(async () => null),
@@ -189,6 +216,7 @@ import type { CreateSessionInput } from "@/types/session";
 import {
   createSession,
   createSessionWithDedupFlag,
+  closeSession,
   SessionServiceError,
 } from "./session-service";
 
@@ -274,6 +302,13 @@ describe("SessionService.createSession — plugin dispatch", () => {
     hoisted.getResolvedPreferences.mockResolvedValue({
       defaultWorkingDirectory: "/tmp",
     });
+    // Default: project has no registered ports → claim is skipped entirely.
+    hoisted.getPortsForFolder.mockReset();
+    hoisted.getPortsForFolder.mockResolvedValue([]);
+    hoisted.claimPortsForSession.mockReset();
+    hoisted.claimPortsForSession.mockResolvedValue(undefined);
+    hoisted.releasePortsForSession.mockReset();
+    hoisted.releasePortsForSession.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -626,5 +661,120 @@ describe("SessionService.createSession — scope-key dedup", () => {
 
     // Only the initial dedup SELECT — no post-conflict retry.
     expect(dbMocks.findManyDedup).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A3: port claim/release across the session lifecycle (remote-dev-2zhb).
+// ─────────────────────────────────────────────────────────────────────────────
+describe("SessionService — port lifecycle (A3)", () => {
+  beforeEach(() => {
+    TerminalTypeServerRegistry.clear();
+    // A no-tmux plugin keeps the close path off TmuxService.killSession.
+    TerminalTypeServerRegistry.register(makeFakePlugin("fake", { useTmux: false }));
+    TerminalTypeServerRegistry.setDefaultType("fake");
+
+    dbState.inserted = [];
+    dbState.closeSessionRow = null;
+    hoisted.state.queryFindManyCalls = 0;
+    tmuxCreate.mockClear();
+    tmuxKill.mockClear();
+
+    dbMocks.findManyDedup.mockResolvedValue([]);
+    dbMocks.findManyTabOrder.mockResolvedValue([]);
+    dbMocks.insertReturning.mockImplementation(async (values) => [
+      makeDbRow(values as Row),
+    ]);
+    hoisted.getResolvedPreferences.mockResolvedValue({
+      defaultWorkingDirectory: "/tmp",
+    });
+
+    hoisted.getPortsForFolder.mockReset();
+    hoisted.getPortsForFolder.mockResolvedValue([]);
+    hoisted.claimPortsForSession.mockReset();
+    hoisted.claimPortsForSession.mockResolvedValue(undefined);
+    hoisted.releasePortsForSession.mockReset();
+    hoisted.releasePortsForSession.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("claims the project's registered ports on create with the resolved sessionId/userId/projectId", async () => {
+    hoisted.getPortsForFolder.mockResolvedValueOnce([
+      { port: 3000, variableName: "PORT", projectId: "project-1" },
+      { port: 5432, variableName: "DATABASE_PORT", projectId: "project-1" },
+    ]);
+    // The default insert mock echoes the inserted values (which carry
+    // `id: sessionId`), so the returned session id equals the id used to
+    // claim — exactly as in production.
+    const result = await createSession("user-1", baseInput());
+
+    expect(hoisted.getPortsForFolder).toHaveBeenCalledWith("project-1", "user-1");
+    expect(hoisted.claimPortsForSession).toHaveBeenCalledTimes(1);
+    expect(hoisted.claimPortsForSession).toHaveBeenCalledWith(
+      result.id,
+      "user-1",
+      "project-1",
+      [
+        { port: 3000, variableName: "PORT" },
+        { port: 5432, variableName: "DATABASE_PORT" },
+      ]
+    );
+  });
+
+  it("skips claiming entirely when the project has no registered ports", async () => {
+    hoisted.getPortsForFolder.mockResolvedValueOnce([]);
+
+    await createSession("user-1", baseInput());
+
+    expect(hoisted.getPortsForFolder).toHaveBeenCalledWith("project-1", "user-1");
+    expect(hoisted.claimPortsForSession).not.toHaveBeenCalled();
+  });
+
+  it("does NOT let a claim failure propagate out of createSession", async () => {
+    hoisted.getPortsForFolder.mockResolvedValueOnce([
+      { port: 3000, variableName: "PORT", projectId: "project-1" },
+    ]);
+    hoisted.claimPortsForSession.mockRejectedValueOnce(
+      new Error("db is on fire")
+    );
+
+    // The session must still be created and returned despite the claim error.
+    const result = await createSession("user-1", baseInput());
+
+    expect(result.id).toBeDefined();
+    expect(dbState.inserted).toHaveLength(1);
+    expect(hoisted.claimPortsForSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases the session's port claims on close", async () => {
+    dbState.closeSessionRow = makeDbRow({
+      id: "sess-to-close",
+      terminalType: "fake",
+      status: "active",
+    });
+
+    await closeSession("sess-to-close", "user-1");
+
+    expect(hoisted.releasePortsForSession).toHaveBeenCalledTimes(1);
+    expect(hoisted.releasePortsForSession).toHaveBeenCalledWith("sess-to-close");
+  });
+
+  it("does NOT let a release failure propagate out of closeSession", async () => {
+    dbState.closeSessionRow = makeDbRow({
+      id: "sess-to-close",
+      terminalType: "fake",
+      status: "active",
+    });
+    hoisted.releasePortsForSession.mockRejectedValueOnce(
+      new Error("release blew up")
+    );
+
+    await expect(
+      closeSession("sess-to-close", "user-1")
+    ).resolves.toBeUndefined();
+    expect(hoisted.releasePortsForSession).toHaveBeenCalledTimes(1);
   });
 });

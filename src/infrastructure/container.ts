@@ -125,6 +125,16 @@ import {
   setPushTokenRepository,
 } from "@/services/notification-service";
 
+// Port Monitoring
+import { PortMonitor } from "@/application/services/PortMonitor";
+import { PortRegistryAdapterImpl } from "./adapters/PortRegistryAdapterImpl";
+import { SessionAdapterImpl } from "./adapters/SessionAdapterImpl";
+import { TmuxAdapterImpl } from "./adapters/TmuxAdapterImpl";
+import { pruneExpiredClaims } from "@/services/port-claims-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("Container");
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Repository Instances
 // ─────────────────────────────────────────────────────────────────────────────
@@ -393,6 +403,39 @@ export const pushNotificationGateway: PushNotificationGateway =
 // Wire push notification dependencies into NotificationService
 setPushGateway(pushNotificationGateway);
 setPushTokenRepository(pushTokenRepository);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Port Monitoring
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Port monitor application service.
+ *
+ * Combines declarative port-registry data with runtime checks (active tmux
+ * session environments + lsof) to detect port conflicts and suggest
+ * alternatives. Wired over the functional services via thin adapters.
+ */
+export const portMonitor = new PortMonitor({
+  portRegistry: new PortRegistryAdapterImpl(),
+  sessions: new SessionAdapterImpl(sessionRepository),
+  tmux: new TmuxAdapterImpl(tmuxGateway),
+});
+
+// Prune expired port claims once at module load. This container is only ever
+// imported server-side (it instantiates Drizzle repositories and tmux
+// gateways), so running a one-shot DB cleanup here is safe. Fire-and-forget:
+// module init must not block on it.
+void pruneExpiredClaims()
+  .then((deleted) => {
+    if (deleted > 0) {
+      log.info("Pruned expired port claims on startup", { deleted });
+    }
+  })
+  .catch((error) => {
+    log.error("Failed to prune expired port claims on startup", {
+      error: String(error),
+    });
+  });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Update System

@@ -126,10 +126,22 @@ export interface PortAllocationWithFolder {
   folderId: string;
   /** Folder name for display */
   folderName: string;
-  /** Whether port is currently listening on localhost */
+  /** Whether port is currently listening on localhost (alias of `isListening`) */
   isActive: boolean;
   /** When the allocation was created */
   createdAt: Date;
+
+  // --- Live runtime fields (populated by GET /api/ports via a single lsof scan) ---
+  /** Whether the port is currently listening on localhost (live scan). */
+  isListening?: boolean;
+  /** PID of the listening process, if detected. */
+  pid?: number | null;
+  /** Name of the listening process, if detected. */
+  process?: string | null;
+  /** Owning session id, when a runtime claim matches this port. */
+  sessionId?: string | null;
+  /** Owning session name, when a runtime claim matches this port. */
+  sessionName?: string | null;
 }
 
 /**
@@ -168,6 +180,11 @@ export interface PortMonitoringConfig {
 export interface PortState {
   /** All port allocations for the user */
   allocations: PortAllocationWithFolder[];
+  /**
+   * Live proxyable ports from `GET /api/ports/proxyable` (the A4 seam).
+   * Drives the active/idle distinction and the "open" affordances in the UI.
+   */
+  livePorts: ProxyablePort[];
   /** Ports currently listening on localhost */
   activePorts: Set<number>;
   /** Detected frameworks per folder */
@@ -188,6 +205,17 @@ export interface PortState {
 export interface PortContextValue extends PortState {
   /** Refresh all port allocations */
   refreshAllocations: () => Promise<void>;
+  /** Refresh the live proxyable-ports set from `GET /api/ports/proxyable`. */
+  refreshLivePorts: () => Promise<void>;
+  /**
+   * Build the in-pod proxy URL for a port (the seam consumed by chips,
+   * allocation rows, and the mobile Ports screen).
+   *
+   * Returns the same-origin `<basePath>/proxy/<port>/` path (runtime base path
+   * via `prefixApiPath`, trailing slash to match the B1 route's injected
+   * `<base>` tag). Returns `null` only for an obviously-invalid port number.
+   */
+  getProxyUrl: (port: number) => string | null;
   /** Detect frameworks for a folder */
   detectFrameworks: (folderId: string, workingDirectory: string | null) => Promise<DetectedFramework[]>;
   /** Detect runtime for a folder */
@@ -230,4 +258,74 @@ export interface AddFrameworkPortInput {
   folderId: string;
   variableName: string;
   port: number;
+}
+
+// =============================================================================
+// Proxyable Ports Seam (A4)
+// =============================================================================
+
+/**
+ * A single proxyable port — the FROZEN contract consumed by Track B (the
+ * in-pod HTTP/WebSocket proxy) via `GET /api/ports/proxyable`.
+ *
+ * A port is proxyable when it is in the user's (= instance's) live universe:
+ * either currently `listening` on the system, `claim`ed by a running session,
+ * or `both`. The route filters this set through `isPortProxyable` so privileged
+ * ports (< 1024) and the hard-blocked instance ports (6001/6002) never appear.
+ *
+ * DO NOT change this shape without coordinating with B2/A5 — they match it.
+ */
+export interface ProxyablePort {
+  /** Port number (always passes `isPortProxyable`). */
+  port: number;
+  /** Whether the port is currently listening on the system (live scan). */
+  isListening: boolean;
+  /** PID of the listening process, if known. */
+  pid: number | null;
+  /** Name of the listening process, if known. */
+  process: string | null;
+  /** Owning session id, if the port is associated with a claim. */
+  sessionId: string | null;
+  /** Owning session name, if resolvable. */
+  sessionName: string | null;
+  /** Owning project id, if the port is associated with a claim. */
+  projectId: string | null;
+  /** Source variable name (e.g. "PORT"), if the port is associated with a claim. */
+  variableName: string | null;
+  /**
+   * Where this port came from:
+   * - `"listening"` — observed on the system but not claimed by any session.
+   * - `"claim"` — claimed by a running session but not (yet) observed listening.
+   * - `"both"` — claimed AND currently listening.
+   */
+  source: "listening" | "claim" | "both";
+}
+
+/**
+ * Response from `GET /api/ports/proxyable`.
+ */
+export interface ProxyablePortsResponse {
+  ports: ProxyablePort[];
+}
+
+/**
+ * An active port discovered from a running session's tmux environment.
+ *
+ * Mirrors the `ActivePort` shape returned by `PortMonitor.getActivePorts`.
+ * Used by `GET /api/ports/active` for additive discovery — these ports may not
+ * be in the declarative registry.
+ */
+export interface ActivePortInfo {
+  sessionId: string;
+  sessionName: string;
+  port: number;
+  variableName: string;
+  projectId: string | null;
+}
+
+/**
+ * Response from `GET /api/ports/active`.
+ */
+export interface ActivePortsResponse {
+  activePorts: ActivePortInfo[];
 }

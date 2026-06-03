@@ -179,6 +179,29 @@ export const portRegistry = pgTable(
   ]
 );
 
+export const portClaims = pgTable(
+  "port_claim",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    sessionId: text("session_id").notNull().references(() => terminalSessions.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    port: integer("port").notNull(),
+    variableName: text("variable_name").notNull(),
+    isListening: boolean("is_listening"),
+    pid: integer("pid"),
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("port_claim_session_idx").on(table.sessionId),
+    index("port_claim_user_idx").on(table.userId),
+    index("port_claim_port_idx").on(table.port),
+    uniqueIndex("port_claim_session_port_unique").on(table.sessionId, table.port),
+  ]
+);
+
 export const sessionTemplates = pgTable(
   "session_template",
   {

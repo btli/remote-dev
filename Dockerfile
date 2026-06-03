@@ -179,6 +179,11 @@ FROM node:${NODE_VERSION} AS runtime
 #   ca-certificates — TLS
 #   tini         — PID 1 / zombie reaper
 #   curl, jq     — diagnostic + entrypoint use
+#   lsof, procps (ps), iproute2 (ss) — live port detection: the port-proxy +
+#                  /api/ports* shell out to `lsof` (primary) with `ps`/`ss`
+#                  fallbacks to find what is listening on 127.0.0.1:<port>.
+#                  Without them the proxy's "is anything listening?" signal is
+#                  silently EMPTY on a real instance, breaking the feature.
 #   sudo         — instances are real dev environments: agents must be able to
 #                  `sudo apt-get install …` their own toolchains. apt is kept
 #                  fully functional (keyring + sources intact); the package
@@ -198,6 +203,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         jq \
         less \
+        lsof \
+        procps \
+        iproute2 \
         sudo \
         python3 \
         python3-venv \

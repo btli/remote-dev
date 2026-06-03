@@ -107,6 +107,7 @@ by session/key auth:
 | SSH connections | `/api/ssh-connections` | [SSH connections](#ssh-connections) |
 | Schedules | `/api/schedules` | [Schedules](#schedules) |
 | Ports | `/api/ports` | [Ports](#ports) |
+| Port proxy | `/<basePath>/proxy/<port>/*` | [Port proxy](#port-proxy) |
 | LiteLLM | `/api/litellm` | [LiteLLM](#litellm) |
 | Beads (issue tracker) | `/api/beads` | [Beads](#beads) |
 | Trash | `/api/trash` | [Trash](#trash) |
@@ -955,15 +956,167 @@ Optional: `timezone`, `enabled`, `maxRetries`, `retryDelaySeconds`,
 
 ## Ports
 
-Port-allocation registry, framework detection, and runtime port monitoring.
-Base path `/api/ports`. All **[session]**.
+Port-allocation registry, framework detection, runtime port monitoring, and the
+in-pod **port proxy** (open a dev server running inside an instance in your
+browser). Base path `/api/ports`. **[session]** unless noted.
 
 ```http
-GET  /api/ports                       # list port allocations
-POST /api/ports/status                # check live status of ports
-POST /api/ports/detect-frameworks     # detect web frameworks for a project
-POST /api/ports/detect-runtime        # detect runtime/listening ports
+GET  /api/ports                       # [session] list allocations + live status
+GET  /api/ports/active                # [session] runtime-discovered active ports
+GET  /api/ports/proxyable             # [session | key] ports that may be proxied
+POST /api/ports/status                # [session] check live status of given ports
+POST /api/ports/detect-frameworks     # [session] detect web frameworks for a project
+POST /api/ports/detect-runtime        # [session] detect runtime/listening ports
 ```
+
+Live status (`isListening`, `pid`, `process`) comes from a single `lsof` scan
+(falling back to `ss`/`netstat`) of the host the instance runs on. On the
+multi-instance image these tools are baked in (see
+[SUPERVISOR_DEPLOY.md](./SUPERVISOR_DEPLOY.md#in-pod-port-proxy)); without them
+the listening signal is empty.
+
+### List allocations
+
+```http
+GET /api/ports
+```
+
+Returns every declared port allocation for the user, each merged with its **live**
+status and the owning session (if a runtime claim matches):
+
+```json
+{
+  "allocations": [
+    {
+      "id": "alloc-uuid",
+      "port": 3000,
+      "variableName": "PORT",
+      "folderId": "project-uuid",
+      "folderName": "my-app",
+      "isActive": true,
+      "isListening": true,
+      "pid": 12345,
+      "process": "node",
+      "sessionId": "sess-uuid",
+      "sessionName": "dev server",
+      "createdAt": "2026-06-01T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+### Active ports
+
+```http
+GET /api/ports/active
+```
+
+Additive runtime discovery: scans the environment of the user's active tmux
+sessions for port-like variables, catching ports **not** in the declarative
+registry (e.g. an ad-hoc dev server). Returns
+`{ "activePorts": [ ActivePortInfo, … ] }` where each entry is
+`{ sessionId, sessionName, port, variableName, projectId }`.
+
+### Proxyable ports
+
+```http
+GET /api/ports/proxyable
+```
+
+**[session | key]** (agents/CLI call it programmatically). Returns the ports
+that may be proxied for this user — the union of *listening* ports and *active
+session claims*, filtered through the proxy allowlist (privileged `< 1024` and
+the hard-blocked instance ports `6001`/`6002` are excluded). Sorted ascending.
+
+```json
+{
+  "ports": [
+    {
+      "port": 3000,
+      "isListening": true,
+      "pid": 12345,
+      "process": "node",
+      "sessionId": "sess-uuid",
+      "sessionName": "dev server",
+      "projectId": "project-uuid",
+      "variableName": "PORT",
+      "source": "both"
+    }
+  ]
+}
+```
+
+`source` is `"listening"` (observed but unclaimed), `"claim"` (claimed by a
+running session but not yet observed listening), or `"both"`. This endpoint is
+the seam the UI's interactive port chips and the proxy use to decide what to
+offer.
+
+---
+
+## Port proxy
+
+A path-based reverse proxy that serves whatever is listening on
+`127.0.0.1:<port>` **inside the instance's pod**, so a dev server started in a
+session is reachable from your browser. It lives at the app root (NOT under
+`/api`); the supervisor router forwards `/<slug>/proxy/<port>/…` to the matching
+instance, where Next.js strips the `<basePath>` (`/<slug>`) before this handler
+runs. On a single-server / routerless deploy (`RDV_BASE_PATH=""`) the path is
+simply `/proxy/<port>/…`.
+
+```http
+GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS  /<basePath>/proxy/<port>/<...path>
+```
+
+**[session]**. Auth is owner-by-construction: the request has already passed the
+instance's CF-Access/session gate, and the instance DB only ever contains users
+provisioned onto it, so any authenticated caller is an authorized owner. (A
+strict requesting-email == instance-owner check was assessed and deferred — see
+[SUPERVISOR_DEPLOY.md](./SUPERVISOR_DEPLOY.md#in-pod-port-proxy).)
+
+**Port allowlist:** `<port>` must be an integer in `[1024, 65535]` and not
+`6001`/`6002` (the instance's own Next.js + terminal-server ports). Otherwise:
+
+| Status | When |
+|--------|------|
+| `400` | Non-numeric / non-integer port (`{ "code": "INVALID_PORT" }`). |
+| `403` | Privileged (`< 1024`) or hard-blocked (`6001`/`6002`) port (`{ "code": "PORT_BLOCKED" }`). |
+| `502` | Upstream unreachable — `ECONNREFUSED` ("Nothing is listening on port N…"), a connect/response **timeout** ("…did not respond in time…", bounded at 30s), or any other failure ("Failed to reach port N…"). Plain-text body. |
+
+**Body / header rewriting** (so a path-based-proxied app's URLs resolve under
+the proxy prefix):
+
+- **HTML** responses are buffered and a `<base href="<basePath>/proxy/<port>/">`
+  tag is injected (right after `<head>`, else `<html>`, else prepended) so
+  *relative* asset/link URLs resolve under the proxy path. Skipped if the
+  document already has a `<base>`.
+- **`Location`** redirect headers that are root-relative (`/foo`) are re-homed
+  under the proxy base; absolute/off-origin and already-proxied URLs are left
+  untouched (idempotent).
+- **`Set-Cookie`** `Path=` attributes are rewritten to the proxy base so cookies
+  stay scoped to the proxied app.
+- **`Content-Encoding`**/stale `Content-Length` are stripped whenever the body is
+  decoded or re-streamed (the runtime auto-decompresses); hop-by-hop and `host`
+  headers are dropped upstream.
+
+> **Limitation (path-based proxying).** The `<base>` tag only fixes *relative*
+> URLs. Apps that hardcode **absolute** URLs in JavaScript (`fetch('/api/x')`)
+> or build WebSocket URLs from `location` will still hit the bare origin and
+> break. The portable workaround is to run the dev server under a matching base
+> path — e.g. Vite `--base=/<slug>/proxy/<port>/`, Next.js `basePath`, CRA
+> `PUBLIC_URL`. The clean long-term fix is the deferred per-port **subdomain**
+> scheme (no path rewriting needed). See
+> [SUPERVISOR_DEPLOY.md](./SUPERVISOR_DEPLOY.md#in-pod-port-proxy).
+
+### WebSocket upgrade (HMR / live-reload)
+
+A WebSocket **upgrade** to a proxy path is handled separately so HMR /
+live-reload work through the proxy. The router matches
+`^/<slug>/proxy/<port>(/|$)` on upgrades (its single `proxy-ws` rule) and
+forwards them to the instance **terminal server** (`:6002`), which bridges the
+socket to `ws://127.0.0.1:<port>/…` inside the pod (the `<basePath>/proxy/<port>`
+prefix is stripped before forwarding). The same `isPortProxyable` allowlist
+applies; a blocked or unparseable port closes the socket. HTTP for the same
+paths is served by the route above and is unaffected.
 
 ---
 

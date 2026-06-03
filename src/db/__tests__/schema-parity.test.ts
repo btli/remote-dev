@@ -34,7 +34,7 @@ type Equal<A, B> =
 // Compiles only when its argument resolves to the literal `true`.
 type Expect<T extends true> = T;
 
-// Per-table $inferSelect / $inferInsert parity for ALL 60 tables. A drift makes
+// Per-table $inferSelect / $inferInsert parity for ALL 61 tables. A drift makes
 // one of these `false`, which is a compile error on the `true[]` annotation.
 type _SchemaParity = [
   // users
@@ -67,6 +67,9 @@ type _SchemaParity = [
   // portRegistry
   Expect<Equal<(typeof sqliteSchema.portRegistry)["$inferSelect"], (typeof pgSchema.portRegistry)["$inferSelect"]>>,
   Expect<Equal<(typeof sqliteSchema.portRegistry)["$inferInsert"], (typeof pgSchema.portRegistry)["$inferInsert"]>>,
+  // portClaims
+  Expect<Equal<(typeof sqliteSchema.portClaims)["$inferSelect"], (typeof pgSchema.portClaims)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.portClaims)["$inferInsert"], (typeof pgSchema.portClaims)["$inferInsert"]>>,
   // sessionTemplates
   Expect<Equal<(typeof sqliteSchema.sessionTemplates)["$inferSelect"], (typeof pgSchema.sessionTemplates)["$inferSelect"]>>,
   Expect<Equal<(typeof sqliteSchema.sessionTemplates)["$inferInsert"], (typeof pgSchema.sessionTemplates)["$inferInsert"]>>,
@@ -227,9 +230,9 @@ void _parityHolds;
 
 // Trivial runtime test so vitest treats this file as a (passing) suite. The
 // real guarantee is the compile-time tuple above, enforced by `tsc`.
-it("schema.sqlite and schema.pg expose the same 60 table exports", () => {
+it("schema.sqlite and schema.pg expose the same 61 table exports", () => {
   const sqliteTables = Object.keys(sqliteSchema).sort();
   const pgTables = Object.keys(pgSchema).sort();
   expect(sqliteTables).toEqual(pgTables);
-  expect(sqliteTables).toHaveLength(60);
+  expect(sqliteTables).toHaveLength(61);
 });
