@@ -17,31 +17,6 @@ export async function register() {
     const { createLogger } = await import("@/lib/logger");
     const log = createLogger("Startup");
 
-    // Drain the sidecar write buffers (logger + litellm webhook) that live in
-    // THIS Next.js process on shutdown — they would otherwise lose buffered rows
-    // (the terminal server drains its own copies in src/server/index.ts). The
-    // flush logic lives in a separate module loaded lazily on signal so its
-    // Node-only deps (pg / better-sqlite3) never enter the edge bundle. We do
-    // NOT process.exit — Next.js owns its shutdown; we only drain. Idempotent:
-    // handlers register once; the flush runs at most once across signals.
-    if (!shutdownHandlersRegistered) {
-      shutdownHandlersRegistered = true;
-      const onShutdown = async (signal: string): Promise<void> => {
-        if (shutdownFlushed) return;
-        shutdownFlushed = true;
-        try {
-          const { flushSidecarsOnShutdown } = await import(
-            "@/infrastructure/persistence/sidecar-shutdown"
-          );
-          await flushSidecarsOnShutdown(signal);
-        } catch (error) {
-          log.error("Sidecar shutdown flush failed", { error: String(error) });
-        }
-      };
-      process.once("SIGTERM", () => void onShutdown("SIGTERM"));
-      process.once("SIGINT", () => void onShutdown("SIGINT"));
-    }
-
     // Apply PostgreSQL migrations BEFORE any DB-touching startup work below.
     // On SQLite this is a no-op (the SQLite path uses `db:push`), so existing
     // behavior is unchanged. On Postgres a failure rethrows to fail the boot
@@ -49,21 +24,58 @@ export async function register() {
     const { runMigrations } = await import("@/db/migrate");
     await runMigrations();
 
-    // On the Postgres path, the sidecar datasets (logs + analytics) live in the
-    // SAME database under dedicated `logs` / `analytics` schemas. Bootstrap them
-    // idempotently right after the main-DB migrations. No-op on SQLite (those
-    // sidecars use their own better-sqlite3 files, created on first connect).
-    try {
-      const { isPostgres } = await import("@/db/is-postgres");
-      if (isPostgres()) {
+    const { isPostgres } = await import("@/db/is-postgres");
+    if (isPostgres()) {
+      // On the Postgres path, the sidecar datasets (logs + analytics) live in
+      // the SAME database under dedicated `logs` / `analytics` schemas.
+      // Bootstrap them idempotently right after the main-DB migrations.
+      try {
         const { initSidecarSchemas } = await import(
           "@/infrastructure/persistence/pg/sidecar-schema"
         );
         await initSidecarSchemas();
+      } catch (error) {
+        log.error("Sidecar schema bootstrap failed", { error: String(error) });
+        throw error;
       }
-    } catch (error) {
-      log.error("Sidecar schema bootstrap failed", { error: String(error) });
-      throw error;
+
+      // Drain the Postgres sidecar write buffers (logger + litellm webhook) that
+      // live in THIS Next.js process on shutdown — they would otherwise lose
+      // buffered rows (the terminal server drains its own copies in
+      // src/server/index.ts). Handlers are registered ONLY on the Postgres path:
+      // it is the only backend with an async buffer to flush (SQLite sidecar
+      // writes are synchronous, so there is nothing to drain). On SQLite we add
+      // NO signal handler and leave the process's existing shutdown behavior
+      // completely untouched. After flushing we RE-RAISE the signal so Next.js's
+      // own handler (or Node's default action) still terminates the process —
+      // a listener that only drains would override Node's default-terminate and
+      // hang the restart. Idempotent: handlers register once; the flush runs at
+      // most once. The flush module is loaded lazily on signal so its Node-only
+      // deps (pg / better-sqlite3) never enter the edge bundle.
+      if (!shutdownHandlersRegistered) {
+        shutdownHandlersRegistered = true;
+        const onShutdown = async (signal: NodeJS.Signals): Promise<void> => {
+          if (!shutdownFlushed) {
+            shutdownFlushed = true;
+            try {
+              const { flushSidecarsOnShutdown } = await import(
+                "@/infrastructure/persistence/sidecar-shutdown"
+              );
+              await flushSidecarsOnShutdown(signal);
+            } catch (error) {
+              log.error("Sidecar shutdown flush failed", {
+                error: String(error),
+              });
+            }
+          }
+          // Re-raise so normal shutdown proceeds (Next.js's handler or Node's
+          // default terminate). Our once-listener is already removed, so this
+          // does not recurse.
+          process.kill(process.pid, signal);
+        };
+        process.once("SIGTERM", () => void onShutdown("SIGTERM"));
+        process.once("SIGINT", () => void onShutdown("SIGINT"));
+      }
     }
 
     // Prune old log entries (7-day retention)
