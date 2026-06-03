@@ -257,6 +257,49 @@ export const portRegistry = sqliteTable(
   ]
 );
 
+// Runtime port claims for live sessions (port-proxy control plane).
+//
+// Unlike the declarative `portRegistry` (project-level, env-var driven), this
+// table tracks ports actively claimed by a running terminal session so the
+// proxy knows which ports are reachable, by which session, and whether a
+// listener is currently bound. Claims expire after 24h and are pruned.
+export const portClaims = sqliteTable(
+  "port_claim",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => terminalSessions.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    port: integer("port").notNull(),
+    variableName: text("variable_name").notNull(), // e.g., "PORT", "DB_PORT"
+    // null = listening status unknown (not yet probed)
+    isListening: integer("is_listening", { mode: "boolean" }),
+    pid: integer("pid"),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    claimedAt: integer("claimed_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("port_claim_session_idx").on(table.sessionId),
+    index("port_claim_user_idx").on(table.userId),
+    index("port_claim_port_idx").on(table.port),
+    // One claim per (session, port) — upsert target for re-claims
+    uniqueIndex("port_claim_session_port_unique").on(table.sessionId, table.port),
+  ]
+);
+
 // Session templates for reusable configurations
 export const sessionTemplates = sqliteTable(
   "session_template",
