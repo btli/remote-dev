@@ -20,9 +20,20 @@
  * - `6001` — the instance's own Next.js HTTP server (proxying it would loop).
  * - `6002` — the terminal server / internal WS+API surface.
  *
+ * The literal defaults are always blocked; we ALSO union in the env-configured
+ * `PORT` / `TERMINAL_PORT` so a non-default deployment still refuses to proxy its
+ * own HTTP/WS surface. This module runs in both the Next server and the tsx
+ * terminal-server contexts, where `process.env` is available; if it is ever
+ * bundled client-side, `process.env.PORT` is `undefined` → `NaN` and is
+ * harmlessly filtered out below.
+ *
  * Privileged ports (`< 1024`) are blocked separately in {@link isPortProxyable}.
  */
-export const HARD_BLOCKED: ReadonlySet<number> = new Set([6001, 6002]);
+export const HARD_BLOCKED: ReadonlySet<number> = new Set(
+  [6001, 6002, Number(process.env.PORT), Number(process.env.TERMINAL_PORT)].filter(
+    (p): p is number => Number.isInteger(p) && p > 0,
+  ),
+);
 
 /** Lowest non-privileged port. Anything below this is blocked. */
 const MIN_UNPRIVILEGED_PORT = 1024;

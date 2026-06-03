@@ -4,7 +4,7 @@
  * statically and call directly (no env/module-cache juggling needed).
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   HARD_BLOCKED,
   isPortProxyable,
@@ -18,6 +18,40 @@ describe("HARD_BLOCKED", () => {
   it("blocks the instance HTTP (6001) and terminal (6002) ports", () => {
     expect(HARD_BLOCKED.has(6001)).toBe(true);
     expect(HARD_BLOCKED.has(6002)).toBe(true);
+  });
+
+  describe("env-configured ports", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    });
+
+    it("also blocks the env-configured PORT and TERMINAL_PORT", async () => {
+      // HARD_BLOCKED is built at module load, so stub env then re-import.
+      vi.stubEnv("PORT", "7001");
+      vi.stubEnv("TERMINAL_PORT", "7002");
+      vi.resetModules();
+      const mod = await import("./proxy-port-utils");
+      // Literal defaults still blocked…
+      expect(mod.HARD_BLOCKED.has(6001)).toBe(true);
+      expect(mod.HARD_BLOCKED.has(6002)).toBe(true);
+      // …plus the non-default deployment's own HTTP/WS ports.
+      expect(mod.HARD_BLOCKED.has(7001)).toBe(true);
+      expect(mod.HARD_BLOCKED.has(7002)).toBe(true);
+      expect(mod.isPortProxyable(7001)).toBe(false);
+      expect(mod.isPortProxyable(7002)).toBe(false);
+    });
+
+    it("keeps the literal defaults when env ports are unset/invalid", async () => {
+      vi.stubEnv("PORT", "");
+      vi.stubEnv("TERMINAL_PORT", "not-a-number");
+      vi.resetModules();
+      const mod = await import("./proxy-port-utils");
+      expect(mod.HARD_BLOCKED.has(6001)).toBe(true);
+      expect(mod.HARD_BLOCKED.has(6002)).toBe(true);
+      // NaN / non-positive values are filtered out, so a normal port is fine.
+      expect(mod.isPortProxyable(3000)).toBe(true);
+    });
   });
 });
 

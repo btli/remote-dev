@@ -89,11 +89,27 @@ function rewriteOptions(port: number): RewriteOptions {
   return { slug: slug || null, port };
 }
 
-/** Build the headers to send upstream: copy all, drop hop-by-hop + host. */
+/**
+ * Build the headers to send upstream: copy all, drop hop-by-hop + host, AND
+ * strip the caller's credentials.
+ *
+ * The upstream is ARBITRARY, potentially-untrusted in-pod code (dev servers,
+ * agent processes) — exactly the surface this feature exposes. We therefore
+ * withhold the host-scoped credentials this proxy authenticates with so they
+ * can't be exfiltrated by the proxied app: the `Cookie` (NextAuth session +
+ * `CF_Authorization` Cloudflare Access JWT), `Authorization` (Bearer API key),
+ * and every Cloudflare Access header (`cf-*` / `x-cf-*`, e.g.
+ * `cf-access-jwt-assertion`, `cf-access-authenticated-user-email`). This mirrors
+ * the WS bridge, which already withholds these. Normal app headers
+ * (content-type, accept, accept-language, user-agent, …) are forwarded.
+ */
 function buildUpstreamHeaders(request: Request): Headers {
   const out = new Headers();
   request.headers.forEach((value, key) => {
-    if (HOP_BY_HOP.has(key.toLowerCase())) return;
+    const lower = key.toLowerCase();
+    if (HOP_BY_HOP.has(lower)) return;
+    if (lower === "cookie" || lower === "authorization") return;
+    if (lower.startsWith("cf-") || lower.startsWith("x-cf-")) return;
     out.set(key, value);
   });
   return out;
@@ -166,11 +182,18 @@ async function handler(
   }
 
   // Reassemble the catch-all path segments and re-attach the query string.
-  // Next.js gives `[...path]` as a single joined string in params (already
-  // URL-decoded per segment is NOT guaranteed, so we use what Next provides).
+  // Next.js resolves a `[...path]` catch-all to a `string[]` (one entry per
+  // segment), or `undefined` when the proxied path is empty (`/proxy/<port>/`).
+  // The shared `RouteContext` types params as `Record<string, string>`, which is
+  // a lie for catch-alls, so we narrow at runtime instead of widening that type.
   const incomingUrl = new URL(request.url);
-  const pathPart = params?.path ?? "";
-  const path = pathPart.startsWith("/") ? pathPart : `/${pathPart}`;
+  const rawPath: unknown = params?.path;
+  const joined = Array.isArray(rawPath)
+    ? rawPath.join("/")
+    : typeof rawPath === "string"
+      ? rawPath
+      : "";
+  const path = joined.startsWith("/") ? joined : `/${joined}`;
   const upstreamUrl = `http://127.0.0.1:${port}${path}${incomingUrl.search}`;
 
   const init: RequestInit = {

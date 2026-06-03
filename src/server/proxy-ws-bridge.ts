@@ -239,6 +239,8 @@ export function handleProxyWsUpgrade(
     if (closing) return;
     closing = true;
     clearTimeout(connectTimer);
+    // Drop any buffered pre-open frames so they can be GC'd (mirrors teardown()).
+    pending.length = 0;
     try {
       clientWs.close(normalizeProxyCloseCode(code), reason.toString());
     } catch {
@@ -268,6 +270,8 @@ export function handleProxyWsUpgrade(
     if (closing) return;
     closing = true;
     clearTimeout(connectTimer);
+    // Drop any buffered pre-open frames so they can be GC'd (mirrors teardown()).
+    pending.length = 0;
     try {
       upstream.close(normalizeProxyCloseCode(code), reason.toString());
     } catch {

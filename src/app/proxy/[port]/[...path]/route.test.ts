@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { RouteContext } from "@/lib/api";
 
 vi.mock("@/lib/auth-utils", () => ({
   getAuthSession: vi.fn().mockResolvedValue({ user: { id: "user-1" } }),
@@ -8,9 +9,27 @@ vi.mock("@/lib/auth-utils", () => ({
 // base-path defaults to unscoped (BASE_PATH="", INSTANCE_SLUG="") in tests, so
 // proxy URLs are rewritten to "/proxy/<port>/…" with no slug prefix.
 
-/** Build the dynamic-route context the way Next.js invokes the handler. */
-function ctx(port: string, path?: string) {
-  return { params: Promise.resolve({ port, ...(path ? { path } : {}) }) };
+/**
+ * Build the dynamic-route context the way Next.js invokes the handler.
+ *
+ * A `[...path]` catch-all resolves to a `string[]` (one entry per URL segment),
+ * or is absent entirely when the proxied path is empty (`/proxy/<port>/`). The
+ * harness mirrors that real shape: pass an array of segments, or omit `path` for
+ * the root case.
+ */
+function ctx(port: string, path?: string[]): RouteContext {
+  // The real runtime params: `port` is a string, `path` is the catch-all's
+  // `string[]` (or absent). `RouteContext` deliberately types params as
+  // `Record<string, string>` (a lie for catch-alls — the very mismatch FIX 1
+  // handles at runtime), so we bridge the genuine runtime shape through
+  // `unknown` rather than widening the shared type.
+  const params: Record<string, unknown> = {
+    port,
+    ...(path ? { path } : {}),
+  };
+  return {
+    params: Promise.resolve(params) as RouteContext["params"],
+  };
 }
 
 const fetchMock = vi.fn();
@@ -64,7 +83,7 @@ describe("port proxy route", () => {
     const { GET } = await import("./route");
     const res = await GET(
       new Request("http://localhost/proxy/3000/foo?x=1"),
-      ctx("3000", "foo"),
+      ctx("3000", ["foo"]),
     );
     expect(res.status).toBe(200);
     await expect(res.text()).resolves.toBe("hello");
@@ -73,6 +92,84 @@ describe("port proxy route", () => {
     expect(url).toBe("http://127.0.0.1:3000/foo?x=1");
     // The fetch is bounded by a timeout signal.
     expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("joins a multi-segment catch-all path into the upstream URL", async () => {
+    // Next resolves `/proxy/6000/api/data` to params.path = ["api", "data"].
+    // Passing a bare string here would throw on `.join`; an array is the real
+    // shape and exercises the catch-all normalization.
+    fetchMock.mockResolvedValue(
+      new Response("ok", {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+      }),
+    );
+    const { GET } = await import("./route");
+    const res = await GET(
+      new Request("http://localhost/proxy/6000/api/data?q=1"),
+      ctx("6000", ["api", "data"]),
+    );
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url] = fetchMock.mock.calls[0];
+    // Multi-segment path joined with "/", query string still appended.
+    expect(url).toBe("http://127.0.0.1:6000/api/data?q=1");
+  });
+
+  it("treats an absent catch-all (root path) as upstream '/'", async () => {
+    // `/proxy/6000/` → params.path is undefined; upstream must be the root.
+    fetchMock.mockResolvedValue(
+      new Response("root", {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+      }),
+    );
+    const { GET } = await import("./route");
+    const res = await GET(
+      new Request("http://localhost/proxy/6000/?z=9"),
+      ctx("6000"),
+    );
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://127.0.0.1:6000/?z=9");
+  });
+
+  it("strips the caller's credentials from the upstream request", async () => {
+    // The upstream is untrusted in-pod code; we must NOT hand it the host-scoped
+    // creds this proxy authenticates with (session/CF-Access cookie, API-key
+    // bearer, or any Cloudflare Access header). Benign app headers pass through.
+    fetchMock.mockResolvedValue(
+      new Response("ok", {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+      }),
+    );
+    const { GET } = await import("./route");
+    const res = await GET(
+      new Request("http://localhost/proxy/3000/", {
+        headers: {
+          cookie: "authjs.session-token=secret; CF_Authorization=jwt",
+          authorization: "Bearer api-key-123",
+          "cf-access-jwt-assertion": "eyJ.jwt.sig",
+          "cf-access-authenticated-user-email": "owner@example.com",
+          "x-cf-user-email": "owner@example.com",
+          accept: "text/html",
+        },
+      }),
+      ctx("3000"),
+    );
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0];
+    const headers = (init as RequestInit).headers as Headers;
+    expect(headers.has("cookie")).toBe(false);
+    expect(headers.has("authorization")).toBe(false);
+    expect(headers.has("cf-access-jwt-assertion")).toBe(false);
+    expect(headers.has("cf-access-authenticated-user-email")).toBe(false);
+    expect(headers.has("x-cf-user-email")).toBe(false);
+    // A normal app header is still forwarded.
+    expect(headers.get("accept")).toBe("text/html");
   });
 
   it("injects a <base> tag into proxied HTML", async () => {
