@@ -51,18 +51,15 @@ class AppRouter {
   /// a valid value.
   String _lastGoodLocation = const ServerPickerRoute().toPath();
 
-  void navigateTo(AppRoute route) {
-    _config.go(route.toPath());
-  }
-
   /// Navigate to a deep-linked target (notification tap / app-link) such that
   /// a back target always exists.
   ///
-  /// [navigateTo] / [GoRouter.go] REPLACE the whole navigation stack, so when
-  /// the app is cold-started from a notification there is nothing beneath the
-  /// target to pop back to and the system/back button does nothing. This
-  /// roots the navigation at `/home` and then PUSHES the target on top, so
-  /// back returns to the home shell instead of being a dead end.
+  /// A plain [GoRouter.go] REPLACES the whole navigation stack, so when the
+  /// app is cold-started from a notification there is nothing beneath the
+  /// target to pop back to and the system/back button does nothing. For
+  /// session/channel targets this roots the navigation at `/home` and then
+  /// PUSHES the target on top, so back returns to the home shell instead of
+  /// being a dead end.
   ///
   /// `/home` and the deep-link targets (`/home/session/:id`,
   /// `/home/channel/:id`, `/notifications`, …) are sibling top-level
@@ -71,8 +68,21 @@ class AppRouter {
   void navigateDeepLink(AppRoute route) {
     final loc = route.toPath();
     final homeLoc = const AppRoute.home().toPath();
-    if (loc == homeLoc) {
+    final notifLoc = const AppRoute.notifications().toPath();
+    // Home and notifications are both full `HomeShell` destinations with their
+    // own internal tab + back handling. Pushing notifications on top of /home
+    // would stack a second shell instance, so replace (go) rather than push.
+    if (loc == homeLoc || loc == notifLoc) {
       _config.go(loc);
+      return;
+    }
+    // Re-entrancy / double-tap guard: Android can deliver a tap via both
+    // getInitialMessage AND onMessageOpenedApp, and a fast double-tap can
+    // fire twice. If the target is already on top of a rooted stack, bail so
+    // we don't stack `[home, target, home, target]`.
+    final current = _config.routerDelegate.currentConfiguration;
+    if (current.matches.length >= 2 &&
+        current.matches.last.matchedLocation == loc) {
       return;
     }
     // Ensure the home shell is beneath the target so back returns to it.

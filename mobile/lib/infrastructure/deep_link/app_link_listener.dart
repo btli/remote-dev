@@ -68,9 +68,9 @@ class AppLinkListener {
     final route = DeepLinkRouter.routeFor(uri);
     if (route != null) {
       // Use navigateDeepLink (root /home, then push) so back works when the
-      // app is cold-started from an external link. navigateTo/go would
-      // replace the stack and leave nothing to pop. navigateDeepLink no-ops
-      // the extra push for the /home target.
+      // app is cold-started from an external link. A plain go() would replace
+      // the stack and leave nothing to pop. navigateDeepLink replaces (go)
+      // rather than pushing for the /home and /notifications targets.
       router.navigateDeepLink(route);
     } else {
       debugPrint('[DeepLink] no route for $uri');
