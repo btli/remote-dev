@@ -5,6 +5,7 @@ import { Loader2, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { PathInput } from "@/components/common/PathInput";
 
 import { apiFetch } from "@/lib/api-fetch";
 interface Props {
@@ -135,14 +136,14 @@ export function GroupPreferencesView({ groupId, groupName, onClose, showHeader =
         <div className="grid gap-4 py-2">
           <div className="space-y-2">
             <Label htmlFor="group-cwd">Default working directory</Label>
-            <Input
+            <PathInput
               id="group-cwd"
+              mode="directory"
               value={prefs.defaultWorkingDirectory ?? ""}
-              onChange={(e) =>
-                setPrefs({ ...prefs, defaultWorkingDirectory: e.target.value || null })
+              onChange={(v) =>
+                setPrefs({ ...prefs, defaultWorkingDirectory: v || null })
               }
               placeholder="/path/to/workspace"
-              className="bg-card/50 border-border focus:border-primary"
             />
           </div>
 

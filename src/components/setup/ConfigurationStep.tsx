@@ -6,7 +6,7 @@
  * Allows users to configure ports and working directory.
  */
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useSetupWizard } from "./SetupWizardContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Folder, Globe, Terminal, RefreshCw, AlertCircle } from "lucide-react";
+import { PathInput } from "@/components/common/PathInput";
 
 // Helper to get electron API if available
 function getElectronSelectDirectory(): (() => Promise<string | null>) | null {
@@ -26,6 +27,13 @@ function getElectronSelectDirectory(): (() => Promise<string | null>) | null {
   }
   return null;
 }
+
+// Detect Electron via useSyncExternalStore so SSR and the first client render
+// agree (both `false` → PathInput), then switch to the Electron picker after
+// hydration. Avoids a hydration mismatch in the desktop app.
+const subscribeElectron = () => () => {};
+const getIsElectron = () => getElectronSelectDirectory() !== null;
+const getServerIsElectron = () => false;
 
 export function ConfigurationStep() {
   const {
@@ -39,6 +47,12 @@ export function ConfigurationStep() {
   } = useSetupWizard();
 
   const [validationError, setValidationError] = useState<string | null>(null);
+
+  const isElectron = useSyncExternalStore(
+    subscribeElectron,
+    getIsElectron,
+    getServerIsElectron
+  );
 
   const handleContinue = async () => {
     setValidationError(null);
@@ -90,23 +104,39 @@ export function ConfigurationStep() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex gap-2">
-              <Input
+            {isElectron ? (
+              <div className="flex gap-2">
+                <Input
+                  value={configuration.workingDirectory}
+                  onChange={(e) =>
+                    updateConfiguration({ workingDirectory: e.target.value })
+                  }
+                  placeholder={platform?.homeDirectory || "/home/user"}
+                  className="flex-1 font-mono"
+                />
+                <Button
+                  variant="outline"
+                  onClick={handleBrowseDirectory}
+                  title="Browse..."
+                >
+                  <Folder className="h-4 w-4" />
+                </Button>
+              </div>
+            ) : (
+              <PathInput
+                mode="directory"
                 value={configuration.workingDirectory}
-                onChange={(e) =>
-                  updateConfiguration({ workingDirectory: e.target.value })
-                }
+                onChange={(v) => updateConfiguration({ workingDirectory: v })}
                 placeholder={platform?.homeDirectory || "/home/user"}
-                className="flex-1 font-mono"
+                initialPath={
+                  configuration.workingDirectory ||
+                  platform?.homeDirectory ||
+                  undefined
+                }
+                browserTitle="Select Working Directory"
+                inputClassName="font-mono"
               />
-              <Button
-                variant="outline"
-                onClick={handleBrowseDirectory}
-                title="Browse..."
-              >
-                <Folder className="h-4 w-4" />
-              </Button>
-            </div>
+            )}
           </CardContent>
         </Card>
 
