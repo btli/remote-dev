@@ -14,8 +14,18 @@
  * CF-Access/session gate (`src/proxy.ts`), and `withAuth` requires a valid
  * session. The instance DB only ever contains users provisioned ONTO this
  * instance, so any authenticated caller is, by construction, an authorized
- * owner of the instance. (The optional strict requesting-email == instance-owner
- * check is deferred to B4 per the plan, §7.)
+ * owner of the instance.
+ *
+ * The plan's OPTIONAL strict "requesting-email == instance-owner" check (§7) is
+ * deliberately NOT implemented (assessed in B4, remote-dev-uqkk): there is no
+ * clean single "instance owner" identity to enforce against. Instances are
+ * seeded with a multi-value `AUTHORIZED_USERS` allow-list (→ the `authorized_user`
+ * table), not one owner email; `withAuth` exposes only `userId` (no email)
+ * here; and single-user/localhost (`RDV_BASE_PATH=""`) has no instance-owner
+ * concept at all, so a strict email gate would risk breaking that case for zero
+ * gain over the owner-by-construction model. It is documented as available
+ * future defense-in-depth (docs/SUPERVISOR_DEPLOY.md) should a per-instance
+ * owner-email config ever be introduced.
  *
  * Content-Encoding handling (verified empirically under Node 26 / undici — the
  * runtime that runs the Next app via `next start`): undici's `fetch`
@@ -41,6 +51,17 @@ import {
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("PortProxy");
+
+/**
+ * Upper bound on how long we wait for the loopback upstream. In-pod loopback to
+ * `127.0.0.1` never does DNS, so the only failure modes are an immediate
+ * `ECONNREFUSED` (nothing listening) or a hung/slow upstream (a port that
+ * accepts the connection but never responds). The timeout bounds the latter so
+ * a dead-but-not-refusing port returns a friendly 502 instead of hanging the
+ * request forever. Generous enough for legitimately slow first-paint dev
+ * servers (SSR cold start, on-demand bundling).
+ */
+const UPSTREAM_TIMEOUT_MS = 30_000;
 
 /**
  * Hop-by-hop headers (RFC 7230 §6.1) plus `host` that must NOT be forwarded to
@@ -156,6 +177,9 @@ async function handler(
     method: request.method,
     headers: buildUpstreamHeaders(request),
     redirect: "manual",
+    // Bound a hung/slow upstream so a dead-but-not-refusing port can't hang the
+    // request indefinitely (loopback never does DNS, so this is the real risk).
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
   };
   // GET/HEAD must not carry a body; everything else streams the request body.
   if (request.method !== "GET" && request.method !== "HEAD") {
@@ -179,17 +203,28 @@ async function handler(
     const code =
       cause && "code" in cause ? String((cause as { code?: unknown }).code) : "";
     const refused = code === "ECONNREFUSED";
+    // AbortSignal.timeout fires a DOMException named "TimeoutError" (some
+    // runtimes surface a plain "AbortError"); treat either as our deadline.
+    const timedOut =
+      error instanceof Error &&
+      (error.name === "TimeoutError" || error.name === "AbortError");
 
     log.warn("Upstream port unreachable", {
       port,
       refused,
+      timedOut,
       code: code || undefined,
       error: String(error),
     });
 
-    const message = refused
-      ? `Nothing is listening on port ${port} inside this instance. Start your dev server, then reload.`
-      : `Failed to reach port ${port} inside this instance.`;
+    let message: string;
+    if (refused) {
+      message = `Nothing is listening on port ${port} inside this instance. Start your dev server, then reload.`;
+    } else if (timedOut) {
+      message = `Port ${port} accepted the connection but did not respond in time inside this instance.`;
+    } else {
+      message = `Failed to reach port ${port} inside this instance.`;
+    }
 
     return new NextResponse(message, {
       status: 502,
