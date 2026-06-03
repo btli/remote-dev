@@ -150,6 +150,14 @@ export async function resolveInstanceMobileCallback(): Promise<MobileCallbackRes
       };
     }
     log.warn("OIDC session resolved but session cookie not found in store", { name });
+    // Falling through to /login would re-run OIDC and land back here (a loop):
+    // an authenticated session with a missing cookie indicates a server
+    // cookie-name misconfiguration, not an unauthenticated user. Surface an
+    // ErrorPage instead (design §5.1).
+    return {
+      kind: "error",
+      message: "Your session is missing its authentication cookie. Please sign in again.",
+    };
   }
 
   return { kind: "login" };

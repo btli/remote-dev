@@ -218,6 +218,24 @@ describe("resolveInstanceMobileCallback", () => {
     ]);
   });
 
+  it("OIDC session present but session cookie absent → error", async () => {
+    // Authenticated session, but the configured session-cookie name is NOT
+    // present in the store (server cookie-name misconfiguration). Redirecting
+    // to /login would re-run OIDC and loop back here, so surface an ErrorPage.
+    const SESSION_COOKIE_NAME = "__Secure-rdv-demo-session-token";
+    vi.mocked(cookies).mockResolvedValue(
+      makeCookieStore([["some-other-cookie", "value"]]) as ReturnType<typeof makeCookieStore>,
+    );
+    vi.mocked(getAuthSession).mockResolvedValue({
+      user: { id: "user-999", email: "oidc3@example.com", name: null },
+    });
+    vi.mocked(getSessionCookieName).mockReturnValue(SESSION_COOKIE_NAME);
+
+    const result = await resolveInstanceMobileCallback();
+
+    expect(result.kind).toBe("error");
+  });
+
   it("(d) nothing → login", async () => {
     vi.mocked(cookies).mockResolvedValue(
       makeCookieStore([]) as ReturnType<typeof makeCookieStore>,
