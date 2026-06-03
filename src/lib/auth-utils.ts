@@ -19,6 +19,7 @@ import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { validateAccessJWT } from "./cloudflare-access";
 import { createLogger } from "@/lib/logger";
+import { getOrCreateUserByEmail, ensurePrimaryUserEmail } from "@/lib/user-identity";
 
 const log = createLogger("Auth");
 
@@ -88,21 +89,10 @@ export async function getAuthSession(): Promise<AuthSession | null> {
         return null;
       }
 
-      // Get or create user in database
-      let dbUser = await db.query.users.findFirst({
-        where: eq(users.email, cfUser.email),
-      });
-
-      if (!dbUser) {
-        const [newUser] = await db
-          .insert(users)
-          .values({
-            email: cfUser.email,
-            name: cfUser.email.split("@")[0],
-          })
-          .returning();
-        dbUser = newUser;
-      }
+      // Resolve via the multi-email index so ANY of the user's emails — primary
+      // or secondary — maps back to the same account. Creates a new user (+
+      // primary user_email row) only when the email is unknown to every user.
+      const dbUser = await getOrCreateUserByEmail(cfUser.email);
 
       return {
         user: {
@@ -117,28 +107,35 @@ export async function getAuthSession(): Promise<AuthSession | null> {
   // Fall back to NextAuth session (local development)
   const session = await auth();
   if (session?.user?.id && session.user.email) {
-    // Verify user exists in database (JWT tokens persist but DB may be reset)
+    // Verify user exists in database (JWT tokens persist but DB may be reset).
+    // The JWT id is authoritative here, so resolve by id first. Select only the
+    // columns used below so the type lines up with the helper's return shape.
     let dbUser = await db.query.users.findFirst({
       where: eq(users.id, session.user.id),
+      columns: { id: true, email: true, name: true },
     });
 
-    // If user doesn't exist but email is authorized, create them
+    // If user doesn't exist but email is authorized, create them — preserving
+    // the JWT id so the existing session stays valid — via the multi-email
+    // helper so a primary user_email row is seeded alongside the user.
     if (!dbUser && session.user.email) {
       const authorized = await db.query.authorizedUsers.findFirst({
         where: eq(authorizedUsers.email, session.user.email),
       });
 
       if (authorized) {
-        const [newUser] = await db
-          .insert(users)
-          .values({
-            id: session.user.id, // Preserve the ID from JWT to avoid session invalidation
-            email: session.user.email,
-            name: session.user.name ?? session.user.email.split("@")[0],
-          })
-          .returning();
-        dbUser = newUser;
+        dbUser = await getOrCreateUserByEmail(
+          session.user.email,
+          session.user.name ?? null,
+          session.user.id // Preserve the ID from JWT to avoid session invalidation
+        );
       }
+    } else if (dbUser?.email) {
+      // Pre-existing user touched via the JWT path: make sure its primary
+      // email is present in the resolution index (covers users created before
+      // this feature shipped, in case the boot backfill hasn't run yet).
+      // Idempotent — UNIQUE(email) makes a duplicate a no-op.
+      await ensurePrimaryUserEmail(dbUser.id, dbUser.email);
     }
 
     if (!dbUser) {

@@ -38,3 +38,31 @@ const r = await db.execute(
   "select count(*) as n from sqlite_master where type='table'",
 );
 console.log(`[bootstrap-db] schema applied (${r.rows[0].n} tables) at ${url}`);
+
+// Backfill the user_email resolution index for pre-existing users. The slim
+// instance runtime image has no `src/`, so we cannot import
+// src/db/backfill-user-emails.ts here — we reimplement the SAME idempotent
+// insert as pure SQL using the same @libsql driver. Mirrors the logic in
+// src/db/backfill-user-emails.ts; keep the two in sync.
+//
+// Idempotent: `user_email.id` is generated with randomblob/hex so we don't need
+// app-side UUIDs; `INSERT OR IGNORE` + the UNIQUE(email) constraint makes a
+// re-run (or a login that already created the row) a no-op. We only select
+// users that have an email and no existing user_email row.
+const backfill = await db.execute(`
+  INSERT OR IGNORE INTO user_email (id, user_id, email, is_primary, created_at)
+  SELECT
+    lower(hex(randomblob(16))),
+    u.id,
+    u.email,
+    1,
+    CAST(strftime('%s','now') AS INTEGER) * 1000
+  FROM user u
+  WHERE u.email IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM user_email ue WHERE ue.email = u.email
+    )
+`);
+console.log(
+  `[bootstrap-db] user_email backfill: ${backfill.rowsAffected} primary row(s) created`,
+);

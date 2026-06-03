@@ -2,13 +2,11 @@ export const dynamic = "force-dynamic";
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { eq } from "drizzle-orm";
 
-import { db } from "@/db";
-import { users } from "@/db/schema";
 import { validateAccessJWT } from "@/lib/cloudflare-access";
 import { createApiKey } from "@/services/api-key-service";
 import { createLogger } from "@/lib/logger";
+import { getOrCreateUserByEmail } from "@/lib/user-identity";
 
 const log = createLogger("auth/mobile-callback");
 
@@ -25,22 +23,9 @@ export default async function MobileCallbackPage() {
     return <ErrorPage message="Your Cloudflare Access token is invalid or expired." />;
   }
 
-  // Get or create user
-  let user = await db.query.users.findFirst({
-    where: eq(users.email, cfUser.email),
-  });
-
-  if (!user) {
-    const [newUser] = await db
-      .insert(users)
-      .values({
-        id: crypto.randomUUID(),
-        email: cfUser.email,
-        name: cfUser.email.split("@")[0],
-      })
-      .returning();
-    user = newUser;
-  }
+  // Resolve via the multi-email index so any of the user's emails maps to the
+  // same account (creates user + primary user_email row when unknown).
+  const user = await getOrCreateUserByEmail(cfUser.email);
 
   // Use the standard createApiKey service (handles prefix + hash correctly)
   const result = await createApiKey(user.id, "Mobile App");

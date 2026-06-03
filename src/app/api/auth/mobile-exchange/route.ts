@@ -7,12 +7,10 @@
 
 import { NextResponse } from "next/server";
 import { createLogger } from "@/lib/logger";
-import { eq } from "drizzle-orm";
 
-import { db } from "@/db";
-import { users } from "@/db/schema";
 import { validateAccessJWT } from "@/lib/cloudflare-access";
 import { createApiKey } from "@/services/api-key-service";
+import { getOrCreateUserByEmail } from "@/lib/user-identity";
 
 const log = createLogger("api/auth");
 
@@ -37,22 +35,9 @@ export async function POST(request: Request) {
       );
     }
 
-    // Get or create user
-    let user = await db.query.users.findFirst({
-      where: eq(users.email, cfUser.email),
-    });
-
-    if (!user) {
-      const [newUser] = await db
-        .insert(users)
-        .values({
-          id: crypto.randomUUID(),
-          email: cfUser.email,
-          name: cfUser.email.split("@")[0],
-        })
-        .returning();
-      user = newUser;
-    }
+    // Resolve via the multi-email index so any of the user's emails maps to the
+    // same account (creates user + primary user_email row when unknown).
+    const user = await getOrCreateUserByEmail(cfUser.email);
 
     // Use the standard createApiKey service (handles prefix + hash correctly)
     const result = await createApiKey(user.id, "Mobile App");

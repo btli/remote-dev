@@ -601,6 +601,24 @@ function runMigration(): boolean {
     "GitHub account metadata backfill"
   );
 
+  // Backfill the user_email resolution index: every existing user without a
+  // primary user_email row gets one (idempotent). Runs after db:push created
+  // the table, so multi-email resolution works for pre-existing accounts.
+  //
+  // GUARDED (defense-in-depth): unlike the best-effort github-accounts backfill
+  // above, this one gates auth — so a failure ABORTS the deploy (mirrors the
+  // db:push guard) rather than serving with an incomplete index. The
+  // self-healing resolver fallback (src/lib/user-identity.ts) already keeps
+  // resolution correct if this is skipped, but failing the deploy surfaces the
+  // problem instead of silently degrading to per-request lazy heals.
+  if (!runCommand(
+    ["bun", "run", "db:backfill-user-emails"],
+    PROJECT_ROOT,
+    "user_email index backfill"
+  )) {
+    return false;
+  }
+
   return true;
 }
 

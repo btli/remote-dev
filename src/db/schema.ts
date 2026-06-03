@@ -22,6 +22,46 @@ export const users = sqliteTable("user", {
   image: text("image"),
 });
 
+/**
+ * Multiple email addresses per user (identity-resolution index).
+ *
+ * `user.email` remains the canonical/display email. This table is the
+ * resolution index that maps EVERY email a user owns — including their primary —
+ * to their `user.id`. Identity-resolution-by-email paths (Cloudflare Access,
+ * credentials, mobile auth) look an inbound email up HERE so a person whose IdP
+ * email differs from their original account email still resolves to the SAME
+ * account instead of getting a brand-new empty one.
+ *
+ * Invariants:
+ *  - `email` is globally UNIQUE → an email maps to exactly one user (a racing
+ *    insert under another user fails rather than silently reassigning).
+ *  - Each user has exactly one row with `isPrimary = true` (its `user.email`).
+ *  - Deleting a user cascades its email rows away.
+ */
+export const userEmails = sqliteTable(
+  "user_email",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    email: text("email").notNull().unique(),
+    isPrimary: integer("is_primary", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    // Resolution lookups hit `email`. The column-level .unique() above already
+    // creates a unique index; we declare it explicitly here for parity with the
+    // other tables in this file and to give it a stable name.
+    uniqueIndex("user_email_email_unique").on(table.email),
+    index("user_email_user_idx").on(table.userId),
+  ]
+);
+
 export const accounts = sqliteTable(
   "account",
   {
