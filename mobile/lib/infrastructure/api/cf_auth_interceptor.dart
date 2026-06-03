@@ -3,26 +3,57 @@ import 'dart:io' show HttpHeaders;
 
 import 'package:dio/dio.dart';
 
+import '../../domain/auth_cookie.dart';
+
 /// Holds the auth material attached by [CfAuthInterceptor] on each
 /// outbound request.
 ///
-/// At least one of [apiKey] / [cfCookie] must be non-empty for the
+/// At least one of [apiKey] / [cookies] must be non-empty for the
 /// request to succeed against a remote server:
-/// - Servers fronted by CF Access need `Cookie: CF_Authorization=<jwt>`
-///   for the CF tunnel to admit the request.
+/// - Servers fronted by CF Access or OIDC need a `Cookie:` header carrying
+///   the relevant tokens (e.g. `CF_Authorization=<jwt>` or
+///   `__Secure-next-auth.session-token=<tok>`). All cookies in [cookies]
+///   are joined as `name=value; …` and appended to any existing `Cookie`
+///   header on the outbound request.
 /// - The Next.js auth layer accepts either an authenticated session
 ///   (impossible from a Dio client) OR `Authorization: Bearer <apiKey>`.
-/// - With both present we get the strongest combo: CF admits the
+/// - With both present we get the strongest combo: the tunnel admits the
 ///   request, and the app server authenticates it via the API key.
+///
+/// [cfCookie] is a **deprecated** single-cookie shorthand kept for call-site
+/// compatibility during migration. New code should pass credentials via
+/// [cookies]. When [cfCookie] is non-null and [cookies] is empty, the
+/// interceptor synthesises `[AuthCookie(name:"CF_Authorization", ...)]`
+/// so that old callers continue to work unchanged.
 class AuthMaterial {
-  const AuthMaterial({this.apiKey, this.cfCookie});
+  const AuthMaterial({
+    this.apiKey,
+    this.cfCookie,
+    this.cookies = const [],
+  });
 
   final String? apiKey;
+
+  /// Deprecated: prefer [cookies].
   final String? cfCookie;
+
+  /// Named auth cookies to be sent as `Cookie: name=value; …`.
+  final List<AuthCookie> cookies;
 
   bool get isEmpty =>
       (apiKey == null || apiKey!.isEmpty) &&
-      (cfCookie == null || cfCookie!.isEmpty);
+      _effectiveCookies.isEmpty;
+
+  /// Resolved cookie list: [cookies] when non-empty; otherwise synthesise
+  /// from legacy [cfCookie] for backwards compatibility.
+  List<AuthCookie> get _effectiveCookies {
+    if (cookies.isNotEmpty) return cookies;
+    final cf = cfCookie;
+    if (cf != null && cf.isNotEmpty) {
+      return [AuthCookie(name: 'CF_Authorization', value: cf, path: '/')];
+    }
+    return const [];
+  }
 }
 
 /// Reads the active server's auth material (API key + CF Access JWT) and
@@ -128,8 +159,8 @@ class CfAuthInterceptor extends Interceptor {
     // client should follow — if that changes, callers will need an
     // opt-out per request (e.g., a RequestOptions.extra flag).
     options.followRedirects = false;
-    options.validateStatus = (status) =>
-        status != null && status >= 200 && status < 300;
+    options.validateStatus =
+        (status) => status != null && status >= 200 && status < 300;
 
     final material = await authReader(serverId);
 
@@ -138,20 +169,21 @@ class CfAuthInterceptor extends Interceptor {
       options.headers[HttpHeaders.authorizationHeader] = 'Bearer $apiKey';
     }
 
-    final cookie = material.cfCookie;
-    if (cookie != null && cookie.isNotEmpty) {
-      // Dio's headers map is case-sensitive; look up any existing
-      // Cookie key (regardless of casing) so we append rather than
-      // shadow when something upstream already set one.
+    final effectiveCookies = material._effectiveCookies;
+    if (effectiveCookies.isNotEmpty) {
+      // Build the cookie string from all auth cookies: "name=value; name=value".
+      final newPart = effectiveCookies.map((c) => '${c.name}=${c.value}').join('; ');
+
+      // Dio's headers map is case-sensitive; look up any existing Cookie key
+      // (regardless of casing) so we append rather than shadow when something
+      // upstream already set one.
       final existingKey = options.headers.keys.firstWhere(
         (k) => k.toLowerCase() == HttpHeaders.cookieHeader,
         orElse: () => HttpHeaders.cookieHeader,
       );
       final existing = options.headers[existingKey] as String?;
-      final cfPart = 'CF_Authorization=$cookie';
-      options.headers[existingKey] = existing == null || existing.isEmpty
-          ? cfPart
-          : '$existing; $cfPart';
+      options.headers[existingKey] =
+          existing == null || existing.isEmpty ? newPart : '$existing; $newPart';
     }
     handler.next(options);
   }
@@ -239,15 +271,13 @@ class CfAuthInterceptor extends Interceptor {
 
     if (status != null && _redirectStatuses.contains(status)) {
       final location = _headerValue(response, HttpHeaders.locationHeader);
-      if (location != null &&
-          location.toLowerCase().contains(_cfAccessHost)) {
+      if (location != null && location.toLowerCase().contains(_cfAccessHost)) {
         return true;
       }
     }
 
     if (status == 200) {
-      final contentType =
-          _headerValue(response, HttpHeaders.contentTypeHeader);
+      final contentType = _headerValue(response, HttpHeaders.contentTypeHeader);
       if (contentType != null &&
           contentType.toLowerCase().contains('text/html')) {
         return true;

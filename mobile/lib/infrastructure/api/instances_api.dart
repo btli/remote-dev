@@ -53,14 +53,15 @@ class InstancesApi {
       CfAuthInterceptor(
         dio: _dio,
         serverId: hostId,
-        // Host-CF-only: no API key at the host-root layer. The interceptor
-        // attaches just `Cookie: CF_Authorization=<hostCfToken>`.
+        // Host-auth-only: no API key at the host-root discovery layer.
+        // The interceptor attaches all host auth cookies (OIDC session cookie,
+        // CF Authorization, etc.) from the resolved list.
         authReader: (id) async {
-          final cfToken = await credentials.getHostCfToken(id);
-          return AuthMaterial(apiKey: null, cfCookie: cfToken);
+          final hostCookies = await credentials.getHostAuthCookies(id);
+          return AuthMaterial(cookies: hostCookies);
         },
         // Discovery does not drive an interactive re-auth: the caller already
-        // owns a host CF token, and a failed discovery just surfaces as an
+        // owns a host auth token, and a failed discovery just surfaces as an
         // error the picker can retry. Null refresh → interceptor falls through.
         refreshAuth: (_) async => null,
         onReauthNeeded: () {},

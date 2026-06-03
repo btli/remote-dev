@@ -8,6 +8,7 @@ import 'package:mocktail/mocktail.dart';
 import 'package:remote_dev/application/state/active_connection.dart';
 import 'package:remote_dev/domain/active_node.dart';
 import 'package:remote_dev/domain/channel.dart';
+import 'package:remote_dev/domain/auth_cookie.dart';
 import 'package:remote_dev/domain/host_config.dart';
 import 'package:remote_dev/domain/workspace_config.dart';
 import 'package:remote_dev/infrastructure/api/channels_api.dart';
@@ -82,18 +83,22 @@ class _MockCookieSeeder extends Mock implements WebViewCookieSeeder {}
 
 _MockCredentialsStore _fastCredentials() {
   final m = _MockCredentialsStore();
-  when(() => m.getHostCfToken(any())).thenAnswer((_) async => 'cf-jwt-stub');
+  when(() => m.getInstanceCookies(any(), any())).thenAnswer(
+    (_) async => const [
+      AuthCookie(name: 'CF_Authorization', value: 'cf-jwt-stub', path: '/'),
+    ],
+  );
   return m;
 }
 
 _MockCookieSeeder _fastSeeder() {
   final m = _MockCookieSeeder();
   when(
-    () => m.seedCfCookie(
+    () => m.seedAuthCookies(
       serverOrigin: any(named: 'serverOrigin'),
-      value: any(named: 'value'),
+      cookies: any(named: 'cookies'),
     ),
-  ).thenAnswer((_) async => true);
+  ).thenAnswer((_) async {});
   return m;
 }
 
@@ -141,9 +146,8 @@ ActiveConnection _conn({
       id: hostId,
       label: 'Work',
       origin: origin,
-      kind: basePath.isEmpty
-          ? HostKind.singleWorkspace
-          : HostKind.multiWorkspace,
+      kind:
+          basePath.isEmpty ? HostKind.singleWorkspace : HostKind.multiWorkspace,
       createdAt: now,
       lastUsedAt: now,
     ),
@@ -161,8 +165,9 @@ ActiveConnection _conn({
 void main() {
   setUpAll(() {
     // mocktail requires a fallback for non-nullable named-args matched
-    // via `any(named: ...)`. `seedCfCookie` takes a non-nullable Uri.
+    // via `any(named: ...)`. `seedAuthCookies` takes a non-nullable Uri.
     registerFallbackValue(Uri.parse('https://fallback.example.com'));
+    registerFallbackValue(<AuthCookie>[]);
   });
 
   testWidgets('ChannelScreen mounts with the channel AppBar', (tester) async {
@@ -302,8 +307,7 @@ void main() {
         expect(
           observer.popped,
           isEmpty,
-          reason:
-              'When the embedded PWA consumes the back gesture, the native '
+          reason: 'When the embedded PWA consumes the back gesture, the native '
               'route must stay put — otherwise the user gets a double-back.',
         );
         expect(find.byType(ChannelScreen), findsOneWidget);
@@ -356,8 +360,7 @@ void main() {
         expect(
           observer.popped,
           isNotEmpty,
-          reason:
-              'When the embedded PWA declines the back gesture, the native '
+          reason: 'When the embedded PWA declines the back gesture, the native '
               'shell must fall back to Navigator.maybePop().',
         );
       },
@@ -533,9 +536,9 @@ void main() {
       );
       // Cookie seeding still targets the bare HOST origin (host-scoped).
       verify(
-        () => seeder.seedCfCookie(
+        () => seeder.seedAuthCookies(
           serverOrigin: Uri.parse('https://h'),
-          value: any(named: 'value'),
+          cookies: any(named: 'cookies'),
         ),
       ).called(1);
     },

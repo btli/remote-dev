@@ -61,8 +61,7 @@ class NoActiveServerError extends Error {
   NoActiveServerError();
 
   @override
-  String toString() =>
-      'No active server. Sign in via the server picker first.';
+  String toString() => 'No active server. Sign in via the server picker first.';
 }
 
 /// Build a silent-refresh callback that the [CfAuthInterceptor] will
@@ -95,18 +94,31 @@ Future<AuthMaterial?> Function() _buildWorkspaceRefreshAuth(
     final launcher = MobileCallbackLoginLauncher(
       deepLinkStream: ref.read(deepLinkStreamProvider),
     );
+    // Use loginInstance so OIDC callbacks (authCookies, no apiKey) are handled.
     final result =
-        await launcher.login(serverUrl: Uri.parse(conn.effectiveUrl));
+        await launcher.loginInstance(serverUrl: Uri.parse(conn.effectiveUrl));
     if (result == null) return null;
 
     final creds = ref.read(mobileCredentialsStoreProvider);
-    // CF token is host-wide; API key is per-workspace.
+    // Persist workspace auth cookies (OIDC session-token or CF JWT).
+    await creds.setWorkspaceAuthCookies(
+      conn.workspace.id,
+      result.authCookies,
+    );
+    // apiKey is optional (null for OIDC).
+    final apiKey = result.apiKey;
+    if (apiKey != null && apiKey.isNotEmpty) {
+      await creds.setWorkspaceApiKey(conn.workspace.id, apiKey);
+    }
+    // Legacy compat: refresh host cfToken when present in callback.
     final cf = result.cfToken;
-    if (cf != null && cf.isNotEmpty) {
+    if (cf.isNotEmpty) {
       await creds.setHostCfToken(conn.host.id, cf);
     }
-    await creds.setWorkspaceApiKey(conn.workspace.id, result.apiKey);
-    return AuthMaterial(apiKey: result.apiKey, cfCookie: result.cfToken);
+    return AuthMaterial(
+      apiKey: apiKey,
+      cookies: result.authCookies,
+    );
   };
 }
 
@@ -234,7 +246,9 @@ void main() async {
   // (legacy keys are retained). On error we log and continue so the app still
   // launches — the migration can resume on the next cold start.
   try {
-    await container.read(hostWorkspaceStoreProvider).migrateLegacyServersIfNeeded();
+    await container
+        .read(hostWorkspaceStoreProvider)
+        .migrateLegacyServersIfNeeded();
   } catch (e) {
     debugPrint('[Migration] migrateLegacyServersIfNeeded failed: $e');
   }

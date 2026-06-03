@@ -149,6 +149,31 @@ export function getSessionCookieNameCandidates(): string[] {
 }
 
 /**
+ * Returns true when at least one candidate session cookie (or a numeric chunk
+ * of one, e.g. `<name>.0`, `<name>.1`) is present among the supplied cookie
+ * names.
+ *
+ * NextAuth JWEs that exceed the 4 KB cookie limit are split across numbered
+ * chunks: the browser sends `<name>.0` and optionally `<name>.1`, … instead
+ * of the bare `<name>`. The scoped presence gate must recognise these variants
+ * so that a chunked session does not cause a spurious redirect to /login.
+ *
+ * @param presentCookieNames - the names of all cookies on the incoming request
+ *   (from `request.cookies.getAll().map((c) => c.name)`)
+ */
+export function hasSessionCookie(presentCookieNames: string[]): boolean {
+  const candidates = getSessionCookieNameCandidates();
+  const present = new Set(presentCookieNames);
+  return candidates.some(
+    (c) =>
+      present.has(c) ||
+      presentCookieNames.some(
+        (n) => n.startsWith(`${c}.`) && /^\d+$/.test(n.slice(c.length + 1)),
+      ),
+  );
+}
+
+/**
  * Returns a NextAuth `cookies` config block that path-scopes every cookie to
  * the current instance's basePath. Returns `undefined` when there is no
  * basePath, so NextAuth uses its built-in defaults (single-server mode).
