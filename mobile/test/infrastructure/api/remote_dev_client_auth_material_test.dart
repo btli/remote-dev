@@ -1,7 +1,7 @@
-/// Tests for the Task 8 AuthMaterial build paths in RemoteDevClient:
-///   - forWorkspace builds merged AuthMaterial from ws authCookies + host authCookies
-///   - OIDC workspace (authCookies, no apiKey) yields AuthMaterial with cookies + null apiKey
-///   - merging deduplicates cookies by name (workspace-scoped ones win)
+// Tests for the Task 8 AuthMaterial build paths in RemoteDevClient:
+//   - forWorkspace builds merged AuthMaterial from ws authCookies + host authCookies
+//   - OIDC workspace (authCookies, no apiKey) yields AuthMaterial with cookies + null apiKey
+//   - merging deduplicates cookies by name (workspace-scoped ones win)
 import 'dart:io' show HttpHeaders;
 import 'dart:typed_data';
 
