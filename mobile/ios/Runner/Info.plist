@@ -43,8 +43,6 @@
 		<string>Remote Dev needs access to your photo library so you can paste screenshots into a terminal session.</string>
 		<key>NSCameraUsageDescription</key>
 		<string>Remote Dev uses the camera to capture images you paste into terminal sessions.</string>
-		<key>NSMicrophoneUsageDescription</key>
-		<string>Remote Dev uses the microphone for voice dictation of terminal input.</string>
 		<key>UIBackgroundModes</key>
 		<array>
 			<string>remote-notification</string>

@@ -7,9 +7,9 @@
  * dispatched between shell, agent, file, browser, and loop views. After A2,
  * `SessionManager.tsx` dispatches directly via
  * {@link TerminalTypeClientRegistry}, so this file narrows its job to what
- * it does best: render a `Terminal` with an overlayed voice mic + agent
- * exit screen. It is no longer the canonical entry point for file/browser/
- * loop sessions — those are each dispatched to their own plugin component.
+ * it does best: render a `Terminal` with an overlayed agent exit screen. It
+ * is no longer the canonical entry point for file/browser/loop sessions —
+ * those are each dispatched to their own plugin component.
  *
  * Kept as the fallback content for the (unused-from-registry) legacy
  * combined plugin shim so the deprecated `TerminalTypePlugin` shape still
@@ -20,7 +20,6 @@ import { useState, useRef, useCallback } from "react";
 import type { TerminalSession } from "@/types/session";
 import { Terminal, type TerminalRef } from "./Terminal";
 import { AgentExitScreen } from "./AgentExitScreen";
-import { VoiceMicButton } from "./VoiceMicButton";
 import type { ConnectionStatus } from "@/types/terminal";
 import type { SessionStatusIndicator, SessionProgress } from "@/types/terminal-type";
 import { useSessionContext } from "@/contexts/SessionContext";
@@ -176,14 +175,6 @@ export function TerminalTypeRenderer({
 
       {isAgent && (
         <>
-          {/* Voice mic button — rendered outside Terminal to avoid xterm canvas stacking */}
-          <div
-            className="absolute top-2 left-2 z-50"
-            style={isRecording ? { left: "5.5rem" } : undefined}
-          >
-            <VoiceMicButton getWebSocket={() => terminalRef.current?.getWebSocket() ?? null} />
-          </div>
-
           {/* Agent Exit Screen Overlay */}
           {agentExitInfo && (
             <AgentExitScreen

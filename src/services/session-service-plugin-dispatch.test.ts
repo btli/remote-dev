@@ -156,10 +156,6 @@ vi.mock("@/services/api-key-service", () => ({
   createApiKey: vi.fn(async () => ({ key: "test-api-key" })),
 }));
 
-vi.mock("@/services/voice-shim-service", () => ({
-  ensureSoxShim: vi.fn(() => "/tmp/sox-shim"),
-}));
-
 vi.mock("@/infrastructure/container", () => ({
   githubAccountRepository: {
     findByProject: vi.fn(async () => null),

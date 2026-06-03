@@ -33,7 +33,6 @@ a PWA, or run the native desktop and mobile apps — your work follows you.
 - **Agent profiles** — Each profile is a fully isolated environment (its own `HOME`, agent config, git identity, and secrets) with per-profile theming.
 - **Live status & exit handling** — Agent sessions report running/idle/waiting state and offer a restart screen on exit.
 - **Peer messaging** — Agents in the same project discover each other and coordinate over an MCP push channel, with a hook-based fallback.
-- **Voice input** — Dictate into agent sessions with a built-in voice mic.
 
 ### Organization & Collaboration
 - **Project tree** — A two-level group + project hierarchy with preference inheritance (Default → User → Group chain → Project).
