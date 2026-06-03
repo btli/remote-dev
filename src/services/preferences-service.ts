@@ -19,7 +19,7 @@ import type {
   AgentProviderSettingsMap,
 } from "@/types/preferences";
 import type { AgentProviderType } from "@/types/session";
-import type { PortValidationResult } from "@/types/environment";
+import type { PortValidationWithRuntimeResult } from "@/types/environment";
 import { BEADS_SECTION_EXPAND_DEFAULTS, type BeadsSectionExpandDefaults } from "@/types/preferences";
 import { safeJsonParse } from "@/lib/utils";
 import { PreferencesServiceError } from "@/lib/errors";
@@ -38,7 +38,7 @@ import {
 } from "@/types/pinned-files";
 import {
   syncPortRegistry,
-  validatePorts,
+  validatePortsRuntime,
   deletePortsForFolder,
 } from "@/services/port-registry-service";
 
@@ -245,7 +245,13 @@ export async function getFolderPreferencesChain(
  */
 export interface UpdateFolderPreferencesResult {
   preferences: FolderPreferences;
-  portValidation: PortValidationResult;
+  /**
+   * Port validation now includes runtime (lsof) conflicts in addition to the
+   * declarative database conflicts. `PortValidationWithRuntimeResult` is a
+   * superset of the old `PortValidationResult`, so existing consumers reading
+   * `conflicts`/`hasConflicts` are unaffected.
+   */
+  portValidation: PortValidationWithRuntimeResult;
 }
 
 /**
@@ -323,8 +329,10 @@ export async function updateFolderPreferences(
   }
 
   // Validate ports BEFORE syncing to detect conflicts against committed state
-  // This prevents TOCTOU issues where concurrent updates could miss conflicts
-  const portValidation = await validatePorts(
+  // This prevents TOCTOU issues where concurrent updates could miss conflicts.
+  // Uses the runtime-aware validator so the result also surfaces ports that are
+  // actually in use on the system (lsof), not just declarative DB conflicts.
+  const portValidation = await validatePortsRuntime(
     folderId,
     userId,
     result.environmentVars
