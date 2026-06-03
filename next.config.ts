@@ -36,7 +36,7 @@ const nextConfig: NextConfig = {
   // `RDV_BASE_PATH=""` (single-server) it inlines `""`, byte-identical behavior.
   env: { RDV_BASE_PATH: basePath },
   output: "standalone",
-  serverExternalPackages: ["@libsql/client", "mysql2"],
+  serverExternalPackages: ["@libsql/client", "better-sqlite3", "pg", "mysql2"],
   outputFileTracingExcludes: {
     "*": [".agents/**", ".claude/**", ".claude-plugin/**"],
   },
