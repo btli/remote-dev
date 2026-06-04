@@ -70,7 +70,7 @@ async function waitForOutput(
   pattern: RegExp,
   onRetry?: () => Promise<void>,
   intervalMs = 150,
-  timeoutMs = 6000,
+  timeoutMs = 4000,
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   const retryAt = onRetry ? Date.now() + Math.floor(timeoutMs / 2) : Infinity;
@@ -334,8 +334,10 @@ describe("Environment Persistence Integration", () => {
       // (1) Readiness wait: poll the visible pane until two consecutive
       // snapshots are identical (no more rc-time output) — proof the shell is
       // idle at a prompt. Bounded so a pathological host still proceeds. The
-      // combined worst case here (quiescent ≤3s + output wait ≤6s = 9s) stays
-      // under vitest's 10s testTimeout; both phases return early on success.
+      // combined worst case here (quiescent ≤3s + output wait ≤4s = 7s) stays
+      // under vitest's 10s testTimeout with ~3s of headroom for per-call tmux
+      // `execFile` overhead under heavy parallel load; both phases return early
+      // on success.
       await waitForPaneQuiescent(sessionName);
 
       // (2) Send an echo whose output is keyed by the unique sentinel. The
