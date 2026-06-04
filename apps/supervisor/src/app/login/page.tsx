@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { signIn, isOidcConfigured, oidcDisplayName, OIDC_PROVIDER_ID } from "@/auth";
+import { safeCallbackPath } from "@/lib/safe-callback-path";
 
 /**
  * Supervisor login page — native OIDC sign-in.
@@ -14,8 +15,14 @@ import { signIn, isOidcConfigured, oidcDisplayName, OIDC_PROVIDER_ID } from "@/a
  * The closed-allowlist `signIn` callback in `src/auth.ts` still decides whether
  * the authenticated email is actually allowed in.
  */
-export default function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const oidcEnabled = isOidcConfigured();
+  const sp = await searchParams;
+  const redirectTo = safeCallbackPath(sp.callbackUrl) ?? "/";
 
   return (
     <main className="mx-auto flex min-h-svh max-w-md flex-col items-center justify-center px-6 text-center">
@@ -31,7 +38,7 @@ export default function LoginPage() {
           <form
             action={async () => {
               "use server";
-              await signIn(OIDC_PROVIDER_ID, { redirectTo: "/" });
+              await signIn(OIDC_PROVIDER_ID, { redirectTo });
             }}
             className="mt-8 w-full"
           >

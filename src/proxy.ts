@@ -180,9 +180,15 @@ export async function proxy(request: NextRequest) {
     request.nextUrl.origin,
   );
   if (!isLoggedIn && !isLoginPage) {
-    return tagInstance(
-      NextResponse.redirect(new URL(prefixPath("/login"), redirectOrigin))
-    );
+    const loginUrl = new URL(prefixPath("/login"), redirectOrigin);
+    // Preserve where the user was headed so post-login returns there instead
+    // of "/". Critical for the mobile `/<slug>/auth/mobile-callback` deep-link
+    // bridge: NextAuth sends the user to this callbackUrl after OIDC sign-in.
+    // `pathname` is basePath-stripped; re-add the prefix so the value is the
+    // full external path the login button hands to signIn({ callbackUrl }).
+    const target = `${prefixPath(pathname)}${request.nextUrl.search}`;
+    loginUrl.searchParams.set("callbackUrl", target);
+    return tagInstance(NextResponse.redirect(loginUrl));
   }
 
   // Only auto-redirect away from /login when isLoggedIn is a REAL validation
