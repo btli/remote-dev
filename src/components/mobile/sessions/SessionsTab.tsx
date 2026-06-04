@@ -19,7 +19,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type ComponentType } from "react";
 import dynamic from "next/dynamic";
-import { ChevronDown, Plus } from "lucide-react";
+import { Bell, ChevronDown, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
@@ -30,6 +30,7 @@ import {
 import { useSessionContext } from "@/contexts/SessionContext";
 import type { TerminalSession } from "@/types/session";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
+import { useJumpToAttention } from "@/hooks/useJumpToAttention";
 
 import { ActionSheet, type ActionSheetItem } from "../common/ActionSheet";
 
@@ -95,6 +96,18 @@ function lastActivityTime(session: TerminalSession): number {
 export function SessionsTab({ isGitHubConnected }: SessionsTabProps) {
   const projectTree = useProjectTree();
   const sessionCtx = useSessionContext();
+
+  // [n6uc.5] Mobile parity: a FAB to cycle to the next agent needing attention.
+  const { jumpNext } = useJumpToAttention();
+  const needsAttention = useMemo(
+    () =>
+      sessionCtx.sessions.some(
+        (s) =>
+          sessionCtx.sessionMetadata[s.id]?.attention ||
+          ["waiting", "error"].includes(sessionCtx.agentActivityStatuses[s.id] ?? ""),
+      ),
+    [sessionCtx.sessions, sessionCtx.sessionMetadata, sessionCtx.agentActivityStatuses],
+  );
 
   const [treeSheetOpen, setTreeSheetOpen] = useState(false);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
@@ -460,6 +473,22 @@ export function SessionsTab({ isGitHubConnected }: SessionsTabProps) {
           )}
         </div>
       </div>
+
+      {/* [n6uc.5] Jump-to-next-attention FAB (only when something needs it) */}
+      {needsAttention && (
+        <button
+          type="button"
+          aria-label="Jump to next agent needing attention"
+          onClick={() => jumpNext()}
+          className={cn(
+            "fixed bottom-20 right-4 z-30 flex h-12 w-12 items-center justify-center",
+            "rounded-full bg-yellow-500 text-black shadow-lg animate-pulse",
+            "active:bg-yellow-400"
+          )}
+        >
+          <Bell className="h-5 w-5" />
+        </button>
+      )}
 
       {/* Sheets */}
       <ProjectTreeSheet

@@ -8,101 +8,155 @@ import {
   GitPullRequest,
   Radio,
   ExternalLink,
+  FileDiff,
 } from "lucide-react";
-import { useSessionGitStatus } from "@/hooks/useSessionGitStatus";
+import { useSessionMetadata } from "@/hooks/useSessionMetadata";
 import { usePortContext } from "@/contexts/PortContext";
 import type { TerminalSession } from "@/types/session";
 import { AGENT_VISUALS } from "./project-tree/agentVisuals";
+import { prefixPath } from "@/lib/base-path";
 
 interface SessionMetadataBarProps {
   session: TerminalSession;
   isCollapsed?: boolean;
   /**
-   * Optional override (B2): when provided, a live/listening port chip calls
-   * `onOpenPort(port)` instead of the default behavior. The default — used by
-   * every current call site — consumes `getProxyUrl` from `PortContext` and
-   * opens the in-pod proxy URL in a new tab.
+   * Optional override: when provided, a session-owned port chip calls
+   * `onOpenPort(port)` instead of the default behavior (open the in-pod proxy
+   * URL from `PortContext.getProxyUrl` in a new tab). Used by mobile callers.
    */
   onOpenPort?: (port: number) => void;
 }
 
+/**
+ * [n6uc] At-a-glance per-session observability for a tree row: live branch +
+ * dirty count + ahead/behind, the linked PR (with review/CI tone), the
+ * session's OWN listening ports (PID-tree attributed) with quick-open through
+ * the existing authenticated port-proxy, a worktree-diff link, and a
+ * needs-attention dot. Reads `useSessionMetadata` (polled + WS-pushed).
+ */
 export function SessionMetadataBar({
   session,
   isCollapsed,
   onOpenPort,
 }: SessionMetadataBarProps) {
-  const { gitStatus } = useSessionGitStatus(session.id, !isCollapsed);
-  const { allocations, isPortActive, getProxyUrl } = usePortContext();
+  const { metadata } = useSessionMetadata(session.id, !isCollapsed);
+  const { getProxyUrl } = usePortContext();
 
-  // Open a live port via the seam. Prefer an explicit `onOpenPort` override (B2);
-  // otherwise build the proxy URL from the context and open it in a new tab.
-  // `noopener,noreferrer` so the proxied app can't reach back via `window.opener`.
+  // Open a session-owned port. Prefer an explicit override; otherwise open the
+  // in-pod proxy URL in a new tab. `noopener,noreferrer` so the proxied app
+  // can't reach back via `window.opener`.
   const handleOpenPort = (port: number) => {
     if (onOpenPort) {
       onOpenPort(port);
       return;
     }
     const url = getProxyUrl?.(port);
-    if (url) {
-      window.open(url, "_blank", "noopener,noreferrer");
-    }
+    if (url) window.open(url, "_blank", "noopener,noreferrer");
   };
 
-  // Get ports for this session's project
-  const sessionPorts = session.projectId
-    ? allocations.filter((p) => p.folderId === session.projectId)
-    : [];
+  if (isCollapsed) return null;
+
+  const git = metadata?.git;
+  const pr = metadata?.pr;
+  const ports = metadata?.ports ?? [];
+  const attention = metadata?.attention ?? null;
 
   const isAgentTerminal =
     session.terminalType === "agent" || session.terminalType === "loop";
-
-  const hasAgent =
+  const hasAgent = Boolean(
     isAgentTerminal &&
-    session.agentProvider &&
-    session.agentProvider !== "none" &&
-    AGENT_VISUALS[session.agentProvider];
+      session.agentProvider &&
+      session.agentProvider !== "none" &&
+      AGENT_VISUALS[session.agentProvider],
+  );
 
-  if (isCollapsed) return null;
-  if (!gitStatus && sessionPorts.length === 0 && !hasAgent) return null;
+  if (
+    !git?.branch &&
+    ports.length === 0 &&
+    !pr &&
+    !hasAgent &&
+    !attention
+  ) {
+    return null;
+  }
+
+  // PR tone: red when blocked (changes requested / CI failing), green when an
+  // open PR is healthy, purple when closed/merged.
+  const prTone =
+    pr?.reviewDecision === "CHANGES_REQUESTED" || pr?.ciStatus === "failing"
+      ? "text-red-400 bg-red-400/10"
+      : pr?.state === "open"
+        ? "text-green-400 bg-green-400/10"
+        : "text-purple-400 bg-purple-400/10";
 
   return (
     <div className="flex flex-wrap gap-1 mt-0.5 px-1">
-      {/* Branch chip with ahead/behind */}
-      {gitStatus?.branch && (
-        <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground/70 bg-muted/30 rounded px-1 py-0.5 max-w-[120px] truncate">
+      {/* Branch chip: name + ahead/behind + dirty count */}
+      {git?.branch && (
+        <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground/70 bg-muted/30 rounded px-1 py-0.5 max-w-[140px]">
           <GitBranch className="w-2.5 h-2.5 shrink-0" />
-          <span className="truncate">{gitStatus.branch}</span>
-          {gitStatus.ahead > 0 && (
+          <span className="truncate">{git.branch}</span>
+          {git.ahead > 0 && (
             <span className="inline-flex items-center text-green-400">
               <ArrowUp className="w-2 h-2" />
-              {gitStatus.ahead}
+              {git.ahead}
             </span>
           )}
-          {gitStatus.behind > 0 && (
+          {git.behind > 0 && (
             <span className="inline-flex items-center text-orange-400">
               <ArrowDown className="w-2 h-2" />
-              {gitStatus.behind}
+              {git.behind}
+            </span>
+          )}
+          {git.dirtyCount > 0 && (
+            <span
+              className="inline-flex items-center gap-0.5 text-amber-400"
+              title={`${git.dirtyCount} uncommitted change${git.dirtyCount === 1 ? "" : "s"}`}
+            >
+              <FileDiff className="w-2 h-2" />
+              {git.dirtyCount}
             </span>
           )}
         </span>
       )}
 
-      {/* PR chip */}
-      {gitStatus?.pr && (
-        <span
-          className={cn(
-            "inline-flex items-center gap-0.5 text-[10px] rounded px-1 py-0.5",
-            gitStatus.pr.state === "open"
-              ? "text-green-400 bg-green-400/10"
-              : "text-purple-400 bg-purple-400/10"
-          )}
+      {/* Worktree-diff link (only when there's something to review) */}
+      {git && (git.dirtyCount > 0 || git.ahead > 0) && (
+        <a
+          href={prefixPath(`/sessions/${session.id}/diff`)}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          title="View worktree diff"
+          aria-label="View worktree diff"
+          className="inline-flex items-center text-[10px] text-muted-foreground/70 bg-muted/30 rounded px-1 py-0.5 hover:text-foreground hover:bg-muted/50 transition-colors"
         >
-          <GitPullRequest className="w-2.5 h-2.5" />#{gitStatus.pr.number}
-        </span>
+          <FileDiff className="w-2.5 h-2.5" />
+        </a>
       )}
 
-      {/* Active Agent Chip */}
-      {isAgentTerminal && session.agentProvider && AGENT_VISUALS[session.agentProvider] && (
+      {/* PR chip with review/CI tone */}
+      {pr && (
+        <a
+          href={pr.url}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          title={`PR #${pr.number}${pr.isDraft ? " (draft)" : ""}${pr.reviewDecision ? ` — ${pr.reviewDecision}` : ""}${pr.ciStatus ? ` — CI ${pr.ciStatus}` : ""}`}
+          className={cn(
+            "inline-flex items-center gap-0.5 text-[10px] rounded px-1 py-0.5 hover:underline",
+            prTone,
+          )}
+        >
+          <GitPullRequest className="w-2.5 h-2.5" />#{pr.number}
+          {pr.isDraft ? <span className="opacity-70">·draft</span> : null}
+        </a>
+      )}
+
+      {/* Active agent chip */}
+      {isAgentTerminal &&
+        session.agentProvider &&
+        AGENT_VISUALS[session.agentProvider] &&
         (() => {
           const config = AGENT_VISUALS[session.agentProvider]!;
           const AgentIcon = config.icon;
@@ -110,62 +164,71 @@ export function SessionMetadataBar({
             <span
               className={cn(
                 "inline-flex items-center gap-0.5 text-[10px] border rounded px-1 py-0.5 shrink-0",
-                config.classes
+                config.classes,
               )}
             >
               <AgentIcon className="w-2.5 h-2.5 shrink-0" />
               <span>{config.label}</span>
             </span>
           );
-        })()
-      )}
+        })()}
 
-      {/* Port chips */}
-      {sessionPorts.map((port) => {
-        // `isPortActive` may be absent under stubbed contexts; treat as idle.
-        const active = isPortActive?.(port.port) ?? false;
-        // Openable only when live AND a real target exists: an explicit
-        // `onOpenPort` override, or a non-null `getProxyUrl` for this port.
-        const canOpen =
-          active && (Boolean(onOpenPort) || getProxyUrl?.(port.port) != null);
-
+      {/* Per-session listening-port chips (quick-open via the port-proxy) */}
+      {ports.map((p) => {
+        const canOpen = Boolean(onOpenPort) || getProxyUrl?.(p.port) != null;
         const chipClasses = cn(
           "inline-flex items-center gap-0.5 text-[10px] rounded px-1 py-0.5",
-          active
-            ? "text-emerald-400 bg-emerald-400/10"
-            : "text-muted-foreground/70 bg-muted/30"
+          "text-emerald-400 bg-emerald-400/10",
         );
-
         if (canOpen) {
           return (
             <button
-              key={port.port}
+              key={p.port}
               type="button"
-              onClick={() => handleOpenPort(port.port)}
-              title={`Open port ${port.port}`}
-              aria-label={`Open port ${port.port}`}
+              onClick={() => handleOpenPort(p.port)}
+              title={p.process ? `Open ${p.process} on :${p.port}` : `Open port ${p.port}`}
+              aria-label={`Open port ${p.port}`}
               className={cn(
                 chipClasses,
                 "hover:bg-emerald-400/20 transition-colors",
-                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400/50"
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400/50",
               )}
             >
-              <Radio className="w-2.5 h-2.5" />:{port.port}
+              <Radio className="w-2.5 h-2.5" />:{p.port}
               <ExternalLink className="w-2 h-2" />
             </button>
           );
         }
-
         return (
           <span
-            key={port.port}
+            key={p.port}
             className={chipClasses}
-            title={active ? `Port ${port.port} active` : `Port ${port.port} idle`}
+            title={p.process ? `${p.process} on :${p.port}` : `Port ${p.port}`}
           >
-            <Radio className="w-2.5 h-2.5" />:{port.port}
+            <Radio className="w-2.5 h-2.5" />:{p.port}
           </span>
         );
       })}
+
+      {/* Needs-attention dot (highest unmet severity) */}
+      {attention && (
+        <span
+          data-attention={attention}
+          title={
+            attention === "error"
+              ? "Agent error — needs attention"
+              : "Agent waiting — needs attention"
+          }
+          className={cn(
+            "inline-flex items-center text-[10px] rounded px-1 py-0.5 font-bold leading-none",
+            attention === "error"
+              ? "text-red-400 bg-red-400/10"
+              : "text-yellow-400 bg-yellow-400/10",
+          )}
+        >
+          ●
+        </span>
+      )}
     </div>
   );
 }

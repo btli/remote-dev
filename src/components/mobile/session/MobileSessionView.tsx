@@ -33,7 +33,10 @@ import {
   useState,
 } from "react";
 
+import { useRouter } from "next/navigation";
+
 import { cn } from "@/lib/utils";
+import { prefixPath } from "@/lib/base-path";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { usePrefersReducedMotion } from "@/hooks/useMobile";
@@ -128,6 +131,7 @@ export function MobileSessionView({
 }: MobileSessionViewProps) {
   const reducedMotion = usePrefersReducedMotion();
   const sessionCtx = useSessionContext();
+  const router = useRouter();
   const prefs = usePreferencesContext();
   const { currentPreferences } = prefs;
   // `loading` may be undefined in older test fixtures that mock this
@@ -318,6 +322,12 @@ export function MobileSessionView({
     terminalRef.current?.openSearch();
   }, []);
 
+  // [n6uc.6] Open the in-app worktree diff viewer (mobile parity with the
+  // desktop metadata-bar diff link). Only wired for worktree sessions below.
+  const handleViewDiff = useCallback(() => {
+    router.push(prefixPath(`/sessions/${session.id}/diff`));
+  }, [router, session.id]);
+
   const handleAgentCloseFromExitScreen = useCallback(async () => {
     if (onClose) {
       await onClose();
@@ -457,6 +467,7 @@ export function MobileSessionView({
         }
         onOpenPeerMessages={onOpenPeerMessages}
         onOpenSearch={handleOpenSearch}
+        onViewDiff={session.worktreeBranch ? handleViewDiff : undefined}
         onSuspend={onSuspend}
         onClose={onClose}
       />

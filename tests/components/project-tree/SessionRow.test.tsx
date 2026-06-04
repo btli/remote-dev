@@ -1,14 +1,26 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { SessionRow } from "@/components/session/project-tree/SessionRow";
-// Global vi.mock of @/hooks/useSessionGitStatus and @/contexts/PortContext
+// Global vi.mock of @/hooks/useSessionMetadata and @/contexts/PortContext
 // lives in tests/setup.ts — override via mockReturnValueOnce below.
-import { useSessionGitStatus } from "@/hooks/useSessionGitStatus";
-import { usePortContext } from "@/contexts/PortContext";
+import { useSessionMetadata } from "@/hooks/useSessionMetadata";
 import type { TerminalSession } from "@/types/session";
+import type { SessionMetadata } from "@/types/session-metadata";
 
-const mockedUseSessionGitStatus = vi.mocked(useSessionGitStatus);
-const mockedUsePortContext = vi.mocked(usePortContext);
+const mockedUseSessionMetadata = vi.mocked(useSessionMetadata);
+
+/** Build a SessionMetadata fixture with sensible empty defaults. */
+function meta(overrides: Partial<SessionMetadata> = {}): SessionMetadata {
+  return {
+    sessionId: "s1",
+    git: null,
+    pr: null,
+    ports: [],
+    lastActivityAt: null,
+    attention: null,
+    ...overrides,
+  };
+}
 
 const baseProps = {
   depth: 1,
@@ -183,42 +195,32 @@ describe("SessionRow", () => {
 
   // Session metadata bar integration (remote-dev-yy0t)
   describe("SessionMetadataBar integration", () => {
-    it("renders the metadata bar when gitStatus has a branch", () => {
-      mockedUseSessionGitStatus.mockReturnValueOnce({
-        gitStatus: { branch: "feat/xyz", ahead: 1, behind: 0, pr: null },
-        loading: false,
+    it("renders the metadata bar when metadata has a branch", () => {
+      mockedUseSessionMetadata.mockReturnValueOnce({
+        metadata: meta({ git: { branch: "feat/xyz", ahead: 1, behind: 0, dirtyCount: 0 } }),
         refresh: vi.fn(),
       });
-      mockedUsePortContext.mockReturnValueOnce({ allocations: [] } as never);
       const { container } = render(<SessionRow {...baseProps} session={shellSession} />);
       expect(screen.getByText("feat/xyz")).toBeInTheDocument();
       expect(container.querySelector("svg.lucide-git-branch")).toBeTruthy();
     });
 
-    it("renders port chips from usePortContext allocations for this project", () => {
-      mockedUseSessionGitStatus.mockReturnValueOnce({
-        gitStatus: null,
-        loading: false,
+    it("renders per-session port chips from metadata", () => {
+      mockedUseSessionMetadata.mockReturnValueOnce({
+        metadata: meta({ ports: [{ port: 3000, process: "node", pid: 111 }] }),
         refresh: vi.fn(),
       });
-      mockedUsePortContext.mockReturnValueOnce({
-        allocations: [
-          { port: 3000, folderId: "p1" },
-          { port: 5173, folderId: "p2" },
-        ],
-      } as never);
       render(<SessionRow {...baseProps} session={shellSession} />);
       expect(screen.getByText(":3000")).toBeInTheDocument();
+      // A port NOT owned by this session is not surfaced.
       expect(screen.queryByText(":5173")).toBeNull();
     });
 
     it("does not render the metadata bar when there is no git status and no ports", () => {
-      mockedUseSessionGitStatus.mockReturnValueOnce({
-        gitStatus: null,
-        loading: false,
+      mockedUseSessionMetadata.mockReturnValueOnce({
+        metadata: meta(),
         refresh: vi.fn(),
       });
-      mockedUsePortContext.mockReturnValueOnce({ allocations: [] } as never);
       const { container } = render(<SessionRow {...baseProps} session={shellSession} />);
       // No GitBranch icon and no port pill
       expect(container.querySelector("svg.lucide-git-branch")).toBeNull();

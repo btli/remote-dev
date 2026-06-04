@@ -258,7 +258,30 @@ function broadcastToUser(userId: string, data: Record<string, unknown>): void {
   }
 }
 
-// Cached module reference for MCP push (avoids repeated dynamic import overhead)
+// [n6uc] Push freshly-aggregated session metadata (branch/dirty/PR/ports/
+// attention) to the owning user's clients so tree rows update live without
+// per-row polling. Fire-and-forget; failures are non-critical (the client TTL
+// poll still refreshes). Imported lazily to avoid pulling the DB-heavy service
+// into the terminal server's hot module graph at startup.
+async function broadcastSessionMetadata(
+  sessionId: string,
+  userId: string,
+): Promise<void> {
+  try {
+    const { getSessionMetadata } = await import(
+      "@/services/session-metadata-service"
+    );
+    const meta = await getSessionMetadata(sessionId, userId);
+    if (meta) broadcastToUser(userId, { type: "session_metadata", metadata: meta });
+  } catch (err) {
+    log.warn("session_metadata broadcast failed", {
+      error: String(err),
+      sessionId,
+    });
+  }
+}
+
+// Cached module references for MCP push (avoids repeated dynamic import overhead)
 let _mcpPush: typeof import("@/server/mcp-push") | null = null;
 
 async function getMcpPush() {
@@ -682,6 +705,26 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       agentLog.debug("No active WebSocket connections", { sessionId });
     }
 
+    // [n6uc] Refresh tree metadata after exit (dev servers may have stopped →
+    // ports/dirty change). Fire-and-forget, scoped to the session's owner.
+    void (async () => {
+      try {
+        const { db } = await import("@/db");
+        const { terminalSessions } = await import("@/db/schema");
+        const { eq } = await import("drizzle-orm");
+        const row = await db.query.terminalSessions.findFirst({
+          where: eq(terminalSessions.id, sessionId),
+          columns: { userId: true },
+        });
+        if (row?.userId) await broadcastSessionMetadata(sessionId, row.userId);
+      } catch (err) {
+        agentLog.warn("session_metadata refresh failed", {
+          error: String(err),
+          sessionId,
+        });
+      }
+    })();
+
     sendJson(res, 200, { success: true, sessionId, exitCode });
     return true;
   }
@@ -708,6 +751,26 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
         )
       )
       .catch((err) => agentStatusLog.error("Failed to persist activity status", { error: String(err) }));
+
+    // [n6uc] Refresh live tree metadata (dirty/ports/attention) on every status
+    // transition, scoped to the session's owner. Fire-and-forget.
+    void (async () => {
+      try {
+        const { db } = await import("@/db");
+        const { terminalSessions } = await import("@/db/schema");
+        const { eq } = await import("drizzle-orm");
+        const row = await db.query.terminalSessions.findFirst({
+          where: eq(terminalSessions.id, sessionId),
+          columns: { userId: true },
+        });
+        if (row?.userId) await broadcastSessionMetadata(sessionId, row.userId);
+      } catch (err) {
+        agentStatusLog.warn("session_metadata refresh failed", {
+          error: String(err),
+          sessionId,
+        });
+      }
+    })();
 
     // [y5ch.3] Create an in-app notification only for waiting/error statuses
     // (idle/ended/running/compacting/subagent never reach this branch — a clean

@@ -13,8 +13,18 @@ vi.mock("@/hooks/useSessionGitStatus", () => ({
   })),
 }));
 
+// [n6uc] SessionMetadataBar now reads useSessionMetadata. Default to empty
+// metadata so SessionRow renders without fetching; fixtures override per-test.
+vi.mock("@/hooks/useSessionMetadata", () => ({
+  useSessionMetadata: vi.fn(() => ({ metadata: null, refresh: vi.fn() })),
+  primeSessionMetadata: vi.fn(),
+}));
+
 vi.mock("@/contexts/PortContext", () => ({
-  usePortContext: vi.fn(() => ({ allocations: [] })),
+  usePortContext: vi.fn(() => ({
+    allocations: [],
+    getProxyUrl: (port: number) => `/proxy/${port}/`,
+  })),
   usePortContextOptional: vi.fn(() => null),
   PortProvider: ({ children }: { children: unknown }) => children,
 }));

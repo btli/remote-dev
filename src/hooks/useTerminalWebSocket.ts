@@ -300,6 +300,19 @@ export function useTerminalWebSocket({
               onAgentActivityStatusRef.current?.(msg.sessionId, msg.status);
               break;
 
+            // [n6uc] Live per-session metadata push. Re-dispatched as a DOM
+            // event so the (cache-backed) useSessionMetadata hook + SessionManager
+            // can consume it without threading another callback ref through here.
+            case "session_metadata":
+              if (msg.metadata) {
+                document.dispatchEvent(
+                  new CustomEvent("rdv:session-metadata", {
+                    detail: msg.metadata,
+                  }),
+                );
+              }
+              break;
+
             case "beads_issues_updated":
               onBeadsIssuesUpdatedRef.current?.(msg.sessionId);
               break;

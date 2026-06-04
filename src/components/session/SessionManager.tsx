@@ -52,6 +52,8 @@ import {
 import { cn } from "@/lib/utils";
 import type { TerminalWithKeyboardRef } from "@/components/terminal/TerminalWithKeyboard";
 import type { AgentActivityStatus } from "@/types/terminal-type";
+import type { SessionMetadata } from "@/types/session-metadata";
+import { useJumpToAttention } from "@/hooks/useJumpToAttention";
 import { useAgentNotifications } from "@/hooks/useAgentNotifications";
 import { useTerminalWsUrl } from "@/hooks/useTerminalWsUrl";
 import { NotificationPanel } from "@/components/notifications/NotificationPanel";
@@ -155,7 +157,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     setSessionStatusIndicator,
     setSessionProgress,
     patchSessionLocal,
+    setSessionMetadata,
   } = useSessionContext();
+
+  // [n6uc.5] Cycle focus through agents needing attention (Cmd/Ctrl+.).
+  const { jumpNext } = useJumpToAttention();
 
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [wizardFolderId, setWizardFolderId] = useState<string | null>(null);
@@ -330,6 +336,20 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       document.removeEventListener("rdv:sidebar-changed", handleSidebarChanged);
     };
   }, [debouncedRefreshSessions, debouncedRefreshFolders]);
+
+  // [n6uc] Live per-session metadata pushes (from useTerminalWebSocket's
+  // session_metadata case). Update the context (for jump/needs-attention); the
+  // useSessionMetadata cache is primed inside setSessionMetadata.
+  useEffect(() => {
+    function handleSessionMetadata(e: Event) {
+      const meta = (e as CustomEvent<SessionMetadata>).detail;
+      if (meta) setSessionMetadata(meta);
+    }
+    document.addEventListener("rdv:session-metadata", handleSessionMetadata);
+    return () => {
+      document.removeEventListener("rdv:session-metadata", handleSessionMetadata);
+    };
+  }, [setSessionMetadata]);
 
   const handlePeerMessageCreated = useCallback(
     (folderId: string, message: PeerChatMessage) => {
@@ -1576,6 +1596,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         e.preventDefault();
         setActiveSession(latestUnreadSessionId);
       }
+    }
+    // [n6uc.5] Cmd+. or Ctrl+. — cycle to the next agent needing attention.
+    if ((e.metaKey || e.ctrlKey) && e.key === ".") {
+      e.preventDefault();
+      jumpNext();
     }
   });
 

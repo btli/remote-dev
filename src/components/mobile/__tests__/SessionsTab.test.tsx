@@ -33,6 +33,9 @@ const sessionMockState = {
   resumeSession: vi.fn().mockResolvedValue(undefined),
   closeSession: vi.fn().mockResolvedValue(undefined),
   getAgentActivityStatus: vi.fn().mockReturnValue("idle"),
+  // [n6uc.5] Consumed by the jump-to-attention FAB derivation.
+  sessionMetadata: {} as Record<string, unknown>,
+  agentActivityStatuses: {} as Record<string, string>,
 };
 
 vi.mock("@/contexts/SessionContext", () => ({

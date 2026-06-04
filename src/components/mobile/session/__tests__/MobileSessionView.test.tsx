@@ -170,6 +170,21 @@ vi.mock("@/contexts/SessionContext", () => ({
   }),
 }));
 
+// [n6uc.6] MobileSessionView now calls useRouter() (for the worktree-diff
+// entry point). Stub next/navigation so the App Router invariant doesn't fire
+// in the test environment.
+const mockRouterPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    push: mockRouterPush,
+    replace: vi.fn(),
+    prefetch: vi.fn(),
+    back: vi.fn(),
+    forward: vi.fn(),
+    refresh: vi.fn(),
+  }),
+}));
+
 vi.mock("@/hooks/useMobile", () => ({
   usePrefersReducedMotion: () => false,
 }));

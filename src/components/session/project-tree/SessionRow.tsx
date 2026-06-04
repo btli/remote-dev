@@ -188,6 +188,10 @@ export function SessionRow({
         role="button"
         tabIndex={isEditing ? -1 : 0}
         aria-label={displayTitle}
+        // [n6uc] Jump-to-attention targets rows by id and reads this flag to
+        // pick the next session needing attention; also drives the ring below.
+        data-session-id={session.id}
+        data-needs-attention={isAgentAlertState ? "true" : undefined}
         draggable={draggable ?? false}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}

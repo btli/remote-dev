@@ -24,6 +24,8 @@ import type { AgentActivityStatus, SessionStatusIndicator, SessionProgress } fro
 import { isTmuxBackedTerminalType } from "@/types/terminal-type";
 import { useProjectTree } from "./ProjectTreeContext";
 import { apiFetch } from "@/lib/api-fetch";
+import type { SessionMetadata } from "@/types/session-metadata";
+import { primeSessionMetadata } from "@/hooks/useSessionMetadata";
 
 const ACTIVE_SESSION_STORAGE_KEY = "remote-dev:activeSessionId";
 const VALID_ACTIVITY_STATUSES = new Set<AgentActivityStatus>(["running", "waiting", "idle", "error", "compacting", "ended", "subagent"]);
@@ -95,6 +97,9 @@ interface SessionContextValue extends SessionState {
   /** Per-session progress bars */
   sessionProgress: Record<string, SessionProgress>;
   setSessionProgress: (sessionId: string, progress: SessionProgress | null) => void;
+  /** [n6uc] Live per-session metadata (branch/dirty/PR/ports/attention), WS-pushed. */
+  sessionMetadata: Record<string, SessionMetadata>;
+  setSessionMetadata: (metadata: SessionMetadata) => void;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -223,6 +228,13 @@ export function SessionProvider({
       if (prev[sessionId] === status) return prev;
       return { ...prev, [sessionId]: status };
     });
+  }, []);
+
+  // [n6uc] Live per-session metadata, fed by WebSocket session_metadata pushes.
+  const [sessionMetadata, setSessionMetadataState] = useState<Record<string, SessionMetadata>>({});
+  const setSessionMetadata = useCallback((metadata: SessionMetadata) => {
+    primeSessionMetadata(metadata); // keep the useSessionMetadata cache warm
+    setSessionMetadataState((prev) => ({ ...prev, [metadata.sessionId]: metadata }));
   }, []);
 
   const getAgentActivityStatus = useCallback((sessionId: string): AgentActivityStatus => {
@@ -704,6 +716,8 @@ export function SessionProvider({
       setSessionStatusIndicator,
       sessionProgress,
       setSessionProgress,
+      sessionMetadata,
+      setSessionMetadata,
     }),
     [
       state,
@@ -724,6 +738,8 @@ export function SessionProvider({
       setSessionStatusIndicator,
       sessionProgress,
       setSessionProgress,
+      sessionMetadata,
+      setSessionMetadata,
     ]
   );
 
