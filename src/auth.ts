@@ -201,6 +201,102 @@ async function isLocalhostRequest(): Promise<boolean> {
   return true;
 }
 
+/**
+ * Reconcile `AUTH_URL` with the explicit `basePath` so Auth.js stops logging
+ * `[auth][warn][env-url-basepath-mismatch]` on every request for slugged
+ * (multi-instance) deployments.
+ *
+ * ## The mismatch
+ *
+ * Slugged instances are provisioned with `AUTH_URL=https://host/<slug>` (so the
+ * URL path carries the instance prefix — see
+ * `apps/supervisor/src/lib/provisioner-builders.ts` and `scripts/init.sh`).
+ * Separately, this app pins Auth.js' `basePath` to the *full* external path
+ * `/<slug>/api/auth` (see {@link AUTH_BASE_PATH} below — required so outbound
+ * OAuth callback URLs resolve under the instance). Per-request, `@auth/core`'s
+ * `createActionURL` then compares `new URL(AUTH_URL).pathname` (`/<slug>`)
+ * against `config.basePath` (`/<slug>/api/auth`); because they differ it logs
+ * `env-url-basepath-mismatch`. Login still works (the comparison is only used
+ * to decide whether to reset the pathname), but the warning is noisy.
+ *
+ * ## The reconciliation
+ *
+ * Auth.js' actual contract is that `AUTH_URL` supplies the **origin** and
+ * `basePath` supplies the **path**. The `/<slug>` in `AUTH_URL.pathname` is
+ * redundant with our explicit `basePath` and is exactly what core flags. So we
+ * normalize the value Auth.js sees down to origin-only.
+ *
+ * Crucially we only rewrite `AUTH_URL` (which core prefers via
+ * `AUTH_URL ?? NEXTAUTH_URL`) and we *preserve the full slugged URL in*
+ * `NEXTAUTH_URL` so the two direct consumers that build slugged paths off the
+ * env keep working:
+ *   - `src/app/api/auth/github/link/route.ts` → `${NEXTAUTH_URL}/api/auth/github/callback`
+ *   - `src/app/api/auth/signout/route.ts`     → `${NEXTAUTH_URL}/login`
+ *
+ * After this:
+ *   - core `createActionURL` / `reqWithEnvURL` see origin-only `AUTH_URL`
+ *     (pathname `/`), so the warning's guard short-circuits and outbound URLs
+ *     are still built correctly from the explicit `basePath`.
+ *   - `isSecureScheme()` (auth-cookies) still reads a value beginning with the
+ *     same scheme, so cookie hardening is unchanged.
+ *
+ * No-op when `BASE_PATH` is empty (single-server): byte-identical to before.
+ * Exported for unit testing (see `src/lib/__tests__/auth-basepath.test.ts`).
+ */
+export function reconcileAuthUrlWithBasePath(
+  env: { AUTH_URL?: string; NEXTAUTH_URL?: string } = process.env,
+  basePath: string = BASE_PATH,
+): { authUrl?: string; nextAuthUrl?: string } {
+  // Single-server: nothing to reconcile.
+  if (basePath === "") {
+    return { authUrl: env.AUTH_URL, nextAuthUrl: env.NEXTAUTH_URL };
+  }
+
+  const configured = env.AUTH_URL || env.NEXTAUTH_URL;
+  if (!configured) {
+    // No URL configured (e.g. local dev relying on request-derived host).
+    // Auth.js falls back to the inbound host; nothing to normalize.
+    return { authUrl: env.AUTH_URL, nextAuthUrl: env.NEXTAUTH_URL };
+  }
+
+  let origin: string;
+  try {
+    origin = new URL(configured).origin;
+  } catch {
+    // Unparseable URL — leave both untouched so we don't mask a config error.
+    return { authUrl: env.AUTH_URL, nextAuthUrl: env.NEXTAUTH_URL };
+  }
+
+  // If the configured URL has no extra path component, it already agrees with
+  // the origin contract and core won't warn — leave it as-is.
+  if (new URL(configured).pathname === "/") {
+    return { authUrl: env.AUTH_URL, nextAuthUrl: env.NEXTAUTH_URL };
+  }
+
+  // Auth.js core (which prefers AUTH_URL) gets the origin-only value so its
+  // pathname is `/` and the per-request mismatch warning no longer fires. The
+  // direct-path consumers read NEXTAUTH_URL, which we keep (or seed) as the
+  // full slugged URL so their hand-built paths stay correct.
+  return { authUrl: origin, nextAuthUrl: env.NEXTAUTH_URL || configured };
+}
+
+// Apply the reconciliation to the live process env so both `@auth/core`
+// (origin-only AUTH_URL) and the direct-path route handlers (slugged
+// NEXTAUTH_URL) observe the values documented above. Runs after the
+// credentials gate so that gate still inspects the originally-configured URL.
+{
+  const reconciled = reconcileAuthUrlWithBasePath();
+  if (reconciled.authUrl !== undefined && reconciled.authUrl !== process.env.AUTH_URL) {
+    process.env.AUTH_URL = reconciled.authUrl;
+  }
+  if (
+    reconciled.nextAuthUrl !== undefined &&
+    reconciled.nextAuthUrl !== process.env.NEXTAUTH_URL
+  ) {
+    process.env.NEXTAUTH_URL = reconciled.nextAuthUrl;
+  }
+}
+
 // When RDV_BASE_PATH is unset, leave the `cookies` key out entirely so NextAuth
 // applies its built-in defaults (preserves AC-1: byte-identical single-server
 // behavior). When set, `buildScopedCookies` returns a fully-formed block that
@@ -233,6 +329,12 @@ const scopedCookies = buildScopedCookies();
 // which would yield just `/alpha` (no `/api/auth` suffix), so we set
 // `basePath` explicitly here — `||=` preserves our value. The route-handler
 // wrapper is the corresponding inbound side. (Opus C-2 / AC-7.)
+//
+// Because this `basePath` (`/alpha/api/auth`) intentionally differs from
+// `AUTH_URL.pathname` (`/alpha`), Auth.js core would otherwise log
+// `env-url-basepath-mismatch` on every request. `reconcileAuthUrlWithBasePath`
+// above normalizes the AUTH_URL core sees down to origin-only so that warning
+// stops while these outbound URLs keep their full path. (remote-dev-y84c.)
 const AUTH_BASE_PATH = `${BASE_PATH}/api/auth`;
 
 // Provider list is assembled before the NextAuth() call so the generic OIDC
