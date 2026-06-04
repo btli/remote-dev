@@ -1,0 +1,81 @@
+# Dev-env image CI (remote-dev-oyej.15)
+#
+# Build + smoke the "golden dev-env" Docker image (root Dockerfile, epic
+# remote-dev-oyej.7) on Node 24 BEFORE it is ever tagged/pushed. The runtime
+# stage bakes all 5 agent CLIs (claude, codex, gemini, opencode + best-effort
+# `agy`) plus sudo/apt; this workflow proves the image actually builds under CI
+# (network + Node-24 ABI) and that the 5-agent smoke gate passes.
+#
+# SCOPE: build into the LOCAL daemon (`--load`) and smoke-test only. This
+# workflow deliberately does NOT push or tag any registry image — tagging/push
+# is a SEPARATE, later step (a future release workflow or a manual
+# `docker buildx ... --push`) that should run ONLY after this gate is green.
+#
+# NODE_VERSION: passed as `24` per the task. The Dockerfile's production default
+# is the more specific `24-trixie-slim` tag (Node 24 ABI 137 + Debian trixie
+# glibc 2.41 — see the Dockerfile header); `24` here pins the same Node MAJOR for
+# the smoke assertion while exercising the full multi-stage build + agent-CLI
+# install path.
+
+name: Dev-Env Image CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - "Dockerfile"
+      - "docker/**"
+      - ".github/workflows/dev-env-image.yml"
+
+# Cancel an in-flight run when a newer commit supersedes it.
+concurrency:
+  group: dev-env-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-smoke:
+    name: Build + smoke dev-env image (Node 24)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build dev-env image (Node 24, load to local daemon)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          # Build into the local Docker daemon so the smoke step can `docker run`
+          # it. NOT pushed — tagging/push is a separate, later step.
+          load: true
+          push: false
+          tags: rdv-dev-env:ci
+          build-args: |
+            NODE_VERSION=24
+            RDV_IMAGE_FLAVOR=dev-env
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test — Node 24 + agent CLIs present
+        timeout-minutes: 5
+        # Assert Node is v24 and the 4 hard-gated agent CLIs resolve on PATH.
+        # antigravity (`agy`) is BEST-EFFORT (its installer 404s) — intentionally
+        # NOT asserted here, mirroring the Dockerfile's build-time smoke gate. A
+        # non-zero exit from this command fails the job.
+        run: |
+          docker run --rm rdv-dev-env:ci sh -lc '
+            node --version | grep -q "^v24" \
+              && command -v claude \
+              && command -v codex \
+              && command -v gemini \
+              && command -v opencode
+          '
+
+      - name: Smoke test — RDV_IMAGE_FLAVOR is dev-env
+        timeout-minutes: 5
+        run: |
+          docker run --rm rdv-dev-env:ci sh -lc '[ "$RDV_IMAGE_FLAVOR" = "dev-env" ]'
