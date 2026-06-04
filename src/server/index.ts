@@ -20,6 +20,9 @@ import { agentSchedulerOrchestrator } from "../services/agent-scheduler-orchestr
 import { updateScheduler } from "../services/update-scheduler.js";
 import { autoUpdateOrchestrator } from "../infrastructure/container.js";
 import { execFile } from "../lib/exec.js";
+// [hgwo.9] Startup diagnostic: verify installed agent CLIs still advertise their
+// resume tokens (catches non-Claude --resume drift before relying on it).
+import { runResumeFlagDiagnostics } from "../lib/agent-resume/resume-flag-diagnostics.js";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLogger } from "../lib/logger.js";
@@ -90,6 +93,11 @@ async function startServer(): Promise<void> {
 
   // Check rdv CLI availability (non-blocking, logs status)
   ensureRdvCli().catch((e) => log.warn("rdv CLI check failed", { error: String(e) }));
+
+  // [hgwo.9] Verify installed agent CLIs still advertise their resume tokens.
+  // Fire-and-forget AFTER the server is up so a slow `--help` probe never delays
+  // boot; runResumeFlagDiagnostics swallows its own errors and never throws.
+  void runResumeFlagDiagnostics();
 
   // Postgres fresh-boot: the schema is applied by the Next.js process's
   // migrate-on-boot (src/instrumentation.ts). Wait for it before starting the
