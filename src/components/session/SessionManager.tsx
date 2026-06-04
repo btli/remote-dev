@@ -387,14 +387,28 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // Handle server-pushed session rename (from `rdv session title`)
   const handleSessionRenamed = useCallback(
-    (sid: string, name: string, claudeSessionId?: string) => {
+    // [hgwo] `agentSessionId` is the generic per-provider native-id map carried
+    // by the enriched session_renamed broadcast. Back-compat: the legacy
+    // `claudeSessionId` string (from older servers) is wrapped as { claude }.
+    (
+      sid: string,
+      name: string,
+      claudeSessionId?: string,
+      agentSessionId?: Record<string, string>,
+    ) => {
       // Local-only update — the DB write already happened server-side.
       // Do NOT call updateSession() here: that sends a PATCH which sets
       // titleLocked=true, permanently preventing future title updates.
       const updates: Partial<TerminalSession> = { name };
-      if (claudeSessionId) {
+      const idMap = agentSessionId ?? (claudeSessionId ? { claude: claudeSessionId } : undefined);
+      if (idMap) {
         const existing = sessionsRef.current.find((s) => s.id === sid);
-        updates.typeMetadata = { ...existing?.typeMetadata, claudeSessionId };
+        const existingMap =
+          (existing?.typeMetadata?.agentSessionId as Record<string, string> | undefined) ?? {};
+        updates.typeMetadata = {
+          ...existing?.typeMetadata,
+          agentSessionId: { ...existingMap, ...idMap },
+        };
       }
       patchSessionLocal(sid, updates);
     },

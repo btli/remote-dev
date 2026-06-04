@@ -19,6 +19,8 @@ import {
   PROXY_WS_PATH_PATTERN,
   handleProxyWsUpgrade,
 } from "./proxy-ws-bridge.js";
+// [hgwo] provider type for the durable agent-session-id capture endpoint.
+import type { AgentProviderType } from "../types/session.js";
 
 const log = createLogger("Terminal");
 const agentLog = createLogger("AgentExit");
@@ -1226,6 +1228,26 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       }
       claudeSessionMap.set(claudeSessionId, rdvSessionId);
       ptyLog.debug("Claude session mapped", { claudeSessionId, rdvSessionId });
+      // [hgwo] Durably persist Claude's native session id to the DB (the
+      // in-memory map above is lost on terminal-server restart). This enables
+      // `claude --resume <id>` relaunch after process/server/pod death.
+      try {
+        const [{ db }, { terminalSessions }, { eq }] = await Promise.all([
+          import("@/db"), import("@/db/schema"), import("drizzle-orm"),
+        ]);
+        const sess = await db.query.terminalSessions.findFirst({
+          where: eq(terminalSessions.id, rdvSessionId),
+          columns: { userId: true },
+        });
+        if (sess) {
+          const { persistAgentSessionId } = await import("@/services/agent-session-id-service");
+          await persistAgentSessionId(rdvSessionId, sess.userId, "claude", claudeSessionId);
+        }
+      } catch (persistErr) {
+        ptyLog.warn("Failed to durably persist claude session id", {
+          rdvSessionId, error: String(persistErr),
+        });
+      }
       sendJson(res, 200, { success: true });
     } catch (error) {
       ptyLog.error("Claude session map error", { error: String(error) });
@@ -1251,6 +1273,67 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       return true;
     }
     sendJson(res, 200, { rdvSessionId });
+    return true;
+  }
+
+  // [hgwo] POST /internal/agent-session-id — durably record a provider's native
+  // session id so the agent's CONVERSATION can be resumed after process death,
+  // terminal-server restart, or pod restart. Generic across all 5 providers
+  // (Claude also pushes via the claude-session-map handler above; Codex/Gemini/
+  // OpenCode have no hook and fall back to disk discovery at relaunch).
+  if (pathname === "/internal/agent-session-id" && req.method === "POST") {
+    if (!isLocalhostRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden: localhost only" });
+      return true;
+    }
+    try {
+      const payload = await parseRequestJson(req, res);
+      if (!payload) return true;
+      const { sessionId, provider, nativeSessionId } = payload as {
+        sessionId?: string; provider?: string; nativeSessionId?: string;
+      };
+      if (!sessionId || !provider || !nativeSessionId) {
+        sendJson(res, 400, { error: "Missing sessionId, provider, or nativeSessionId" });
+        return true;
+      }
+      const [{ db }, { terminalSessions }, { eq }] = await Promise.all([
+        import("@/db"), import("@/db/schema"), import("drizzle-orm"),
+      ]);
+      const sess = await db.query.terminalSessions.findFirst({
+        where: eq(terminalSessions.id, sessionId),
+        columns: { userId: true },
+      });
+      if (!sess) {
+        sendJson(res, 404, { error: "Session not found" });
+        return true;
+      }
+      const { persistAgentSessionId } = await import("@/services/agent-session-id-service");
+      await persistAgentSessionId(
+        sessionId, sess.userId, provider as AgentProviderType, nativeSessionId,
+      );
+      // Broadcast the enriched map so connected clients update their local copy.
+      try {
+        const { getSession } = await import("@/services/session-service");
+        const updated = await getSession(sessionId, sess.userId);
+        const agentSessionId = updated?.typeMetadata?.agentSessionId as
+          | Record<string, string>
+          | undefined;
+        broadcastToUser(sess.userId, {
+          type: "session_renamed",
+          sessionId,
+          name: updated?.name ?? "",
+          agentSessionId,
+        });
+      } catch (broadcastErr) {
+        internalLog.warn("Failed to broadcast agent session id", {
+          sessionId, error: String(broadcastErr),
+        });
+      }
+      sendJson(res, 200, { applied: true });
+    } catch (error) {
+      internalLog.error("agent-session-id error", { error: String(error) });
+      sendJson(res, 500, { error: "Failed to persist agent session id" });
+    }
     return true;
   }
 
@@ -2256,6 +2339,22 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
           sessionId,
           tmuxSessionName,
         }));
+
+        // [hgwo] We took the CREATE branch for an agent session, which means
+        // the tmux session was gone — the terminal server (or the whole pod)
+        // restarted out from under a persistent agent. The fresh tmux is a bare
+        // shell, so relaunch the agent RESUMED (durable binding + native id /
+        // disk discovery) instead of leaving an empty prompt. WS-disconnect
+        // alone does NOT reach here (tmux + agent survive → the attach branch).
+        if (isAgentTerminalType(terminalType)) {
+          void import("@/server/agent-relaunch")
+            .then(({ relaunchAgentInTmux }) => relaunchAgentInTmux(sessionId, tmuxSessionName))
+            .catch((e) =>
+              agentLog.error("Relaunch failed on cold-attach", {
+                sessionId, error: String(e),
+              }),
+            );
+        }
       }
     } catch (error) {
       log.error("Failed to create/attach tmux session", { connectionId, sessionId, error: String(error) });
@@ -2497,11 +2596,32 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
                 cleanupConnection(connectionId);
               });
 
-              broadcastToSession(sessionId, {
-                type: "agent_restarted",
-                sessionId,
-                tmuxSessionName,
-              });
+              // [hgwo] The recreated tmux is a BARE shell — relaunch the agent
+              // (resumed if possible) so its conversation comes back instead of
+              // an empty prompt. Non-blocking; the PTY handlers above already
+              // stream the relaunched output. Broadcast resumed-vs-fresh once
+              // the relaunch resolves so the UI (hgwo.7) can badge it.
+              void import("@/server/agent-relaunch")
+                .then(({ relaunchAgentInTmux }) => relaunchAgentInTmux(sessionId, tmuxSessionName))
+                .then(({ resumed }) => {
+                  broadcastToSession(sessionId, {
+                    type: "agent_restarted",
+                    sessionId,
+                    tmuxSessionName,
+                    resumed,
+                  });
+                })
+                .catch((e) => {
+                  agentLog.error("Relaunch failed after restart_agent", {
+                    sessionId, error: String(e),
+                  });
+                  broadcastToSession(sessionId, {
+                    type: "agent_restarted",
+                    sessionId,
+                    tmuxSessionName,
+                    resumed: false,
+                  });
+                });
             } catch (error) {
               agentLog.error("Failed to restart agent session", { connectionId, sessionId, error: String(error) });
               // Other connections were removed from `connections` but may still

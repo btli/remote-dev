@@ -11,6 +11,7 @@
 import { RefreshCw, X, Terminal, Clock, AlertCircle, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { AgentProviderType } from "@/types/session";
 
 interface AgentExitScreenProps {
   sessionId: string;
@@ -21,7 +22,14 @@ interface AgentExitScreenProps {
   onRestart: () => void;
   onClose: () => void;
   isRestarting?: boolean;
+  /** [hgwo] Provider, used to hint whether Restart resumes the conversation. */
+  agentProvider?: AgentProviderType | null;
 }
+
+// [hgwo] Client-safe resume-capability set (mirrors agent-resume-registry's
+// supportsResume; inlined to avoid pulling the server-only registry — which
+// imports node:child_process — into the client bundle).
+const RESUME_CAPABLE = new Set<AgentProviderType>(["claude", "codex", "gemini", "opencode"]);
 
 export function AgentExitScreen({
   sessionName,
@@ -31,7 +39,9 @@ export function AgentExitScreen({
   onRestart,
   onClose,
   isRestarting = false,
+  agentProvider,
 }: AgentExitScreenProps) {
+  const canResume = agentProvider ? RESUME_CAPABLE.has(agentProvider) : true;
   const exitedTime = new Date(exitedAt);
   const formattedTime = exitedTime.toLocaleTimeString();
   const isSuccess = exitCode === 0;
@@ -133,7 +143,9 @@ export function AgentExitScreen({
 
         {/* Help Text */}
         <p className="text-xs text-muted-foreground mt-4 text-center">
-          Restarting will create a new agent session in the same directory.
+          {canResume
+            ? "Restarting resumes the prior conversation when a session id is found, otherwise it starts fresh."
+            : "This provider does not support resume — restarting starts a fresh session."}
         </p>
       </div>
     </div>

@@ -84,6 +84,8 @@ import {
 
 // Agent Use Cases
 import { RestartAgentUseCase } from "@/application/use-cases/session/RestartAgentUseCase";
+// [hgwo] Resume resolver for agent session durability (Vault).
+import { AgentResumeResolverImpl } from "@/infrastructure/agent-resume/AgentResumeResolverImpl";
 
 // Update System
 import { DrizzleReleaseRepository } from "./persistence/repositories/DrizzleReleaseRepository";
@@ -263,9 +265,14 @@ export const updateSessionUseCase = new UpdateSessionUseCase(sessionRepository);
  * Restart agent use case.
  * Handles restarting agent CLI processes with environment preservation.
  */
+// [hgwo] Shared resume resolver instance (stateless; reads the declarative
+// per-provider registry + on-disk discovery).
+export const agentResumeResolver = new AgentResumeResolverImpl();
+
 export const restartAgentUseCase = new RestartAgentUseCase(
   sessionRepository,
-  tmuxGateway
+  tmuxGateway,
+  agentResumeResolver
 );
 
 // ─────────────────────────────────────────────────────────────────────────────

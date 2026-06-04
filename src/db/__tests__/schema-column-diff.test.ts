@@ -61,7 +61,7 @@ describe("schema column diff (sqlite-core vs pg-core)", () => {
     // model_proxy_token, model_usage_event) + 6 (oyej: agentSchedules,
     // agentRuns, triggerConfigs, triggerEvents, crownRuns, crownCandidates)
     // + 4 (x386: message_delivery, message_replay_cursor, channel_subscription,
-    // agent_work_context) = 74 tables.
+    // agent_work_context) = 74 tables. (hgwo adds no tables.)
     expect(sqliteTables).toHaveLength(74);
   });
 

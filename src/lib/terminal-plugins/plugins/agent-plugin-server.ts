@@ -115,11 +115,17 @@ export function createAgentServerPlugin(
 
       if (!provider || provider.id === "none") return null;
 
-      const agentCommand = buildAgentCommand(
-        provider,
-        [],
-        config.allowDangerousFlags
-      );
+      // [hgwo] Resume is intentionally NOT handled here. This hook is inert for
+      // launch purposes: `markAgentRestarting` only existence-checks the config,
+      // and the live restart paths route elsewhere — the HTTP
+      // `RestartAgentUseCase` and the WS `restart_agent` / cold-attach
+      // `relaunchAgentInTmux`, both of which resolve resume via the
+      // AgentResumeResolver + registry. A prior version read
+      // `typeMetadata.resumeBinding.resumeFlags` here, but that binding stores
+      // the ORIGINAL launch flags (e.g. `--dangerously-skip-permissions`), not a
+      // `--resume` flag — so wiring it in would have relaunched FRESH with the
+      // original flags, never resuming. Keep this returning the bare command.
+      const agentCommand = buildAgentCommand(provider, [], config.allowDangerousFlags);
 
       return {
         shellCommand: agentCommand,

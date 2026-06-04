@@ -132,15 +132,22 @@ interface TerminalProps {
   onSessionExit?: (exitCode: number) => void;
   /** Called when an agent session exits (only for terminalType='agent') */
   onAgentExited?: (exitCode: number | null, exitedAt: string) => void;
-  /** Called when an agent session restarts successfully */
-  onAgentRestarted?: () => void;
+  /** Called when an agent session restarts successfully. [hgwo] `resumed`
+   *  distinguishes a resumed conversation from a fresh relaunch. */
+  onAgentRestarted?: (resumed?: boolean) => void;
   /** Called when agent activity status changes (from Claude Code hooks).
    *  Includes sessionId so broadcast messages correctly target the right session. */
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
   /** Called when beads issues are updated */
   onBeadsIssuesUpdated?: (sessionId: string) => void;
-  /** Called when an agent session is auto-titled from its .jsonl file */
-  onSessionRenamed?: (sessionId: string, name: string, claudeSessionId?: string) => void;
+  /** Called when an agent session is auto-titled from its .jsonl file.
+   *  [hgwo] `agentSessionId` is the generic per-provider native-id map. */
+  onSessionRenamed?: (
+    sessionId: string,
+    name: string,
+    claudeSessionId?: string,
+    agentSessionId?: Record<string, string>,
+  ) => void;
   /** Called when a notification is broadcast from the terminal server */
   onNotification?: (notification: Record<string, unknown>) => void;
   /** Called when a session status indicator is set or cleared */
@@ -865,13 +872,19 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
               case "agent_restarted":
                 // Agent has been restarted successfully
                 terminal.clear();
-                terminal.writeln("\x1b[32mAgent restarted\x1b[0m\r\n");
+                // [hgwo] Show resumed-vs-fresh so the user knows whether the
+                // conversation was restored.
+                terminal.writeln(
+                  msg.resumed
+                    ? "\x1b[32mAgent resumed (conversation restored)\x1b[0m\r\n"
+                    : "\x1b[33mAgent restarted (fresh session)\x1b[0m\r\n"
+                );
                 // Clear intentional exit flag
                 intentionalExitRef.current = false;
                 // Reset activity status to running
                 onAgentActivityStatusRef.current?.(sessionId, "running");
                 // Notify parent component
-                onAgentRestartedRef.current?.();
+                onAgentRestartedRef.current?.(Boolean(msg.resumed));
                 break;
               case "agent_activity_status":
                 // Agent activity status from Claude Code hooks (broadcast — may be for any session)
@@ -883,7 +896,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
                 break;
               case "session_renamed":
                 // Agent session auto-titled from .jsonl first user message
-                onSessionRenamedRef.current?.(msg.sessionId, msg.name, msg.claudeSessionId);
+                onSessionRenamedRef.current?.(
+                  msg.sessionId,
+                  msg.name,
+                  msg.claudeSessionId,
+                  msg.agentSessionId as Record<string, string> | undefined,
+                );
                 break;
               case "notification":
                 // In-app notification broadcast from terminal server

@@ -19,7 +19,13 @@
 import type { Session } from "@/domain/entities/Session";
 import type { SessionRepository } from "@/application/ports/SessionRepository";
 import type { TmuxGateway } from "@/application/ports/TmuxGateway";
+import {
+  type AgentResumeResolver,
+  NoopAgentResumeResolver,
+} from "@/application/ports/AgentResumeResolver";
 import { EntityNotFoundError, InvalidStateTransitionError } from "@/domain/errors/DomainError";
+import { AGENT_PROVIDERS } from "@/types/session";
+import { buildAgentCommand } from "@/lib/terminal-plugins/agent-utils";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("RestartAgent");
@@ -32,6 +38,8 @@ export interface RestartAgentInput {
 export interface RestartAgentOutput {
   session: Session;
   wasRecreated: boolean;
+  /** [hgwo] true when the agent was relaunched with a resume flag/argv. */
+  resumed: boolean;
 }
 
 /**
@@ -52,28 +60,15 @@ export class RestartAgentError extends Error {
   }
 }
 
-/**
- * Get the agent CLI command based on provider.
- */
-function getAgentCommand(provider: string | null): string {
-  switch (provider) {
-    case "claude":
-      return "claude";
-    case "codex":
-      return "codex";
-    case "gemini":
-      return "gemini";
-    case "opencode":
-      return "opencode";
-    default:
-      return "claude"; // Default to Claude
-  }
-}
-
 export class RestartAgentUseCase {
   constructor(
     private readonly sessionRepository: SessionRepository,
-    private readonly tmuxGateway: TmuxGateway
+    private readonly tmuxGateway: TmuxGateway,
+    // [hgwo] Resume resolver turns the session's stored/discovered native id
+    // into resume flags so the conversation comes back, not a fresh agent.
+    // Optional + defaults to a no-op resolver so legacy 2-arg construction
+    // (and tests) keep the prior fresh-relaunch behavior.
+    private readonly resumeResolver: AgentResumeResolver = new NoopAgentResumeResolver()
   ) {}
 
   async execute(input: RestartAgentInput): Promise<RestartAgentOutput> {
@@ -140,9 +135,26 @@ export class RestartAgentUseCase {
     }
 
     // Tmux session exists - send the new agent command
-    // Environment persists at tmux session level, no re-injection needed
+    // Environment persists at tmux session level, no re-injection needed.
+    // [hgwo] Resolve resume flags so the agent's CONVERSATION comes back
+    // (was: bare command with no flags). Falls back to a fresh relaunch when
+    // the provider has no resume support or no native id is known.
+    let resumed = false;
     try {
-      const agentCommand = getAgentCommand(session.agentProvider);
+      const provider =
+        AGENT_PROVIDERS.find((p) => p.id === (session.agentProvider ?? "claude")) ??
+        AGENT_PROVIDERS.find((p) => p.id === "claude")!;
+      const resolution = await this.resumeResolver.resolveResume(session);
+      resumed = Boolean(resolution);
+      const agentCommand = resolution?.argvOverride
+        ? resolution.argvOverride.join(" ") // e.g. "codex resume <id>"
+        : buildAgentCommand(provider, resolution?.resumeFlags ?? [], false);
+      log.info("Relaunching agent (HTTP restart)", {
+        sessionId: input.sessionId,
+        provider: provider.id,
+        resumed,
+      });
+      // sendKeys submits with Enter (carriage return) — Claude TUI needs \r.
       await this.tmuxGateway.sendKeys(tmuxName, agentCommand);
     } catch (error) {
       // Revert session to exited state on failure to avoid stuck "restarting" state
@@ -167,6 +179,7 @@ export class RestartAgentUseCase {
     return {
       session: savedSession,
       wasRecreated: false,
+      resumed,
     };
   }
 }

@@ -131,6 +131,7 @@ function AgentExitScreenAdapter({
       restartCount={session.agentRestartCount ?? 0}
       onRestart={onRestart}
       onClose={onClose}
+      agentProvider={session.agentProvider}
     />
   );
 }

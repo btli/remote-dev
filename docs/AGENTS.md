@@ -214,6 +214,49 @@ For the full design (Unix-socket push relay, internal endpoints, dedup), see the
 
 ---
 
+## 6. Session durability & resume (Vault)
+
+When an agent CLI process dies, the terminal server restarts, or the host/pod
+restarts, the agent's **conversation** is brought back via the provider's native
+resume mechanism — not just an empty tmux pane. The behavior is **declarative**:
+a single per-provider registry (`src/lib/agent-resume/agent-resume-registry.ts`)
+is the source of truth, consumed by the resume resolver
+(`src/infrastructure/agent-resume/AgentResumeResolverImpl.ts`) and wired into
+**every** launch path (create, HTTP `RestartAgentUseCase`, WS `restart_agent`,
+cold-attach recreate).
+
+### Resume capability matrix
+
+| Provider | Resumes? | Mechanism | Session-id source | Id capture |
+|----------|----------|-----------|-------------------|------------|
+| `claude` | ✅ | `claude --resume <id>` (flag) | `.jsonl` filename / header `sessionId` under `$CLAUDE_CONFIG_DIR/.claude/projects/<encodePath(cwd)>/` | Push (Stop hook → `/internal/agent-session-id`) **+** disk fallback |
+| `codex` | ✅ | `codex resume <id>` (**subcommand**, argv override) | newest rollout file under `$CODEX_HOME` (default `~/.codex/sessions`) | Disk discovery at relaunch |
+| `gemini` | ✅ | `gemini --resume <id>` (flag) | newest checkpoint under `$GEMINI_HOME` (default `~/.gemini/tmp`) | Disk discovery at relaunch |
+| `opencode` | ✅ | `opencode --session <id>` (flag) | newest session under `$OPENCODE_HOME` (default `~/.local/share/opencode`) | Disk discovery at relaunch |
+| `antigravity` | ❌ | — (no confirmed resume flag) | — | — — relaunches **fresh** (UI marks "Fresh (resume unsupported)") |
+
+Notes:
+
+- **Codex resume is a subcommand, not a flag** — the registry models this with a
+  `resume: { kind: "subcommand" }` template that produces a full argv override
+  (`["codex","resume","<id>"]`) rather than appended flags.
+- **Flag spelling is version-dependent** for gemini/opencode. `verifyResumeFlag()`
+  probes the installed CLI's `--help` at startup diagnostics and logs a `warn`
+  if the token is missing, so drift is detectable without changing the resolver
+  (adjust the registry only).
+- **Native id capture asymmetry:** Claude pushes its id in real time via the
+  Stop hook; the other providers have no hook system today and rely on **disk
+  discovery** (newest session file under the profile-isolated home dir) at
+  relaunch.
+- **Durable resume binding:** at create time a sanitized resume binding
+  (provider + flags + **secrets-stripped** env) is persisted into
+  `terminalSessions.typeMetadata.resumeBinding`. After a pod restart this env is
+  re-injected into the recreated tmux so the profile-isolated home dir that
+  holds the resume files is present. Secrets are never persisted; the agent
+  re-resolves API keys from its own profile credential store.
+
+---
+
 ## See also
 
 - [`RDV_CLI.md`](./RDV_CLI.md) — `rdv` CLI reference (agent + peer + session commands)

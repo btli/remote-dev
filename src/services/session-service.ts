@@ -325,13 +325,13 @@ export async function createSessionWithDedupFlag(
   const pluginMetadata = (sessionConfig.metadata ?? null) as
     | Record<string, unknown>
     | null;
-  const mergedMetadata: Record<string, unknown> | null =
+  // [hgwo] `mergedMetadata` is `let` so the durable resume binding (computed
+  // later inside the plugin.useTmux block, once initialEnv is known) can be
+  // folded in before the single typeMetadata column write at insert time.
+  let mergedMetadata: Record<string, unknown> | null =
     pluginMetadata || input.typeMetadata
       ? { ...(pluginMetadata ?? {}), ...(input.typeMetadata ?? {}) }
       : null;
-  const typeMetadata: string | null = mergedMetadata
-    ? JSON.stringify(mergedMetadata)
-    : null;
 
   // Get the next tab order
   const existingSessions = await db.query.terminalSessions.findMany({
@@ -702,6 +702,30 @@ export async function createSessionWithDedupFlag(
     const effectiveStartupCommand = sessionConfig.shellCommand ?? startupCommand;
     const effectiveCwd = sessionConfig.cwd ?? workingPath ?? undefined;
 
+    // [hgwo] Persist a durable resume binding for agent sessions: the sanitized
+    // env (secrets stripped) + provider + initial flags. The native session id
+    // is captured later (hgwo.1); this binding's job is to record the env +
+    // provider durably so a recreate (terminal-server / pod restart) can
+    // relaunch the agent — and resume the conversation via disk discovery —
+    // even before any id was captured. Rides along into the same typeMetadata
+    // column write below (no extra UPDATE, no new column).
+    if (isAgentSession && effectiveAgentProvider) {
+      try {
+        const { buildResumeBinding } = await import("@/lib/agent-resume/resume-binding");
+        const binding = buildResumeBinding(
+          {
+            provider: effectiveAgentProvider,
+            resumeFlags: mergedAgentFlags ?? [],
+            argvOverride: null,
+          },
+          initialEnv,
+        );
+        mergedMetadata = { ...(mergedMetadata ?? {}), resumeBinding: binding };
+      } catch (error) {
+        log.error("Failed to build resume binding", { sessionId, error: String(error) });
+      }
+    }
+
     // Create the tmux session with initial environment for PTY spawn
     try {
       await TmuxService.createSession(
@@ -755,8 +779,14 @@ export async function createSessionWithDedupFlag(
   const createdWorktree = input.createWorktree && branchName && workingPath !== input.projectPath;
   const repoPath = input.projectPath;
 
-  // `terminalType`, `plugin`, `typeMetadata` were resolved up-front; see the
-  // dedup + plugin-delegation block near the top of createSession.
+  // `terminalType`, `plugin` were resolved up-front; see the dedup +
+  // plugin-delegation block near the top of createSession. [hgwo] The
+  // typeMetadata JSON is serialized HERE (deferred from the assembly block) so
+  // the resume binding folded into mergedMetadata inside the useTmux block is
+  // included in the single column write.
+  const typeMetadata: string | null = mergedMetadata
+    ? JSON.stringify(mergedMetadata)
+    : null;
 
   // Insert the database record - clean up tmux session and worktree if this fails
   try {

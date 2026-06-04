@@ -27,10 +27,17 @@ export interface UseTerminalWebSocketOptions {
   onWebSocketReady?: (ws: WebSocket | null) => void;
   onSessionExit?: (exitCode: number) => void;
   onAgentExited?: (exitCode: number | null, exitedAt: string) => void;
-  onAgentRestarted?: () => void;
+  // [hgwo] `resumed` distinguishes a resumed conversation from a fresh relaunch.
+  onAgentRestarted?: (resumed?: boolean) => void;
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
   onBeadsIssuesUpdated?: (sessionId: string) => void;
-  onSessionRenamed?: (sessionId: string, name: string, claudeSessionId?: string) => void;
+  // [hgwo] `agentSessionId` is the generic per-provider native-id map.
+  onSessionRenamed?: (
+    sessionId: string,
+    name: string,
+    claudeSessionId?: string,
+    agentSessionId?: Record<string, string>,
+  ) => void;
   onNotification?: (notification: Record<string, unknown>) => void;
   onSessionStatus?: (sessionId: string, key: string, indicator: SessionStatusIndicator | null) => void;
   onSessionProgress?: (sessionId: string, progress: SessionProgress | null) => void;
@@ -281,8 +288,12 @@ export function useTerminalWebSocket({
             case "agent_restarted":
               intentionalExitRef.current = false;
               onAgentActivityStatusRef.current?.(sessionId, "running");
-              onStatusMessageRef.current?.("\x1b[32mAgent restarted\x1b[0m");
-              onAgentRestartedRef.current?.();
+              onStatusMessageRef.current?.(
+                msg.resumed
+                  ? "\x1b[32mAgent resumed (conversation restored)\x1b[0m"
+                  : "\x1b[33mAgent restarted (fresh session)\x1b[0m"
+              );
+              onAgentRestartedRef.current?.(Boolean(msg.resumed));
               break;
 
             case "agent_activity_status":
@@ -294,7 +305,12 @@ export function useTerminalWebSocket({
               break;
 
             case "session_renamed":
-              onSessionRenamedRef.current?.(msg.sessionId, msg.name, msg.claudeSessionId);
+              onSessionRenamedRef.current?.(
+                msg.sessionId,
+                msg.name,
+                msg.claudeSessionId,
+                msg.agentSessionId as Record<string, string> | undefined,
+              );
               break;
 
             case "notification":
