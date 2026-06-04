@@ -1426,3 +1426,63 @@ export const crownCandidates = pgTable(
     index("crown_candidate_run_idx").on(table.crownRunId),
   ]
 );
+
+export const messageDelivery = pgTable(
+  "message_delivery",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    messageId: text("message_id").notNull().references(() => agentPeerMessages.id, { onDelete: "cascade" }),
+    toSessionId: text("to_session_id").notNull().references(() => terminalSessions.id, { onDelete: "cascade" }),
+    projectId: text("project_id").notNull(),
+    state: text("state").$type<"pending" | "delivered" | "acked">().notNull().default("pending"),
+    channelType: text("channel_kind").$type<"mcp_push" | "poll" | null>(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true, mode: "date" }),
+    ackedAt: timestamp("acked_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("message_delivery_msg_session_idx").on(table.messageId, table.toSessionId),
+    index("message_delivery_session_state_idx").on(table.toSessionId, table.state, table.createdAt),
+  ]
+);
+
+export const messageReplayCursor = pgTable(
+  "message_replay_cursor",
+  {
+    sessionId: text("session_id").primaryKey().references(() => terminalSessions.id, { onDelete: "cascade" }),
+    lastAckedAt: timestamp("last_acked_at", { withTimezone: true, mode: "date" }),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  }
+);
+
+export const channelSubscription = pgTable(
+  "channel_subscription",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    channelId: text("channel_id").notNull().references(() => channels.id, { onDelete: "cascade" }),
+    sessionId: text("session_id").notNull().references(() => terminalSessions.id, { onDelete: "cascade" }),
+    mode: text("mode").$type<"auto_deliver" | "direct_only">().notNull().default("auto_deliver"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("channel_subscription_unique_idx").on(table.channelId, table.sessionId),
+  ]
+);
+
+export const agentWorkContext = pgTable(
+  "agent_work_context",
+  {
+    sessionId: text("session_id").primaryKey().references(() => terminalSessions.id, { onDelete: "cascade" }),
+    projectId: text("project_id").notNull(),
+    branch: text("branch"),
+    worktreePath: text("worktree_path"),
+    activityStatus: text("activity_status"),
+    claimedIssueId: text("claimed_issue_id"),
+    claimedIssueTitle: text("claimed_issue_title"),
+    joinConfidence: text("join_confidence").$type<"branch" | "project" | "none">(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("agent_work_context_project_idx").on(table.projectId),
+  ]
+);

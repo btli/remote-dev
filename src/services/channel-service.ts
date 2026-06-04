@@ -130,6 +130,59 @@ export async function getGeneralChannelId(projectId: string): Promise<string> {
   return generalChannelId;
 }
 
+const AGENTS_CHANNEL_NAME = "agents";
+
+/** Cache for the per-project #agents channel id. */
+const agentsChannelCache = new Map<string, { id: string; expiresAt: number }>();
+
+/**
+ * [x386.6] Ensure a per-project `#agents` system channel exists and return its
+ * id. This is where structured check-in / check-out posts and `rdv peer note`
+ * gotchas/heads-ups land, attributed to the agent as a system speaker. Mirrors
+ * {@link getGeneralChannelId} but with `type: "system"`. Idempotent.
+ */
+export async function getAgentsChannelId(projectId: string): Promise<string> {
+  const cached = agentsChannelCache.get(projectId);
+  if (cached && cached.expiresAt > Date.now()) {
+    const ch = await db.query.channels.findFirst({
+      where: eq(channels.id, cached.id),
+      columns: { id: true },
+    });
+    if (ch) {
+      cached.expiresAt = Date.now() + CACHE_TTL_MS;
+      return cached.id;
+    }
+    agentsChannelCache.delete(projectId);
+  }
+
+  // Reuse the default group so #agents sits alongside #general.
+  const { groupId } = await ensureProjectChannels(projectId);
+
+  await db
+    .insert(channels)
+    .values({
+      projectId,
+      groupId,
+      name: AGENTS_CHANNEL_NAME,
+      displayName: "#agents",
+      type: "system",
+      topic: "Agent check-ins, check-outs, gotchas and heads-ups",
+    })
+    .onConflictDoNothing({ target: [channels.projectId, channels.name] });
+
+  const agents = await db.query.channels.findFirst({
+    where: and(eq(channels.projectId, projectId), eq(channels.name, AGENTS_CHANNEL_NAME)),
+    columns: { id: true },
+  });
+  if (!agents) {
+    throw new Error(`Failed to ensure #agents channel for project ${projectId}`);
+  }
+
+  agentsChannelCache.set(projectId, { id: agents.id, expiresAt: Date.now() + CACHE_TTL_MS });
+  log.debug("Agents channel ensured", { projectId, agentsChannelId: agents.id });
+  return agents.id;
+}
+
 // ─── Channel CRUD ───────────────────────────────────────────────────────────
 
 export interface CreateChannelParams {

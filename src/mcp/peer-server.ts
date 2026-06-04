@@ -116,13 +116,22 @@ function textResult(text: string) {
  * Handle an event pushed from the terminal server via Unix socket.
  * Formats it as human-readable text and sends via sendLoggingMessage().
  * Also advances the rdv CLI poll sentinel to prevent double-delivery.
+ *
+ * [x386.2] After surfacing the message, write an {type:"ack", messageId} frame
+ * back on the same connection so the terminal server can mark the delivery
+ * `acked`. A dropped ack is harmless — the terminal server keeps the row
+ * `delivered` and the poll fallback recovers it.
  */
-function handleSocketEvent(event: Record<string, unknown>): void {
+function handleSocketEvent(event: Record<string, unknown>, conn: net.Socket): void {
   const messageId = event.messageId as string | undefined;
 
-  // Dedup: skip if already delivered
+  // Dedup: skip if already delivered. Still re-ack so the server can advance a
+  // delivery that was re-pushed during a replay handshake (x386.3).
   if (messageId) {
-    if (deliveredMessageIds.has(messageId)) return;
+    if (deliveredMessageIds.has(messageId)) {
+      conn.write(JSON.stringify({ type: "ack", messageId }) + "\n");
+      return;
+    }
     deliveredMessageIds.add(messageId);
     // Evict oldest entry if set grows too large
     if (deliveredMessageIds.size > MAX_DELIVERED_IDS) {
@@ -165,7 +174,12 @@ function handleSocketEvent(event: Record<string, unknown>): void {
     level: "info",
     logger: "rdv",
     data: text,
-  }).catch(() => {});
+  })
+    .then(() => {
+      // Ack only after the client received the log notification.
+      if (messageId) conn.write(JSON.stringify({ type: "ack", messageId }) + "\n");
+    })
+    .catch(() => {}); // dropped ack → server keeps it "delivered"; poll recovers
 }
 
 // ── Unix socket listener ──────────────────────────────────────────────────────
@@ -179,6 +193,12 @@ function startSocketListener(): void {
   try { fs.unlinkSync(sockPath); } catch {}
 
   const sockServer = net.createServer((conn) => {
+    // [x386.3] On (re)connect, ask the terminal server to replay anything we
+    // missed while the socket was down (compaction, brief disconnect). Replayed
+    // events flow through the same handleSocketEvent path; the in-process dedup
+    // set + the server's durable cursor prevent double-surfacing.
+    conn.write(JSON.stringify({ type: "replay_request", sessionId: SESSION_ID }) + "\n");
+
     let buf = "";
     conn.on("data", (chunk: Buffer) => {
       buf += chunk.toString();
@@ -188,7 +208,9 @@ function startSocketListener(): void {
         buf = buf.slice(nl + 1);
         if (!line.trim()) continue;
         try {
-          handleSocketEvent(JSON.parse(line));
+          const msg = JSON.parse(line) as Record<string, unknown>;
+          // Both live pushes and replayed events carry frame:"event".
+          if (msg.frame === "event") handleSocketEvent(msg, conn);
         } catch { /* malformed JSON, skip */ }
       }
     });

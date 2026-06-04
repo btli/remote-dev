@@ -163,19 +163,51 @@ verifies whether each agent CLI is installed and resolves its version.
 
 ## 5. Agent peer communication (summary)
 
-Agents in the **same project** can discover each other and coordinate. The
-architecture is **push-first**: messages arrive instantly via the `rdv` MCP server's
-push notifications, with the Claude Code **PreToolUse hook** polling as a reliable
-fallback.
+Agents in the **same project** can discover each other and coordinate. **bd
+(beads) tracks the work** (issues, status, assignment); **chat tracks awareness**
+— who's-active-right-now, gotchas, heads-ups, and overlap warnings that bd does
+not hold. Do **not** duplicate task state in chat.
 
-- The `rdv` MCP server is auto-registered into each Claude Code profile's
-  `.claude/settings.json` at session creation (`installAgentHooks()`), alongside the
-  activity-reporting lifecycle hooks (PreToolUse, PreCompact, Notification, Stop,
-  SubagentStop, PostToolUse, SessionEnd).
-- MCP tools handle the **write** side: `send_message`, `send_to_channel`,
-  `set_summary`. **Read** operations (list peers, read channels) go through the
-  `rdv` CLI — see [`RDV_CLI.md`](./RDV_CLI.md) (`rdv peer …`, `rdv channel …`).
-- Messages are stored project-scoped with a 24-hour TTL.
+**Reliable delivery (every message reaches the agent exactly once).** Each
+message gets a per-recipient **durable inbox** row (`message_delivery`) that
+advances `pending → delivered → acked`:
+
+- **Long-lived MCP subscription** — the `rdv` MCP server keeps a persistent Unix
+  socket and surfaces pushed messages instantly, **acking** each so the server
+  marks it delivered. On (re)connect it requests a **replay** of anything it
+  missed (compaction, brief disconnect), driven by a durable per-session cursor.
+- **Poll fallback** — the four non-MCP providers (Codex, Gemini, OpenCode,
+  Antigravity) have no MCP server, so they rely on `rdv peer messages`, which
+  now reads the same durable delivery state and auto-acks the batch it returns.
+  This gives MCP and poll providers **exactly-once parity**.
+- **Channel subscriptions** — a channel's broadcasts auto-deliver only to
+  subscribed sessions (`#general` is auto-subscribe for all; opt out with
+  `direct_only`). Non-subscribers still get **@mentions** and replies-to-them.
+- **TTL** — awareness chat is ephemeral; messages prune after
+  `RDV_CHAT_TTL_DAYS` (default 14), but **never** while an unacked delivery
+  remains, so a long-disconnected agent never loses something it hasn't seen.
+
+The `rdv` MCP server is auto-registered into each Claude Code profile's
+`.claude/settings.json` at session creation (`installAgentHooks()`), alongside
+the lifecycle hooks (PreToolUse, PreCompact, Notification, Stop, SubagentStop,
+PostToolUse, SessionEnd). MCP tools handle the **write** side (`send_message`,
+`send_to_channel`, `set_summary`); read paths go through the `rdv` CLI.
+
+**Coordination discipline (check in → read peers → check out).**
+
+1. **Check in** (automatic, first PreToolUse) — a structured post to the
+   per-project `#agents` channel: *"checked in — branch …, working on …"*.
+2. **Read peers** (the **start digest**, printed at session start) — who's
+   working on what (branch + claimed bd issue), recent gotchas, and any
+   **collision** (another active session on your branch / worktree / claimed
+   issue). Read it before acting.
+3. **Post gotchas** — when you discover a footgun, `rdv peer note "<body>"`
+   (optionally `--kind heads-up|progress`) broadcasts it to `#agents` so it
+   surfaces in every peer's next start digest.
+4. **Check out** (automatic, on Stop) — *"checked out — branch …"* to `#agents`.
+
+> Note on "acked": the MCP ack means the message was **surfaced to the client**,
+> the strongest signal MCP logging affords — not a guaranteed human/agent read.
 
 For the full design (Unix-socket push relay, internal endpoints, dedup), see the
 "Agent Peer Communication" section of [`ARCHITECTURE.md`](./ARCHITECTURE.md).

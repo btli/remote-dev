@@ -5,9 +5,10 @@
 import { db } from "@/db";
 import { ltDate } from "@/db/sql-helpers";
 import { agentPeerMessages, terminalSessions } from "@/db/schema";
-import { eq, and, or, isNull, gt, inArray, sql, desc } from "drizzle-orm";
+import { eq, and, or, isNull, gt, inArray, lt, sql, desc } from "drizzle-orm";
 import { createLogger } from "@/lib/logger";
 import { safeJsonParse } from "@/lib/utils";
+import * as MD from "@/services/message-delivery-service";
 
 const log = createLogger("PeerService");
 
@@ -298,9 +299,63 @@ export async function setSummary(
   log.debug("Peer summary updated", { sessionId, summary });
 }
 
-/** @deprecated Messages are now permanent. This function is a no-op. */
-export async function cleanupOldMessages(): Promise<void> {
-  log.debug("Peer message cleanup skipped (messages are permanent)");
+/**
+ * [x386.4] Poll using durable delivery state instead of a client timestamp.
+ * Returns this session's undelivered messages and marks them `delivered` via
+ * the `poll` channel. The CLI acks the batch afterwards (`ack-batch`), giving
+ * non-MCP providers (Codex/Gemini/OpenCode/Antigravity) the same exactly-once
+ * semantics as the MCP push path. The timestamp-based {@link pollMessages} is
+ * kept for the chat-room UI / backward compat.
+ */
+export async function pollUndelivered(sessionId: string): Promise<PeerMessage[]> {
+  const rows = await MD.getUndelivered(sessionId, 100);
+  // Mark delivered (NOT acked — ack happens when the agent acknowledges; for
+  // poll providers with no socket ack the CLI acks the batch on read).
+  await Promise.all(rows.map((r) => MD.markDelivered(r.id, sessionId, "poll")));
+  return rows.map((r) =>
+    toMessageRow({
+      id: r.id,
+      fromSessionId: null,
+      fromSessionName: r.fromSessionName,
+      toSessionId: r.toSessionId,
+      body: r.body,
+      isUserMessage: false,
+      channelId: r.channelId,
+      parentMessageId: r.parentMessageId,
+      replyCount: 0,
+      createdAt: r.createdAt,
+    }),
+  );
+}
+
+// Awareness chat is ephemeral — the work TRACKER is beads, not chat. Prune old
+// messages after a configurable window, but NEVER a message that still has an
+// unacked delivery (so a long-disconnected agent doesn't lose what it never saw).
+const MESSAGE_TTL_DAYS = 14; // awareness window; tune via env RDV_CHAT_TTL_DAYS
+
+/**
+ * [x386.9] Prune messages older than the TTL that have no pending/delivered
+ * (unacked) delivery rows. Returns the number of messages deleted. Deleting a
+ * message cascades its `message_delivery` rows via the FK.
+ */
+export async function cleanupOldMessages(): Promise<number> {
+  const ttlDays = Number(process.env.RDV_CHAT_TTL_DAYS ?? MESSAGE_TTL_DAYS);
+  const cutoff = new Date(Date.now() - ttlDays * 86_400_000);
+  const stale = await db
+    .select({ id: agentPeerMessages.id })
+    .from(agentPeerMessages)
+    .where(
+      and(
+        lt(agentPeerMessages.createdAt, cutoff),
+        // No unacked delivery rows remain for this message.
+        sql`NOT EXISTS (SELECT 1 FROM message_delivery md WHERE md.message_id = ${agentPeerMessages.id} AND md.state != 'acked')`,
+      ),
+    );
+  if (stale.length === 0) return 0;
+  const ids = stale.map((s) => s.id);
+  await db.delete(agentPeerMessages).where(inArray(agentPeerMessages.id, ids)); // cascades delivery rows
+  log.info("Pruned old peer messages", { count: ids.length, ttlDays });
+  return ids.length;
 }
 
 /**

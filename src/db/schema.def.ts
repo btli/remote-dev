@@ -1519,4 +1519,86 @@ export const schema: SchemaDefinition = [
     ],
   },
   // [oyej] end automation platform tables.
+
+  // [x386] Agent-native chat & coordination (epic remote-dev-x386).
+  // Delivery layer (durable inbox + per-recipient state machine) + awareness
+  // layer (channel subscriptions + auto work-context with READ-ONLY bd join).
+  {
+    // Per-recipient delivery state for agent messages (durable inbox).
+    // One row per (messageId, toSessionId). Broadcasts/channels fan out to one
+    // row per subscribed recipient at send time. State advances
+    // pending → delivered → acked so a dropped MCP push is recoverable by poll.
+    exportName: "messageDelivery",
+    sqlName: "message_delivery",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
+      { field: "messageId", dbName: "message_id", kind: "text", notNull: true, references: { table: "agentPeerMessages", column: "id", onDelete: "cascade" } },
+      { field: "toSessionId", dbName: "to_session_id", kind: "text", notNull: true, references: { table: "terminalSessions", column: "id", onDelete: "cascade" } },
+      { field: "projectId", dbName: "project_id", kind: "text", notNull: true },
+      // pending = written, not yet pushed; delivered = pushed to a live MCP
+      // socket or returned by a poll; acked = surfaced to the agent.
+      { field: "state", dbName: "state", kind: "text", notNull: true, typeBrand: "\"pending\" | \"delivered\" | \"acked\"", default: { kind: "value", value: "\"pending\"" } },
+      // How it reached the agent (for parity metrics + debugging).
+      { field: "channelType", dbName: "channel_kind", kind: "text", typeBrand: "\"mcp_push\" | \"poll\" | null" },
+      { field: "deliveredAt", dbName: "delivered_at", kind: "timestampMs" },
+      { field: "ackedAt", dbName: "acked_at", kind: "timestampMs" },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "message_delivery_msg_session_idx", columns: ["messageId","toSessionId"], unique: true },
+      // Replay/poll: "give me undelivered rows for this session, oldest first".
+      { name: "message_delivery_session_state_idx", columns: ["toSessionId","state","createdAt"] },
+    ],
+  },
+  {
+    // Durable per-session replay cursor (survives MCP server restarts; the /tmp
+    // sentinel in peer-server.ts is a fast cache, this DB row is source of truth).
+    exportName: "messageReplayCursor",
+    sqlName: "message_replay_cursor",
+    columns: [
+      { field: "sessionId", dbName: "session_id", kind: "text", primaryKey: true, references: { table: "terminalSessions", column: "id", onDelete: "cascade" } },
+      // Highest agent_peer_message.createdAt the session has acked.
+      { field: "lastAckedAt", dbName: "last_acked_at", kind: "timestampMs" },
+      { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+  },
+  {
+    // Which sessions auto-receive a channel's non-direct messages. Absence of a
+    // row means "direct/mention only" for that (channel, session).
+    exportName: "channelSubscription",
+    sqlName: "channel_subscription",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
+      { field: "channelId", dbName: "channel_id", kind: "text", notNull: true, references: { table: "channels", column: "id", onDelete: "cascade" } },
+      { field: "sessionId", dbName: "session_id", kind: "text", notNull: true, references: { table: "terminalSessions", column: "id", onDelete: "cascade" } },
+      // auto_deliver = push every channel message; direct_only = only @mentions/replies-to-me.
+      { field: "mode", dbName: "mode", kind: "text", notNull: true, typeBrand: "\"auto_deliver\" | \"direct_only\"", default: { kind: "value", value: "\"auto_deliver\"" } },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "channel_subscription_unique_idx", columns: ["channelId","sessionId"], unique: true },
+    ],
+  },
+  {
+    // Last computed work-context snapshot per session (auto-derived; cache only).
+    // The claimed bd-issue fields are a READ-ONLY mirror for display and are
+    // NEVER written back to bd (bd remains the durable work tracker).
+    exportName: "agentWorkContext",
+    sqlName: "agent_work_context",
+    columns: [
+      { field: "sessionId", dbName: "session_id", kind: "text", primaryKey: true, references: { table: "terminalSessions", column: "id", onDelete: "cascade" } },
+      { field: "projectId", dbName: "project_id", kind: "text", notNull: true },
+      { field: "branch", dbName: "branch", kind: "text" },
+      { field: "worktreePath", dbName: "worktree_path", kind: "text" },
+      { field: "activityStatus", dbName: "activity_status", kind: "text" },
+      { field: "claimedIssueId", dbName: "claimed_issue_id", kind: "text" },
+      { field: "claimedIssueTitle", dbName: "claimed_issue_title", kind: "text" },
+      { field: "joinConfidence", dbName: "join_confidence", kind: "text", typeBrand: "\"branch\" | \"project\" | \"none\"" },
+      { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "agent_work_context_project_idx", columns: ["projectId"] },
+    ],
+  },
+  // [x386] end chat & coordination tables.
 ];

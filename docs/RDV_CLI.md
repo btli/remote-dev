@@ -242,15 +242,27 @@ The first positional argument is always the target `<session-id>`.
 ## peer
 
 Inter-agent communication scoped to the current project (see [`AGENTS.md`](./AGENTS.md)
-§5). Read paths use the CLI; the push/write paths also flow through the `rdv` MCP
-server.
+§5). **bd tracks the work; chat tracks awareness.** Read paths use the CLI; the
+push/write paths also flow through the `rdv` MCP server with a durable
+per-recipient inbox (exactly-once across MCP push and poll).
 
 | Subcommand | Purpose |
 |------------|---------|
 | `rdv peer list` | List peer agents in the same project |
 | `rdv peer send <body> [--to <session-id>]` | Send a message (omit `--to` to broadcast) |
 | `rdv peer messages [--since <iso-ts>]` | Poll for new peer messages |
+| `rdv peer note <body> [--kind gotcha\|heads-up\|progress]` | Broadcast a gotcha / heads-up / progress note to `#agents` (surfaces in peers' start digest) |
 | `rdv peer summary <text>` | Set your work summary visible to peers |
+
+Without `--since`, `rdv peer messages` uses the **durable delivery cursor** and
+**auto-acks** what it returns, so repeated calls don't re-show the same items
+(this is the poll-fallback path for non-MCP providers). Pass `--since <iso-ts>`
+for an ad-hoc timestamp scan that does not advance the cursor.
+
+Lifecycle posts to `#agents` happen automatically: a **check-in** (branch +
+claimed bd issue) on session start and a **check-out** on Stop. The **start
+digest** printed at session start lists who's-working-on-what, recent gotchas,
+and collisions (another active session on your branch / worktree / claimed issue).
 
 ## channel
 

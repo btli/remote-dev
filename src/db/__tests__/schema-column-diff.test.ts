@@ -57,11 +57,12 @@ describe("schema column diff (sqlite-core vs pg-core)", () => {
     const sqliteTables = [...sqlite.keys()].sort();
     const pgTables = [...pg.keys()].sort();
     expect(pgTables).toEqual(sqliteTables);
-    // Sanity: the full schema is 70 tables: 61 base +1 notification_preferences
-    // (y5ch) +2 model_proxy_token/model_usage_event (aehq) +6 oyej automation
-    // (agentSchedules, agentRuns, triggerConfigs, triggerEvents, crownRuns,
-    // crownCandidates).
-    expect(sqliteTables).toHaveLength(70);
+    // Sanity: 61 base + 1 (y5ch: notification_preferences) + 2 (aehq:
+    // model_proxy_token, model_usage_event) + 6 (oyej: agentSchedules,
+    // agentRuns, triggerConfigs, triggerEvents, crownRuns, crownCandidates)
+    // + 4 (x386: message_delivery, message_replay_cursor, channel_subscription,
+    // agent_work_context) = 74 tables.
+    expect(sqliteTables).toHaveLength(74);
   });
 
   // One assertion per table so a failure names the offending table.

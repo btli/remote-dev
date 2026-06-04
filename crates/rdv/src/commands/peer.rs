@@ -34,6 +34,14 @@ enum PeerCommand {
         /// 1-2 sentence summary of current work
         text: String,
     },
+    /// Broadcast a gotcha / heads-up / progress note to project peers (#agents)
+    Note {
+        /// Note body
+        body: String,
+        /// Kind of note (default: gotcha)
+        #[arg(long, value_parser = ["gotcha", "heads-up", "progress"], default_value = "gotcha")]
+        kind: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -197,15 +205,33 @@ pub async fn run(
             }
         }
         PeerCommand::Messages { since } => {
+            // [x386.4] When no explicit `--since` is given, use the DURABLE
+            // delivery cursor (cursor=durable) so repeated calls don't re-show
+            // the same messages and non-MCP providers reach exactly-once parity
+            // with the MCP push path. We ack the returned batch afterwards. An
+            // explicit `--since` keeps the legacy timestamp scan for ad-hoc
+            // human queries.
+            let use_durable = since.is_none();
             let since_str = since.unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
-            let mut query: Vec<(&str, &str)> =
-                vec![("sessionId", sid), ("since", since_str.as_str())];
+            let mut query: Vec<(&str, &str)> = vec![("sessionId", sid)];
+            if use_durable {
+                query.push(("cursor", "durable"));
+            } else {
+                query.push(("since", since_str.as_str()));
+            }
             if let Some(pid) = project_id.as_deref() {
                 query.push(("projectId", pid));
             }
             let resp: MessageListResponse = client
                 .get_with_query("/internal/peers/messages/poll", &query)
                 .await?;
+
+            // Ack the durable batch so the next poll doesn't re-surface them.
+            if use_durable && !resp.messages.is_empty() {
+                let ids: Vec<&str> = resp.messages.iter().map(|m| m.id.as_str()).collect();
+                let ack = json!({ "sessionId": sid, "messageIds": ids });
+                let _ = client.post_json("/internal/peers/ack-batch", &ack).await;
+            }
 
             if human {
                 if resp.messages.is_empty() {
@@ -233,6 +259,27 @@ pub async fn run(
                 println!("Summary updated.");
             } else {
                 println!("{}", json!({ "ok": true }));
+            }
+        }
+        PeerCommand::Note { body, kind } => {
+            // [x386.13] Post a typed note to the project's #agents channel. The
+            // `[kind]` prefix lets the start digest's gotcha filter surface it
+            // distinctly from regular chatter. Reuses the durable channel-send
+            // → delivery path (no new server table).
+            let tagged = format!("[{kind}] {body}");
+            let payload = json!({
+                "fromSessionId": sid,
+                "channelName": "agents",
+                "body": tagged,
+            });
+            client
+                .post_json("/internal/channels/send", &payload)
+                .await?;
+
+            if human {
+                println!("Note posted to #agents ({kind}).");
+            } else {
+                println!("{}", json!({ "ok": true, "kind": kind }));
             }
         }
     }

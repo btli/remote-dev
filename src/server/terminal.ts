@@ -256,36 +256,60 @@ function broadcastToUser(userId: string, data: Record<string, unknown>): void {
   }
 }
 
-// Cached module references for MCP push (avoids repeated dynamic import overhead)
+// Cached module reference for MCP push (avoids repeated dynamic import overhead)
 let _mcpPush: typeof import("@/server/mcp-push") | null = null;
-let _peerService: typeof import("@/services/peer-service") | null = null;
 
 async function getMcpPush() {
   return (_mcpPush ??= await import("@/server/mcp-push"));
 }
-async function getPeerService() {
-  return (_peerService ??= await import("@/services/peer-service"));
+
+// [x386.2] Sessions whose per-socket ack handler is already registered. The
+// handler advances delivery → acked when the MCP server confirms it surfaced a
+// message. Registered lazily the first time we push to a session.
+const ackHandlerRegistered = new Set<string>();
+
+/** Ensure the ack handler is installed for a session (idempotent). */
+function ensureMcpAckHandler(sessionId: string): void {
+  if (ackHandlerRegistered.has(sessionId)) return;
+  ackHandlerRegistered.add(sessionId);
+  getMcpPush()
+    .then(async (mp) => {
+      const MD = await import("@/services/message-delivery-service");
+      mp.onMcpAck(sessionId, (messageId) => {
+        MD.ackDelivery(messageId, sessionId).catch((err) =>
+          peerLog.debug("ackDelivery hook failed", { sessionId, error: String(err) }),
+        );
+      });
+    })
+    .catch(() => ackHandlerRegistered.delete(sessionId));
 }
 
-/** Push an MCP event to a single peer session (fire-and-forget). */
-function pushMcpEventToPeer(sessionId: string, event: import("@/server/mcp-push").McpPushEvent): void {
-  getMcpPush().then(({ pushToMcpServer }) => pushToMcpServer(sessionId, event)).catch(() => {});
-}
-
-/** Push an MCP event to all folder peers except the sender (fire-and-forget). */
-async function pushMcpEventToFolderPeers(
-  folderId: string,
-  fromSessionId: string,
-  buildEvent: (peerId: string) => import("@/server/mcp-push").McpPushEvent,
+/**
+ * [x386.2] Record durable delivery rows for a message, register ack handlers,
+ * then push to each recipient's MCP socket. Recipients that are not connected
+ * keep a `pending`/`delivered` row that the poll fallback recovers. `selfSid`
+ * is excluded.
+ */
+async function deliverToRecipients(
+  messageId: string,
+  projectId: string,
+  recipientSessionIds: string[],
+  buildEvent: (recipientSessionId: string) => import("@/server/mcp-push").McpPushEvent,
+  selfSid: string,
 ): Promise<void> {
+  const recipients = recipientSessionIds.filter((id) => id && id !== selfSid);
+  if (recipients.length === 0) return;
+  const MD = await import("@/services/message-delivery-service");
+  // Write delivery rows BEFORE pushing so a push that races ahead still has a
+  // row to mark `delivered`.
+  await MD.recordDeliveries(messageId, projectId, recipients);
   const { pushToMcpServer } = await getMcpPush();
-  const PeerService = await getPeerService();
-  const peers = await PeerService.getProjectPeers(folderId);
-  for (const peer of peers) {
-    if (peer.sessionId === fromSessionId) continue;
-    pushToMcpServer(peer.sessionId, buildEvent(peer.sessionId));
+  for (const sid of recipients) {
+    ensureMcpAckHandler(sid);
+    pushToMcpServer(sid, buildEvent(sid));
   }
 }
+
 
 /** Whether a terminal type has agent-like behavior (exit handling, restart). */
 function isAgentTerminalType(type: string): boolean {
@@ -1365,7 +1389,9 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
         },
       });
 
-      // Push to MCP server sockets (fire-and-forget)
+      // [x386.2] Record durable deliveries + push (ack-aware). Direct → the one
+      // recipient; broadcast → all project peers. Each gets a delivery row so a
+      // dropped push is recovered by the poll fallback.
       const senderSid = String(fromSessionId);
       const mcpEvent: import("@/server/mcp-push").McpPushEvent = {
         type: "peer_message",
@@ -1380,9 +1406,19 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
         createdAt: result.createdAt,
       };
       if (toSessionId) {
-        pushMcpEventToPeer(String(toSessionId), mcpEvent);
+        deliverToRecipients(result.messageId, result.projectId, [String(toSessionId)], () => mcpEvent, senderSid).catch(
+          (err) => peerLog.error("Failed to deliver direct peer message", { error: String(err) }),
+        );
       } else {
-        pushMcpEventToFolderPeers(result.projectId, senderSid, () => mcpEvent).catch(() => {});
+        const PeerSvc = await import("@/services/peer-service");
+        const peers = await PeerSvc.getProjectPeers(result.projectId);
+        deliverToRecipients(
+          result.messageId,
+          result.projectId,
+          peers.map((p) => p.sessionId),
+          () => mcpEvent,
+          senderSid,
+        ).catch((err) => peerLog.error("Failed to deliver broadcast peer message", { error: String(err) }));
       }
 
       sendJson(res, 200, { messageId: result.messageId, resolvedBody: result.resolvedBody });
@@ -1403,13 +1439,124 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     }
 
     try {
-      const sinceDate = since ? new Date(since) : new Date(0);
+      // [x386.4] When the caller opts into the durable cursor (cursor=durable),
+      // use the delivery-state poll (exactly-once parity with MCP push) and
+      // mark returned rows `delivered` via poll. Otherwise keep the legacy
+      // timestamp scan for the chat-room UI / backward compat.
       const PeerService = await import("@/services/peer-service");
+      if (query.cursor === "durable") {
+        const messages = await PeerService.pollUndelivered(sessionId);
+        sendJson(res, 200, { messages });
+        return true;
+      }
+      const sinceDate = since ? new Date(since) : new Date(0);
       const messages = await PeerService.pollMessages(sessionId, sinceDate);
       sendJson(res, 200, { messages });
     } catch (err) {
       peerLog.error("Failed to poll peer messages", { error: String(err) });
       sendJson(res, 500, { error: "Failed to poll messages" });
+    }
+    return true;
+  }
+
+  // [x386.2] POST /internal/peers/ack { sessionId, messageId } — confirm receipt
+  // (parity path for poll/CLI acks; the socket-level ack is the primary path).
+  if (pathname === "/internal/peers/ack" && req.method === "POST") {
+    const payload = await parseRequestJson(req, res);
+    if (!payload) return true;
+    const { sessionId, messageId } = payload;
+    if (!sessionId || !messageId) {
+      sendJson(res, 400, { error: "Missing sessionId or messageId" });
+      return true;
+    }
+    try {
+      const MD = await import("@/services/message-delivery-service");
+      await MD.ackDelivery(String(messageId), String(sessionId));
+      sendJson(res, 200, { ok: true });
+    } catch (err) {
+      peerLog.error("Failed to ack delivery", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to ack" });
+    }
+    return true;
+  }
+
+  // [x386.4] POST /internal/peers/ack-batch { sessionId, messageIds[] } — the
+  // non-MCP poll path acks everything it just surfaced so it isn't re-shown.
+  if (pathname === "/internal/peers/ack-batch" && req.method === "POST") {
+    const payload = await parseRequestJson(req, res);
+    if (!payload) return true;
+    const { sessionId, messageIds } = payload;
+    if (!sessionId || !Array.isArray(messageIds)) {
+      sendJson(res, 400, { error: "Missing sessionId or messageIds" });
+      return true;
+    }
+    try {
+      const MD = await import("@/services/message-delivery-service");
+      await MD.ackDeliveries(messageIds.map(String), String(sessionId));
+      sendJson(res, 200, { ok: true, acked: messageIds.length });
+    } catch (err) {
+      peerLog.error("Failed to ack delivery batch", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to ack batch" });
+    }
+    return true;
+  }
+
+  // [x386.3] GET /internal/peers/replay?sessionId=xxx — the undelivered set for
+  // a session (same rows the socket replay handshake pushes). Used by tests and
+  // the CLI poll path without the socket.
+  if (pathname === "/internal/peers/replay" && req.method === "GET") {
+    const sessionId = query.sessionId as string;
+    if (!sessionId) {
+      sendJson(res, 400, { error: "Missing sessionId" });
+      return true;
+    }
+    try {
+      const MD = await import("@/services/message-delivery-service");
+      const rows = await MD.getUndelivered(sessionId, 50);
+      sendJson(res, 200, { messages: rows });
+    } catch (err) {
+      peerLog.error("Failed to fetch replay set", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to fetch replay set" });
+    }
+    return true;
+  }
+
+  // [x386.11] GET /internal/work-context?sessionId=xxx — lightweight work
+  // context (branch/worktree/status) + READ-ONLY bd-issue join. Used by the
+  // Rust digest/collision + the chat UI.
+  if (pathname === "/internal/work-context" && req.method === "GET") {
+    const sessionId = query.sessionId as string;
+    if (!sessionId) {
+      sendJson(res, 400, { error: "Missing sessionId" });
+      return true;
+    }
+    try {
+      const WC = await import("@/services/work-context-service");
+      const ctx = await WC.computeWorkContext(sessionId);
+      sendJson(res, 200, { context: ctx });
+    } catch (err) {
+      peerLog.error("Failed to compute work context", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to compute work context" });
+    }
+    return true;
+  }
+
+  // [x386.12/.14] GET /internal/peers/digest?sessionId=xxx — start digest:
+  // who's-working-on-what (work-context + claimed bd issues) + recent gotchas +
+  // collisions. The heavy joins live in TS; the Rust hook just renders this.
+  if (pathname === "/internal/peers/digest" && req.method === "GET") {
+    const sessionId = query.sessionId as string;
+    if (!sessionId) {
+      sendJson(res, 400, { error: "Missing sessionId" });
+      return true;
+    }
+    try {
+      const WC = await import("@/services/work-context-service");
+      const digest = await WC.buildStartDigest(sessionId);
+      sendJson(res, 200, digest);
+    } catch (err) {
+      peerLog.error("Failed to build peer digest", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to build digest" });
     }
     return true;
   }
@@ -1585,7 +1732,14 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       if (!resolvedChannelId && channelName) {
         const ctx = await getSessionFolderContext(fromSessionId as string);
         if (ctx) {
-          resolvedChannelId = await resolveChannelName(ctx.folderId, channelName as string);
+          // [x386.6/.13] The per-project #agents system channel is auto-created
+          // on demand (check-in/out + `rdv peer note` target it).
+          if (channelName === "agents") {
+            const ChannelService = await import("@/services/channel-service");
+            resolvedChannelId = await ChannelService.getAgentsChannelId(ctx.folderId);
+          } else {
+            resolvedChannelId = await resolveChannelName(ctx.folderId, channelName as string);
+          }
         }
         if (!resolvedChannelId) {
           sendJson(res, 404, { error: `Channel '${channelName}' not found` });
@@ -1644,18 +1798,42 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
           if (ch) resolvedChannelName = ch.name;
         } catch { /* non-critical, name will be null in push */ }
       }
-      pushMcpEventToFolderPeers(result.projectId, chSenderSid, (peerId) => ({
-        type: mentions.has(peerId) ? "mention" : "channel_message",
-        messageId: result.messageId,
-        fromSessionId: chSenderSid,
-        fromSessionName: result.senderName,
-        toSessionId: null,
-        body: result.resolvedBody,
-        channelId: effectiveChannelId,
-        channelName: resolvedChannelName,
-        parentMessageId: parentMessageId ? String(parentMessageId) : null,
-        createdAt: result.createdAt,
-      })).catch(() => {});
+      // [x386.5/.7] Recipient set = channel auto-deliver subscribers ∪ @mentioned
+      // sessions (mentions always delivered, even if unsubscribed). Each gets a
+      // durable delivery row; non-subscribers get only their mentions.
+      void (async () => {
+        try {
+          const PeerSvc = await import("@/services/peer-service");
+          const ChanSubs = await import("@/services/channel-subscription-service");
+          const peers = await PeerSvc.getProjectPeers(result.projectId);
+          const peerIds = peers.map((p) => p.sessionId);
+          const autoDeliver = effectiveChannelId
+            ? await ChanSubs.getAutoDeliverSessions(effectiveChannelId, peerIds)
+            : peerIds;
+          const recipientSet = new Set<string>(autoDeliver);
+          for (const m of mentions) recipientSet.add(m);
+          await deliverToRecipients(
+            result.messageId,
+            result.projectId,
+            [...recipientSet],
+            (peerId) => ({
+              type: mentions.has(peerId) ? "mention" : "channel_message",
+              messageId: result.messageId,
+              fromSessionId: chSenderSid,
+              fromSessionName: result.senderName,
+              toSessionId: null,
+              body: result.resolvedBody,
+              channelId: effectiveChannelId,
+              channelName: resolvedChannelName,
+              parentMessageId: parentMessageId ? String(parentMessageId) : null,
+              createdAt: result.createdAt,
+            }),
+            chSenderSid,
+          );
+        } catch (err) {
+          peerLog.error("Failed to deliver channel message", { error: String(err) });
+        }
+      })();
 
       sendJson(res, 200, { messageId: result.messageId, resolvedBody: result.resolvedBody });
     } catch (err) {
@@ -1947,7 +2125,48 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     });
   }
 
-  // Periodic peer message cleanup (hourly, 24h TTL)
+  // [x386.2/.3] Install the durable-delivery hooks into the MCP push manager
+  // once at boot. mcp-push.ts holds no service import (layering boundary); the
+  // terminal server is the only place that knows both the socket layer and the
+  // delivery service, so it wires them together here.
+  getMcpPush()
+    .then(async (mp) => {
+      const MD = await import("@/services/message-delivery-service");
+      // Socket-write success → delivery marked `delivered`.
+      mp.setDeliveredHook((sid, mid) => {
+        MD.markDelivered(mid, sid, "mcp_push").catch((err) =>
+          peerLog.debug("markDelivered hook failed", { sessionId: sid, error: String(err) }),
+        );
+      });
+      // MCP server (re)connect → replay everything still undelivered for it.
+      mp.setReplayHook(async (sid) => {
+        const rows = await MD.getUndelivered(sid, 50);
+        for (const r of rows) {
+          mp.pushToMcpServer(sid, {
+            type: r.channelId ? "channel_message" : r.toSessionId ? "peer_message" : "channel_message",
+            messageId: r.id,
+            fromSessionId: null,
+            fromSessionName: r.fromSessionName,
+            toSessionId: r.toSessionId,
+            body: r.body,
+            channelId: r.channelId,
+            channelName: null,
+            parentMessageId: r.parentMessageId,
+            createdAt: new Date(r.createdAt).toISOString(),
+          });
+        }
+      });
+    })
+    .catch((err) => peerLog.error("Failed to install MCP delivery hooks", { error: String(err) }));
+
+  // [x386.9] Prune the awareness-chat backlog once at boot (TTL), then hourly.
+  // Old messages with no unacked delivery are removed; bd remains the durable
+  // work tracker, chat is ephemeral awareness.
+  import("@/services/peer-service")
+    .then((PeerService) => PeerService.cleanupOldMessages())
+    .catch((err) => peerLog.error("Startup peer cleanup failed", { error: String(err) }));
+
+  // Periodic peer message cleanup (hourly TTL).
   setInterval(() => {
     import("@/services/peer-service")
       .then((PeerService) => PeerService.cleanupOldMessages())

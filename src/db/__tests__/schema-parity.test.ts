@@ -34,7 +34,7 @@ type Equal<A, B> =
 // Compiles only when its argument resolves to the literal `true`.
 type Expect<T extends true> = T;
 
-// Per-table $inferSelect / $inferInsert parity for ALL 70 tables. A drift makes
+// Per-table $inferSelect / $inferInsert parity for ALL 74 tables. A drift makes
 // one of these `false`, which is a compile error on the `true[]` annotation.
 type _SchemaParity = [
   // users
@@ -220,6 +220,16 @@ type _SchemaParity = [
   // sshConnections
   Expect<Equal<(typeof sqliteSchema.sshConnections)["$inferSelect"], (typeof pgSchema.sshConnections)["$inferSelect"]>>,
   Expect<Equal<(typeof sqliteSchema.sshConnections)["$inferInsert"], (typeof pgSchema.sshConnections)["$inferInsert"]>>,
+  // [y5ch.6] notificationPreferences
+  Expect<Equal<(typeof sqliteSchema.notificationPreferences)["$inferSelect"], (typeof pgSchema.notificationPreferences)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.notificationPreferences)["$inferInsert"], (typeof pgSchema.notificationPreferences)["$inferInsert"]>>,
+  // [aehq] model-proxy tables
+  // modelProxyTokens
+  Expect<Equal<(typeof sqliteSchema.modelProxyTokens)["$inferSelect"], (typeof pgSchema.modelProxyTokens)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.modelProxyTokens)["$inferInsert"], (typeof pgSchema.modelProxyTokens)["$inferInsert"]>>,
+  // modelUsageEvents
+  Expect<Equal<(typeof sqliteSchema.modelUsageEvents)["$inferSelect"], (typeof pgSchema.modelUsageEvents)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.modelUsageEvents)["$inferInsert"], (typeof pgSchema.modelUsageEvents)["$inferInsert"]>>,
   // [oyej] automation tables
   // triggerConfigs
   Expect<Equal<(typeof sqliteSchema.triggerConfigs)["$inferSelect"], (typeof pgSchema.triggerConfigs)["$inferSelect"]>>,
@@ -239,6 +249,19 @@ type _SchemaParity = [
   // crownCandidates
   Expect<Equal<(typeof sqliteSchema.crownCandidates)["$inferSelect"], (typeof pgSchema.crownCandidates)["$inferSelect"]>>,
   Expect<Equal<(typeof sqliteSchema.crownCandidates)["$inferInsert"], (typeof pgSchema.crownCandidates)["$inferInsert"]>>,
+  // [x386] chat & coordination tables
+  // messageDelivery
+  Expect<Equal<(typeof sqliteSchema.messageDelivery)["$inferSelect"], (typeof pgSchema.messageDelivery)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.messageDelivery)["$inferInsert"], (typeof pgSchema.messageDelivery)["$inferInsert"]>>,
+  // messageReplayCursor
+  Expect<Equal<(typeof sqliteSchema.messageReplayCursor)["$inferSelect"], (typeof pgSchema.messageReplayCursor)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.messageReplayCursor)["$inferInsert"], (typeof pgSchema.messageReplayCursor)["$inferInsert"]>>,
+  // channelSubscription
+  Expect<Equal<(typeof sqliteSchema.channelSubscription)["$inferSelect"], (typeof pgSchema.channelSubscription)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.channelSubscription)["$inferInsert"], (typeof pgSchema.channelSubscription)["$inferInsert"]>>,
+  // agentWorkContext
+  Expect<Equal<(typeof sqliteSchema.agentWorkContext)["$inferSelect"], (typeof pgSchema.agentWorkContext)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.agentWorkContext)["$inferInsert"], (typeof pgSchema.agentWorkContext)["$inferInsert"]>>,
 ];
 
 // Force the assertion tuple to be evaluated: `true[]` only accepts a tuple
@@ -249,12 +272,13 @@ void _parityHolds;
 
 // Trivial runtime test so vitest treats this file as a (passing) suite. The
 // real guarantee is the compile-time tuple above, enforced by `tsc`.
-it("schema.sqlite and schema.pg expose the same 70 table exports", () => {
+it("schema.sqlite and schema.pg expose the same 74 table exports", () => {
   const sqliteTables = Object.keys(sqliteSchema).sort();
   const pgTables = Object.keys(pgSchema).sort();
   expect(sqliteTables).toEqual(pgTables);
-  // 61 base +1 notification_preferences (y5ch) +2 model_proxy_token,
-  // model_usage_event (aehq) +6 oyej automation (agentSchedules, agentRuns,
-  // triggerConfigs, triggerEvents, crownRuns, crownCandidates).
-  expect(sqliteTables).toHaveLength(70);
+  // 61 base + 1 (y5ch: notification_preferences) + 2 (aehq: model_proxy_token,
+  // model_usage_event) + 6 (oyej: agentSchedules, agentRuns, triggerConfigs,
+  // triggerEvents, crownRuns, crownCandidates) + 4 (x386: messageDelivery,
+  // messageReplayCursor, channelSubscription, agentWorkContext) = 74.
+  expect(sqliteTables).toHaveLength(74);
 });

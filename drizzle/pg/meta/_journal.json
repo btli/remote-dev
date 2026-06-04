@@ -36,6 +36,13 @@
       "when": 1780534956785,
       "tag": "0004_wise_maddog",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780535315762,
+      "tag": "0005_youthful_hex",
+      "breakpoints": true
     }
   ]
 }

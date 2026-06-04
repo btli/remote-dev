@@ -103,12 +103,29 @@ rdv context          # Discover your session ID, folder, and project path
 | \`rdv worktree cleanup\` | Clean up worktree, branches, and session |
 | \`rdv peer list\` | List peer agents in same folder |
 | \`rdv peer send "message"\` | Broadcast to peers |
+| \`rdv peer note "gotcha"\` | Broadcast a gotcha/heads-up to #agents |
 | \`rdv send text <id> "text"\` | Send text to another session PTY |
 | \`rdv screen <id> --human\` | View another session's screen |
 | \`rdv notification list --unread\` | Check notifications |
 | \`rdv status --human\` | System dashboard |
 
 Run \`rdv --help\` or \`rdv <command> --help\` for full documentation.
+
+## Team awareness (bd tracks work; chat tracks awareness)
+
+You share this project with peer agents. **bd (beads) is the work tracker; chat
+is the awareness layer** — do not duplicate task state in chat.
+
+- **Read the start digest** printed at session start (who's-working-on-what,
+  recent gotchas, and collisions) **before acting**. If it warns of a
+  **collision** (a peer on your branch / worktree / claimed bd issue),
+  coordinate before pushing.
+- When you discover a footgun, post it: \`rdv peer note "what to watch out for"\`
+  (add \`--kind heads-up\` or \`--kind progress\` as appropriate). It surfaces in
+  every peer's next start digest.
+- Check-in (on start) and check-out (on stop) to \`#agents\` happen automatically.
+- Peer messages reach you reliably (durable inbox + MCP subscription); non-Claude
+  agents should run \`rdv peer messages\` periodically to drain their inbox.
 `;
 
 /**

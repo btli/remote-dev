@@ -81,4 +81,8 @@ export const {
   triggerEvents,
   crownRuns,
   crownCandidates,
+  messageDelivery,
+  messageReplayCursor,
+  channelSubscription,
+  agentWorkContext,
 } = active;

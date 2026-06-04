@@ -120,6 +120,20 @@ fn strip_mention_tokens(body: &str) -> String {
     result
 }
 
+/// [x386 hardening] Strip control/escape characters from a peer-derived string
+/// before rendering it to a peer's TUI digest. The digest is machine-read by
+/// peer agents AND printed to a terminal, so a crafted note/branch/name
+/// containing raw ANSI/OSC escapes (e.g. `\x1b]0;...\x07`) or embedded newlines
+/// could spoof "⚠ COLLISION" / section-header lines or hijack the terminal.
+/// We drop every C0 control byte (0x00–0x1f, which includes ESC 0x1b, CR, LF)
+/// and DEL (0x7f); the surviving text is inert. The replacement leaves the ESC
+/// gone so an OSC/CSI sequence degrades to harmless literal characters.
+fn sanitize_for_digest(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_control())
+        .collect()
+}
+
 // ── Status reporting ────────────────────────────────────────────────
 
 /// Report an agent activity status to the terminal server.
@@ -136,74 +150,141 @@ async fn report_status(client: &Client, status: &str) {
 
 // ── Peer digest ─────────────────────────────────────────────────────
 
-const PEER_HEADER: &str = "\u{2500}\u{2500} Peers \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}";
-const PEER_FOOTER: &str = "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}";
+// [x386.12] Start-digest section headers (em-dash rules).
+const TEAM_HEADER: &str = "\u{2500}\u{2500} Team (who's working on what) \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}";
+const GOTCHA_HEADER: &str = "\u{2500}\u{2500} Recent gotchas \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}";
+const MESSAGES_HEADER: &str = "\u{2500}\u{2500} New messages \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}";
+const SECTION_RULE: &str = "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}";
 
-/// Print a compact peer status table and any new messages to stderr.
+/// [x386.12/.14] Read-peers START DIGEST printed to stderr at the first
+/// PreToolUse so the agent reads it before acting. Three sections:
+///   - Team: who's-working-on-what (work-context + claimed bd issues)
+///   - Recent gotchas: tagged notes from #agents (`rdv peer note`)
+///   - Collisions: another active session on the same branch/worktree/issue
+///   - New messages: durable-cursor backlog (auto-acked)
+///
+/// The heavy joins live server-side (`/internal/peers/digest`); this renders
+/// the payload. The "New messages" section uses the durable cursor so repeated
+/// calls don't re-show the same items.
 async fn print_peer_digest(client: &Client) {
     let Some(sid) = client.session_id() else {
         return;
     };
 
-    // Fetch peers
-    let peer_query = [("sessionId", sid)];
-    let peers_result: Result<serde_json::Value, _> = client
-        .get_with_query("/internal/peers/list", &peer_query)
+    // ── Team / gotchas / collisions (server-built digest) ────────────────
+    let digest_query = [("sessionId", sid)];
+    let digest: Result<serde_json::Value, _> = client
+        .get_with_query("/internal/peers/digest", &digest_query)
         .await;
 
-    // Fetch new messages using timestamp sentinel
-    let ts_file = format!("/tmp/rdv-peer-poll-{sid}");
-    let since = std::fs::read_to_string(&ts_file)
-        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
-    let now = chrono::Utc::now().to_rfc3339();
-
-    let msg_query = [("sessionId", sid), ("since", since.as_str())];
-    let messages_result: Result<serde_json::Value, _> = client
-        .get_with_query("/internal/peers/messages/poll", &msg_query)
-        .await;
-
-    // Always update timestamp to avoid re-processing on failure
-    let _ = std::fs::write(&ts_file, &now);
-
-    // Print peers section if there are peers
-    if let Ok(resp) = &peers_result {
-        if let Some(peers) = resp.get("peers").and_then(|v| v.as_array()) {
+    if let Ok(d) = &digest {
+        // Team section.
+        if let Some(peers) = d.get("peers").and_then(|v| v.as_array()) {
             if !peers.is_empty() {
-                eprintln!("{PEER_HEADER}");
+                eprintln!("{TEAM_HEADER}");
                 for peer in peers {
-                    let name = peer.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
-                    let status = peer
-                        .get("agentActivityStatus")
+                    // All peer-derived strings are control-char-stripped so a
+                    // crafted name/branch/issue can't inject escapes or newlines.
+                    let name = sanitize_for_digest(
+                        peer.get("name").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                    );
+                    let status = sanitize_for_digest(
+                        peer.get("status").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                    );
+                    let branch = sanitize_for_digest(
+                        peer.get("branch").and_then(|v| v.as_str()).unwrap_or(""),
+                    );
+                    let issue_id = peer
+                        .get("claimedIssueId")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    let summary = peer
-                        .get("peerSummary")
+                        .map(sanitize_for_digest);
+                    let issue_title = peer
+                        .get("claimedIssueTitle")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    if summary.is_empty() {
-                        eprintln!("  {name} [{status}]");
+                        .map(sanitize_for_digest);
+                    let work = match (issue_id.as_deref(), issue_title.as_deref()) {
+                        (Some(id), Some(title)) => format!(" \u{b7} {id} {title}"),
+                        (Some(id), None) => format!(" \u{b7} {id}"),
+                        _ => " \u{b7} (no claimed issue)".to_string(),
+                    };
+                    let branch_part = if branch.is_empty() {
+                        String::new()
                     } else {
-                        eprintln!("  {name} [{status}]: {summary}");
-                    }
+                        format!(" {branch}")
+                    };
+                    eprintln!("  {name} [{status}]{branch_part}{work}");
                 }
-                eprintln!("{PEER_FOOTER}");
+                eprintln!("{SECTION_RULE}");
+            }
+        }
+
+        // Recent gotchas.
+        if let Some(gotchas) = d.get("gotchas").and_then(|v| v.as_array()) {
+            if !gotchas.is_empty() {
+                eprintln!("{GOTCHA_HEADER}");
+                for g in gotchas {
+                    let from = sanitize_for_digest(
+                        g.get("from").and_then(|v| v.as_str()).unwrap_or("peer"),
+                    );
+                    let raw_body = g.get("body").and_then(|v| v.as_str()).unwrap_or("");
+                    let body = sanitize_for_digest(&strip_mention_tokens(raw_body));
+                    eprintln!("  \u{26a0} {from}: {body}");
+                }
+                eprintln!("{SECTION_RULE}");
+            }
+        }
+
+        // Collisions.
+        if let Some(collisions) = d.get("collisions").and_then(|v| v.as_array()) {
+            for c in collisions {
+                let peer_name = sanitize_for_digest(
+                    c.get("peerName").and_then(|v| v.as_str()).unwrap_or("a peer"),
+                );
+                let reason = sanitize_for_digest(
+                    c.get("reason").and_then(|v| v.as_str()).unwrap_or("work"),
+                );
+                let value = sanitize_for_digest(
+                    c.get("value").and_then(|v| v.as_str()).unwrap_or(""),
+                );
+                eprintln!(
+                    "\u{26a0} COLLISION: {peer_name} shares your {reason} {value} \u{2014} coordinate before pushing."
+                );
             }
         }
     }
 
-    // Print new messages if any
+    // ── New messages (durable cursor, auto-acked) ────────────────────────
+    let msg_query = [("sessionId", sid), ("cursor", "durable")];
+    let messages_result: Result<serde_json::Value, _> = client
+        .get_with_query("/internal/peers/messages/poll", &msg_query)
+        .await;
+
     if let Ok(resp) = messages_result {
         if let Some(messages) = resp.get("messages").and_then(|v| v.as_array()) {
-            for msg in messages {
-                let from = msg
-                    .get("fromSessionName")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
-                let raw_body = msg.get("body").and_then(|v| v.as_str()).unwrap_or("");
-                let body = strip_mention_tokens(raw_body);
-                let is_broadcast = msg.get("toSessionId").map_or(true, |v| v.is_null());
-                let target = if is_broadcast { " (broadcast)" } else { "" };
-                eprintln!("\u{1f4e8} Peer message from {from}{target}: {body}");
+            if !messages.is_empty() {
+                eprintln!("{MESSAGES_HEADER}");
+                // Ack the batch so the next digest doesn't re-show them.
+                let ids: Vec<&str> = messages
+                    .iter()
+                    .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
+                    .collect();
+                if !ids.is_empty() {
+                    let ack = json!({ "sessionId": sid, "messageIds": ids });
+                    let _ = client.post_json("/internal/peers/ack-batch", &ack).await;
+                }
+                for msg in messages {
+                    let from = sanitize_for_digest(
+                        msg.get("fromSessionName")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown"),
+                    );
+                    let raw_body = msg.get("body").and_then(|v| v.as_str()).unwrap_or("");
+                    let body = sanitize_for_digest(&strip_mention_tokens(raw_body));
+                    let is_broadcast = msg.get("toSessionId").map_or(true, |v| v.is_null());
+                    let target = if is_broadcast { " (broadcast)" } else { "" };
+                    eprintln!("\u{1f4e8} {from}{target}: {body}");
+                }
+                eprintln!("{SECTION_RULE}");
             }
         }
     }
@@ -246,7 +327,11 @@ async fn broadcast_git_push_to_peers(client: &Client, command: &str) {
     let _ = client.post_json("/internal/peers/messages/send", &payload).await;
 }
 
-/// Broadcast session start once per session (sentinel at /tmp/rdv-peer-start-{sid}).
+/// [x386.6] Check IN once per session (sentinel at /tmp/rdv-peer-start-{sid}).
+/// Posts a structured check-in to the per-project #agents channel — branch +
+/// claimed bd issue (omitted when the loose join has no confidence) — so peers
+/// see who joined and what they're on. Replaces the old "session started"
+/// broadcast. bd remains the work tracker; this is awareness only.
 async fn broadcast_session_start(client: &Client) {
     let Some(sid) = client.session_id() else {
         return;
@@ -256,8 +341,44 @@ async fn broadcast_session_start(client: &Client) {
         return;
     }
     let _ = std::fs::write(&sentinel, "1");
-    let payload = json!({ "fromSessionId": sid, "body": "session started" });
-    let _ = client.post_json("/internal/peers/messages/send", &payload).await;
+
+    // Fetch work-context to enrich the check-in (best-effort).
+    let ctx_query = [("sessionId", sid)];
+    let ctx: Option<serde_json::Value> = client
+        .get_with_query::<serde_json::Value, _>("/internal/work-context", &ctx_query)
+        .await
+        .ok()
+        .and_then(|v| v.get("context").cloned());
+
+    let body = build_checkin_body(ctx.as_ref());
+    let payload = json!({ "fromSessionId": sid, "channelName": "agents", "body": body });
+    let _ = client.post_json("/internal/channels/send", &payload).await;
+}
+
+/// Build the check-in message body from an optional work-context payload.
+fn build_checkin_body(ctx: Option<&serde_json::Value>) -> String {
+    let branch = ctx
+        .and_then(|c| c.get("branch"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    let confidence = ctx
+        .and_then(|c| c.get("joinConfidence"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("none");
+    let issue_id = ctx
+        .and_then(|c| c.get("claimedIssueId"))
+        .and_then(|v| v.as_str());
+
+    let branch_part = match branch {
+        Some(b) => format!(" \u{2014} branch {b}"),
+        None => String::new(),
+    };
+    // Only mention the issue when the join is confident (omit on "none").
+    let issue_part = match (confidence, issue_id) {
+        ("none", _) | (_, None) => String::new(),
+        (_, Some(id)) => format!(", working on {id}"),
+    };
+    format!("checked in{branch_part}{issue_part}")
 }
 
 // ── Proxy state reporting ───────────────────────────────────────────
@@ -530,13 +651,27 @@ async fn handle_stop(
     // of notification noise and has been removed. Stuck/crashed agents now
     // surface via the server-side PID-liveness sweep (y5ch.9, emits agent_stuck),
     // and "agent needs you" surfaces via the Notification hook (waiting status).
-    // The idle status report above and the peer "finished work" broadcast below
-    // remain.
+    // The idle status report above and the peer check-out below remain.
 
-    // Broadcast "finished work" to peers (in-band signal, not a user notification).
-    let finished_payload = json!({ "fromSessionId": sid, "body": "finished work" });
+    // [x386.6] Check OUT to #agents (in-band awareness, not a user notification).
+    // Replaces the old "finished work" broadcast with a structured check-out
+    // attributed to the agent as a system speaker in the per-project channel.
+    let ctx_query = [("sessionId", sid)];
+    let branch = client
+        .get_with_query::<serde_json::Value, _>("/internal/work-context", &ctx_query)
+        .await
+        .ok()
+        .and_then(|v| v.get("context").cloned())
+        .and_then(|c| c.get("branch").and_then(|v| v.as_str()).map(String::from))
+        .filter(|s| !s.is_empty());
+    let checkout_body = match branch {
+        Some(b) => format!("checked out \u{2014} branch {b}"),
+        None => "checked out".to_string(),
+    };
+    let checkout_payload =
+        json!({ "fromSessionId": sid, "channelName": "agents", "body": checkout_body });
     let _ = client
-        .post_json("/internal/peers/messages/send", &finished_payload)
+        .post_json("/internal/channels/send", &checkout_payload)
         .await;
 
     Ok(())
@@ -753,9 +888,59 @@ mod stop_tests {
             !body.contains("/internal/notify"),
             "handle_stop must not call /internal/notify (y5ch.2 noise source)"
         );
+        // [x386.6] The peer awareness post remains, now as a structured check-out
+        // to the #agents channel (replaces the old "finished work" broadcast).
         assert!(
-            body.contains("finished work"),
-            "peer broadcast must remain after y5ch.2"
+            body.contains("checked out"),
+            "peer check-out must remain after y5ch.2 / x386.6"
         );
+        assert!(
+            body.contains("/internal/channels/send"),
+            "check-out must post to the #agents channel"
+        );
+    }
+}
+
+#[cfg(test)]
+mod sanitize_tests {
+    use super::sanitize_for_digest;
+
+    #[test]
+    fn strips_ansi_osc_and_csi_escapes() {
+        // A crafted note trying to set the terminal title (OSC) + recolor (CSI).
+        let attack = "\u{1b}]0;pwned\u{07}\u{1b}[31mhello";
+        let out = sanitize_for_digest(attack);
+        // No ESC (0x1b) or BEL (0x07) survive; the payload is inert literal text.
+        assert!(!out.contains('\u{1b}'), "ESC must be stripped");
+        assert!(!out.contains('\u{07}'), "BEL must be stripped");
+        assert_eq!(out, "]0;pwned[31mhello");
+    }
+
+    #[test]
+    fn strips_newlines_so_fake_section_lines_cannot_be_injected() {
+        // An attacker embedding a newline + a spoofed COLLISION line.
+        let attack = "ok\n\u{26a0} COLLISION: spoofed shares your branch main";
+        let out = sanitize_for_digest(attack);
+        assert!(!out.contains('\n'), "newlines must be stripped");
+        // Renders as a single inert line (the warning glyph itself is harmless).
+        assert_eq!(
+            out,
+            "ok\u{26a0} COLLISION: spoofed shares your branch main"
+        );
+    }
+
+    #[test]
+    fn preserves_ordinary_text_and_unicode() {
+        let s = "feat/x386.11 \u{2014} \u{b7} \u{26a0} caf\u{e9}";
+        assert_eq!(sanitize_for_digest(s), s);
+    }
+
+    #[test]
+    fn strips_c1_control_introducers() {
+        // 0x9b is the 8-bit CSI introducer; 0x9d is 8-bit OSC. Both are C1
+        // controls and must be dropped.
+        let attack = "a\u{9b}31mb\u{9d}0;x";
+        let out = sanitize_for_digest(attack);
+        assert_eq!(out, "a31mb0;x");
     }
 }
