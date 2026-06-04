@@ -69,10 +69,10 @@ describe("waitForSchemaReady", () => {
     vi.resetModules();
 
     // First poll: table missing (relation does not exist). Second poll: all
-    // 7 committed migrations applied → ready.
+    // 8 committed migrations applied → ready.
     const { Pool, end } = mockPg([
       { throws: true },
-      { rows: [{ c: 7 }] },
+      { rows: [{ c: 8 }] },
     ]);
     const { waitForSchemaReady } = await import("../schema-ready");
 

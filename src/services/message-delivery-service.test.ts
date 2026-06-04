@@ -7,13 +7,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as schema from "@/db/schema";
 
-// Real libsql on a TEMP FILE (not :memory:) — the delivery state machine, the
-// unique-index idempotency, and the monotonic cursor MAX() are all SQL behavior
-// that must run against a real engine. A file URL is required because
-// `ackDelivery` uses `db.transaction()`, and libsql's interactive transaction
-// runs on a separate connection: with `:memory:` each connection is a distinct
-// database, so plain queries after a transaction would see no tables. A shared
-// on-disk file makes all connections see the same schema + data.
+// Real libsql on a TEMP FILE (not :memory:) — the delivery state machine and
+// the unique-index idempotency are SQL behavior that must run against a real
+// engine. A file URL is used (rather than `:memory:`) so every connection sees
+// the same schema + data, which matters for any future multi-connection paths.
 let client: Client;
 let testDb: ReturnType<typeof drizzle<typeof schema>>;
 let tmpDir: string;
@@ -52,11 +49,6 @@ const DDL = [
   );`,
   `CREATE UNIQUE INDEX message_delivery_msg_session_idx ON message_delivery (message_id, to_session_id);`,
   `CREATE INDEX message_delivery_session_state_idx ON message_delivery (to_session_id, state, created_at);`,
-  `CREATE TABLE message_replay_cursor (
-    session_id TEXT PRIMARY KEY NOT NULL,
-    last_acked_at INTEGER,
-    updated_at INTEGER NOT NULL
-  );`,
 ];
 
 async function resetDb(): Promise<void> {
@@ -77,7 +69,6 @@ import {
   ackDelivery,
   ackDeliveries,
   getUndelivered,
-  getReplayCursor,
 } from "./message-delivery-service";
 import { cleanupOldMessages } from "./peer-service";
 
@@ -171,33 +162,37 @@ describe("MessageDeliveryService", () => {
     });
   });
 
-  describe("ackDelivery + replay cursor", () => {
-    it("advances the cursor to the acked message's createdAt", async () => {
+  describe("ackDelivery", () => {
+    it("advances the delivery row to acked and stamps acked_at", async () => {
       await insertMessage({ id: "m1", agoMs: 1000 });
       await recordDeliveries("m1", PROJECT, ["s1"]);
       await ackDelivery("m1", "s1");
-      const cursor = await getReplayCursor("s1");
-      expect(cursor).not.toBeNull();
-      const row = await client.execute("SELECT created_at FROM agent_peer_message WHERE id='m1'");
-      expect(cursor!.getTime()).toBe(Number(row.rows[0].created_at));
+      const row = await client.execute("SELECT state, acked_at FROM message_delivery WHERE message_id='m1'");
+      expect(row.rows[0].state).toBe("acked");
+      expect(row.rows[0].acked_at).not.toBeNull();
     });
 
-    it("never moves the cursor backwards when acking an OLDER message", async () => {
-      // newer m2 acked first, then older m1
+    it("makes the message disappear from getUndelivered (acked IS the cursor)", async () => {
+      await insertMessage({ id: "m1", agoMs: 1000 });
+      await recordDeliveries("m1", PROJECT, ["s1"]);
+      expect((await getUndelivered("s1")).map((r) => r.id)).toEqual(["m1"]);
+      await ackDelivery("m1", "s1");
+      expect(await getUndelivered("s1")).toHaveLength(0);
+    });
+
+    it("acking only one of several messages leaves the rest undelivered", async () => {
       await insertMessage({ id: "m1", agoMs: 10_000 });
       await insertMessage({ id: "m2", agoMs: 1_000 });
       await recordDeliveries("m1", PROJECT, ["s1"]);
       await recordDeliveries("m2", PROJECT, ["s1"]);
       await ackDelivery("m2", "s1");
-      const afterNewer = await getReplayCursor("s1");
-      await ackDelivery("m1", "s1");
-      const afterOlder = await getReplayCursor("s1");
-      // Cursor stays at the NEWER (m2) timestamp.
-      expect(afterOlder!.getTime()).toBe(afterNewer!.getTime());
+      expect((await getUndelivered("s1")).map((r) => r.id)).toEqual(["m1"]);
     });
 
-    it("returns null cursor for a session that never acked", async () => {
-      expect(await getReplayCursor("never")).toBeNull();
+    it("is a no-op for a (message, session) with no delivery row", async () => {
+      await ackDelivery("missing", "never"); // no throw
+      const all = await client.execute("SELECT COUNT(*) AS n FROM message_delivery");
+      expect(Number(all.rows[0].n)).toBe(0);
     });
   });
 
@@ -251,12 +246,12 @@ describe("MessageDeliveryService", () => {
       expect(await getUndelivered("gemini-session")).toHaveLength(0);
     });
 
-    it("ackDeliveries advances the cursor and is safe on an empty list", async () => {
+    it("ackDeliveries acks every id and is safe on an empty list", async () => {
       await ackDeliveries([], "s1"); // no throw
       await insertMessage({ id: "m1", agoMs: 1000 });
       await recordDeliveries("m1", PROJECT, ["s1"]);
       await ackDeliveries(["m1"], "s1");
-      expect(await getReplayCursor("s1")).not.toBeNull();
+      expect(await getUndelivered("s1")).toHaveLength(0);
     });
   });
 });

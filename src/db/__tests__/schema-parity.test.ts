@@ -253,9 +253,6 @@ type _SchemaParity = [
   // messageDelivery
   Expect<Equal<(typeof sqliteSchema.messageDelivery)["$inferSelect"], (typeof pgSchema.messageDelivery)["$inferSelect"]>>,
   Expect<Equal<(typeof sqliteSchema.messageDelivery)["$inferInsert"], (typeof pgSchema.messageDelivery)["$inferInsert"]>>,
-  // messageReplayCursor
-  Expect<Equal<(typeof sqliteSchema.messageReplayCursor)["$inferSelect"], (typeof pgSchema.messageReplayCursor)["$inferSelect"]>>,
-  Expect<Equal<(typeof sqliteSchema.messageReplayCursor)["$inferInsert"], (typeof pgSchema.messageReplayCursor)["$inferInsert"]>>,
   // channelSubscription
   Expect<Equal<(typeof sqliteSchema.channelSubscription)["$inferSelect"], (typeof pgSchema.channelSubscription)["$inferSelect"]>>,
   Expect<Equal<(typeof sqliteSchema.channelSubscription)["$inferInsert"], (typeof pgSchema.channelSubscription)["$inferInsert"]>>,
@@ -278,8 +275,8 @@ it("schema.sqlite and schema.pg expose the same 74 table exports", () => {
   expect(sqliteTables).toEqual(pgTables);
   // 61 base + 1 (y5ch: notification_preferences) + 2 (aehq: model_proxy_token,
   // model_usage_event) + 6 (oyej: agentSchedules, agentRuns, triggerConfigs,
-  // triggerEvents, crownRuns, crownCandidates) + 4 (x386: messageDelivery,
-  // messageReplayCursor, channelSubscription, agentWorkContext) + 1 (oyej.14:
-  // webhookDeliveries) = 75.
-  expect(sqliteTables).toHaveLength(75);
+  // triggerEvents, crownRuns, crownCandidates) + 3 (x386: messageDelivery,
+  // channelSubscription, agentWorkContext) + 1 (oyej.14: webhookDeliveries) =
+  // 74. (x386.16 dropped the unused message_replay_cursor table.)
+  expect(sqliteTables).toHaveLength(74);
 });

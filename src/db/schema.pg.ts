@@ -1458,15 +1458,6 @@ export const messageDelivery = pgTable(
   ]
 );
 
-export const messageReplayCursor = pgTable(
-  "message_replay_cursor",
-  {
-    sessionId: text("session_id").primaryKey().references(() => terminalSessions.id, { onDelete: "cascade" }),
-    lastAckedAt: timestamp("last_acked_at", { withTimezone: true, mode: "date" }),
-    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
-  }
-);
-
 export const channelSubscription = pgTable(
   "channel_subscription",
   {

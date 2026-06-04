@@ -1570,18 +1570,6 @@ export const schema: SchemaDefinition = [
     ],
   },
   {
-    // Durable per-session replay cursor (survives MCP server restarts; the /tmp
-    // sentinel in peer-server.ts is a fast cache, this DB row is source of truth).
-    exportName: "messageReplayCursor",
-    sqlName: "message_replay_cursor",
-    columns: [
-      { field: "sessionId", dbName: "session_id", kind: "text", primaryKey: true, references: { table: "terminalSessions", column: "id", onDelete: "cascade" } },
-      // Highest agent_peer_message.createdAt the session has acked.
-      { field: "lastAckedAt", dbName: "last_acked_at", kind: "timestampMs" },
-      { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
-    ],
-  },
-  {
     // Which sessions auto-receive a channel's non-direct messages. Absence of a
     // row means "direct/mention only" for that (channel, session).
     exportName: "channelSubscription",
