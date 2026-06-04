@@ -25,6 +25,8 @@ export const {
   sessionTemplates,
   sessionRecordings,
   apiKeys,
+  modelProxyTokens,
+  modelUsageEvents,
   terminalSessions,
   trashItems,
   worktreeTrashMetadata,

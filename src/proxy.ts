@@ -71,6 +71,17 @@ export async function proxy(request: NextRequest) {
     return tagInstance(NextResponse.next());
   }
 
+  // [aehq] Model-key proxy: the forward endpoint authenticates with its own
+  // per-session token (`mp_…`), not a browser session or CF JWT, so let it
+  // bypass this gate. `/api/model-proxy/tokens*` is DELIBERATELY excluded — it
+  // is the browser/`withApiAuth` issuance surface and stays behind the gate.
+  if (
+    pathname.startsWith("/api/model-proxy/") &&
+    !pathname.startsWith("/api/model-proxy/tokens")
+  ) {
+    return tagInstance(NextResponse.next());
+  }
+
   // Check for Cloudflare Access JWT first
   const cfToken = getAccessToken(request);
   if (cfToken) {

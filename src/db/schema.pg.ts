@@ -267,6 +267,52 @@ export const apiKeys = pgTable(
   ]
 );
 
+export const modelProxyTokens = pgTable(
+  "model_proxy_token",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    sessionId: text("session_id").references(() => terminalSessions.id, { onDelete: "cascade" }),
+    instanceSlug: text("instance_slug"),
+    tokenPrefix: text("token_prefix").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    providerScope: text("provider_scope").notNull().default("[\"anthropic\"]"),
+    revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("model_proxy_token_prefix_idx").on(table.tokenPrefix),
+    index("model_proxy_token_session_idx").on(table.sessionId),
+    index("model_proxy_token_user_idx").on(table.userId),
+  ]
+);
+
+export const modelUsageEvents = pgTable(
+  "model_usage_event",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull(),
+    sessionId: text("session_id"),
+    instanceSlug: text("instance_slug"),
+    provider: text("provider").notNull(),
+    model: text("model"),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cacheReadTokens: integer("cache_read_tokens").notNull().default(0),
+    cacheCreationTokens: integer("cache_creation_tokens").notNull().default(0),
+    costMicroUsd: integer("cost_micro_usd"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("model_usage_session_idx").on(table.sessionId),
+    index("model_usage_user_idx").on(table.userId),
+    index("model_usage_instance_idx").on(table.instanceSlug),
+    index("model_usage_created_idx").on(table.createdAt),
+  ]
+);
+
 export const terminalSessions = pgTable(
   "terminal_session",
   {

@@ -309,6 +309,61 @@ export const schema: SchemaDefinition = [
       { name: "api_key_prefix_idx", columns: ["keyPrefix"] },
     ],
   },
+  // [aehq] Centralized model-key proxy: scoped, revocable, per-session tokens
+  // (`mp_…`) that authenticate calls to /api/model-proxy. Hash-at-rest, modeled
+  // on api_key above.
+  {
+    exportName: "modelProxyTokens",
+    sqlName: "model_proxy_token",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
+      { field: "userId", dbName: "user_id", kind: "text", notNull: true, references: { table: "users", column: "id", onDelete: "cascade" } },
+      // Session this token is scoped to (revoked when the session closes).
+      { field: "sessionId", dbName: "session_id", kind: "text", references: { table: "terminalSessions", column: "id", onDelete: "cascade" } },
+      // Supervisor instance slug for multi-tenant cost attribution (nullable single-tenant).
+      { field: "instanceSlug", dbName: "instance_slug", kind: "text" },
+      { field: "tokenPrefix", dbName: "token_prefix", kind: "text", notNull: true },
+      { field: "tokenHash", dbName: "token_hash", kind: "text", notNull: true },
+      // Which providers this token may proxy. JSON array string, e.g. '["anthropic"]'.
+      { field: "providerScope", dbName: "provider_scope", kind: "text", notNull: true, default: { kind: "value", value: "\"[\\\"anthropic\\\"]\"" } },
+      { field: "revokedAt", dbName: "revoked_at", kind: "timestampMs" },
+      { field: "expiresAt", dbName: "expires_at", kind: "timestampMs" },
+      { field: "lastUsedAt", dbName: "last_used_at", kind: "timestampMs" },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "model_proxy_token_prefix_idx", columns: ["tokenPrefix"] },
+      { name: "model_proxy_token_session_idx", columns: ["sessionId"] },
+      { name: "model_proxy_token_user_idx", columns: ["userId"] },
+    ],
+  },
+  // [aehq] Centralized model-key proxy: per-call token/cost usage events for
+  // observability + central billing, attributed by session / user / instance.
+  {
+    exportName: "modelUsageEvents",
+    sqlName: "model_usage_event",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
+      { field: "userId", dbName: "user_id", kind: "text", notNull: true },
+      { field: "sessionId", dbName: "session_id", kind: "text" },
+      { field: "instanceSlug", dbName: "instance_slug", kind: "text" },
+      { field: "provider", dbName: "provider", kind: "text", notNull: true },
+      { field: "model", dbName: "model", kind: "text" },
+      { field: "inputTokens", dbName: "input_tokens", kind: "integer", notNull: true, default: { kind: "value", value: "0" } },
+      { field: "outputTokens", dbName: "output_tokens", kind: "integer", notNull: true, default: { kind: "value", value: "0" } },
+      { field: "cacheReadTokens", dbName: "cache_read_tokens", kind: "integer", notNull: true, default: { kind: "value", value: "0" } },
+      { field: "cacheCreationTokens", dbName: "cache_creation_tokens", kind: "integer", notNull: true, default: { kind: "value", value: "0" } },
+      // Cost in micro-USD (integer to avoid float drift); null if model unpriced.
+      { field: "costMicroUsd", dbName: "cost_micro_usd", kind: "integer" },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "model_usage_session_idx", columns: ["sessionId"] },
+      { name: "model_usage_user_idx", columns: ["userId"] },
+      { name: "model_usage_instance_idx", columns: ["instanceSlug"] },
+      { name: "model_usage_created_idx", columns: ["createdAt"] },
+    ],
+  },
   {
     exportName: "terminalSessions",
     sqlName: "terminal_session",

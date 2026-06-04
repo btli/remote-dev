@@ -481,6 +481,14 @@ export async function getProfileEnvironment(
     if (secrets) {
       // Merge secrets into environment
       Object.assign(env, secrets);
+      // [aehq] When the centralized model-key proxy is enabled, the agent must
+      // NOT see real provider keys — they live only in the server-side resolver
+      // (which reads them straight from profileSecretsConfig). Strip them here
+      // so they never reach tmux. No-op when the flag is off (byte-identical).
+      if (process.env.RDV_MODEL_PROXY_ENABLED === "1") {
+        const { stripProviderSecrets } = await import("@/lib/env-keys");
+        stripProviderSecrets(env);
+      }
     }
   } catch (error) {
     // Log but don't fail if secrets fetch fails

@@ -34,7 +34,7 @@ type Equal<A, B> =
 // Compiles only when its argument resolves to the literal `true`.
 type Expect<T extends true> = T;
 
-// Per-table $inferSelect / $inferInsert parity for ALL 62 tables. A drift makes
+// Per-table $inferSelect / $inferInsert parity for ALL 64 tables. A drift makes
 // one of these `false`, which is a compile error on the `true[]` annotation.
 type _SchemaParity = [
   // users
@@ -230,10 +230,11 @@ void _parityHolds;
 
 // Trivial runtime test so vitest treats this file as a (passing) suite. The
 // real guarantee is the compile-time tuple above, enforced by `tsc`.
-it("schema.sqlite and schema.pg expose the same 62 table exports", () => {
+it("schema.sqlite and schema.pg expose the same 64 table exports", () => {
   const sqliteTables = Object.keys(sqliteSchema).sort();
   const pgTables = Object.keys(pgSchema).sort();
   expect(sqliteTables).toEqual(pgTables);
-  // [y5ch.6] +1 for notification_preferences.
-  expect(sqliteTables).toHaveLength(62);
+  // [y5ch.6] +1 notification_preferences; [aehq] +2 model_proxy_token,
+  // model_usage_event.
+  expect(sqliteTables).toHaveLength(64);
 });

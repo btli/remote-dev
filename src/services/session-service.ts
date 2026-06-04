@@ -568,6 +568,34 @@ export async function createSessionWithDedupFlag(
     }
   }
 
+  // [aehq] Centralized model-key proxy (feature-flagged OFF by default). When
+  // on, mint a per-session proxy token and point the agent CLI at the in-Next.js
+  // proxy with the token in place of a real provider key. Merged into initialEnv
+  // AFTER proxyEnv (LiteLLM) so it overrides it. When the flag is off this is
+  // empty and behavior is byte-identical to today.
+  let modelProxyEnv: Record<string, string> = {};
+  if (isAgentRuntime && process.env.RDV_MODEL_PROXY_ENABLED === "1") {
+    try {
+      const { issueProxyToken } = await import("@/services/model-proxy-token-service");
+      const { buildModelProxyEnv, providerScopeFor } = await import("@/lib/env-keys");
+      const { INSTANCE_SLUG } = await import("@/lib/base-path");
+      const { token } = await issueProxyToken({
+        userId,
+        sessionId,
+        instanceSlug: INSTANCE_SLUG || undefined,
+        providerScope: providerScopeFor(effectiveAgentProvider),
+      });
+      // The proxy lives on the API server; agents reach it on the local API
+      // port (or localhost when bound to a unix socket).
+      const apiBase = process.env.SOCKET_PATH
+        ? "http://localhost"
+        : `http://localhost:${process.env.PORT ?? "6001"}`;
+      modelProxyEnv = buildModelProxyEnv(effectiveAgentProvider, token, apiBase);
+    } catch (error) {
+      log.error("Failed to mint model-proxy token", { sessionId, error: String(error) });
+    }
+  }
+
   // RDV_* env vars only matter to local agent hook scripts that call back
   // into the terminal/API server. SSH sessions don't run those hooks (the
   // remote shell wouldn't see the vars anyway), so skip injecting them.
@@ -651,13 +679,14 @@ export async function createSessionWithDedupFlag(
       : {};
 
     // Initial environment — all must be present at PTY spawn so agent processes inherit them immediately.
-    // Precedence (low → high): claudeAgentDefaults < pluginEnv < profileEnv < proxyEnv < folderEnv <
-    //   folderGitIdentityEnv < gitCredentialEnv < ghAccountEnv < rdvEnv.
+    // Precedence (low → high): claudeAgentDefaults < pluginEnv < profileEnv < proxyEnv < modelProxyEnv
+    //   < folderEnv < folderGitIdentityEnv < gitCredentialEnv < ghAccountEnv < rdvEnv.
     const initialEnv: Record<string, string> = {
       ...claudeAgentDefaults,
       ...(sessionConfig.environment ?? {}),
       ...(profileEnv ?? {}),
       ...proxyEnv,
+      ...modelProxyEnv, // [aehq] proxy token + base URL win over LiteLLM (proxyEnv) + profile
       ...(folderEnv ?? {}),
       ...folderGitIdentityEnv,
       ...gitCredentialEnv,
@@ -1230,6 +1259,17 @@ export async function suspendSession(
         eq(terminalSessions.userId, userId)
       )
     );
+
+  // [aehq] Revoke the session's model-proxy tokens while suspended — the agent
+  // is detached and resume re-mints a fresh token. Idempotent (revokes 0 rows
+  // when none exist) and a no-op when the proxy was never enabled (empty table),
+  // so it stays byte-identical for non-proxy deployments.
+  try {
+    const { revokeTokensForSession } = await import("./model-proxy-token-service");
+    await revokeTokensForSession(sessionId);
+  } catch (error) {
+    log.error("Failed to revoke model-proxy tokens on suspend", { sessionId, error: String(error) });
+  }
 }
 
 /**
@@ -1338,8 +1378,39 @@ export async function resumeSession(
 
       const proxyEnv = await resolveProxyEnv(agentProvider, userId);
 
+      // [aehq] Re-mint a fresh model-proxy token on resume (feature-flagged OFF
+      // by default; empty + byte-identical to today when off). The predecessor
+      // token is revoked FIRST so tokens never accumulate across suspend/resume
+      // cycles — only one valid token per session at a time (blast radius = one
+      // session, revocable).
+      let modelProxyEnv: Record<string, string> = {};
+      if (process.env.RDV_MODEL_PROXY_ENABLED === "1" && agentProvider !== "none") {
+        try {
+          const { issueProxyToken, revokeTokensForSession } = await import(
+            "@/services/model-proxy-token-service"
+          );
+          const { buildModelProxyEnv, providerScopeFor } = await import("@/lib/env-keys");
+          const { INSTANCE_SLUG } = await import("@/lib/base-path");
+          // Idempotent + safe even if no prior token exists (revokes 0 rows).
+          await revokeTokensForSession(sessionId);
+          const { token } = await issueProxyToken({
+            userId,
+            sessionId,
+            instanceSlug: INSTANCE_SLUG || undefined,
+            providerScope: providerScopeFor(agentProvider),
+          });
+          const apiBase = process.env.SOCKET_PATH
+            ? "http://localhost"
+            : `http://localhost:${process.env.PORT ?? "6001"}`;
+          modelProxyEnv = buildModelProxyEnv(agentProvider, token, apiBase);
+        } catch (error) {
+          log.error("Failed to mint model-proxy token on resume", { sessionId, error: String(error) });
+        }
+      }
+
       await TmuxService.setSessionEnvironment(session.tmuxSessionName, {
         ...proxyEnv,
+        ...modelProxyEnv, // [aehq] proxy token + base URL win over LiteLLM (proxyEnv)
         ...folderGitIdentityEnv,
         ...gitCredentialEnv,
         ...ghAccountEnv,
@@ -1442,6 +1513,17 @@ export async function closeSession(
     );
   } catch (error) {
     log.error("Failed to revoke API key", { sessionId, error: String(error) });
+  }
+
+  // [aehq] Revoke any model-proxy tokens scoped to this session so the agent's
+  // proxy credential dies with the session (the FK cascade is a delete-path
+  // backstop; this explicit revoke also covers suspend-without-delete). No-op
+  // when the model proxy was never enabled — the table is simply empty.
+  try {
+    const { revokeTokensForSession } = await import("./model-proxy-token-service");
+    await revokeTokensForSession(sessionId);
+  } catch (error) {
+    log.error("Failed to revoke model-proxy tokens", { sessionId, error: String(error) });
   }
 
   // Clean up session-scoped gitconfig (non-profile sessions)
