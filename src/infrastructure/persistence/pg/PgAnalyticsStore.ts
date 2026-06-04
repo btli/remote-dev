@@ -16,7 +16,7 @@
  * flattened, sorted number[]).
  */
 
-import { createLogger } from "@/lib/logger";
+import { createLogger, type Logger } from "@/lib/logger";
 import type {
   AnalyticsStore,
   AnalyticsSummary,
@@ -37,7 +37,17 @@ import type { PoolClient } from "pg";
 import { getSidecarPool } from "./sidecar-db";
 import { PgWriteBuffer } from "./PgWriteBuffer";
 
-const log = createLogger("PgAnalyticsStore");
+// The logger is resolved lazily (not at module top level) to avoid an import
+// cycle: sidecar-factory statically imports this module, AppLogger statically
+// imports sidecar-factory, and `@/lib/logger` re-exports AppLogger — calling
+// createLogger() at module-eval time would run before AppLogger finished
+// initializing (`createLogger is not a function`). Deferring the call to first
+// use breaks the cycle while keeping the import static (bundler-safe).
+let _log: Logger | null = null;
+function log(): Logger {
+  if (!_log) _log = createLogger("PgAnalyticsStore");
+  return _log;
+}
 
 const MAX_LATENCY_SAMPLES = 1000;
 
@@ -711,7 +721,7 @@ export class PgAnalyticsStore implements AnalyticsStore {
     );
     const deletedCount = result.rowCount ?? 0;
     if (deletedCount > 0) {
-      log.info("Pruned old request logs", { deletedCount, retentionDays });
+      log().info("Pruned old request logs", { deletedCount, retentionDays });
     }
     return { deletedCount };
   }

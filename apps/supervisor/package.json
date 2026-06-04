@@ -17,7 +17,9 @@
     "db:codegen": "bun run scripts/codegen-schema.ts",
     "db:push": "drizzle-kit push",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "db:migrate-supervisor-to-postgres": "bun run scripts/migrate-supervisor-to-postgres.ts",
+    "db:dump-supervisor-sql": "bun run scripts/dump-supervisor-sql.ts"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.11.2",

@@ -8,15 +8,21 @@
  *   - SQLite (default): the original synchronous better-sqlite3 stores,
  *     behavior-identical to the prior implementation.
  *
- * The dialect-specific modules are loaded with a lazy `require()` so that `pg`
- * is only pulled in on the Postgres path and `better-sqlite3` only on the
- * SQLite path — neither driver is loaded for the backend not in use. A
- * synchronous accessor is required because `AppLogger.write()` is a synchronous
- * fire-and-forget call, so an `await import()` is not an option here.
+ * The dialect-specific modules are pulled in with STATIC top-level imports so
+ * the references are statically linked and survive Next.js standalone bundling.
+ * The prior implementation lazily `require()`d these modules, but that interop
+ * does NOT survive standalone bundling — the named export resolved to
+ * `undefined`, producing `TypeError: PgLogStore is not a constructor` at
+ * runtime (bug pcm7). Static imports are bundler-safe.
  *
- * This mirrors the existing lazy-require convention in this codebase
- * (`src/lib/dynamic-fs.ts`, `src/lib/preferences.ts`), which uses the same
- * single-line `no-require-imports` directive for exactly this purpose.
+ * Importing both dialect modules on either path is safe:
+ *   - The native drivers (`pg`, `better-sqlite3`) are externalized via
+ *     `serverExternalPackages` in next.config, so they are not bundled.
+ *   - None of these store modules open a DB connection at import time — the PG
+ *     stores only construct an in-memory write buffer and lazily get the pool on
+ *     first flush; the SQLite stores lazily open their DB on first use. A
+ *     synchronous accessor is required because `AppLogger.write()` is a
+ *     synchronous fire-and-forget call, so an `await import()` is not an option.
  *
  * Both stores are process-wide singletons.
  */
@@ -24,6 +30,10 @@
 import { isPostgres } from "@/db/is-postgres";
 import type { LogRepository } from "@/application/ports/LogRepository";
 import type { AnalyticsStore } from "@/application/ports/AnalyticsStore";
+import { PgLogStore } from "./pg/PgLogStore";
+import { PgAnalyticsStore } from "./pg/PgAnalyticsStore";
+import { getLogRepositoryInstance } from "./repositories/BetterSqliteLogRepository";
+import { SqliteAnalyticsStore } from "@/infrastructure/analytics/SqliteAnalyticsStore";
 
 let _logStore: LogRepository | null = null;
 let _analyticsStore: AnalyticsStore | null = null;
@@ -31,30 +41,16 @@ let _analyticsStore: AnalyticsStore | null = null;
 export function getLogStore(): LogRepository {
   if (_logStore) return _logStore;
 
-  if (isPostgres()) {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require("./pg/PgLogStore") as typeof import("./pg/PgLogStore");
-    _logStore = new mod.PgLogStore();
-  } else {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require("./repositories/BetterSqliteLogRepository") as typeof import("./repositories/BetterSqliteLogRepository");
-    _logStore = mod.getLogRepositoryInstance();
-  }
+  _logStore = isPostgres() ? new PgLogStore() : getLogRepositoryInstance();
   return _logStore;
 }
 
 export function getAnalyticsStore(): AnalyticsStore {
   if (_analyticsStore) return _analyticsStore;
 
-  if (isPostgres()) {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require("./pg/PgAnalyticsStore") as typeof import("./pg/PgAnalyticsStore");
-    _analyticsStore = new mod.PgAnalyticsStore();
-  } else {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require("@/infrastructure/analytics/SqliteAnalyticsStore") as typeof import("@/infrastructure/analytics/SqliteAnalyticsStore");
-    _analyticsStore = new mod.SqliteAnalyticsStore();
-  }
+  _analyticsStore = isPostgres()
+    ? new PgAnalyticsStore()
+    : new SqliteAnalyticsStore();
   return _analyticsStore;
 }
 
