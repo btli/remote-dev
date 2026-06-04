@@ -347,23 +347,45 @@ export function normalizeCloseCode(code: number): number {
  * `WebSocket` client sets `Sec-WebSocket-Key`/`Version`/`Upgrade`/`Connection`
  * itself, so we only need to carry `Sec-WebSocket-Protocol`/`-Extensions` plus
  * auth and a few useful forwarding headers.
+ *
+ * `Origin` is forwarded explicitly: the instance's port-proxy WS bridge enforces
+ * an `Origin == public-origin` allowlist, and a browser sends `Origin` on the WS
+ * handshake. Bun's upstream `WebSocket` does NOT replay it, so without this the
+ * bridge would reject every Shape-B (router) handshake.
+ *
+ * `X-Forwarded-Host` is REBUILT from the trusted `Host` this router received
+ * (mirroring `forwardHttpHeaders`), NOT passed through from whatever the client
+ * sent — the instance derives its public origin from `X-Forwarded-Host`, so a
+ * client-supplied value would let the client spoof the allowlisted origin.
+ * `X-Forwarded-Proto` defaults to `https` when absent (CF terminates TLS).
  */
 export function buildWsUpgradeHeaders(req: Request): Record<string, string> {
   const out: Record<string, string> = {};
+  // Headers safe to carry through verbatim. NOTE: `x-forwarded-host` is
+  // deliberately NOT here — it is rebuilt from the trusted Host below so the
+  // client can't forge the origin the instance trusts.
   const carry = [
     "cookie",
     "cf-access-jwt-assertion",
     "authorization",
+    "origin",
     "sec-websocket-protocol",
     "sec-websocket-extensions",
     "user-agent",
     "x-forwarded-for",
-    "x-forwarded-proto",
-    "x-forwarded-host",
   ];
   for (const name of carry) {
     const value = req.headers.get(name);
     if (value !== null) out[name] = value;
   }
+
+  // Convey the public origin from the TRUSTED Host this router received, the
+  // same way the HTTP path does — never trust a client-supplied x-forwarded-host.
+  const incomingHost = req.headers.get("host");
+  if (incomingHost) out["x-forwarded-host"] = incomingHost;
+
+  const incomingProto = req.headers.get("x-forwarded-proto");
+  out["x-forwarded-proto"] = incomingProto ?? "https";
+
   return out;
 }

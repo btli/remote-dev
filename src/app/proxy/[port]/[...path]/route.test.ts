@@ -6,6 +6,11 @@ vi.mock("@/lib/auth-utils", () => ({
   getAuthSession: vi.fn().mockResolvedValue({ user: { id: "user-1" } }),
 }));
 
+// Runtime membership gate (remote-dev-urjg): mocked so the existing upstream
+// cases exercise the proxy path. The membership-reject case overrides it.
+const isPortProxyableForUser = vi.hoisted(() => vi.fn());
+vi.mock("@/services/proxyable-ports-service", () => ({ isPortProxyableForUser }));
+
 // base-path defaults to unscoped (BASE_PATH="", INSTANCE_SLUG="") in tests, so
 // proxy URLs are rewritten to "/proxy/<port>/…" with no slug prefix.
 
@@ -46,6 +51,10 @@ const fetchMock = vi.fn();
 beforeEach(() => {
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
+  // Default: the port IS in the user's proxyable set (the syntactic-gate and
+  // upstream-behavior tests below assume membership passes).
+  isPortProxyableForUser.mockReset();
+  isPortProxyableForUser.mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -79,6 +88,20 @@ describe("port proxy route", () => {
     const { GET } = await import("./route");
     const res = await GET(req("http://localhost/proxy/80/"), ctx("80"));
     expect(res.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a syntactically-OK port that is NOT in the user's proxyable set (403)", async () => {
+    // 9999 passes isPortProxyable but is neither listening nor claimed → the
+    // runtime membership gate (remote-dev-urjg) must block it before any fetch.
+    isPortProxyableForUser.mockResolvedValue(false);
+    const { GET } = await import("./route");
+    const res = await GET(req("http://localhost/proxy/9999/"), ctx("9999"));
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "PORT_NOT_PROXYABLE",
+    });
+    expect(isPortProxyableForUser).toHaveBeenCalledWith("user-1", 9999);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { withApiAuth } from "@/lib/api";
-import { getListeningPorts } from "@/services/port-monitoring-service";
-import { getActiveClaimsForUser } from "@/services/port-claims-service";
 import { listSessions } from "@/services/session-service";
-import { isPortProxyable } from "@/lib/proxy-port-utils";
+import {
+  loadProxyableContext,
+  computeProxyablePortSet,
+} from "@/services/proxyable-ports-service";
 import type { ProxyablePort, ProxyablePortsResponse } from "@/types/port";
 
 /**
@@ -27,9 +28,8 @@ import type { ProxyablePort, ProxyablePortsResponse } from "@/types/port";
  * a claim's session can't be resolved, `sessionName` is null.
  */
 export const GET = withApiAuth(async (_request, { userId }) => {
-  const [listening, claims, sessions] = await Promise.all([
-    getListeningPorts(),
-    getActiveClaimsForUser(userId),
+  const [{ listening, claims }, sessions] = await Promise.all([
+    loadProxyableContext(userId),
     listSessions(userId),
   ]);
 
@@ -45,13 +45,8 @@ export const GET = withApiAuth(async (_request, { userId }) => {
   }
 
   // Union of listening + claimed ports, filtered by the syntactic allowlist.
-  const candidatePorts = new Set<number>();
-  for (const port of listening.keys()) {
-    if (isPortProxyable(port)) candidatePorts.add(port);
-  }
-  for (const port of claimByPort.keys()) {
-    if (isPortProxyable(port)) candidatePorts.add(port);
-  }
+  // Shared with the proxy gates so the response and the gates agree exactly.
+  const candidatePorts = computeProxyablePortSet(listening, claims);
 
   const ports: ProxyablePort[] = [];
   for (const port of candidatePorts) {

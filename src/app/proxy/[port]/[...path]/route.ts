@@ -10,11 +10,21 @@
  * stream the response back, and rewrite redirect/cookie paths + inject a
  * `<base>` tag so a path-based-proxied app's relative URLs resolve correctly.
  *
- * Auth / owner-scoping: the request has already passed this instance's
- * CF-Access/session gate (`src/proxy.ts`), and `withAuth` requires a valid
- * session. The instance DB only ever contains users provisioned ONTO this
- * instance, so any authenticated caller is, by construction, an authorized
- * owner of the instance.
+ * Auth model: `withApiAuth` (session OR Bearer API key), DELIBERATELY matching
+ * the proxy-token mint (`/api/ports/:port/proxy-token`) and `/api/ports/proxyable`
+ * so browsers and agents authenticate identically (an agent that can discover a
+ * proxyable port should be able to fetch it too). The request has already passed
+ * this instance's CF-Access/session gate (`src/proxy.ts`). The instance DB only
+ * ever contains users provisioned ONTO this instance, so any authenticated caller
+ * is, by construction, an authorized owner of the instance; the runtime port gate
+ * below then bounds the blast radius to that caller's OWN listening/claimed ports.
+ *
+ * Port-scoping (remote-dev-urjg): two gates decide WHICH port a caller may reach.
+ * `isPortProxyable` is the cheap syntactic allowlist (privileged <1024 +
+ * hard-blocked 6001/6002). Layered on top, `isPortProxyableForUser` enforces
+ * RUNTIME membership — the port must be in the caller's live `(listening ∪
+ * claimed)` set, so an authenticated user can't reach an arbitrary loopback port
+ * they have no server/claim for. The WS bridge applies the same two gates.
  *
  * The plan's OPTIONAL strict "requesting-email == instance-owner" check (§7) is
  * deliberately NOT implemented (assessed in B4, remote-dev-uqkk): there is no
@@ -40,7 +50,7 @@
 
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { withAuth, type RouteContext } from "@/lib/api";
+import { withApiAuth, type RouteContext } from "@/lib/api";
 import { BASE_PATH, INSTANCE_SLUG } from "@/lib/base-path";
 import {
   isPortProxyable,
@@ -49,6 +59,7 @@ import {
   injectBaseTag,
   type RewriteOptions,
 } from "@/lib/proxy-port-utils";
+import { isPortProxyableForUser } from "@/services/proxyable-ports-service";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("PortProxy");
@@ -160,7 +171,7 @@ function isHtml(contentType: string | null): boolean {
 
 async function handler(
   request: Request,
-  { params }: { userId: string; params?: Record<string, string> },
+  { userId, params }: { userId: string; params?: Record<string, string> },
 ): Promise<NextResponse> {
   const portRaw = params?.port ?? "";
   const port = Number(portRaw);
@@ -172,11 +183,25 @@ async function handler(
     );
   }
 
+  // First gate: syntactic allowlist (privileged <1024 + hard-blocked 6001/6002).
   if (!isPortProxyable(port)) {
     return NextResponse.json(
       {
         error: `Port ${port} cannot be proxied`,
         code: "PORT_BLOCKED",
+      },
+      { status: 403 },
+    );
+  }
+
+  // Second gate: runtime membership (remote-dev-urjg). The port must be in this
+  // user's live `(listening ∪ claimed)` set — not any arbitrary loopback port.
+  if (!(await isPortProxyableForUser(userId, port))) {
+    log.warn("Rejected port not in user's proxyable set", { port, userId });
+    return NextResponse.json(
+      {
+        error: `Port ${port} is not in your set of proxyable ports. Start a server on it or claim it from a session, then retry.`,
+        code: "PORT_NOT_PROXYABLE",
       },
       { status: 403 },
     );
@@ -288,12 +313,12 @@ async function handler(
   });
 }
 
-const wrapped = withAuth(handler);
+const wrapped = withApiAuth(handler);
 
 /**
  * Next's generated route validator types this `[...path]` catch-all's context as
  * `{ params: Promise<{ port: string; path: string[] }> }` (the `path` segment is
- * a REQUIRED `string[]`). The shared `withAuth`/`RouteContext` types params as
+ * a REQUIRED `string[]`). The shared `withApiAuth`/`RouteContext` types params as
  * `Promise<Record<string, string>>`, whose index signature yields `path: string`
  * — so the wrapped handler doesn't satisfy the generated constraint. We bridge
  * the two LOCALLY here (rather than widening the shared `RouteContext`, which

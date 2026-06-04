@@ -348,4 +348,36 @@ describe("buildWsUpgradeHeaders", () => {
     expect(headers["authorization"]).toBeUndefined();
     expect(headers["x-forwarded-for"]).toBeUndefined();
   });
+
+  it("forwards the browser Origin (the instance's WS bridge enforces an Origin allowlist)", () => {
+    // Bun's upstream WebSocket does not replay Origin, so the router must.
+    const req = new Request("https://dev.example.com/alpha/proxy/6000/_hmr", {
+      headers: { origin: "https://dev.example.com", host: "dev.example.com" },
+    });
+    const headers = buildWsUpgradeHeaders(req);
+    expect(headers["origin"]).toBe("https://dev.example.com");
+  });
+
+  it("rebuilds X-Forwarded-Host from the trusted Host, ignoring a client-supplied one", () => {
+    // The instance derives its public origin from x-forwarded-host; a value the
+    // CLIENT set must never win, or the client could spoof the allowlisted origin.
+    const req = new Request("https://dev.example.com/alpha/proxy/6000/_hmr", {
+      headers: {
+        host: "dev.example.com",
+        "x-forwarded-host": "evil.example", // attacker-supplied → must be dropped
+        origin: "https://dev.example.com",
+      },
+    });
+    const headers = buildWsUpgradeHeaders(req);
+    expect(headers["x-forwarded-host"]).toBe("dev.example.com");
+    expect(headers["x-forwarded-proto"]).toBe("https");
+  });
+
+  it("preserves an existing X-Forwarded-Proto", () => {
+    const req = new Request("http://dev.example.com/alpha/ws", {
+      headers: { host: "dev.example.com", "x-forwarded-proto": "http" },
+    });
+    const headers = buildWsUpgradeHeaders(req);
+    expect(headers["x-forwarded-proto"]).toBe("http");
+  });
 });
