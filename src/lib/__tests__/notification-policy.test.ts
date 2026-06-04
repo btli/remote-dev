@@ -1,8 +1,11 @@
 // @vitest-environment node
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   applyNotificationPolicy,
   inQuietHours,
+  setNotificationPolicyHook,
+  getNotificationPolicyHook,
+  type NotificationDecision,
   type ResolvedNotificationPrefs,
 } from "@/lib/notification-policy";
 
@@ -113,5 +116,86 @@ describe("ResolvedNotificationPrefs shape (y5ch.6)", () => {
     };
     expect(prefs.mutedSessionIds.has("s1")).toBe(true);
     expect(prefs.pushByType.agent_exited).toBe(false);
+  });
+});
+
+describe("pluggable policy hook (y5ch.7)", () => {
+  // Always clear the global hook so suites stay isolated.
+  afterEach(() => setNotificationPolicyHook(null));
+
+  it("leaves the decision unchanged when no hook is registered", () => {
+    expect(getNotificationPolicyHook()).toBeNull();
+    const d = applyNotificationPolicy(
+      { userId: "u", sessionId: "s", type: "agent_waiting", title: "x" },
+      base,
+      { now: at(12), focused: false },
+    );
+    // Byte-identical to the built-in default (the pre-hook behavior).
+    expect(d).toEqual({ store: true, push: true });
+  });
+
+  it("applies a hook patch over the base decision (force-suppress push)", () => {
+    setNotificationPolicyHook((event, baseDecision) => {
+      expect(event.type).toBe("agent_waiting");
+      // Base would have pushed; the external policy flips push off.
+      expect(baseDecision).toEqual({ store: true, push: true });
+      return { push: false, reason: "external_suppress" };
+    });
+    const d = applyNotificationPolicy(
+      { userId: "u", sessionId: "s", type: "agent_waiting", title: "x" },
+      base,
+      { now: at(12), focused: false },
+    );
+    // store carries over from base; only the patched keys change.
+    expect(d).toEqual({ store: true, push: false, reason: "external_suppress" });
+  });
+
+  it("lets a hook force-push an event the base policy gated off", () => {
+    setNotificationPolicyHook(() => ({ push: true, reason: "external_force" }));
+    const d = applyNotificationPolicy(
+      // passive type below the default min severity → base gates push off.
+      { userId: "u", type: "agent_exited", title: "x" },
+      base,
+      { now: at(12), focused: false },
+    );
+    expect(d).toEqual({ store: true, push: true, reason: "external_force" });
+  });
+
+  it("treats a null/undefined patch as no-op", () => {
+    setNotificationPolicyHook(() => null);
+    const d = applyNotificationPolicy(
+      { userId: "u", sessionId: "s", type: "agent_waiting", title: "x" },
+      base,
+      { now: at(12), focused: false },
+    );
+    expect(d).toEqual({ store: true, push: true });
+  });
+
+  it("falls back to the base decision when the hook throws", () => {
+    setNotificationPolicyHook(() => {
+      throw new Error("boom");
+    });
+    const d = applyNotificationPolicy(
+      { userId: "u", sessionId: "s", type: "agent_waiting", title: "x" },
+      base,
+      { now: at(12), focused: false },
+    );
+    // The throwing hook is swallowed; the built-in decision survives.
+    expect(d).toEqual({ store: true, push: true });
+  });
+
+  it("does not let a hook mutate the base decision in place", () => {
+    setNotificationPolicyHook((_event, baseDecision) => {
+      expect(() => {
+        (baseDecision as NotificationDecision).push = false;
+      }).toThrow();
+      return null;
+    });
+    const d = applyNotificationPolicy(
+      { userId: "u", sessionId: "s", type: "agent_waiting", title: "x" },
+      base,
+      { now: at(12), focused: false },
+    );
+    expect(d).toEqual({ store: true, push: true });
   });
 });
