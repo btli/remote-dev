@@ -36,6 +36,11 @@ servers:
       basePath:
         default: ""
         description: e.g. /alpha
+  - url: https://supervisor.example.com
+    description: >-
+      Supervisor control plane (apps/supervisor — a SEPARATE Next.js app/port).
+      Hosts only the Supervisor-tagged paths (/api/instances/{id}/agent,
+      /api/delegate). Replace the host with your deployment.
 
 tags:
   - name: Sessions
@@ -122,6 +127,17 @@ tags:
     description: Blue-green deploy webhook (HMAC)
   - name: Cron
     description: Scheduled maintenance endpoints (shared secret)
+  - name: Automation
+    description: >-
+      Agent automation & orchestration (epic remote-dev-oyej): scheduled and
+      GitHub-triggered REAL agent runs. See docs/AUTOMATION.md.
+  - name: Crown
+    description: Crown best-of-N — fan out N agent runs, judge, and auto-PR the winner
+  - name: Supervisor
+    description: >-
+      Multi-instance Supervisor control plane (separate Next.js app, NOT served
+      by this app's port). Operator-gated agent launch and cross-instance
+      delegation. See docs/SUPERVISOR_DEPLOY.md.
   - name: Auth
     description: NextAuth and OAuth endpoints
 
@@ -1756,6 +1772,186 @@ paths:
       parameters: [{ name: secret, in: query, schema: { type: string } }]
       responses: { '200': { $ref: '#/components/responses/Success' } }
 
+  # ===================== Automation: agent schedules =====================
+  /api/agent-schedules:
+    get:
+      tags: [Automation]
+      summary: List agent schedules
+      parameters: [{ name: projectId, in: query, schema: { type: string } }]
+      responses:
+        '200':
+          description: Schedules
+          content: { application/json: { schema: { type: object, properties: { schedules: { type: array, items: { type: object, additionalProperties: true } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Automation]
+      summary: Create a scheduled REAL agent run
+      description: Creates the schedule and notifies the terminal server's agent scheduler (fire-and-forget) when enabled.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AgentScheduleInput' } } } }
+      responses:
+        '201': { description: Created schedule, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/agent-schedules/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [Automation]
+      summary: Get an agent schedule
+      responses:
+        '200': { description: Schedule, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Automation]
+      summary: Update an agent schedule
+      description: Updates the schedule and notifies the agent scheduler.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses:
+        '200': { description: Updated schedule, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Automation]
+      summary: Delete an agent schedule
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ===================== Automation: agent runs =====================
+  /api/agent-runs:
+    get:
+      tags: [Automation]
+      summary: List agent runs
+      parameters:
+        - { name: scheduleId, in: query, schema: { type: string } }
+        - { name: triggerConfigId, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [pending, running, completed, failed, superseded] } }
+      responses:
+        '200':
+          description: Runs
+          content: { application/json: { schema: { type: object, properties: { runs: { type: array, items: { type: object, additionalProperties: true } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Automation]
+      summary: Launch a manual agent run (immediate)
+      description: Creates a fresh agent-type session (source "manual") and delivers the prompt. Returns the run handle.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ManualRunInput' } } } }
+      responses:
+        '202': { description: Run launched, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ===================== Automation: trigger configs =====================
+  /api/trigger-configs:
+    get:
+      tags: [Automation]
+      summary: List trigger configs
+      parameters: [{ name: projectId, in: query, schema: { type: string } }]
+      responses:
+        '200':
+          description: Trigger configs
+          content: { application/json: { schema: { type: object, properties: { configs: { type: array, items: { type: object, additionalProperties: true } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Automation]
+      summary: Create a trigger config
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TriggerConfigInput' } } } }
+      responses:
+        '201': { description: Created trigger config, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/trigger-configs/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [Automation]
+      summary: Get a trigger config
+      responses:
+        '200': { description: Trigger config, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Automation]
+      summary: Update a trigger config
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses:
+        '200': { description: Updated trigger config, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Automation]
+      summary: Delete a trigger config
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ===================== Automation: GitHub webhook =====================
+  /api/webhooks/github:
+    post:
+      tags: [Automation]
+      summary: GitHub event webhook (HMAC-SHA256 auth)
+      description: >-
+        Structurally mirrors /api/deploy. The raw body is read before JSON parse
+        and the HMAC is computed over the raw bytes. A `ping` event returns
+        `{ message: "pong" }`. Matched events dispatch agent runs fire-and-forget,
+        so GitHub's delivery is never blocked on an agent launch.
+      security: []
+      parameters:
+        - { name: X-Hub-Signature-256, in: header, required: true, schema: { type: string } }
+        - { name: X-GitHub-Event, in: header, schema: { type: string } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true, description: GitHub webhook event payload } } } }
+      responses:
+        '200': { description: Pong (ping event), content: { application/json: { schema: { type: object, properties: { message: { type: string, example: pong } } } } } }
+        '202': { description: Accepted (event dispatched), content: { application/json: { schema: { type: object, properties: { message: { type: string, example: accepted }, event: { type: string }, action: { type: string, nullable: true } } } } } }
+        '400': { description: Invalid JSON body }
+        '401': { description: Invalid signature }
+        '503': { description: Webhooks not configured (GITHUB_WEBHOOK_SECRET unset) }
+
+  # ===================== Crown (best-of-N) =====================
+  /api/crown:
+    get:
+      tags: [Crown]
+      summary: List Crown runs
+      responses:
+        '200':
+          description: Crown runs
+          content: { application/json: { schema: { type: object, properties: { runs: { type: array, items: { type: object, additionalProperties: true } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Crown]
+      summary: Start a Crown run
+      description: Fans out N candidate agent runs asynchronously. Returns immediately; poll GET /api/crown/{id}.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CrownStartInput' } } } }
+      responses:
+        '202':
+          description: Crown run started
+          content: { application/json: { schema: { type: object, properties: { crownRunId: { type: string }, status: { type: string } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/crown/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [Crown]
+      summary: Get a Crown run (status + candidates + diffs + judge result)
+      responses:
+        '200': { description: Crown run detail, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Crown]
+      summary: Manual override — open a PR for a chosen candidate
+      description: Ignores the judge's winner and opens a PR for the operator-chosen candidate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, candidateId]
+              properties:
+                action: { type: string, enum: [pr] }
+                candidateId: { type: string }
+      responses:
+        '200': { description: PR opened, content: { application/json: { schema: { type: object, properties: { prUrl: { type: string } } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { description: Crown run or candidate not found (or candidate has no branch) }
+
   # ===================== Auth =====================
   /api/auth/{nextauth}:
     parameters: [{ name: nextauth, in: path, required: true, schema: { type: string }, description: NextAuth catch-all segment }]
@@ -1797,6 +1993,80 @@ paths:
       security: []
       responses: { '200': { $ref: '#/components/responses/Success' } }
 
+  # ===================== Supervisor (separate app) =====================
+  # NOTE: These two paths are served by the Supervisor control-plane app
+  # (apps/supervisor), NOT by this app's port. Use the Supervisor `server` entry
+  # above. Auth is the Supervisor's own CF Access JWT or OIDC session with an
+  # `operator` role gate (NOT this app's API keys).
+  /api/instances/{id}/agent:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [Supervisor]
+      summary: Launch an agent run on an instance (operator)
+      description: >-
+        Proxies a manual agent run into instance `{id}`'s data-plane
+        /api/agent-runs. Owner-scoped (404, not 403, when missing/invisible). A
+        suspended instance is woken first (wake-on-traffic); a
+        provisioning/terminating instance yields 409. The response mirrors the
+        instance's /api/agent-runs reply.
+      security:
+        - supervisorCfAccess: []
+        - supervisorSession: []
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SupervisorAgentRunInput' } } } }
+      responses:
+        '202': { description: Run launched (proxied from the instance), content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Instance not launchable (provisioning/terminating), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /api/delegate:
+    post:
+      tags: [Supervisor]
+      summary: Cross-instance delegation — resolve-or-provision then launch (operator)
+      description: >-
+        Resolves the target instance by `toSlug`. If it exists and is
+        ready/suspended, delegates the run via the same dispatch path as
+        /api/instances/{id}/agent. If it is missing and `provisionIfMissing` is
+        set, a new instance is queued (inserted `requested`) and a 202
+        `{ status: "provisioning" }` is returned so the caller polls until ready
+        and re-delegates.
+      security:
+        - supervisorCfAccess: []
+        - supervisorSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/SupervisorAgentRunInput'
+                - type: object
+                  required: [toSlug]
+                  properties:
+                    toSlug: { type: string, description: Target instance slug }
+                    provisionIfMissing: { type: boolean, description: Create the instance when it does not exist }
+      responses:
+        '202':
+          description: Run launched (proxied) OR a new instance was queued for provisioning
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    additionalProperties: true
+                    description: Proxied /api/agent-runs response from the target instance
+                  - type: object
+                    properties:
+                      status: { type: string, example: provisioning }
+                      instanceId: { type: string }
+                      slug: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Target instance not found (and provisionIfMissing not set), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: Slug already in use, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
 components:
   securitySchemes:
     apiKey:
@@ -1813,6 +2083,21 @@ components:
       type: http
       scheme: bearer
       description: CRON_SECRET as a bearer token (or ?secret= query param)
+    supervisorCfAccess:
+      type: apiKey
+      in: cookie
+      name: CF_Authorization
+      description: >-
+        Supervisor app's Cloudflare Access JWT (production). The authenticated
+        email is mapped to a supervisor_user with a role; Supervisor endpoints
+        additionally require the resolved role (e.g. operator).
+    supervisorSession:
+      type: apiKey
+      in: cookie
+      name: authjs.session-token
+      description: >-
+        Supervisor app's NextAuth (OIDC) session cookie — the native-login
+        alternative to Cloudflare Access for Supervisor endpoints.
   parameters:
     IdPath:
       name: id
@@ -2043,3 +2328,76 @@ components:
       properties:
         ok: { type: boolean }
         error: { type: string }
+    AgentScheduleInput:
+      type: object
+      description: >-
+        Create a scheduled REAL agent run (epic remote-dev-oyej). A run launches
+        a fresh agent-type session with the prompt — distinct from /api/schedules,
+        which sends keystrokes to an existing session.
+      required: [projectId, name, prompt]
+      properties:
+        projectId: { type: string }
+        name: { type: string }
+        prompt: { type: string }
+        agentProvider: { type: string, description: "Agent CLI id (default: claude)" }
+        agentFlags: { type: array, items: { type: string } }
+        worktreeType: { type: string, nullable: true }
+        baseBranch: { type: string, nullable: true }
+        scheduleType: { type: string, enum: [recurring, one-time], description: "recurring → cronExpression; one-time → scheduledAt" }
+        cronExpression: { type: string, nullable: true }
+        scheduledAt: { type: string, format: date-time, nullable: true }
+        timezone: { type: string }
+        enabled: { type: boolean }
+        maxRetries: { type: integer }
+    TriggerConfigInput:
+      type: object
+      description: A GitHub-event → agent-run trigger config (epic remote-dev-oyej).
+      required: [projectId, name, kind, promptTemplate]
+      properties:
+        projectId: { type: string }
+        githubRepoId: { type: string, nullable: true }
+        name: { type: string }
+        kind: { type: string, enum: [pr_labeled, issue_opened, ci_failed] }
+        filter:
+          type: object
+          additionalProperties: true
+          description: 'JSON-serializable event filter, e.g. { "label": "agent:fix" }'
+        agentProvider: { type: string }
+        agentFlags: { type: array, items: { type: string } }
+        promptTemplate: { type: string }
+        worktreeType: { type: string, nullable: true }
+        enabled: { type: boolean }
+    ManualRunInput:
+      type: object
+      description: Immediate manual agent launch (source "manual").
+      required: [projectId, prompt]
+      properties:
+        projectId: { type: string }
+        prompt: { type: string }
+        agentProvider: { type: string, description: "default: claude" }
+        agentFlags: { type: array, items: { type: string } }
+        worktreeType: { type: string, nullable: true }
+        baseBranch: { type: string, nullable: true }
+    CrownStartInput:
+      type: object
+      description: Start a Crown best-of-N run (async; poll GET /api/crown/{id}).
+      required: [projectId, prompt]
+      properties:
+        projectId: { type: string }
+        prompt: { type: string }
+        count: { type: integer, minimum: 1, maximum: 10, default: 2, description: Number of parallel candidate runs }
+        agentProvider: { type: string, description: "default: claude" }
+        judgeModel: { type: string }
+        baseBranch: { type: string, nullable: true }
+        timeoutMs: { type: integer }
+    SupervisorAgentRunInput:
+      type: object
+      description: Agent-run body proxied into a target instance's /api/agent-runs.
+      required: [projectId, prompt]
+      properties:
+        projectId: { type: string }
+        prompt: { type: string }
+        agentProvider: { type: string }
+        agentFlags: { type: array, items: { type: string } }
+        worktreeType: { type: string, nullable: true }
+        baseBranch: { type: string, nullable: true }
