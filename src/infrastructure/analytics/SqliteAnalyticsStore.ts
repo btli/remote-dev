@@ -13,7 +13,7 @@
  *   - `flush` is a no-op (writes are synchronous, nothing is buffered).
  */
 
-import { createLogger } from "@/lib/logger";
+import { createLogger, type Logger } from "@/lib/logger";
 import { getAnalyticsDatabase } from "@/infrastructure/analytics/AnalyticsDatabase";
 import type {
   AnalyticsStore,
@@ -32,7 +32,17 @@ import type {
   LatencyPercentiles,
 } from "@/types/litellm";
 
-const log = createLogger("LiteLLMAnalytics");
+// The logger is resolved lazily (not at module top level) to avoid an import
+// cycle: sidecar-factory statically imports this module, AppLogger statically
+// imports sidecar-factory, and `@/lib/logger` re-exports AppLogger — calling
+// createLogger() at module-eval time would run before AppLogger finished
+// initializing (`createLogger is not a function`). Deferring the call to first
+// use breaks the cycle while keeping the import static (bundler-safe).
+let _log: Logger | null = null;
+function log(): Logger {
+  if (!_log) _log = createLogger("LiteLLMAnalytics");
+  return _log;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -74,7 +84,7 @@ function parseConcatenatedSamples(raw: string | null): number[] {
     flat.sort((a, b) => a - b);
     return flat;
   } catch {
-    log.warn("Failed to parse latency samples", {
+    log().warn("Failed to parse latency samples", {
       samplePreview: raw.slice(0, 100),
     });
     return [];
@@ -253,9 +263,9 @@ export class SqliteAnalyticsStore implements AnalyticsStore {
 
     try {
       txn();
-      log.debug("Recorded batch", { count: payloads.length });
+      log().debug("Recorded batch", { count: payloads.length });
     } catch (err) {
-      log.error("Failed to record batch", {
+      log().error("Failed to record batch", {
         error: String(err),
         count: payloads.length,
       });
@@ -542,7 +552,7 @@ export class SqliteAnalyticsStore implements AnalyticsStore {
 
     const deletedCount = result.changes;
     if (deletedCount > 0) {
-      log.info("Pruned old request logs", { deletedCount, retentionDays });
+      log().info("Pruned old request logs", { deletedCount, retentionDays });
     }
 
     return Promise.resolve({ deletedCount });

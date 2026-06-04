@@ -45,6 +45,7 @@
     "db:generate:pg": "drizzle-kit generate --config=drizzle.pg.config.ts",
     "db:push:pg": "drizzle-kit push --config=drizzle.pg.config.ts",
     "db:migrate-to-postgres": "bun run scripts/migrate-to-postgres/index.ts",
+    "db:dump-main-sql": "bun run scripts/dump-main-sql.ts",
     "db:seed": "bun run src/db/seed.ts",
     "db:migrate-agents": "bun run scripts/migrate-agent-sessions.ts",
     "db:migrate-github-accounts": "bun run scripts/migrate-github-accounts.ts",
