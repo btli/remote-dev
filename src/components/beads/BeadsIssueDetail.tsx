@@ -134,7 +134,7 @@ export function BeadsIssueDetail({
     };
   }, [issue.id, projectPath]);
 
-  const hasDeps = issue.dependencies.length > 0 || issue.dependents.length > 0;
+  const hasDeps = issue.dependencies.length > 0 || issue.dependents.length > 0 || issue.parents.length > 0 || issue.children.length > 0;
 
   return (
     <ScrollArea className="flex-1">
@@ -312,7 +312,7 @@ export function BeadsIssueDetail({
                 <GitBranch className="w-3 h-3" />
                 Dependencies
                 <span className="ml-auto text-[10px] bg-muted px-1.5 py-0.5 rounded">
-                  {issue.dependencies.length + issue.dependents.length}
+                  {issue.dependencies.length + issue.dependents.length + issue.parents.length + issue.children.length}
                 </span>
               </button>
               {depsExpanded && (

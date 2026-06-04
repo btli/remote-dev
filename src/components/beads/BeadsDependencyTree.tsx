@@ -15,6 +15,8 @@ import {
   ChevronDown,
   ArrowUp,
   ArrowDown,
+  CornerLeftUp,
+  CornerLeftDown,
 } from "lucide-react";
 import type {
   BeadsIssue,
@@ -29,7 +31,7 @@ interface DependencyNodeProps {
   issueId: string;
   allIssues: BeadsIssue[];
   onNavigateToIssue: (issueId: string) => void;
-  direction: "blocking" | "dependent";
+  direction: "blocking" | "dependent" | "parent" | "child";
   depth: number;
   visited: Set<string>;
 }
@@ -82,7 +84,11 @@ function DependencyNode({
   const childIds =
     direction === "blocking"
       ? issue.dependencies.map((d) => d.dependsOnId)
-      : issue.dependents.map((d) => d.issueId);
+      : direction === "dependent"
+        ? issue.dependents.map((d) => d.issueId)
+        : direction === "parent"
+          ? issue.parents.map((d) => d.dependsOnId)
+          : issue.children.map((d) => d.issueId);
 
   const hasChildren = childIds.length > 0;
   const nextVisited = new Set(visited);
@@ -165,6 +171,8 @@ export function BeadsDependencyTree({
 }: BeadsDependencyTreeProps) {
   const blockingIds = issue.dependencies.map((d) => d.dependsOnId);
   const dependentIds = issue.dependents.map((d) => d.issueId);
+  const parentIds = issue.parents.map((d) => d.dependsOnId);
+  const childLinkIds = issue.children.map((d) => d.issueId);
   const rootVisited = new Set([issue.id]);
 
   return (
@@ -204,6 +212,48 @@ export function BeadsDependencyTree({
               allIssues={allIssues}
               onNavigateToIssue={onNavigateToIssue}
               direction="dependent"
+              depth={0}
+              visited={rootVisited}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Parent (structural epic/parent links) */}
+      {parentIds.length > 0 && (
+        <div>
+          <div className="flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">
+            <CornerLeftUp className="w-3 h-3" />
+            Parent ({parentIds.length})
+          </div>
+          {parentIds.map((depId) => (
+            <DependencyNode
+              key={depId}
+              issueId={depId}
+              allIssues={allIssues}
+              onNavigateToIssue={onNavigateToIssue}
+              direction="parent"
+              depth={0}
+              visited={rootVisited}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Children (structural epic/child links) */}
+      {childLinkIds.length > 0 && (
+        <div>
+          <div className="flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">
+            <CornerLeftDown className="w-3 h-3" />
+            Children ({childLinkIds.length})
+          </div>
+          {childLinkIds.map((depId) => (
+            <DependencyNode
+              key={depId}
+              issueId={depId}
+              allIssues={allIssues}
+              onNavigateToIssue={onNavigateToIssue}
+              direction="child"
               depth={0}
               visited={rootVisited}
             />
