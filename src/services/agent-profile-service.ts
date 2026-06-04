@@ -19,7 +19,7 @@ import {
 } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import { mkdir, writeFile, readFile, access } from "node:fs/promises";
-import { join, dirname } from "node:path";
+import { runtimeJoin as join, runtimeDirname as dirname } from "@/lib/dynamic-fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createSecretsProvider, isProviderSupported } from "./secrets";

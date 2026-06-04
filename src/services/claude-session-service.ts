@@ -8,7 +8,7 @@
 import { createReadStream } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { createInterface } from "readline";
-import { join, basename } from "node:path";
+import { runtimeJoin as join, runtimeBasename as basename } from "@/lib/dynamic-fs";
 import { homedir } from "node:os";
 import type { ClaudeSessionSummary } from "@/types/claude-session";
 

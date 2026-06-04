@@ -9,7 +9,7 @@
 import type { SessionDrainGateway, DrainStatus } from "@/application/ports/SessionDrainGateway";
 import http from "node:http";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { runtimeJoin as join } from "@/lib/dynamic-fs";
 import { homedir } from "node:os";
 import { createLogger } from "@/lib/logger";
 

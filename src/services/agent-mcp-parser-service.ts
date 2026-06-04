@@ -10,7 +10,7 @@
  */
 
 import { readFile, access, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { runtimeJoin as join } from "@/lib/dynamic-fs";
 import { homedir } from "node:os";
 import type { AgentProviderType } from "@/types/session";
 import type {

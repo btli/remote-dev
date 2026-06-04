@@ -13,7 +13,7 @@ import type {
   CloneResult,
 } from "@/types/github";
 import { existsSync, mkdirSync, readdirSync, statSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { runtimeJoin as join } from "@/lib/dynamic-fs";
 import { GitHubServiceError } from "@/lib/errors";
 import { createLogger } from "@/lib/logger";
 

@@ -23,7 +23,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { runtimeJoin as join } from "@/lib/dynamic-fs";
 import { BASE_PATH } from "@/lib/base-path";
 import { createLogger } from "@/lib/logger";
 

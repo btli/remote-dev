@@ -16,7 +16,7 @@ import {
 } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
-import { join, dirname, basename } from "node:path";
+import { runtimeJoin as join, runtimeDirname as dirname, runtimeBasename as basename } from "@/lib/dynamic-fs";
 import type { TrashItem, RestoreResult } from "@/types/trash";
 import * as TmuxService from "./tmux-service";
 import { sanitizeBranchName, getRepoRoot } from "./worktree-service";
