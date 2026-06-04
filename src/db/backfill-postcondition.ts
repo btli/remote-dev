@@ -23,9 +23,7 @@
  * worktree with the same HOME/RDV_DATA_DIR the live server uses, it inspects the
  * SAME live DB the server serves.
  */
-import { db, execute } from "./index";
-import { users } from "./schema";
-import { isNotNull } from "drizzle-orm";
+import { execute } from "./index";
 
 /** Result of evaluating a single backfill post-condition. */
 export interface PostconditionResult {
@@ -56,37 +54,39 @@ export interface BackfillPostcondition {
  * quoted `"user"` table name is required on both backends (reserved word).
  */
 export async function checkUserEmailBackfill(): Promise<PostconditionResult> {
-  // Total users-with-email for context in the log line.
-  const usersWithEmail = await db.query.users.findMany({
-    where: isNotNull(users.email),
-    columns: { id: true },
-  });
-
-  const missing = await execute(
-    `SELECT count(*) AS missing
+  // Aggregate everything in one pass on the DB (O(1) memory on the live DB —
+  // never materializes the user set client-side): total users-with-email for the
+  // log line, plus how many are MISSING a matching user_email row.
+  const counts = await execute(
+    `SELECT
+        count(*) AS total,
+        count(*) FILTER (
+          WHERE NOT EXISTS (
+            SELECT 1 FROM user_email ue
+             WHERE ue.user_id = u.id
+               AND ue.email = u.email
+          )
+        ) AS missing
        FROM "user" u
-      WHERE u.email IS NOT NULL
-        AND NOT EXISTS (
-              SELECT 1 FROM user_email ue
-               WHERE ue.user_id = u.id
-                 AND ue.email = u.email
-            )`,
+      WHERE u.email IS NOT NULL`,
   );
-  const missingCount = Number(
-    (missing.rows[0] as { missing?: unknown } | undefined)?.missing ?? 0,
-  );
+  const row = counts.rows[0] as
+    | { total?: unknown; missing?: unknown }
+    | undefined;
+  const total = Number(row?.total ?? 0);
+  const missingCount = Number(row?.missing ?? 0);
 
   if (missingCount > 0) {
     return {
       ok: false,
       detail:
-        `${missingCount} of ${usersWithEmail.length} users with an email are MISSING a ` +
+        `${missingCount} of ${total} users with an email are MISSING a ` +
         `matching user_email row — db:backfill-user-emails did not take effect on the live DB`,
     };
   }
   return {
     ok: true,
-    detail: `all ${usersWithEmail.length} users with an email have a matching user_email row`,
+    detail: `all ${total} users with an email have a matching user_email row`,
   };
 }
 

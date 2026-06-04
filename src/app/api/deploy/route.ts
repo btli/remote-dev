@@ -129,17 +129,22 @@ export async function POST(request: Request) {
     process.env.DEPLOY_PROJECT_ROOT ||
     join(homedir(), "Projects", "btli", "remote-dev");
   const projectRootScript = join(projectRoot, "scripts", "deploy.ts");
-  const deploySrcScript = join(DATA_DIR, "deploy-src", "scripts", "deploy.ts");
+  const deploySrcDir = join(DATA_DIR, "deploy-src");
+  const deploySrcScript = join(deploySrcDir, "scripts", "deploy.ts");
+  // deploy.ts statically `import`s `./deploy-lib`, so a HALF-synced deploy-src
+  // (deploy.ts present but deploy-lib.ts missing/stale) would crash the
+  // orchestrator at import — silently, since the spawn is detached + stdio
+  // "ignore" (CI would just time out polling). Require BOTH files before trusting
+  // the deploy-src copy; otherwise fall back to PROJECT_ROOT.
+  const deploySrcLib = join(deploySrcDir, "scripts", "deploy-lib.ts");
 
-  const useDeploySrc = existsSync(deploySrcScript);
+  const useDeploySrc = existsSync(deploySrcScript) && existsSync(deploySrcLib);
   const scriptPath = useDeploySrc ? deploySrcScript : projectRootScript;
   // The script reads PROJECT_ROOT via import.meta.dir ("<scriptDir>/.."), so when
   // running the deploy-src copy, cwd is its own worktree root; PROJECT_ROOT (the
   // live serving dir restored by restoreSlotToLive) is resolved by deploy.ts from
   // DEPLOY_PROJECT_ROOT below, not from cwd.
-  const scriptCwd = useDeploySrc
-    ? join(DATA_DIR, "deploy-src")
-    : projectRoot;
+  const scriptCwd = useDeploySrc ? deploySrcDir : projectRoot;
 
   log.info("Triggering deploy", {
     commit: body.after?.slice(0, 7) ?? "unknown",

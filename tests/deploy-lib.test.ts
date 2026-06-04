@@ -15,6 +15,7 @@ import {
   nativeRebuildCommand,
   pathWithRuntimeNodeFirst,
   NATIVE_MODULES_TO_REBUILD,
+  shouldRunSqlitePush,
 } from "../scripts/deploy-lib";
 
 describe("isAcceptableSsrStatus", () => {
@@ -273,5 +274,24 @@ describe("pathWithRuntimeNodeFirst (remote-dev-7wgn)", () => {
       dirname,
     );
     expect(result.split(PATH_DELIM)[0]).toBe("/opt/homebrew/bin");
+  });
+});
+
+describe("shouldRunSqlitePush (remote-dev-6lf3)", () => {
+  it("runs the SQLite push when DATABASE_URL is unset", () => {
+    expect(shouldRunSqlitePush(undefined)).toBe(true);
+    expect(shouldRunSqlitePush("")).toBe(true);
+  });
+  it("runs the SQLite push for a file: / bare-path SQLite URL", () => {
+    expect(shouldRunSqlitePush("file:/Users/x/.remote-dev/sqlite.db")).toBe(true);
+    expect(shouldRunSqlitePush("/Users/x/.remote-dev/sqlite.db")).toBe(true);
+  });
+  it("SKIPS the SQLite push for a Postgres URL (both schemes)", () => {
+    expect(shouldRunSqlitePush("postgresql://u:p@host:5432/db")).toBe(false);
+    expect(shouldRunSqlitePush("postgres://u:p@host:5432/db")).toBe(false);
+  });
+  it("does not misclassify a SQLite path that merely contains 'postgres'", () => {
+    // Only a leading scheme counts — a db file named postgres.db is still SQLite.
+    expect(shouldRunSqlitePush("file:/data/postgres-backup.db")).toBe(true);
   });
 });

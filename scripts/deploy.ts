@@ -54,6 +54,7 @@ import {
   nativeRebuildCommand,
   pathWithRuntimeNodeFirst,
   NATIVE_MODULES_TO_REBUILD,
+  shouldRunSqlitePush,
 } from "./deploy-lib";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -917,7 +918,18 @@ function runMigration(): boolean {
     return false;
   }
 
-  if (!runCommand(
+  // db:push is `drizzle-kit push --dialect sqlite`, whose getDatabasePath()
+  // returns DATABASE_URL verbatim. The webhook now forwards DATABASE_URL
+  // (remote-dev-6lf3), so on a Postgres host a `postgresql://…` URL would be fed
+  // to the SQLite drizzle-kit push → error → hard abort → every webhook deploy
+  // blocked. Gate it: only SQLite uses db:push; the PG schema is applied via the
+  // drizzle/pg migrate-on-boot path (src/db/migrate.ts), so skip the push on PG.
+  // The backfills + db:verify-backfills below are dialect-portable and still run.
+  if (!shouldRunSqlitePush(process.env.DATABASE_URL)) {
+    logDeploy(
+      "DATABASE_URL is Postgres — skipping db:push (SQLite-only); PG schema is applied via migrate-on-boot",
+    );
+  } else if (!runCommand(
     ["bun", "run", "db:push"],
     DEPLOY_SRC,
     "database migration"

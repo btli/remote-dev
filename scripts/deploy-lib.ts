@@ -5,6 +5,22 @@ import { dirname, join } from "path";
 export const SSR_PROBE_PATHS = ["/", "/login"] as const;
 
 /**
+ * Whether the deploy's `db:push` (which is `drizzle-kit push --dialect sqlite`)
+ * should run, given a DATABASE_URL.
+ *
+ * The webhook now forwards DATABASE_URL to the deploy (remote-dev-6lf3), so a
+ * `postgresql://…` / `postgres://…` URL would otherwise be fed to the SQLite
+ * drizzle-kit push and hard-abort every deploy on a Postgres host. db:push is
+ * SQLite-only (the PG schema is applied via the drizzle/pg migrate-on-boot path),
+ * so we skip it on Postgres. Mirrors `src/db/is-postgres.ts`. Pure/testable.
+ */
+export function shouldRunSqlitePush(databaseUrl: string | undefined): boolean {
+  const u = databaseUrl ?? "";
+  const isPg = u.startsWith("postgresql://") || u.startsWith("postgres://");
+  return !isPg;
+}
+
+/**
  * Whether an HTTP status from an SSR probe of `path` is acceptable.
  *
  * The local health check otherwise only exercises `/api/*`, so a build whose
