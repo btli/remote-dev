@@ -11,6 +11,70 @@ import type {
   BeadsIssueType,
 } from "@/types/beads";
 
+// ----- Dependency classification -----
+
+/** Dependency types that represent a true blocking relationship (gate ready/blocked). */
+export const BLOCKING_DEP_TYPES: ReadonlySet<string> = new Set(["blocks"]);
+/** Dependency types that represent structural epic/parent hierarchy (NOT blocking). */
+export const STRUCTURAL_DEP_TYPES: ReadonlySet<string> = new Set([
+  "parent-child",
+  "child-of",
+]);
+
+export type DependencyClass = "blocking" | "structural" | "other";
+
+export function classifyDependency(type: string): DependencyClass {
+  if (BLOCKING_DEP_TYPES.has(type)) return "blocking";
+  if (STRUCTURAL_DEP_TYPES.has(type)) return "structural";
+  return "other";
+}
+
+export interface GroupedDependencies {
+  /** Blocking deps keyed by the blocked issue id (BeadsDependency.issueId). */
+  dependencies: Map<string, BeadsDependency[]>;
+  /** Blocking deps keyed by the blocker issue id (BeadsDependency.dependsOnId). */
+  dependents: Map<string, BeadsDependency[]>;
+  /** Structural parent links keyed by the child issue id (BeadsDependency.issueId). */
+  parents: Map<string, BeadsDependency[]>;
+  /** Structural child links keyed by the parent issue id (BeadsDependency.dependsOnId). */
+  children: Map<string, BeadsDependency[]>;
+}
+
+/**
+ * Bucket already-mapped dependency links by their semantic class so that the
+ * ready/blocked computation only ever sees true `blocks` links, while epic
+ * hierarchy (`parent-child`/`child-of`) is surfaced separately and provenance
+ * links (`relates-to`/`discovered-from`) are dropped. Pure + unit-tested.
+ */
+export function groupDependencies(deps: BeadsDependency[]): GroupedDependencies {
+  const grouped: GroupedDependencies = {
+    dependencies: new Map(),
+    dependents: new Map(),
+    parents: new Map(),
+    children: new Map(),
+  };
+  const push = (map: Map<string, BeadsDependency[]>, key: string, value: BeadsDependency) => {
+    const arr = map.get(key) ?? [];
+    arr.push(value);
+    map.set(key, arr);
+  };
+  for (const d of deps) {
+    switch (classifyDependency(d.type)) {
+      case "blocking":
+        push(grouped.dependencies, d.issueId, d);
+        push(grouped.dependents, d.dependsOnId, d);
+        break;
+      case "structural":
+        push(grouped.parents, d.issueId, d);
+        push(grouped.children, d.dependsOnId, d);
+        break;
+      case "other":
+        break;
+    }
+  }
+  return grouped;
+}
+
 // ----- Row types for DB results -----
 
 interface IssueRow extends RowDataPacket {
@@ -80,7 +144,9 @@ function mapIssue(
   row: IssueRow,
   labels: string[],
   dependencies: BeadsDependency[],
-  dependents: BeadsDependency[]
+  dependents: BeadsDependency[],
+  parents: BeadsDependency[],
+  children: BeadsDependency[]
 ): BeadsIssue {
   const metadata = typeof row.metadata === "object" && row.metadata !== null
     ? (row.metadata as Record<string, unknown>)
@@ -107,6 +173,8 @@ function mapIssue(
     labels,
     dependencies,
     dependents,
+    parents,
+    children,
   };
 }
 
@@ -271,27 +339,20 @@ export async function getIssues(
     labelMap.set(l.issue_id, arr);
   }
 
-  // Group dependencies
-  const depsMap = new Map<string, BeadsDependency[]>();
-  const dependentsMap = new Map<string, BeadsDependency[]>();
-  for (const d of deps) {
-    if (!d.depends_on_issue_id) continue;
-    const mapped = mapDependency(d);
-    const arr = depsMap.get(d.issue_id) ?? [];
-    arr.push(mapped);
-    depsMap.set(d.issue_id, arr);
-
-    const arr2 = dependentsMap.get(d.depends_on_issue_id) ?? [];
-    arr2.push(mapped);
-    dependentsMap.set(d.depends_on_issue_id, arr2);
-  }
+  // Group dependencies by semantic class
+  const mappedDeps = deps
+    .filter((d) => d.depends_on_issue_id)
+    .map(mapDependency);
+  const { dependencies, dependents, parents, children } = groupDependencies(mappedDeps);
 
   return issues.map((row) =>
     mapIssue(
       row,
       labelMap.get(row.id) ?? [],
-      depsMap.get(row.id) ?? [],
-      dependentsMap.get(row.id) ?? []
+      dependencies.get(row.id) ?? [],
+      dependents.get(row.id) ?? [],
+      parents.get(row.id) ?? [],
+      children.get(row.id) ?? []
     )
   );
 }
@@ -322,18 +383,18 @@ export async function getIssue(
     ),
   ]);
 
-  const dependencies = deps
-    .filter((d) => d.issue_id === issueId && d.depends_on_issue_id)
+  const mappedDeps = deps
+    .filter((d) => d.depends_on_issue_id)
     .map(mapDependency);
-  const dependents = deps
-    .filter((d) => d.depends_on_issue_id === issueId)
-    .map(mapDependency);
+  const grouped = groupDependencies(mappedDeps);
 
   return mapIssue(
     row,
     labels.map((l) => l.label),
-    dependencies,
-    dependents
+    grouped.dependencies.get(issueId) ?? [],
+    grouped.dependents.get(issueId) ?? [],
+    grouped.parents.get(issueId) ?? [],
+    grouped.children.get(issueId) ?? []
   );
 }
 
@@ -373,7 +434,9 @@ export async function getStats(projectPath: string): Promise<BeadsStats> {
        FROM dependencies d
        JOIN issues blocked ON blocked.id = d.issue_id
        JOIN issues blocker ON blocker.id = d.depends_on_issue_id
-       WHERE blocked.status != 'closed' AND blocker.status != 'closed'`
+       WHERE blocked.status != 'closed' AND blocker.status != 'closed'
+         AND d.type IN (${[...BLOCKING_DEP_TYPES].map(() => "?").join(",")})`,
+      [...BLOCKING_DEP_TYPES]
     ),
   ]);
 

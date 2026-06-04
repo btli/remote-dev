@@ -35,6 +35,18 @@ function hydrateIssue(raw: Record<string, unknown>): BeadsIssue {
           createdAt: new Date(d.createdAt as string),
         }))
       : [],
+    parents: Array.isArray(raw.parents)
+      ? (raw.parents as Record<string, unknown>[]).map((d) => ({
+          ...(d as unknown as BeadsIssue["parents"][number]),
+          createdAt: new Date(d.createdAt as string),
+        }))
+      : [],
+    children: Array.isArray(raw.children)
+      ? (raw.children as Record<string, unknown>[]).map((d) => ({
+          ...(d as unknown as BeadsIssue["children"][number]),
+          createdAt: new Date(d.createdAt as string),
+        }))
+      : [],
     metadata: (raw.metadata as Record<string, unknown>) ?? {},
   };
 }

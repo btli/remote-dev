@@ -26,6 +26,10 @@ export interface BeadsIssue {
   labels: string[];
   dependencies: BeadsDependency[];
   dependents: BeadsDependency[];
+  /** Structural parent links (this issue is a child, e.g. of an epic). NOT blocking. */
+  parents: BeadsDependency[];
+  /** Structural child links (this issue is a parent/epic). NOT blocking. */
+  children: BeadsDependency[];
 }
 
 export type BeadsStatus = "open" | "in_progress" | "closed" | "deferred";
