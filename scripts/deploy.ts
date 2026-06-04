@@ -708,7 +708,33 @@ function buildSlot(slot: Slot): boolean {
     return false;
   }
 
-  // Step 1b: Prune dangling symlinks from the synced source tree BEFORE building.
+  // Step 1b: Purge UNTRACKED files from the synced source tree BEFORE building.
+  // Next 16 + Turbopack over-traces the whole workspace root into the one build
+  // entry that `outputFileTracingExcludes` does NOT filter
+  // (`instrumentation.js.nft.json`), so the `output:"standalone"` copy step walks
+  // tracked dev-tooling dirs (`.agents/`, `.claude/`, …). That over-trace is
+  // non-fatal ONLY while every traced path still exists at copy time. The Step 1
+  // sync is `git reset --hard origin/master`, which restores tracked files but
+  // does NOT remove untracked ones — so a stale untracked phantom left in
+  // deploy-src (observed: a leftover `.agents/skills/gemini-api-dev` dir) gets
+  // pulled into the trace, then vanishes/has-no-tracked-source at copy time and
+  // the standalone copy ENOENTs (`copyfile … .agents/skills/gemini-api-dev …`),
+  // aborting the entire build and wedging prod deploys. `git clean -fd` removes
+  // those untracked non-ignored files+dirs so the trace can't dangle. `-x` is
+  // deliberately OMITTED: it would also delete gitignored `node_modules`/`.next`
+  // (the APFS-warmed deps + prior build), forcing a slow cold reinstall/rebuild.
+  // This is best-effort/non-fatal — a `git clean` hiccup must never block a
+  // deploy, and the build succeeds anyway when there's no phantom (the ENOENT is
+  // the exception, not the rule). It complements Step 1c's
+  // pruneDanglingSymlinks, which only removes TRACKED dangling symlinks and does
+  // nothing about untracked phantoms.
+  if (!runCommand(["git", "clean", "-fd"], DEPLOY_SRC, "git clean -fd (deploy-src)")) {
+    logError(
+      "git clean -fd (deploy-src) failed; continuing (untracked phantoms, if any, may still cause a standalone-copy ENOENT)"
+    );
+  }
+
+  // Step 1c: Prune dangling symlinks from the synced source tree BEFORE building.
   // Next's standalone copy resolves symlinks to their real path and copyfile-
   // ENOENTs on a committed broken symlink, failing the whole build. Pruning here
   // (after the reset to origin/master, before `bun run build`) makes a future
