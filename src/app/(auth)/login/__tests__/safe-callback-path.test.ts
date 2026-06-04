@@ -32,7 +32,12 @@ describe("safeCallbackPath", () => {
     expect(safeCallbackPath("https://evil.com")).toBeUndefined();
   });
 
-  it("rejects a backslash-escape (/\\) path", () => {
+  it("rejects control/whitespace/backslash chars browsers strip or fold", () => {
+    // e.g. "/\t//evil.com" → "//evil.com" after the browser strips the tab.
+    expect(safeCallbackPath("/\t/evil.com")).toBeUndefined();
+    expect(safeCallbackPath("/\n//evil.com")).toBeUndefined();
+    expect(safeCallbackPath("/\r/evil.com")).toBeUndefined();
+    expect(safeCallbackPath("/ x")).toBeUndefined();
     expect(safeCallbackPath("/\\evil")).toBeUndefined();
   });
 
