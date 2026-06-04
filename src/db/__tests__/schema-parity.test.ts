@@ -34,7 +34,7 @@ type Equal<A, B> =
 // Compiles only when its argument resolves to the literal `true`.
 type Expect<T extends true> = T;
 
-// Per-table $inferSelect / $inferInsert parity for ALL 74 tables. A drift makes
+// Per-table $inferSelect / $inferInsert parity for ALL 75 tables. A drift makes
 // one of these `false`, which is a compile error on the `true[]` annotation.
 type _SchemaParity = [
   // users
@@ -279,6 +279,7 @@ it("schema.sqlite and schema.pg expose the same 74 table exports", () => {
   // 61 base + 1 (y5ch: notification_preferences) + 2 (aehq: model_proxy_token,
   // model_usage_event) + 6 (oyej: agentSchedules, agentRuns, triggerConfigs,
   // triggerEvents, crownRuns, crownCandidates) + 4 (x386: messageDelivery,
-  // messageReplayCursor, channelSubscription, agentWorkContext) = 74.
-  expect(sqliteTables).toHaveLength(74);
+  // messageReplayCursor, channelSubscription, agentWorkContext) + 1 (oyej.14:
+  // webhookDeliveries) = 75.
+  expect(sqliteTables).toHaveLength(75);
 });
