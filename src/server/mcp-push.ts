@@ -67,9 +67,16 @@ type DeliveredHook = (sessionId: string, messageId: string) => void;
 type ReplayHook = (sessionId: string) => void | Promise<void>;
 /** Per-session handler invoked when the MCP server acks a messageId. */
 type AckHandler = (messageId: string) => void;
+/**
+ * [x386.15] Returns the session ids that currently have undelivered backlog.
+ * The reconcile tick uses it to decide which sockets to proactively (re)connect
+ * so replay fires on idle reconnect rather than on the next coincident push.
+ */
+type PendingSessionsProvider = () => Promise<string[]>;
 
 let deliveredHook: DeliveredHook | null = null;
 let replayHook: ReplayHook | null = null;
+let pendingSessionsProvider: PendingSessionsProvider | null = null;
 const ackHandlers = new Map<string, AckHandler>();
 
 /** Install the hook that marks a delivery `delivered` on socket-write success. */
@@ -80,6 +87,15 @@ export function setDeliveredHook(fn: DeliveredHook | null): void {
 /** Install the hook that replays a session's undelivered backlog on reconnect. */
 export function setReplayHook(fn: ReplayHook | null): void {
   replayHook = fn;
+}
+
+/**
+ * [x386.15] Install the provider that lists sessions with undelivered backlog.
+ * Without it the reconcile tick is a no-op (e.g. in unit tests that don't wire
+ * the delivery service).
+ */
+export function setPendingSessionsProvider(fn: PendingSessionsProvider | null): void {
+  pendingSessionsProvider = fn;
 }
 
 /** Register a per-session ack handler (advances delivery → acked). */
@@ -204,9 +220,27 @@ export function pushToMcpServer(sessionId: string, event: McpPushEvent): boolean
     return false;
   }
 
-  // Not connected — connect and write.
-  // Store socket immediately so closeMcpSocket() can destroy it during connecting.
-  const data = frame(event);
+  // Not connected — connect, write this event first, then fire the queued ones.
+  connect(sessionId, sockPath, (socket) => {
+    socket.write(frame(event), (err) => {
+      if (!err && event.messageId) deliveredHook?.(sessionId, event.messageId);
+    });
+  });
+  return true;
+}
+
+/**
+ * Open a fresh connection to a session's MCP socket and run `onConnect` once the
+ * socket is up. Shared by {@link pushToMcpServer} (writes the triggering event)
+ * and {@link ensureConnected} (fires a proactive replay). The entry is stored
+ * immediately as `connecting` so {@link closeMcpSocket} can tear it down mid-dial
+ * and so a concurrent push queues onto `pending` instead of opening a 2nd socket.
+ */
+function connect(
+  sessionId: string,
+  sockPath: string,
+  onConnect: (socket: net.Socket) => void,
+): void {
   const socket = net.createConnection(sockPath);
   const newEntry: SocketEntry = {
     socket,
@@ -221,9 +255,7 @@ export function pushToMcpServer(sessionId: string, event: McpPushEvent): boolean
   socket.on("connect", () => {
     newEntry.state = "connected";
     log.debug("MCP socket connected", { sessionId });
-    socket.write(data, (err) => {
-      if (!err && event.messageId) deliveredHook?.(sessionId, event.messageId);
-    });
+    onConnect(socket);
     // Flush any events queued while connecting.
     for (const queued of newEntry.pending) {
       socket.write(queued);
@@ -244,8 +276,103 @@ export function pushToMcpServer(sessionId: string, event: McpPushEvent): boolean
     newEntry.lastErrorAt = Date.now();
     newEntry.socket = null;
   });
+}
 
+/**
+ * [x386.15] Proactively (re)connect a session's MCP socket if it has reappeared,
+ * and on connect fire the replay hook so the session's undelivered backlog is
+ * pushed without waiting for a coincident outbound message. No-op when already
+ * connected/connecting, when inside the post-error retry cooldown, or when the
+ * socket file does not (yet) exist. Returns true only when a fresh dial was
+ * started (used by the reconcile tick to throttle log noise / for tests).
+ *
+ * Idempotency: the replay re-pushes via {@link pushToMcpServer}, whose delivery
+ * rows gate on ack state (`getUndelivered` skips `acked`, `markDelivered` never
+ * regresses an ack), so a message is never delivered twice. Because this is a
+ * no-op while a socket is live, it never competes with the normal push path.
+ */
+export function ensureConnected(sessionId: string): boolean {
+  const entry = sockets.get(sessionId);
+
+  // Already up or dialing — nothing to do (the live socket also receives any
+  // replay_request the MCP server sends, so reconnect-replay is already covered).
+  if (entry?.state === "connected" || entry?.state === "connecting") return false;
+
+  // Respect the post-error cooldown so a flapping socket can't trigger a
+  // reconnect storm from the periodic tick.
+  if (entry?.state === "disconnected" && Date.now() - entry.lastErrorAt < RETRY_COOLDOWN_MS) {
+    return false;
+  }
+
+  const sockPath = getMcpSocketPath(sessionId);
+  try {
+    fs.accessSync(sockPath);
+  } catch {
+    // Socket not present — cache the negative result so we don't accessSync it
+    // every tick (the cooldown rate-limits the next probe).
+    sockets.set(sessionId, {
+      socket: null,
+      state: "disconnected",
+      lastErrorAt: Date.now(),
+      pending: [],
+      inBuf: "",
+    });
+    return false;
+  }
+
+  log.debug("MCP socket reappeared — proactively reconnecting for replay", { sessionId });
+  connect(sessionId, sockPath, () => {
+    Promise.resolve(replayHook?.(sessionId)).catch((err) =>
+      log.debug("Proactive replay failed", { sessionId, error: String(err) }),
+    );
+  });
   return true;
+}
+
+// ── Proactive reconcile tick (idle-reconnect replay) ─────────────────────────
+
+const RECONCILE_INTERVAL_MS = 3000;
+let reconcileTimer: ReturnType<typeof setInterval> | null = null;
+let reconcileInFlight = false;
+
+/**
+ * [x386.15] One reconcile pass: ask the delivery service which sessions still
+ * have undelivered backlog and {@link ensureConnected} each. When nothing is
+ * pending (the common case) this performs a single cheap indexed query and does
+ * no socket work. Never throws into the caller — failures are logged and swallowed
+ * so the interval keeps running.
+ */
+export async function reconcileMcpConnections(): Promise<void> {
+  if (!pendingSessionsProvider) return;
+  // Skip if a prior pass is still resolving (slow DB) — avoids overlap.
+  if (reconcileInFlight) return;
+  reconcileInFlight = true;
+  try {
+    const sessionIds = await pendingSessionsProvider();
+    for (const sessionId of sessionIds) ensureConnected(sessionId);
+  } catch (err) {
+    log.debug("MCP reconcile pass failed", { error: String(err) });
+  } finally {
+    reconcileInFlight = false;
+  }
+}
+
+/** Start the periodic reconcile tick (idempotent). Unref'd so it never holds the
+ * event loop open at shutdown. */
+export function startMcpReconcile(): void {
+  if (reconcileTimer) return;
+  reconcileTimer = setInterval(() => {
+    void reconcileMcpConnections();
+  }, RECONCILE_INTERVAL_MS);
+  reconcileTimer.unref?.();
+}
+
+/** Stop the periodic reconcile tick (idempotent). */
+export function stopMcpReconcile(): void {
+  if (reconcileTimer) {
+    clearInterval(reconcileTimer);
+    reconcileTimer = null;
+  }
 }
 
 /**

@@ -69,6 +69,7 @@ import {
   ackDelivery,
   ackDeliveries,
   getUndelivered,
+  getSessionsWithPending,
 } from "./message-delivery-service";
 import { cleanupOldMessages } from "./peer-service";
 
@@ -223,6 +224,39 @@ describe("MessageDeliveryService", () => {
       await recordDeliveries("m1", PROJECT, ["s1"]);
       const [row] = await getUndelivered("s1");
       expect(row).toMatchObject({ channelId: "ch-1", body: "ping", fromSessionName: "alice" });
+    });
+  });
+
+  describe("getSessionsWithPending (x386.15)", () => {
+    it("returns distinct sessions that have undelivered backlog", async () => {
+      await insertMessage({ id: "m1" });
+      await insertMessage({ id: "m2" });
+      // s1 has two undelivered; s2 has one; s3 only an acked one.
+      await recordDeliveries("m1", PROJECT, ["s1", "s2", "s3"]);
+      await recordDeliveries("m2", PROJECT, ["s1"]);
+      await ackDelivery("m1", "s3");
+
+      const sessions = await getSessionsWithPending();
+      expect(sessions.sort()).toEqual(["s1", "s2"]);
+    });
+
+    it("excludes a session once all its deliveries are acked", async () => {
+      await insertMessage({ id: "m1" });
+      await recordDeliveries("m1", PROJECT, ["s1"]);
+      expect(await getSessionsWithPending()).toEqual(["s1"]);
+      await ackDelivery("m1", "s1");
+      expect(await getSessionsWithPending()).toEqual([]);
+    });
+
+    it("still lists a session whose only delivery is delivered-but-unacked", async () => {
+      await insertMessage({ id: "m1" });
+      await recordDeliveries("m1", PROJECT, ["s1"]);
+      await markDelivered("m1", "s1", "mcp_push");
+      expect(await getSessionsWithPending()).toEqual(["s1"]);
+    });
+
+    it("returns [] when nothing is pending", async () => {
+      expect(await getSessionsWithPending()).toEqual([]);
     });
   });
 

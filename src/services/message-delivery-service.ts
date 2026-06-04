@@ -148,6 +148,22 @@ export async function getUndelivered(
   return rows;
 }
 
+/**
+ * [x386.15] Distinct session ids that currently have at least one undelivered
+ * (pending|delivered, not acked) message. Drives the proactive MCP reconnect
+ * tick: the terminal server feeds this set to `mcp-push` so a session whose MCP
+ * socket reappeared after idle gets its backlog replayed *without* waiting for a
+ * coincident push. Returns the empty array (the common case) cheaply via the
+ * `(to_session_id, state, created_at)` index.
+ */
+export async function getSessionsWithPending(limit = 200): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ sessionId: messageDelivery.toSessionId })
+    .from(messageDelivery)
+    .where(sql`${messageDelivery.state} != 'acked'`)
+    .limit(limit);
+  return rows.map((r) => r.sessionId);
+}
 // Re-export the logger namespace name for callers that want to assert/log the
 // delivery channel without importing the table. (Keeps mcp-push.ts loosely
 // coupled — it installs a hook rather than importing this module directly.)

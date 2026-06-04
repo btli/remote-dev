@@ -10,6 +10,10 @@ import {
   closeMcpSocket,
   setDeliveredHook,
   setReplayHook,
+  setPendingSessionsProvider,
+  ensureConnected,
+  reconcileMcpConnections,
+  stopMcpReconcile,
   onMcpAck,
   __setMcpSocketPathForTest,
   type McpPushEvent,
@@ -110,10 +114,12 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  stopMcpReconcile();
   closeMcpSocket(SID);
   __setMcpSocketPathForTest(null);
   setDeliveredHook(null);
   setReplayHook(null);
+  setPendingSessionsProvider(null);
   if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -190,5 +196,123 @@ describe("mcp-push replay handshake (x386.3)", () => {
     pushToMcpServer(SID, makeEvent({ messageId: "m1" }));
     await new Promise((r) => setTimeout(r, 60));
     expect(delivered).toHaveLength(0);
+  });
+});
+
+describe("mcp-push idle-reconnect replay (x386.15)", () => {
+  // Model a durable inbox: ids the agent has NOT yet acked. The replay hook reads
+  // this (like getUndelivered) and the ack handler removes from it (like
+  // ackDelivery), so the "no double-delivery" guarantee is exercised end-to-end.
+  let unacked: Set<string>;
+
+  function installReplayFromInbox(): void {
+    setReplayHook((sid) => {
+      for (const mid of unacked) {
+        pushToMcpServer(sid, makeEvent({ messageId: mid }));
+      }
+    });
+  }
+
+  beforeEach(() => {
+    unacked = new Set();
+  });
+
+  it("delivers a pending unacked message on reconnect WITHOUT a coincident push", async () => {
+    // A message is owed to the session but nothing is actively pushing it.
+    unacked.add("owed-1");
+    const delivered: string[] = [];
+    setDeliveredHook((_sid, mid) => delivered.push(mid));
+    installReplayFromInbox();
+
+    // The MCP server (re)appears after idle: its socket file now exists.
+    const stub = await startStub(sockPath);
+
+    // The delivery service reports this session has backlog; the reconcile tick
+    // proactively reconnects and replays — no push() was called.
+    setPendingSessionsProvider(async () => ["sess-abc"]);
+    await reconcileMcpConnections();
+
+    await waitFor(() => delivered.includes("owed-1"));
+    expect(delivered).toEqual(["owed-1"]);
+    // The MCP server actually received the replayed event over the fresh socket.
+    await waitFor(() => stub.received.some((m) => m.messageId === "owed-1"));
+    await stub.close();
+  });
+
+  it("does NOT double-deliver: a second reconcile while connected is a no-op", async () => {
+    unacked.add("owed-1");
+    const delivered: string[] = [];
+    setDeliveredHook((_sid, mid) => delivered.push(mid));
+    installReplayFromInbox();
+
+    const stub = await startStub(sockPath);
+    setPendingSessionsProvider(async () => ["sess-abc"]);
+
+    // First pass: connect + replay.
+    await reconcileMcpConnections();
+    await waitFor(() => delivered.includes("owed-1"));
+    const countAfterFirst = stub.received.filter((m) => m.messageId === "owed-1").length;
+    expect(countAfterFirst).toBe(1);
+
+    // Second + third passes while the socket is live: ensureConnected() short-
+    // circuits (already connected) so the replay hook does NOT fire again.
+    await reconcileMcpConnections();
+    await reconcileMcpConnections();
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect(delivered.filter((m) => m === "owed-1")).toEqual(["owed-1"]);
+    expect(stub.received.filter((m) => m.messageId === "owed-1").length).toBe(1);
+    await stub.close();
+  });
+
+  it("ensureConnected returns false (no dial) when already connected", async () => {
+    const stub = await startStub(sockPath);
+    // Establish a live connection via a normal push.
+    pushToMcpServer(SID, makeEvent({ messageId: "m1" }));
+    await waitFor(() => stub.conns.length > 0);
+
+    // Now a live socket exists — ensureConnected must be a no-op.
+    expect(ensureConnected(SID)).toBe(false);
+    await stub.close();
+  });
+
+  it("is a no-op when the socket file is absent (nothing to reconnect to)", async () => {
+    unacked.add("owed-1");
+    const delivered: string[] = [];
+    setDeliveredHook((_sid, mid) => delivered.push(mid));
+    installReplayFromInbox();
+    expect(fs.existsSync(sockPath)).toBe(false);
+
+    setPendingSessionsProvider(async () => ["sess-abc"]);
+    expect(ensureConnected(SID)).toBe(false);
+    await reconcileMcpConnections();
+    await new Promise((r) => setTimeout(r, 60));
+    expect(delivered).toHaveLength(0);
+  });
+
+  it("does nothing when there is no pending backlog (provider returns [])", async () => {
+    const stub = await startStub(sockPath);
+    const replays: string[] = [];
+    setReplayHook((sid) => {
+      replays.push(sid);
+    });
+    setPendingSessionsProvider(async () => []);
+
+    await reconcileMcpConnections();
+    await new Promise((r) => setTimeout(r, 60));
+    expect(replays).toHaveLength(0);
+    // No connection was opened for a session with no backlog.
+    expect(stub.conns).toHaveLength(0);
+    await stub.close();
+  });
+
+  it("reconcile is a no-op when no provider is installed", async () => {
+    // Provider left null (the default in unit tests that don't wire the service).
+    const replays: string[] = [];
+    setReplayHook((sid) => {
+      replays.push(sid);
+    });
+    await reconcileMcpConnections(); // must not throw
+    expect(replays).toHaveLength(0);
   });
 });
