@@ -23,6 +23,80 @@ import { randomUUID } from "node:crypto";
 // Test-specific prefix to avoid conflicts with real sessions
 const TEST_PREFIX = "rdv-test-";
 
+/**
+ * Block until a freshly-created pane stops emitting output — i.e. the shell
+ * has finished sourcing its rc files and is idle at a prompt. Polls the
+ * visible pane and returns once two consecutive snapshots are identical (or
+ * the bounded timeout elapses, so a pathological host still proceeds rather
+ * than hanging the suite). Mirrors the production readiness gate in
+ * `TmuxService` (`waitForPaneQuiescent`); duplicated here because that helper
+ * is intentionally not exported.
+ *
+ * Readiness-based (not a fixed sleep): this is what makes the test robust to
+ * variable shell-init timing under full-suite parallel load.
+ */
+async function waitForPaneQuiescent(
+  sessionName: string,
+  intervalMs = 75,
+  timeoutMs = 3000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let previous: string | null = null;
+  while (Date.now() < deadline) {
+    let snapshot: string;
+    try {
+      snapshot = (await TmuxService.capturePane(sessionName)).replace(/\s+$/, "");
+    } catch {
+      return;
+    }
+    if (previous !== null && snapshot === previous) return;
+    previous = snapshot;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+/**
+ * Poll the session's captured output until `pattern` matches, returning the
+ * matching capture. Bounded by `timeoutMs`. If `onRetry` is supplied it is
+ * invoked once, roughly halfway through, to re-issue a command that may have
+ * been dropped while the shell was still initializing under heavy load.
+ *
+ * Returns the last captured output even if the pattern never matched, so the
+ * caller's `expect(...).toMatch(...)` produces a readable failure with the
+ * real terminal contents rather than a bare timeout.
+ */
+async function waitForOutput(
+  sessionName: string,
+  pattern: RegExp,
+  onRetry?: () => Promise<void>,
+  intervalMs = 150,
+  timeoutMs = 4000,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  const retryAt = onRetry ? Date.now() + Math.floor(timeoutMs / 2) : Infinity;
+  let retried = false;
+  let output = "";
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    try {
+      output = await TmuxService.captureOutput(sessionName, 50);
+    } catch {
+      // Session may not be queryable yet; keep polling until the deadline.
+      continue;
+    }
+    if (pattern.test(output)) return output;
+    if (!retried && Date.now() >= retryAt && onRetry) {
+      retried = true;
+      try {
+        await onRetry();
+      } catch {
+        // Best-effort resend; ignore failures.
+      }
+    }
+  }
+  return output;
+}
+
 describe("Environment Persistence Integration", () => {
   // Track sessions created during tests for cleanup
   const createdSessions: string[] = [];
@@ -245,18 +319,42 @@ describe("Environment Persistence Integration", () => {
         XDG_DATA_HOME: "/tmp/test-xdg-data",
       });
 
-      // The shell should still have access to BASH_VERSION or ZSH_VERSION
-      // because HOME wasn't overridden
-      await TmuxService.sendKeys(sessionName, "echo SHELL_CHECK:$SHELL");
+      // Flake fix (remote-dev-ab7l): the previous version typed the echo
+      // immediately after createSession and polled for a static substring.
+      // Under full-suite parallel load the shell is often still sourcing its
+      // rc files when send-keys fires, so the keystrokes are dropped or the
+      // `$SHELL` expansion races — the assertion then sees a still-empty pane.
+      //
+      // We now (1) wait for the pane to go quiescent (shell finished init and
+      // is sitting at a prompt) BEFORE typing, and (2) tag the echo with a
+      // unique sentinel so we match *our* command's output rather than any
+      // pre-existing buffer text, polling until that exact line appears.
+      const sentinel = `SHELLCHK_${randomUUID().slice(0, 8)}`;
 
-      // Poll for up to 3s — shell startup + echo timing varies by host.
-      const shellPattern = /SHELL_CHECK:.*\/(bash|zsh|sh)/;
-      let output = "";
-      for (let i = 0; i < 15; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        output = await TmuxService.captureOutput(sessionName, 50);
-        if (shellPattern.test(output)) break;
-      }
+      // (1) Readiness wait: poll the visible pane until two consecutive
+      // snapshots are identical (no more rc-time output) — proof the shell is
+      // idle at a prompt. Bounded so a pathological host still proceeds. The
+      // combined worst case here (quiescent ≤3s + output wait ≤4s = 7s) stays
+      // under vitest's 10s testTimeout with ~3s of headroom for per-call tmux
+      // `execFile` overhead under heavy parallel load; both phases return early
+      // on success.
+      await waitForPaneQuiescent(sessionName);
+
+      // (2) Send an echo whose output is keyed by the unique sentinel. The
+      // shell prints the literal "<sentinel>:" prefix followed by $SHELL.
+      await TmuxService.sendKeys(sessionName, `echo ${sentinel}:$SHELL`);
+
+      // Poll until the sentinel-tagged shell line is present. Matching the
+      // sentinel guarantees we observe the resolved command output (the typed
+      // echo line itself contains "$SHELL" verbatim, not the expansion).
+      const shellPattern = new RegExp(`${sentinel}:\\S*/(bash|zsh|sh)\\b`);
+      const output = await waitForOutput(
+        sessionName,
+        shellPattern,
+        // One mid-flight resend guards against a keystroke dropped during a
+        // slow init under extreme load.
+        () => TmuxService.sendKeys(sessionName, `echo ${sentinel}:$SHELL`),
+      );
 
       // Should contain the shell path (proof shell loaded correctly)
       expect(output).toMatch(shellPattern);
