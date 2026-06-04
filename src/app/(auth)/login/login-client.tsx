@@ -22,6 +22,14 @@ interface LoginClientProps {
   oidcEnabled: boolean;
   /** Display label for the OIDC sign-in button (e.g. "Okta", "Authentik"). */
   oidcName: string;
+  /**
+   * Same-origin path to return to after OIDC sign-in (from `?callbackUrl=`,
+   * sanitized server-side). When set, the OIDC button hands this to
+   * `signIn({ callbackUrl })` so post-login lands on the original destination
+   * (e.g. the mobile `/<slug>/auth/mobile-callback` deep-link bridge) instead
+   * of "/". Undefined → fall back to the instance root.
+   */
+  callbackUrl?: string;
 }
 
 /**
@@ -43,7 +51,7 @@ export default function LoginClient(props: LoginClientProps) {
   );
 }
 
-function LoginForm({ oidcEnabled, oidcName }: LoginClientProps) {
+function LoginForm({ oidcEnabled, oidcName, callbackUrl }: LoginClientProps) {
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -114,7 +122,9 @@ function LoginForm({ oidcEnabled, oidcName }: LoginClientProps) {
                 type="button"
                 variant="outline"
                 className="w-full"
-                onClick={() => signIn("oidc", { callbackUrl: prefixPath("/") })}
+                onClick={() =>
+                  signIn("oidc", { callbackUrl: callbackUrl ?? prefixPath("/") })
+                }
               >
                 Sign in with {oidcName}
               </Button>

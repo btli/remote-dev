@@ -107,17 +107,25 @@ const candidatesMock = getSessionCookieNameCandidates as unknown as Mock;
  */
 function makeRequest(
   pathname: string,
-  opts: { cookies?: string[]; headers?: Record<string, string> } = {},
+  opts: {
+    cookies?: string[];
+    headers?: Record<string, string>;
+    search?: string;
+  } = {},
 ): NextRequest {
   const cookieNames = opts.cookies ?? [];
   const cookieSet = new Set(cookieNames);
   const headers = new Headers(opts.headers ?? {});
+  // Real NextRequest.nextUrl exposes `search` (the leading-`?` query string, or
+  // "" when absent). The proxy reads it to round-trip the original query into
+  // the `?callbackUrl=` it sets on the unauth→login redirect.
+  const search = opts.search ?? "";
   return {
     // Real NextRequest.nextUrl always exposes `origin`; the proxy reads it as
     // the fallback for resolveExternalOrigin() when no forwarded/host header is
     // present, so the fake must provide it too.
-    nextUrl: { pathname, origin: "https://host" },
-    url: `https://host${pathname}`,
+    nextUrl: { pathname, origin: "https://host", search },
+    url: `https://host${pathname}${search}`,
     headers,
     cookies: {
       has: (name: string) => cookieSet.has(name),
@@ -181,7 +189,7 @@ describe("proxy — scoped instance realm (presence gate, regardless of AUTH_SEC
         expect(res.status).toBe(200);
       });
 
-      it("redirects to /login when NO candidate session cookie is present", async () => {
+      it("redirects to /login (preserving callbackUrl) when NO candidate session cookie is present", async () => {
         const req = makeRequest("/dashboard", {
           cookies: ["some-other-cookie"],
         });
@@ -190,7 +198,38 @@ describe("proxy — scoped instance realm (presence gate, regardless of AUTH_SEC
 
         expect(getTokenMock).not.toHaveBeenCalled();
         expect(res.status).toBe(307);
-        expect(res.headers.get("location")).toBe("https://host/dev/login");
+        // Scoped → prefixed login path; the intended destination is preserved
+        // as `?callbackUrl=` (also prefixed) for post-login return.
+        expect(res.headers.get("location")).toBe(
+          "https://host/dev/login?callbackUrl=%2Fdev%2Fdashboard",
+        );
+      });
+
+      it("preserves the mobile-callback destination (and its query) as callbackUrl", async () => {
+        // The mobile deep-link bridge opens `/<slug>/auth/mobile-callback?...`
+        // in the system browser. With no session cookie the proxy must bounce
+        // it to `/<slug>/login?callbackUrl=/<slug>/auth/mobile-callback?...` so
+        // that, after OIDC sign-in, NextAuth returns the user to the callback
+        // page (which fires the `remotedev://` deep link). `pathname` is
+        // basePath-stripped by Next, so the proxy re-adds the `/dev` prefix.
+        const req = makeRequest("/auth/mobile-callback", {
+          cookies: [],
+          search: "?state=xyz",
+        });
+
+        const res = await proxy(req);
+
+        expect(getTokenMock).not.toHaveBeenCalled();
+        expect(res.status).toBe(307);
+        const location = res.headers.get("location");
+        expect(location).not.toBeNull();
+        const url = new URL(location as string);
+        expect(url.pathname).toBe("/dev/login");
+        // The full external destination (prefixed path + original query) is the
+        // single decoded callbackUrl value.
+        expect(url.searchParams.get("callbackUrl")).toBe(
+          "/dev/auth/mobile-callback?state=xyz",
+        );
       });
     });
   }
@@ -291,9 +330,11 @@ describe("proxy — scoped instance realm (presence gate, regardless of AUTH_SEC
       const res = await proxy(req);
 
       expect(getTokenMock).not.toHaveBeenCalled();
-      // Not recognised → redirected to login.
+      // Not recognised → redirected to login (with callbackUrl preserved).
       expect(res.status).toBe(307);
-      expect(res.headers.get("location")).toBe("https://host/dev/login");
+      expect(res.headers.get("location")).toBe(
+        "https://host/dev/login?callbackUrl=%2Fdev%2Fdashboard",
+      );
     });
   });
 });
@@ -330,7 +371,7 @@ describe("proxy — unscoped single-server (getToken path / AC-1)", () => {
     });
   });
 
-  it("redirects an unauthenticated page request to /login", async () => {
+  it("redirects an unauthenticated page request to /login (preserving callbackUrl)", async () => {
     getTokenMock.mockResolvedValue(null);
     const req = makeRequest("/dashboard");
 
@@ -338,8 +379,10 @@ describe("proxy — unscoped single-server (getToken path / AC-1)", () => {
 
     expect(getTokenMock).toHaveBeenCalledTimes(1);
     expect(res.status).toBe(307);
-    // Unscoped → no prefix on the Location.
-    expect(res.headers.get("location")).toBe("https://host/login");
+    // Unscoped → no prefix on the Location or the callbackUrl.
+    expect(res.headers.get("location")).toBe(
+      "https://host/login?callbackUrl=%2Fdashboard",
+    );
   });
 
   it("a present session cookie does NOT bypass getToken (crypto validation wins)", async () => {
@@ -353,7 +396,9 @@ describe("proxy — unscoped single-server (getToken path / AC-1)", () => {
 
     expect(getTokenMock).toHaveBeenCalledTimes(1);
     expect(res.status).toBe(307);
-    expect(res.headers.get("location")).toBe("https://host/login");
+    expect(res.headers.get("location")).toBe(
+      "https://host/login?callbackUrl=%2Fdashboard",
+    );
   });
 
   it("returns 401 JSON for an unauthenticated API route with no Bearer token", async () => {
