@@ -10,11 +10,14 @@
  * stream the response back, and rewrite redirect/cookie paths + inject a
  * `<base>` tag so a path-based-proxied app's relative URLs resolve correctly.
  *
- * Auth / owner-scoping: the request has already passed this instance's
- * CF-Access/session gate (`src/proxy.ts`), and `withAuth` requires a valid
- * session. The instance DB only ever contains users provisioned ONTO this
- * instance, so any authenticated caller is, by construction, an authorized
- * owner of the instance.
+ * Auth model: `withApiAuth` (session OR Bearer API key), DELIBERATELY matching
+ * the proxy-token mint (`/api/ports/:port/proxy-token`) and `/api/ports/proxyable`
+ * so browsers and agents authenticate identically (an agent that can discover a
+ * proxyable port should be able to fetch it too). The request has already passed
+ * this instance's CF-Access/session gate (`src/proxy.ts`). The instance DB only
+ * ever contains users provisioned ONTO this instance, so any authenticated caller
+ * is, by construction, an authorized owner of the instance; the runtime port gate
+ * below then bounds the blast radius to that caller's OWN listening/claimed ports.
  *
  * Port-scoping (remote-dev-urjg): two gates decide WHICH port a caller may reach.
  * `isPortProxyable` is the cheap syntactic allowlist (privileged <1024 +
@@ -47,7 +50,7 @@
 
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { withAuth, type RouteContext } from "@/lib/api";
+import { withApiAuth, type RouteContext } from "@/lib/api";
 import { BASE_PATH, INSTANCE_SLUG } from "@/lib/base-path";
 import {
   isPortProxyable,
@@ -310,12 +313,12 @@ async function handler(
   });
 }
 
-const wrapped = withAuth(handler);
+const wrapped = withApiAuth(handler);
 
 /**
  * Next's generated route validator types this `[...path]` catch-all's context as
  * `{ params: Promise<{ port: string; path: string[] }> }` (the `path` segment is
- * a REQUIRED `string[]`). The shared `withAuth`/`RouteContext` types params as
+ * a REQUIRED `string[]`). The shared `withApiAuth`/`RouteContext` types params as
  * `Promise<Record<string, string>>`, whose index signature yields `path: string`
  * — so the wrapped handler doesn't satisfy the generated constraint. We bridge
  * the two LOCALLY here (rather than widening the shared `RouteContext`, which

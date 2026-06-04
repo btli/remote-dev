@@ -174,6 +174,9 @@ export function validateProxyWsToken(
     // Must be a proxy-kind token.
     if (kind !== PROXY_KIND) return null;
 
+    // Strict numeric parse — match the HTTP layer's `/^\d+$/` and avoid the
+    // `Number("")===0` / `Number(" 80 ")===80` footguns before comparing.
+    if (!/^\d+$/.test(portStr)) return null;
     const port = Number(portStr);
     if (!Number.isInteger(port)) return null;
 

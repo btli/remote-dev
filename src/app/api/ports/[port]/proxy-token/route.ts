@@ -14,8 +14,9 @@ import { isPortProxyableForUser } from "@/services/proxyable-ports-service";
  * the caller may proxy `port` (it must be in their live `(listening ∪ claimed)`
  * set) and then issues a token bound to that single port.
  *
- * Dual-auth (session OR Bearer API key), matching `/api/ports/proxyable` and
- * `/api/sessions/:id/token`, so both the browser UI and agents can obtain one.
+ * Dual-auth (session OR Bearer API key), matching `/api/ports/proxyable`, the
+ * HTTP proxy route (`src/app/proxy/[port]/[...path]`), and `/api/sessions/:id/token`,
+ * so both the browser UI and agents authenticate identically end-to-end.
  *
  * Returns 403 (not 404) when the port isn't proxyable so the distinction from an
  * unauthenticated 401 is clear; the token itself never authorizes a port the

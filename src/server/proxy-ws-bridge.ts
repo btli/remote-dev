@@ -102,7 +102,7 @@ export function normalizeProxyCloseCode(code: number): number {
   return 1011;
 }
 
-/** Lower-case a header that `ws`/`http` may surface as `string | string[]`. */
+/** Collapse a Node header (`string | string[] | undefined`) to its first value. */
 function firstHeader(value: string | string[] | undefined): string | undefined {
   if (Array.isArray(value)) return value[0];
   return value;
@@ -118,8 +118,8 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
  * The allowed origin is derived the same way the rest of the app derives its
  * public origin: the edge-forwarded `x-forwarded-host` / `host` (the router and
  * cloudflared set these to the real public host), with `AUTH_URL` as the
- * fallback. We compare scheme+host+port (the URL `origin`), tolerating only a
- * trailing-slash difference.
+ * fallback. Both sides are normalized through `new URL(...).origin` (scheme +
+ * host + port, never a trailing slash) before comparison.
  *
  * @param origin - The raw `Origin` header from the upgrade request (may be absent).
  * @param getHeader - Accessor for the upgrade request's headers.
@@ -301,140 +301,144 @@ export function handleProxyWsUpgrade(
    * membership gate above resolves OK (the client handshake is already done).
    */
   function connectAndBridge(): void {
-  // The client may have gone away during the async membership check; if so,
-  // don't bother opening an upstream that would only dangle until timeout.
-  if (
-    clientWs.readyState === WebSocket.CLOSING ||
-    clientWs.readyState === WebSocket.CLOSED
-  ) {
-    return;
-  }
-
-  let upstream: WebSocket;
-  try {
-    upstream =
-      protocols.length > 0
-        ? new WebSocket(upstreamUrl, protocols)
-        : new WebSocket(upstreamUrl);
-  } catch (error) {
-    proxyLog.warn("Failed to open upstream proxy WebSocket", {
-      error: String(error),
-      port,
-    });
-    clientWs.close(1011, "upstream connect failed");
-    return;
-  }
-
-  // Bridge state. `pending` buffers client→upstream frames sent before the
-  // upstream socket finishes opening (HMR clients usually wait for the server,
-  // but a frame can race the open).
-  let upstreamOpen = false;
-  let closing = false;
-  const pending: Array<{ data: RawData; isBinary: boolean }> = [];
-
-  const connectTimer = setTimeout(() => {
-    if (!upstreamOpen && !closing) {
-      proxyLog.warn("Upstream proxy WebSocket connect timeout", { port });
-      teardown(1011, "upstream connect timeout");
-    }
-  }, UPSTREAM_CONNECT_TIMEOUT_MS);
-
-  /** Close BOTH sockets once, swallowing errors. */
-  function teardown(code: number, reason: string): void {
-    if (closing) return;
-    closing = true;
-    clearTimeout(connectTimer);
-    pending.length = 0;
-    const safe = normalizeProxyCloseCode(code);
-    try {
-      upstream.close(safe, reason);
-    } catch {
-      // already closing/closed
-    }
-    try {
-      clientWs.close(safe, reason);
-    } catch {
-      // already closing/closed
-    }
-  }
-
-  // --- upstream → client ---
-  upstream.on("open", () => {
-    upstreamOpen = true;
-    clearTimeout(connectTimer);
-    for (const { data, isBinary } of pending) {
-      upstream.send(data, { binary: isBinary });
-    }
-    pending.length = 0;
-    proxyLog.debug("Port-proxy WS bridge open", { port });
-  });
-
-  upstream.on("message", (data: RawData, isBinary: boolean) => {
-    if (closing) return;
-    clientWs.send(data, { binary: isBinary });
-  });
-
-  upstream.on("close", (code: number, reason: Buffer) => {
-    if (closing) return;
-    closing = true;
-    clearTimeout(connectTimer);
-    // Drop any buffered pre-open frames so they can be GC'd (mirrors teardown()).
-    pending.length = 0;
-    try {
-      clientWs.close(normalizeProxyCloseCode(code), reason.toString());
-    } catch {
-      // already closing/closed
-    }
-  });
-
-  upstream.on("error", (error: Error) => {
-    proxyLog.warn("Upstream proxy WebSocket error", {
-      error: String(error),
-      port,
-    });
-    teardown(1011, "upstream error");
-  });
-
-  // --- client → upstream ---
-  clientWs.on("message", (data: RawData, isBinary: boolean) => {
-    if (closing) return;
-    if (upstreamOpen) {
-      upstream.send(data, { binary: isBinary });
+    // The client may have gone away during the async membership check; if so,
+    // don't bother opening an upstream that would only dangle until timeout.
+    if (
+      clientWs.readyState === WebSocket.CLOSING ||
+      clientWs.readyState === WebSocket.CLOSED
+    ) {
       return;
     }
-    // Upstream not open yet — buffer until its `open` fires, but BOUND the queue
-    // (mirrors the router's MAX_PENDING) so a client streaming at a stalled
-    // upstream can't grow memory without limit.
-    if (pending.length >= MAX_PENDING) {
-      proxyLog.warn("Proxy WS pre-open buffer overflow; closing", {
+
+    let upstream: WebSocket;
+    try {
+      upstream =
+        protocols.length > 0
+          ? new WebSocket(upstreamUrl, protocols)
+          : new WebSocket(upstreamUrl);
+    } catch (error) {
+      proxyLog.warn("Failed to open upstream proxy WebSocket", {
+        error: String(error),
         port,
-        max: MAX_PENDING,
       });
-      teardown(1011, "buffer overflow before upstream open");
+      clientWs.close(1011, "upstream connect failed");
       return;
     }
-    pending.push({ data, isBinary });
-  });
 
-  clientWs.on("close", (code: number, reason: Buffer) => {
-    if (closing) return;
-    closing = true;
-    clearTimeout(connectTimer);
-    // Drop any buffered pre-open frames so they can be GC'd (mirrors teardown()).
-    pending.length = 0;
-    try {
-      upstream.close(normalizeProxyCloseCode(code), reason.toString());
-    } catch {
-      // already closing/closed
+    // Bridge state. `pending` buffers client→upstream frames sent before the
+    // upstream socket finishes opening (HMR clients usually wait for the server,
+    // but a frame can race the open).
+    let upstreamOpen = false;
+    let closing = false;
+    const pending: Array<{ data: RawData; isBinary: boolean }> = [];
+
+    const connectTimer = setTimeout(() => {
+      if (!upstreamOpen && !closing) {
+        proxyLog.warn("Upstream proxy WebSocket connect timeout", { port });
+        teardown(1011, "upstream connect timeout");
+      }
+    }, UPSTREAM_CONNECT_TIMEOUT_MS);
+
+    /**
+     * Close BOTH sockets once, swallowing errors. `clientCode` defaults to the
+     * upstream `code` but can differ — e.g. a policy violation closes the client
+     * with 1008 while the upstream is torn down with 1011.
+     */
+    function teardown(code: number, reason: string, clientCode = code): void {
+      if (closing) return;
+      closing = true;
+      clearTimeout(connectTimer);
+      pending.length = 0;
+      try {
+        upstream.close(normalizeProxyCloseCode(code), reason);
+      } catch {
+        // already closing/closed
+      }
+      try {
+        clientWs.close(normalizeProxyCloseCode(clientCode), reason);
+      } catch {
+        // already closing/closed
+      }
     }
-  });
 
-  clientWs.on("error", (error: Error) => {
-    proxyLog.warn("Client proxy WebSocket error", {
-      error: String(error),
-      port,
+    // --- upstream → client ---
+    upstream.on("open", () => {
+      upstreamOpen = true;
+      clearTimeout(connectTimer);
+      for (const { data, isBinary } of pending) {
+        upstream.send(data, { binary: isBinary });
+      }
+      pending.length = 0;
+      proxyLog.debug("Port-proxy WS bridge open", { port });
     });
-    teardown(1011, "client error");
-  });
+
+    upstream.on("message", (data: RawData, isBinary: boolean) => {
+      if (closing) return;
+      clientWs.send(data, { binary: isBinary });
+    });
+
+    upstream.on("close", (code: number, reason: Buffer) => {
+      if (closing) return;
+      closing = true;
+      clearTimeout(connectTimer);
+      // Drop any buffered pre-open frames so they can be GC'd (mirrors teardown()).
+      pending.length = 0;
+      try {
+        clientWs.close(normalizeProxyCloseCode(code), reason.toString());
+      } catch {
+        // already closing/closed
+      }
+    });
+
+    upstream.on("error", (error: Error) => {
+      proxyLog.warn("Upstream proxy WebSocket error", {
+        error: String(error),
+        port,
+      });
+      teardown(1011, "upstream error");
+    });
+
+    // --- client → upstream ---
+    clientWs.on("message", (data: RawData, isBinary: boolean) => {
+      if (closing) return;
+      if (upstreamOpen) {
+        upstream.send(data, { binary: isBinary });
+        return;
+      }
+      // Upstream not open yet — buffer until its `open` fires, but BOUND the
+      // queue (mirrors the router's MAX_PENDING) so a client streaming at a
+      // stalled upstream can't grow memory without limit. Close the CLIENT with
+      // 1008 (policy), matching the router; the upstream gets 1011.
+      if (pending.length >= MAX_PENDING) {
+        proxyLog.warn("Proxy WS pre-open buffer overflow; closing", {
+          port,
+          max: MAX_PENDING,
+        });
+        teardown(1011, "buffer overflow before upstream open", 1008);
+        return;
+      }
+      pending.push({ data, isBinary });
+    });
+
+    clientWs.on("close", (code: number, reason: Buffer) => {
+      if (closing) return;
+      closing = true;
+      clearTimeout(connectTimer);
+      // Drop any buffered pre-open frames so they can be GC'd (mirrors teardown()).
+      pending.length = 0;
+      try {
+        upstream.close(normalizeProxyCloseCode(code), reason.toString());
+      } catch {
+        // already closing/closed
+      }
+    });
+
+    clientWs.on("error", (error: Error) => {
+      proxyLog.warn("Client proxy WebSocket error", {
+        error: String(error),
+        port,
+      });
+      teardown(1011, "client error");
+    });
   }
 }
