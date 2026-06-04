@@ -17,6 +17,44 @@ export async function register() {
     const { createLogger } = await import("@/lib/logger");
     const log = createLogger("Startup");
 
+    // Native-module ABI self-check (remote-dev-7wgn). Structured logging writes
+    // to logs.db through better-sqlite3, and the logger swallows write errors —
+    // so a NODE_MODULE_VERSION mismatch (e.g. Homebrew silently bumping Node)
+    // silently disables logs.db with no obvious symptom. Actively probe the
+    // addon here and, on an ABI mismatch, emit ONE loud, specific, grep-able
+    // error under a dedicated namespace. This is intentionally NON-FATAL: the
+    // app's main DB is libsql, so a broken logging addon must not take the app
+    // down — it must just be impossible to miss.
+    try {
+      const { probeBetterSqlite3 } = await import("@/lib/native-module-check");
+      const probe = await probeBetterSqlite3();
+      if (!probe.ok && probe.abiMismatch) {
+        createLogger("NativeModuleCheck").error(
+          "better-sqlite3 ABI mismatch — structured logging is DISABLED (logs.db writes will silently fail); rebuild native modules against the running Node",
+          {
+            module: "better-sqlite3",
+            nodeVersion: process.version,
+            nodeModuleVersion: process.versions.modules,
+            error: probe.error,
+            remediation:
+              "npm rebuild better-sqlite3 --build-from-source (with the runtime node on PATH), then restart",
+          },
+        );
+      } else if (!probe.ok) {
+        // Non-ABI failure (e.g. module genuinely missing) — still worth a loud
+        // line, but phrased so it isn't mistaken for the ABI case.
+        createLogger("NativeModuleCheck").error(
+          "better-sqlite3 failed to load — structured logging to logs.db is DISABLED",
+          { module: "better-sqlite3", error: probe.error },
+        );
+      }
+    } catch (error) {
+      // The probe itself must never break boot.
+      log.error("Native-module self-check failed to run", {
+        error: String(error),
+      });
+    }
+
     // Apply PostgreSQL migrations BEFORE any DB-touching startup work below.
     // On SQLite this is a no-op (the SQLite path uses `db:push`), so existing
     // behavior is unchanged. On Postgres a failure rethrows to fail the boot

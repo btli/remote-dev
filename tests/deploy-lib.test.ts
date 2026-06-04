@@ -4,6 +4,7 @@ import {
 } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { dirname, delimiter as PATH_DELIM } from "path";
 import {
   isAcceptableSsrStatus,
   restoreStandalone,
@@ -11,6 +12,9 @@ import {
   gitSyncCommands,
   ancestryGuardDecision,
   isSafeDeploySrcToRemove,
+  nativeRebuildCommand,
+  pathWithRuntimeNodeFirst,
+  NATIVE_MODULES_TO_REBUILD,
 } from "../scripts/deploy-lib";
 
 describe("isAcceptableSsrStatus", () => {
@@ -204,5 +208,70 @@ describe("isSafeDeploySrcToRemove", () => {
     expect(isSafeDeploySrcToRemove("C:\\rd\\deploy-src", "\\")).toBe(true);
     // Right token, wrong separator → not the leaf under that platform's rules.
     expect(isSafeDeploySrcToRemove("C:\\rd\\deploy-src", "/")).toBe(false);
+  });
+});
+
+describe("nativeRebuildCommand (remote-dev-7wgn)", () => {
+  it("rebuilds the registered native modules from source, with foreground scripts", () => {
+    expect(nativeRebuildCommand()).toEqual([
+      "npm",
+      "rebuild",
+      "better-sqlite3",
+      "--build-from-source",
+      "--foreground-scripts",
+    ]);
+  });
+  it("includes every module in NATIVE_MODULES_TO_REBUILD", () => {
+    const cmd = nativeRebuildCommand();
+    for (const m of NATIVE_MODULES_TO_REBUILD) {
+      expect(cmd).toContain(m);
+    }
+  });
+  it("accepts an explicit module list", () => {
+    expect(nativeRebuildCommand(["a", "b"])).toEqual([
+      "npm",
+      "rebuild",
+      "a",
+      "b",
+      "--build-from-source",
+      "--foreground-scripts",
+    ]);
+  });
+});
+
+describe("pathWithRuntimeNodeFirst (remote-dev-7wgn)", () => {
+  it("prepends the runtime node's dir to PATH", () => {
+    const result = pathWithRuntimeNodeFirst(
+      "/opt/homebrew/bin/node",
+      "/usr/bin:/bin",
+      ":",
+      dirname,
+    );
+    expect(result).toBe("/opt/homebrew/bin:/usr/bin:/bin");
+  });
+  it("de-duplicates when the runtime dir is already present", () => {
+    const result = pathWithRuntimeNodeFirst(
+      "/opt/homebrew/bin/node",
+      "/usr/bin:/opt/homebrew/bin:/bin",
+      ":",
+      dirname,
+    );
+    // The dir appears exactly once, and leading.
+    expect(result).toBe("/opt/homebrew/bin:/usr/bin:/bin");
+    expect(result.split(":").filter((p) => p === "/opt/homebrew/bin")).toHaveLength(1);
+  });
+  it("handles an empty inherited PATH", () => {
+    expect(
+      pathWithRuntimeNodeFirst("/opt/homebrew/bin/node", "", ":", dirname),
+    ).toBe("/opt/homebrew/bin");
+  });
+  it("works with the real platform delimiter + dirname", () => {
+    const result = pathWithRuntimeNodeFirst(
+      "/opt/homebrew/bin/node",
+      `/x${PATH_DELIM}/y`,
+      PATH_DELIM,
+      dirname,
+    );
+    expect(result.split(PATH_DELIM)[0]).toBe("/opt/homebrew/bin");
   });
 });

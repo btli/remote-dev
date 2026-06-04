@@ -107,17 +107,45 @@ export async function POST(request: Request) {
     );
   }
 
-  // Spawn deploy script as detached background process
-  // Use the project root (where scripts/ lives), not standalone dir
+  // Spawn deploy script as detached background process.
+  //
+  // ORCHESTRATOR-LAG FIX (remote-dev-6lf3). PROJECT_ROOT is the live dev/agent
+  // working tree and is intentionally NEVER synced to origin/master, so its
+  // scripts/deploy.ts can lag master by arbitrary commits. The #338 deploy
+  // created the user_email table (db:push ran from the origin/master deploy-src)
+  // but never ran the backfill, because PROJECT_ROOT's deploy.ts predated the
+  // backfill wiring — the step didn't exist in the orchestrator that executed.
+  //
+  // Prefer the ORIGIN/MASTER copy of deploy.ts from the deploy-src worktree
+  // (DATA_DIR/deploy-src), which a prior deploy already pinned to origin/master.
+  // That makes the orchestration logic itself track master, not the stale dev
+  // tree. Chicken-and-egg: deploy-src is created BY deploy.ts, so on the very
+  // first deploy (or right after deploy-src is wiped) it won't exist yet — fall
+  // back to PROJECT_ROOT's copy, which will (re)materialize deploy-src so the
+  // NEXT deploy uses the fresh origin/master orchestrator. The post-condition
+  // guard (db:verify-backfills) is the belt-and-suspenders backstop for the
+  // window where the fallback orchestrator is itself stale.
   const projectRoot =
     process.env.DEPLOY_PROJECT_ROOT ||
     join(homedir(), "Projects", "btli", "remote-dev");
-  const scriptPath = join(projectRoot, "scripts", "deploy.ts");
+  const projectRootScript = join(projectRoot, "scripts", "deploy.ts");
+  const deploySrcScript = join(DATA_DIR, "deploy-src", "scripts", "deploy.ts");
+
+  const useDeploySrc = existsSync(deploySrcScript);
+  const scriptPath = useDeploySrc ? deploySrcScript : projectRootScript;
+  // The script reads PROJECT_ROOT via import.meta.dir ("<scriptDir>/.."), so when
+  // running the deploy-src copy, cwd is its own worktree root; PROJECT_ROOT (the
+  // live serving dir restored by restoreSlotToLive) is resolved by deploy.ts from
+  // DEPLOY_PROJECT_ROOT below, not from cwd.
+  const scriptCwd = useDeploySrc
+    ? join(DATA_DIR, "deploy-src")
+    : projectRoot;
 
   log.info("Triggering deploy", {
     commit: body.after?.slice(0, 7) ?? "unknown",
     pusher: body.pusher?.name ?? "unknown",
     script: scriptPath,
+    orchestratorSource: useDeploySrc ? "deploy-src (origin/master)" : "project-root (fallback)",
   });
 
   try {
@@ -138,14 +166,32 @@ export async function POST(request: Request) {
         process.env.DEPLOY_EXTERNAL_URL || "https://dev.bryanli.net",
       DEPLOY_WEBHOOK_SECRET: process.env.DEPLOY_WEBHOOK_SECRET ?? "",
       DEPLOY_REQUESTED_COMMIT: body.after ?? "",
+      // Pin deploy.ts's notion of the LIVE serving dir explicitly. When we run
+      // the deploy-src copy of deploy.ts, its import.meta.dir-derived
+      // PROJECT_ROOT would point at the deploy-src worktree, NOT the live tree —
+      // so restoreSlotToLive / the rdv.ts restart would target the wrong dir.
+      // Passing DEPLOY_PROJECT_ROOT makes deploy.ts resolve PROJECT_ROOT to the
+      // real live serving dir regardless of which copy of the script runs.
+      DEPLOY_PROJECT_ROOT: projectRoot,
     };
-    // Forward RDV_DATA_DIR if set
+    // Forward the DB-TARGETING env so the spawned migration/backfill resolves
+    // the SAME database the live server serves (remote-dev-6lf3). The DB path is
+    // chosen purely from env (DATABASE_URL > RDV_DATA_DIR/sqlite.db >
+    // ~/.remote-dev/sqlite.db; see src/lib/paths.ts) — never cwd-relative — so
+    // forwarding these is what guarantees the backfill hits the live DB rather
+    // than a stray default. DATABASE_URL is the highest-priority selector and was
+    // previously NOT forwarded: a server configured with DATABASE_URL would have
+    // had its deploy backfill silently fall back to ~/.remote-dev/sqlite.db (a
+    // DIFFERENT DB). Forward both, only when set.
     if (process.env.RDV_DATA_DIR) {
       cleanEnv.RDV_DATA_DIR = process.env.RDV_DATA_DIR;
     }
+    if (process.env.DATABASE_URL) {
+      cleanEnv.DATABASE_URL = process.env.DATABASE_URL;
+    }
 
     const child = spawn("bun", ["run", scriptPath], {
-      cwd: projectRoot,
+      cwd: scriptCwd,
       detached: true,
       stdio: "ignore",
       env: cleanEnv as unknown as NodeJS.ProcessEnv,

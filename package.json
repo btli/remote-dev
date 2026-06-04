@@ -50,6 +50,7 @@
     "db:migrate-agents": "bun run scripts/migrate-agent-sessions.ts",
     "db:migrate-github-accounts": "bun run scripts/migrate-github-accounts.ts",
     "db:backfill-user-emails": "bun run scripts/backfill-user-emails.ts",
+    "db:verify-backfills": "bun run scripts/verify-backfills.ts",
     "db:migrate-profile-gitconfigs": "bun run scripts/migrate-profile-gitconfigs.ts",
     "db:migrate-channels": "tsx src/db/migrations/migrate-channels.ts",
     "db:migrate-agent-provider": "bun run scripts/migrate-agent-provider.ts",
