@@ -28,7 +28,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       title,
       body: body ?? undefined,
     });
-    return NextResponse.json(notification ?? { debounced: true });
+    return NextResponse.json(notification ?? { suppressed: true });
   } catch (error) {
     log.error("Error creating notification", { error: String(error) });
     return errorResponse("Failed to create notification", 500);
