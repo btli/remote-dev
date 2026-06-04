@@ -17,6 +17,7 @@ import {
   triggerConfigs,
   triggerEvents,
   githubRepositories,
+  webhookDeliveries,
 } from "@/db/schema";
 import { createLogger } from "@/lib/logger";
 import * as AgentRunService from "./agent-run-service";
@@ -66,6 +67,11 @@ export interface TriggerDeps {
     matched: boolean,
     runId: string | null,
   ): Promise<void>;
+  /**
+   * Atomically record a webhook delivery id. Returns `true` if newly inserted
+   * (claim won), `false` if the id already existed (redelivery / duplicate).
+   */
+  recordDelivery(deliveryId: string, eventKind: string): Promise<boolean>;
 }
 
 /** Per-kind event-shape predicates (kind ↔ GitHub event/action). */
@@ -146,7 +152,46 @@ function defaultDeps(): TriggerDeps {
         runId,
       });
     },
+    recordDelivery: async (deliveryId, eventKind) => {
+      // Atomic claim: ON CONFLICT DO NOTHING + RETURNING. A non-empty result
+      // means this insert won (first time seen); an empty result means the
+      // delivery id was already present (a redelivery → caller no-ops).
+      const inserted = await db
+        .insert(webhookDeliveries)
+        .values({ deliveryId, eventKind })
+        .onConflictDoNothing()
+        .returning({ deliveryId: webhookDeliveries.deliveryId });
+      return inserted.length > 0;
+    },
   };
+}
+
+/**
+ * Atomically claim a GitHub webhook delivery so each `X-GitHub-Delivery` UUID is
+ * processed at most once (epic remote-dev-oyej.14).
+ *
+ * GitHub assigns a unique delivery UUID per delivery and REUSES it when it
+ * redelivers (manual replay or its own retry). The per-(triggerConfig, headSha)
+ * `agentRuns` unique index only dedupes events that carry a head SHA, so
+ * issue/label/comment redeliveries (headSha == null) would otherwise launch a
+ * SECOND agent run. Inserting the delivery id with `onConflictDoNothing()` and
+ * checking `.returning()` is a single atomic claim that also collapses the race
+ * between two concurrent deliveries of the same UUID.
+ *
+ * @returns `true` when this call won the claim (first time seen — caller should
+ * process the delivery); `false` when the UUID was already recorded (redelivery
+ * — caller must treat it as a no-op). A blank/missing id always returns `true`
+ * (no UUID to dedupe on — fall back to the existing head-SHA guard).
+ *
+ * Injectable via {@link TriggerDeps.recordDelivery} for unit tests.
+ */
+export async function claimDelivery(
+  deliveryId: string,
+  eventKind: string,
+  recordDelivery: TriggerDeps["recordDelivery"] = defaultDeps().recordDelivery,
+): Promise<boolean> {
+  if (!deliveryId) return true;
+  return recordDelivery(deliveryId, eventKind);
 }
 
 /**

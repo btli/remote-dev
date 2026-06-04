@@ -208,6 +208,14 @@ PostToolUse, SessionEnd). MCP tools handle the **write** side (`send_message`,
 
 > Note on "acked": the MCP ack means the message was **surfaced to the client**,
 > the strongest signal MCP logging affords — not a guaranteed human/agent read.
+>
+> Because ack means "surfaced," not "consumed," a delivered-but-unacked message
+> can briefly **display twice**: once via the live MCP push, and again in the
+> next session-start "read peers" digest (the start digest lists
+> delivered-but-unacked rows as *New messages*). This is a narrow window when an
+> ack is slow or dropped — a duplicate, never a loss. Expect it as **normal
+> behavior, not a bug**: de-dup mentally by message id / timestamp and treat the
+> two copies as the same message.
 
 For the full design (Unix-socket push relay, internal endpoints, dedup), see the
 "Agent Peer Communication" section of [`ARCHITECTURE.md`](./ARCHITECTURE.md).

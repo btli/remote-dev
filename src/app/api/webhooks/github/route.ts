@@ -47,6 +47,44 @@ export async function POST(request: Request) {
   }
 
   const event = parseGithubEvent(request.headers, body);
+
+  // Replay dedupe: GitHub assigns a unique `X-GitHub-Delivery` UUID per delivery
+  // and reuses it on redelivery (manual replay or its own retry). Claim it BEFORE
+  // dispatch so a redelivery is a no-op — this covers issue/label/comment events
+  // (headSha == null) that the per-(triggerConfig, headSha) agent-run unique index
+  // cannot dedupe. A blank id (claimDelivery returns true) falls back to the
+  // existing head-SHA guard. We await the claim (a single indexed upsert) before
+  // the fire-and-forget dispatch so duplicates never reach handleEvent.
+  const deliveryId = request.headers.get("x-github-delivery") ?? "";
+  let firstDelivery = true;
+  try {
+    firstDelivery = await TriggerService.claimDelivery(deliveryId, event.event);
+  } catch (err) {
+    // A dedupe-store failure must not drop a legitimate delivery; fall through
+    // and dispatch (the head-SHA unique index still guards push/PR/check events).
+    log.warn("delivery dedupe check failed; processing without replay guard", {
+      error: String(err),
+      deliveryId,
+      event: event.event,
+    });
+  }
+
+  if (!firstDelivery) {
+    log.info("duplicate webhook delivery ignored", {
+      deliveryId,
+      event: event.event,
+      action: event.action ?? null,
+    });
+    return NextResponse.json(
+      {
+        message: "already processed",
+        event: event.event,
+        action: event.action ?? null,
+      },
+      { status: 200 },
+    );
+  }
+
   // Fire-and-forget so GitHub's delivery isn't blocked on agent launch.
   void TriggerService.handleEvent(event).catch((err) =>
     log.error("trigger dispatch failed", {

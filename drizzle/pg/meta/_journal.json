@@ -43,6 +43,13 @@
       "when": 1780535315762,
       "tag": "0005_youthful_hex",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1780603075908,
+      "tag": "0006_luxuriant_may_parker",
+      "breakpoints": true
     }
   ]
 }
