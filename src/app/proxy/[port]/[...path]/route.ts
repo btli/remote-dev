@@ -16,6 +16,13 @@
  * instance, so any authenticated caller is, by construction, an authorized
  * owner of the instance.
  *
+ * Port-scoping (remote-dev-urjg): two gates decide WHICH port a caller may reach.
+ * `isPortProxyable` is the cheap syntactic allowlist (privileged <1024 +
+ * hard-blocked 6001/6002). Layered on top, `isPortProxyableForUser` enforces
+ * RUNTIME membership — the port must be in the caller's live `(listening ∪
+ * claimed)` set, so an authenticated user can't reach an arbitrary loopback port
+ * they have no server/claim for. The WS bridge applies the same two gates.
+ *
  * The plan's OPTIONAL strict "requesting-email == instance-owner" check (§7) is
  * deliberately NOT implemented (assessed in B4, remote-dev-uqkk): there is no
  * clean single "instance owner" identity to enforce against. Instances are
@@ -49,6 +56,7 @@ import {
   injectBaseTag,
   type RewriteOptions,
 } from "@/lib/proxy-port-utils";
+import { isPortProxyableForUser } from "@/services/proxyable-ports-service";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("PortProxy");
@@ -160,7 +168,7 @@ function isHtml(contentType: string | null): boolean {
 
 async function handler(
   request: Request,
-  { params }: { userId: string; params?: Record<string, string> },
+  { userId, params }: { userId: string; params?: Record<string, string> },
 ): Promise<NextResponse> {
   const portRaw = params?.port ?? "";
   const port = Number(portRaw);
@@ -172,11 +180,25 @@ async function handler(
     );
   }
 
+  // First gate: syntactic allowlist (privileged <1024 + hard-blocked 6001/6002).
   if (!isPortProxyable(port)) {
     return NextResponse.json(
       {
         error: `Port ${port} cannot be proxied`,
         code: "PORT_BLOCKED",
+      },
+      { status: 403 },
+    );
+  }
+
+  // Second gate: runtime membership (remote-dev-urjg). The port must be in this
+  // user's live `(listening ∪ claimed)` set — not any arbitrary loopback port.
+  if (!(await isPortProxyableForUser(userId, port))) {
+    log.warn("Rejected port not in user's proxyable set", { port, userId });
+    return NextResponse.json(
+      {
+        error: `Port ${port} is not in your set of proxyable ports. Start a server on it or claim it from a session, then retry.`,
+        code: "PORT_NOT_PROXYABLE",
       },
       { status: 403 },
     );
