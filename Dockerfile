@@ -101,6 +101,15 @@ WORKDIR /app
 
 COPY . .
 
+# Prune committed dangling symlinks before the Next build. `output: standalone`
+# resolves symlinks to their real path when copying into .next/standalone, so a
+# broken link (e.g. a committed .claude/skills/* pointing at an untracked
+# .agents/skills/* target) aborts the build with copyfile ENOENT. Mirrors the
+# scripts/deploy.ts hardening (remote-dev-6ziz). Valid symlinks (target exists)
+# are kept.
+RUN find . -type l ! -path './node_modules/*' ! -path './.git/*' \
+      -exec sh -c 'for l do [ -e "$l" ] || { echo "pruning dangling symlink: $l"; rm -f "$l"; }; done' _ {} +
+
 # Native modules (better-sqlite3, node-pty) are compiled during the
 # `bun install --frozen-lockfile` in the build-deps stage because they are
 # listed in the root package.json `trustedDependencies`, with the build-essential
