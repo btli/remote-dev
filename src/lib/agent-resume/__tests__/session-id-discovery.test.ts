@@ -18,6 +18,7 @@ vi.mock("@/services/claude-session-service", () => ({
 import {
   discoverLatestSessionId,
   listSessionIds,
+  listResumableSessions,
 } from "../session-id-discovery";
 
 beforeEach(() => {
@@ -102,5 +103,52 @@ describe("listSessionIds", () => {
     );
     const list = await listSessionIds("codex", "/proj", { CODEX_HOME: "/c" }, 2);
     expect(list.map((s) => s.sessionId)).toEqual(["a", "b"]);
+  });
+});
+
+describe("listResumableSessions — picker shape", () => {
+  it("preserves Claude's rich previews (firstUserMessage + gitBranch)", async () => {
+    listSessions.mockResolvedValue([
+      {
+        sessionId: "claude-uuid-1",
+        lastModified: "2026-06-03T00:00:00.000Z",
+        firstUserMessage: "fix the bug",
+        gitBranch: "main",
+      },
+    ]);
+    const list = await listResumableSessions("claude", "/proj", {
+      CLAUDE_CONFIG_DIR: "/profiles/p1/.config",
+    });
+    expect(list[0]).toMatchObject({
+      sessionId: "claude-uuid-1",
+      firstUserMessage: "fix the bug",
+      gitBranch: "main",
+    });
+    expect(listSessions).toHaveBeenCalledWith("/proj", {
+      limit: 20,
+      profileConfigDir: "/profiles/p1/.config",
+    });
+  });
+
+  it("returns id + timestamp (no preview) for disk-discovery providers", async () => {
+    readdir.mockResolvedValue(["cx-1.jsonl"]);
+    stat.mockResolvedValue({ mtimeMs: 1000 });
+    const list = await listResumableSessions("codex", "/proj", { CODEX_HOME: "/c" });
+    expect(list).toHaveLength(1);
+    expect(list[0].sessionId).toBe("cx-1");
+    expect(list[0].firstUserMessage).toBeUndefined();
+    expect(list[0].gitBranch).toBeUndefined();
+  });
+
+  it("empty-states (returns []) when the provider dir is unreadable", async () => {
+    readdir.mockRejectedValue(new Error("ENOENT"));
+    const list = await listResumableSessions("gemini", "/proj", { GEMINI_HOME: "/missing" });
+    expect(list).toEqual([]);
+  });
+
+  it("returns [] for a non-resumable provider (antigravity)", async () => {
+    const list = await listResumableSessions("antigravity", "/proj", {});
+    expect(list).toEqual([]);
+    expect(readdir).not.toHaveBeenCalled();
   });
 });

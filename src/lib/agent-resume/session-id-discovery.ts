@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { readdir, stat } from "node:fs/promises";
 import type { AgentProviderType } from "@/types/session";
+import type { ResumableSessionSummary } from "@/types/agent-resume";
 import { getResumeSpec } from "./agent-resume-registry";
 import { listSessions } from "@/services/claude-session-service";
 
@@ -65,28 +66,16 @@ function isSafeSessionId(id: string): boolean {
 }
 
 /**
- * List native session ids for a provider+cwd, newest first.
- *
- * For Claude this delegates to the streaming parser (cwd-aware). For the
- * generic providers it lists files under the provider's home dir sorted by
- * mtime. Returns at most `limit` entries (default 20).
+ * Generic disk discovery: newest-first session ids from the files under a
+ * provider's (profile-isolated) home dir. Shared by both the lean
+ * `listSessionIds` and the richer `listResumableSessions`. Returns [] if the
+ * provider has no on-disk store or the dir can't be read.
  */
-export async function listSessionIds(
+async function listDiskSessionIds(
   provider: AgentProviderType,
-  cwd: string,
   env: Record<string, string>,
-  limit = 20,
+  limit: number,
 ): Promise<DiscoveredSessionId[]> {
-  if (provider === "claude") {
-    // listSessions joins ".claude" itself, so pass the bare config dir.
-    const configDir = env.CLAUDE_CONFIG_DIR;
-    const sessions = await listSessions(cwd, { limit, profileConfigDir: configDir });
-    // Claude ids are UUIDs (safe); filter anyway for a single uniform guard.
-    return sessions
-      .map((s) => ({ sessionId: s.sessionId, lastModified: s.lastModified }))
-      .filter((entry) => isSafeSessionId(entry.sessionId));
-  }
-
   const dir = resolveHomeDir(provider, env);
   if (!dir) return [];
   const spec = getResumeSpec(provider);
@@ -115,6 +104,67 @@ export async function listSessionIds(
   } catch {
     return [];
   }
+}
+
+/**
+ * List native session ids for a provider+cwd, newest first.
+ *
+ * For Claude this delegates to the streaming parser (cwd-aware). For the
+ * generic providers it lists files under the provider's home dir sorted by
+ * mtime. Returns at most `limit` entries (default 20).
+ */
+export async function listSessionIds(
+  provider: AgentProviderType,
+  cwd: string,
+  env: Record<string, string>,
+  limit = 20,
+): Promise<DiscoveredSessionId[]> {
+  if (provider === "claude") {
+    // listSessions joins ".claude" itself, so pass the bare config dir.
+    const configDir = env.CLAUDE_CONFIG_DIR;
+    const sessions = await listSessions(cwd, { limit, profileConfigDir: configDir });
+    // Claude ids are UUIDs (safe); filter anyway for a single uniform guard.
+    return sessions
+      .map((s) => ({ sessionId: s.sessionId, lastModified: s.lastModified }))
+      .filter((entry) => isSafeSessionId(entry.sessionId));
+  }
+
+  return listDiskSessionIds(provider, env, limit);
+}
+
+/**
+ * List resumable sessions for the multi-provider resume PICKER, newest first.
+ *
+ * Like `listSessionIds` but returns the richer provider-agnostic
+ * `ResumableSessionSummary`. For Claude it preserves the `.jsonl`-derived
+ * previews (`firstUserMessage`, `gitBranch`) so the picker looks exactly as it
+ * did against the old Claude-only route. The disk-discovery providers
+ * (codex/gemini/opencode) have no cheap preview, so those fields are omitted and
+ * the UI degrades to id + timestamp. A provider with no on-disk store (or whose
+ * dir is empty/unreadable) yields an empty list — the picker shows an empty
+ * state rather than erroring.
+ */
+export async function listResumableSessions(
+  provider: AgentProviderType,
+  cwd: string,
+  env: Record<string, string>,
+  limit = 20,
+): Promise<ResumableSessionSummary[]> {
+  if (provider === "claude") {
+    const configDir = env.CLAUDE_CONFIG_DIR;
+    const sessions = await listSessions(cwd, { limit, profileConfigDir: configDir });
+    return sessions
+      .filter((s) => isSafeSessionId(s.sessionId))
+      .map((s) => ({
+        sessionId: s.sessionId,
+        lastModified: s.lastModified,
+        firstUserMessage: s.firstUserMessage,
+        gitBranch: s.gitBranch,
+      }));
+  }
+
+  // Generic providers: id + timestamp only (no cheap on-disk preview).
+  return listDiskSessionIds(provider, env, limit);
 }
 
 /** Newest native session id for the given provider+cwd, or null. */

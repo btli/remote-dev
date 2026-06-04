@@ -16,6 +16,23 @@ import type { AgentProviderType } from "./session";
 /** Per-provider native session ids stored in terminalSessions.typeMetadata.agentSessionId. */
 export type AgentSessionIdMap = Partial<Record<AgentProviderType, string>>;
 
+/**
+ * Provider-agnostic resumable-session summary surfaced by the multi-provider
+ * resume picker (`/api/agent/sessions`).
+ *
+ * `sessionId` + `lastModified` are always present (every discoverable provider
+ * yields at least these). `firstUserMessage` / `gitBranch` are best-effort
+ * previews — Claude populates them from its `.jsonl` headers; the disk-discovery
+ * providers (codex/gemini/opencode) leave them undefined and the UI degrades to
+ * showing just the id + timestamp.
+ */
+export interface ResumableSessionSummary {
+  sessionId: string;
+  lastModified: string; // ISO
+  firstUserMessage?: string;
+  gitBranch?: string;
+}
+
 /** How a provider's resume command is assembled. */
 export interface ResumeTemplate {
   /**

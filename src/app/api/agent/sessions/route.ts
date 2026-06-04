@@ -4,8 +4,12 @@
  * [hgwo] Multi-provider resumable-session discovery. Generalizes the
  * Claude-only `/api/agent/claude-sessions` route to every resume-capable
  * provider (claude, codex, gemini, opencode) by delegating to the per-provider
- * on-disk discovery (`session-id-discovery.ts`). Antigravity (no resume) and
- * `none` return an empty list.
+ * discovery (`session-id-discovery.ts`). Claude keeps its rich `.jsonl`
+ * previews (first message + git branch); codex/gemini/opencode return id +
+ * timestamp from disk discovery (no cheap preview). Antigravity (no resume) is
+ * rejected as an invalid provider, the same as `none`.
+ *
+ * Response: `{ provider, sessions: ResumableSessionSummary[] }`.
  *
  * Query params:
  *   provider     - One of claude|codex|gemini|opencode (required)
@@ -17,7 +21,7 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import { validateProjectPath } from "@/lib/api-validation";
-import { listSessionIds } from "@/lib/agent-resume/session-id-discovery";
+import { listResumableSessions } from "@/lib/agent-resume/session-id-discovery";
 import { getResumeSpec } from "@/lib/agent-resume/agent-resume-registry";
 import * as AgentProfileService from "@/services/agent-profile-service";
 import type { AgentProviderType } from "@/types/session";
@@ -62,6 +66,6 @@ export const GET = withApiAuth(async (request, { userId }) => {
     }
   }
 
-  const sessions = await listSessionIds(provider, projectPath, env, limit);
+  const sessions = await listResumableSessions(provider, projectPath, env, limit);
   return NextResponse.json({ provider, sessions });
 });
