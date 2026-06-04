@@ -12,6 +12,7 @@ import { RefreshCw, X, Terminal, Clock, AlertCircle, CheckCircle } from "lucide-
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { AgentProviderType } from "@/types/session";
+import { providerSupportsResume } from "@/lib/agent-resume/resume-providers.client";
 
 interface AgentExitScreenProps {
   sessionId: string;
@@ -26,11 +27,6 @@ interface AgentExitScreenProps {
   agentProvider?: AgentProviderType | null;
 }
 
-// [hgwo] Client-safe resume-capability set (mirrors agent-resume-registry's
-// supportsResume; inlined to avoid pulling the server-only registry — which
-// imports node:child_process — into the client bundle).
-const RESUME_CAPABLE = new Set<AgentProviderType>(["claude", "codex", "gemini", "opencode"]);
-
 export function AgentExitScreen({
   sessionName,
   exitCode,
@@ -41,7 +37,7 @@ export function AgentExitScreen({
   isRestarting = false,
   agentProvider,
 }: AgentExitScreenProps) {
-  const canResume = agentProvider ? RESUME_CAPABLE.has(agentProvider) : true;
+  const canResume = agentProvider ? providerSupportsResume(agentProvider) : true;
   const exitedTime = new Date(exitedAt);
   const formattedTime = exitedTime.toLocaleTimeString();
   const isSuccess = exitCode === 0;

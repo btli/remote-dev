@@ -11,13 +11,24 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn, formatRelativeTime } from "@/lib/utils";
-import type { ClaudeSessionSummary } from "@/types/claude-session";
+import type { ResumableSessionSummary } from "@/types/agent-resume";
+import type { AgentProviderType } from "@/types/session";
+import { AGENT_PROVIDERS } from "@/types/session";
+import { providerSupportsResume } from "@/lib/agent-resume/resume-providers.client";
 
 import { apiFetch } from "@/lib/api-fetch";
+
+/** Human-readable provider name for titles/empty states (client-safe). */
+function providerLabel(provider: AgentProviderType): string {
+  return AGENT_PROVIDERS.find((p) => p.id === provider)?.name ?? "Agent";
+}
+
 interface ResumeSessionModalProps {
   open: boolean;
   onClose: () => void;
   projectPath: string;
+  /** Which agent's prior sessions to discover. Defaults to Claude. */
+  provider?: AgentProviderType;
   profileId?: string;
   onResume: (sessionId: string) => Promise<void>;
   limit?: number;
@@ -27,29 +38,45 @@ export function ResumeSessionModal({
   open,
   onClose,
   projectPath,
+  provider = "claude",
   profileId,
   onResume,
   limit = 20,
 }: ResumeSessionModalProps) {
-  const [sessions, setSessions] = useState<ClaudeSessionSummary[]>([]);
+  const [sessions, setSessions] = useState<ResumableSessionSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resumingId, setResumingId] = useState<string | null>(null);
 
+  const label = providerLabel(provider);
+  const canResume = providerSupportsResume(provider);
+
   useEffect(() => {
     if (!open || !projectPath) return;
+
+    // Providers without a resume mechanism (e.g. Antigravity) have nothing to
+    // discover — skip the fetch and let the empty state explain.
+    if (!canResume) {
+      setSessions([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
 
     const fetchSessions = async () => {
       setLoading(true);
       setError(null);
       try {
         const params = new URLSearchParams({
+          provider,
           projectPath,
           limit: String(limit),
         });
         if (profileId) params.set("profileId", profileId);
 
-        const res = await apiFetch(`/api/agent/claude-sessions?${params}`);
+        // Generic multi-provider discovery (Claude keeps its rich previews;
+        // codex/gemini/opencode return id + timestamp).
+        const res = await apiFetch(`/api/agent/sessions?${params}`);
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           throw new Error(data.error ?? "Failed to load sessions");
@@ -64,9 +91,9 @@ export function ResumeSessionModal({
     };
 
     fetchSessions();
-  }, [open, projectPath, profileId, limit]);
+  }, [open, projectPath, provider, profileId, limit, canResume]);
 
-  const handleResume = async (session: ClaudeSessionSummary) => {
+  const handleResume = async (session: ResumableSessionSummary) => {
     setResumingId(session.sessionId);
     try {
       await onResume(session.sessionId);
@@ -84,10 +111,10 @@ export function ResumeSessionModal({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <History className="w-5 h-5" />
-            Resume Claude Session
+            Resume {label} Session
           </DialogTitle>
           <DialogDescription>
-            Select a previous Claude Code conversation to resume in a new terminal.
+            Select a previous {label} conversation to resume in a new terminal.
           </DialogDescription>
         </DialogHeader>
 
@@ -102,22 +129,28 @@ export function ResumeSessionModal({
           <div className="text-sm text-destructive px-1 py-2">{error}</div>
         )}
 
-        {!loading && !error && !projectPath && (
+        {!loading && !error && !canResume && (
+          <div className="text-sm text-muted-foreground text-center py-10">
+            {label} does not support resuming a prior conversation.
+          </div>
+        )}
+
+        {!loading && !error && canResume && !projectPath && (
           <div className="text-sm text-muted-foreground text-center py-10">
             No working directory configured for this folder. Set a default working directory in folder settings to discover sessions.
           </div>
         )}
 
-        {!loading && !error && projectPath && sessions.length === 0 && (
+        {!loading && !error && canResume && projectPath && sessions.length === 0 && (
           <div className="text-sm text-muted-foreground text-center py-10">
-            No resumable sessions found for this project.
+            No discoverable {label} sessions found for this project.
           </div>
         )}
 
         {!loading && sessions.length > 0 && (
           <ScrollArea className="max-h-[380px] pr-3">
             <div className="space-y-2">
-              {sessions.map((session: ClaudeSessionSummary) => (
+              {sessions.map((session: ResumableSessionSummary) => (
                 <button
                   key={session.sessionId}
                   type="button"
@@ -154,7 +187,7 @@ export function ResumeSessionModal({
                     </span>
                   </div>
 
-                  {/* First user message preview */}
+                  {/* First user message preview (Claude only; absent for others) */}
                   {session.firstUserMessage && (
                     <p className="text-xs text-foreground/80 line-clamp-2 leading-snug">
                       {session.firstUserMessage}

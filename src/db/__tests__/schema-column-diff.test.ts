@@ -60,10 +60,10 @@ describe("schema column diff (sqlite-core vs pg-core)", () => {
     // Sanity: 61 base + 1 (y5ch: notification_preferences) + 2 (aehq:
     // model_proxy_token, model_usage_event) + 6 (oyej: agentSchedules,
     // agentRuns, triggerConfigs, triggerEvents, crownRuns, crownCandidates)
-    // + 4 (x386: message_delivery, message_replay_cursor, channel_subscription,
-    // agent_work_context) + 1 (oyej.14: webhook_delivery) = 75 tables.
-    // (hgwo + n6uc add no tables.)
-    expect(sqliteTables).toHaveLength(75);
+    // + 3 (x386: message_delivery, channel_subscription, agent_work_context)
+    // + 1 (oyej.14: webhook_delivery) = 74 tables. (hgwo + n6uc add no tables;
+    // x386.16 dropped the unused message_replay_cursor table.)
+    expect(sqliteTables).toHaveLength(74);
   });
 
   // One assertion per table so a failure names the offending table.

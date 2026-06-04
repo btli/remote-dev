@@ -83,7 +83,6 @@ export const {
   crownRuns,
   crownCandidates,
   messageDelivery,
-  messageReplayCursor,
   channelSubscription,
   agentWorkContext,
 } = active;

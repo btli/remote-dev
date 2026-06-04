@@ -2302,6 +2302,12 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
           });
         }
       });
+      // [x386.15] Proactive idle-reconnect replay: the tick asks which sessions
+      // have undelivered backlog and reconnects each whose MCP socket reappeared,
+      // firing the replay hook above — so replay no longer waits on a coincident
+      // push. The provider returns [] cheaply when nothing is pending.
+      mp.setPendingSessionsProvider(() => MD.getSessionsWithPending(200));
+      mp.startMcpReconcile();
     })
     .catch((err) => peerLog.error("Failed to install MCP delivery hooks", { error: String(err) }));
 
@@ -2754,6 +2760,10 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 // the lock release + bounded cleanup. See remote-dev-i85i.
 export function shutdownTerminalConnections(): void {
   log.info("Shutting down terminal server (tmux sessions preserved)...");
+  // [x386.15] Stop the proactive MCP reconcile tick (best-effort; it's unref'd,
+  // but stop it cleanly so no pass fires mid-teardown). Uses the cached module
+  // ref if mcp-push was already loaded; otherwise nothing was ever started.
+  if (_mcpPush) _mcpPush.stopMcpReconcile();
   for (const [id, conn] of connections) {
     safeDestroyPty(conn.pty);
     conn.ws.close();

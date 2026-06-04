@@ -1459,15 +1459,6 @@ export const messageDelivery = sqliteTable(
   ]
 );
 
-export const messageReplayCursor = sqliteTable(
-  "message_replay_cursor",
-  {
-    sessionId: text("session_id").primaryKey().references(() => terminalSessions.id, { onDelete: "cascade" }),
-    lastAckedAt: integer("last_acked_at", { mode: "timestamp_ms" }),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-  }
-);
-
 export const channelSubscription = sqliteTable(
   "channel_subscription",
   {

@@ -1,0 +1,13 @@
+-- [x386.16] Drop the unused `message_replay_cursor` table.
+--
+-- The cursor was maintained (monotonic last-acked timestamp per session) but
+-- never read to drive behavior: replay is driven entirely by the
+-- `message_delivery.state != 'acked'` filter, so the delivery state IS the
+-- cursor. The table was dead infrastructure; dropping it is data-safe.
+--
+-- The SQLite path uses `db:push` for fresh/dev databases; this hand-written
+-- migration mirrors the 0013-0024 raw-SQL convention (the generated dialect
+-- source is src/db/schema.sqlite.ts via `bun run db:codegen`) so existing
+-- SQLite deployments drop the table in place. The matching PostgreSQL
+-- drop is drizzle/pg/0007_mature_sheva_callister.sql.
+DROP TABLE IF EXISTS `message_replay_cursor`;

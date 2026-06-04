@@ -12,14 +12,16 @@
  * `delivered` the message was pushed to a live MCP socket OR returned by a poll.
  * `acked`     the MCP server (or CLI) confirmed it surfaced to the agent.
  *
- * A durable per-session replay cursor (`message_replay_cursor`) records the
- * highest acked message timestamp so a reconnecting MCP server can replay
- * exactly what it missed. This is the source of truth; the /tmp sentinel in
- * peer-server.ts is only a fast cache.
+ * Replay is driven entirely by the `state != 'acked'` filter (see
+ * `getUndelivered`): a reconnecting MCP server or poll asks for the rows it has
+ * not yet acked, so the delivery state IS the cursor. (An earlier
+ * `message_replay_cursor` table tracked the highest acked timestamp as a
+ * defense-in-depth lower bound, but nothing ever read it to drive behavior, so
+ * it was removed as dead infrastructure — bd remote-dev-x386.16.)
  */
 
 import { db } from "@/db";
-import { messageDelivery, messageReplayCursor, agentPeerMessages } from "@/db/schema";
+import { messageDelivery, agentPeerMessages } from "@/db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { createLogger } from "@/lib/logger";
 
@@ -85,39 +87,20 @@ export async function markDelivered(
 }
 
 /**
- * Confirm the agent surfaced the message; advances the durable replay cursor.
- * The cursor is monotonic — acking an older message never moves it backwards.
+ * Confirm the agent surfaced the message: advance its delivery row to `acked`.
+ * The `acked` state is itself the replay cursor — once set, `getUndelivered`'s
+ * `state != 'acked'` filter never returns the row again.
  */
 export async function ackDelivery(messageId: string, sessionId: string): Promise<void> {
-  await db.transaction(async (tx) => {
-    await tx
-      .update(messageDelivery)
-      .set({ state: "acked", ackedAt: new Date() })
-      .where(
-        and(
-          eq(messageDelivery.messageId, messageId),
-          eq(messageDelivery.toSessionId, sessionId),
-        ),
-      );
-    const msg = await tx.query.agentPeerMessages.findFirst({
-      where: eq(agentPeerMessages.id, messageId),
-      columns: { createdAt: true },
-    });
-    if (!msg?.createdAt) return;
-    const createdMs = msg.createdAt.getTime();
-    await tx
-      .insert(messageReplayCursor)
-      .values({ sessionId, lastAckedAt: msg.createdAt })
-      .onConflictDoUpdate({
-        target: messageReplayCursor.sessionId,
-        // Monotonic: never move the cursor backwards. SQLite stores the
-        // timestamp as epoch-ms, so compare against the literal ms value.
-        set: {
-          lastAckedAt: sql`MAX(COALESCE(${messageReplayCursor.lastAckedAt}, 0), ${createdMs})`,
-          updatedAt: new Date(),
-        },
-      });
-  });
+  await db
+    .update(messageDelivery)
+    .set({ state: "acked", ackedAt: new Date() })
+    .where(
+      and(
+        eq(messageDelivery.messageId, messageId),
+        eq(messageDelivery.toSessionId, sessionId),
+      ),
+    );
 }
 
 /**
@@ -165,14 +148,22 @@ export async function getUndelivered(
   return rows;
 }
 
-/** The durable replay cursor (highest acked message time) for a session. */
-export async function getReplayCursor(sessionId: string): Promise<Date | null> {
-  const row = await db.query.messageReplayCursor.findFirst({
-    where: eq(messageReplayCursor.sessionId, sessionId),
-  });
-  return row?.lastAckedAt ?? null;
+/**
+ * [x386.15] Distinct session ids that currently have at least one undelivered
+ * (pending|delivered, not acked) message. Drives the proactive MCP reconnect
+ * tick: the terminal server feeds this set to `mcp-push` so a session whose MCP
+ * socket reappeared after idle gets its backlog replayed *without* waiting for a
+ * coincident push. Returns the empty array (the common case) cheaply via the
+ * `(to_session_id, state, created_at)` index.
+ */
+export async function getSessionsWithPending(limit = 200): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ sessionId: messageDelivery.toSessionId })
+    .from(messageDelivery)
+    .where(sql`${messageDelivery.state} != 'acked'`)
+    .limit(limit);
+  return rows.map((r) => r.sessionId);
 }
-
 // Re-export the logger namespace name for callers that want to assert/log the
 // delivery channel without importing the table. (Keeps mcp-push.ts loosely
 // coupled — it installs a hook rather than importing this module directly.)

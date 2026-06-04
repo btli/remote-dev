@@ -31,6 +31,7 @@ import type { FolderRepoStats } from "./Sidebar";
 import type { PinnedFile } from "@/types/pinned-files";
 import { WORKTREE_TYPES, type WorktreeType, type TerminalSession, type AgentProviderType } from "@/types/session";
 import { sanitizeBranchName } from "@/lib/git-utils";
+import { buildResumeAgentFlags } from "@/lib/agent-resume/resume-providers.client";
 import { Terminal as TerminalIcon, Plus, GitBranch } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -268,11 +269,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // Trash state from context
   const { count: trashCount, trashSession } = useTrashContext();
 
-  // Resume Claude Session modal state
+  // Resume Session modal state (multi-provider, defaults to the folder's agent)
   const [isResumeModalOpen, setIsResumeModalOpen] = useState(false);
   const [resumeModalFolderId, setResumeModalFolderId] = useState<string | null>(null);
   const [resumeModalProjectPath, setResumeModalProjectPath] = useState("");
   const [resumeModalProfileId, setResumeModalProfileId] = useState<string | undefined>(undefined);
+  const [resumeModalProvider, setResumeModalProvider] =
+    useState<AgentProviderType>("claude");
 
   // Schedule target session — passed to TaskSidebar to open schedule creation
   const [scheduleTargetSessionId, setScheduleTargetSessionId] = useState<string | null>(null);
@@ -1406,15 +1409,19 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [createSession, generateSessionName, setActiveFolder, logSessionError],
   );
 
-  // Handler to open the Resume Claude Session modal for a folder
-  const handleFolderResumeClaudeSession = useCallback(
+  // Handler to open the Resume Session modal for a folder. The provider is the
+  // folder's default agent (Claude when unset), so the picker discovers prior
+  // sessions for whichever agent that folder runs — not just Claude.
+  const handleFolderResumeSession = useCallback(
     (folderId: string) => {
       const prefs = resolvePreferencesForFolder(folderId);
+      const provider = (prefs.defaultAgentProvider as AgentProviderType) || "claude";
       const profileId = sessions.find(
         (s) => s.projectId === folderId && s.profileId
       )?.profileId ?? undefined;
 
       setResumeModalFolderId(folderId);
+      setResumeModalProvider(provider);
       setResumeModalProjectPath(prefs.defaultWorkingDirectory || "");
       setResumeModalProfileId(profileId);
       setIsResumeModalOpen(true);
@@ -1427,35 +1434,47 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     setResumeModalFolderId(null);
   }, []);
 
-  // Handler to resume a specific Claude Code session.
-  // Uses `agentFlags: ["--resume", id]` instead of the legacy string-built
-  // `startupCommand` so the agent plugin owns command assembly. The folder-
-  // level wrapper override mechanism (e.g. `jclaude`) was removed.
-  const handleResumeClaudeSession = useCallback(
-    async (claudeSessionId: string) => {
+  // Handler to resume a specific prior agent session, for any resume-capable
+  // provider. The resume flags come from the client-safe registry mirror
+  // (`buildResumeAgentFlags`): claude/gemini → `--resume <id>`, opencode →
+  // `--session <id>`, codex → `resume <id>` (a subcommand that the agent plugin
+  // appends right after the command). Passing flags lets the agent plugin own
+  // command assembly — the legacy string-built `startupCommand` wrapper override
+  // (e.g. `jclaude`) was removed.
+  const handleResumeAgentSession = useCallback(
+    async (nativeSessionId: string) => {
       const folderId = resumeModalFolderId ?? undefined;
-      const sanitizedId = claudeSessionId.replace(/[^a-zA-Z0-9\-_]/g, "");
+      const provider = resumeModalProvider;
+      // Sanitize defensively (server re-validates) before the id reaches argv.
+      const sanitizedId = nativeSessionId.replace(/[^a-zA-Z0-9\-_]/g, "");
+      const agentFlags = buildResumeAgentFlags(provider, sanitizedId);
+      if (!agentFlags) {
+        const err = new Error(`${provider} does not support resume`);
+        logSessionError("resume agent session", err);
+        throw err;
+      }
 
       try {
         const newSession = await createSession({
-          name: `Resume ${claudeSessionId.slice(0, 8)}`,
+          name: `Resume ${nativeSessionId.slice(0, 8)}`,
           projectPath: resumeModalProjectPath || undefined,
           projectId: folderId,
           terminalType: "agent",
-          agentProvider: "claude",
-          agentFlags: ["--resume", sanitizedId],
+          agentProvider: provider,
+          agentFlags,
           profileId: resumeModalProfileId || undefined,
         });
         if (newSession && folderId) {
           setActiveFolder(folderId);
         }
       } catch (error) {
-        logSessionError("resume claude session", error);
+        logSessionError("resume agent session", error);
         throw error;
       }
     },
     [
       resumeModalFolderId,
+      resumeModalProvider,
       resumeModalProjectPath,
       resumeModalProfileId,
       createSession,
@@ -2157,7 +2176,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onProjectNewAgentWithProvider={(projectId, provider) => {
               void handleFolderNewAgentWithProvider(projectId, provider);
             }}
-            onProjectResumeClaudeSession={handleFolderResumeClaudeSession}
+            onProjectResumeClaudeSession={handleFolderResumeSession}
             onProjectAdvancedSession={handleFolderAdvancedSession}
             onProjectNewWorktree={handleFolderNewWorktree}
             onProjectNewSshSession={(projectId, connectionId) => {
@@ -2461,13 +2480,14 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         sessionName={activeSessions.find((s) => s.id === activeSessionId)?.name}
       />
 
-      {/* Resume Claude Session Modal */}
+      {/* Resume Session Modal (multi-provider) */}
       <ResumeSessionModal
         open={isResumeModalOpen}
         onClose={handleResumeModalClose}
         projectPath={resumeModalProjectPath}
+        provider={resumeModalProvider}
         profileId={resumeModalProfileId}
-        onResume={handleResumeClaudeSession}
+        onResume={handleResumeAgentSession}
       />
 
       {/* Worktree Name Prompt */}
