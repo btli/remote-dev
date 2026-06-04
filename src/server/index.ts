@@ -13,6 +13,7 @@ if (!process.env.TERM) process.env.TERM = "xterm-256color";
 
 import { config } from "dotenv";
 import { createTerminalServer, shutdownTerminalConnections } from "./terminal.js";
+import { waitForSchemaReady } from "../db/schema-ready.js";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
 // [oyej] Agent-run scheduler (REAL agent launches; epic remote-dev-oyej).
 import { agentSchedulerOrchestrator } from "../services/agent-scheduler-orchestrator.js";
@@ -89,6 +90,18 @@ async function startServer(): Promise<void> {
 
   // Check rdv CLI availability (non-blocking, logs status)
   ensureRdvCli().catch((e) => log.warn("rdv CLI check failed", { error: String(e) }));
+
+  // Postgres fresh-boot: the schema is applied by the Next.js process's
+  // migrate-on-boot (src/instrumentation.ts). Wait for it before starting the
+  // DB-touching services below, or they'd query tables that don't exist yet and
+  // wedge the terminal server unready until a restart (remote-dev-snap). No-op on
+  // SQLite. /health reports 503 (scheduler down) during the wait, so /api/readyz
+  // correctly shows not-ready until services start — it self-heals, no restart.
+  try {
+    await waitForSchemaReady();
+  } catch (error) {
+    log.error("Schema-ready wait failed", { error: String(error) });
+  }
 
   try {
     await schedulerOrchestrator.start();

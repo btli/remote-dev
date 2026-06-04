@@ -36,8 +36,11 @@ import {
   writeSync,
   closeSync,
   renameSync,
+  lstatSync,
+  readlinkSync,
+  readdirSync,
 } from "fs";
-import { join, sep } from "path";
+import { join, sep, isAbsolute, dirname, resolve } from "path";
 import { homedir, hostname as osHostname } from "os";
 import http from "http";
 import {
@@ -621,6 +624,73 @@ function ensureDeploySrcAtOrigin(): boolean {
   return runCommand(secondCmd, DEPLOY_SRC, "git reset --hard origin/master (deploy-src)");
 }
 
+// Defense-in-depth: walk a freshly-synced source tree and remove any DANGLING
+// symlinks (symlink whose resolved target does not exist). Next.js
+// `output: "standalone"` copies tracked symlinks by resolving them to their real
+// path; a committed broken symlink (target untracked / machine-local) makes that
+// copyfile ENOENT and fails the whole build at the build stage. Pruning them here
+// — after the tree is reset to origin/master, before `bun run build` — means a
+// future broken symlink slipping into the repo can never silently wedge prod.
+//
+// HARD EXCLUSIONS: never descend into `node_modules` (bun's isolated layout is
+// built from valid RELATIVE symlinks that can momentarily look unresolved during
+// traversal — touching it would corrupt the install) or `.git`. Idempotent: a
+// clean tree prunes nothing and logs a single debug line.
+function pruneDanglingSymlinks(root: string): void {
+  const SKIP_DIRS = new Set(["node_modules", ".git"]);
+  const pruned: string[] = [];
+
+  const walk = (dir: string): void => {
+    let entries: import("fs").Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      logError(`pruneDanglingSymlinks: cannot read ${dir}: ${String(err)}`);
+      return;
+    }
+    for (const entry of entries) {
+      const full = join(dir, entry.name);
+      if (entry.isSymbolicLink()) {
+        // Resolve the link target relative to its own directory (POSIX semantics)
+        // so a relative target like "../../x" is checked against the right base.
+        let target: string;
+        try {
+          const raw = readlinkSync(full);
+          target = isAbsolute(raw) ? raw : resolve(dirname(full), raw);
+        } catch (err) {
+          logError(`pruneDanglingSymlinks: cannot readlink ${full}: ${String(err)}`);
+          continue;
+        }
+        if (!existsSync(target)) {
+          try {
+            rmSync(full);
+            pruned.push(full);
+          } catch (err) {
+            logError(`pruneDanglingSymlinks: failed to remove dangling ${full}: ${String(err)}`);
+          }
+        }
+        // Never traverse THROUGH a symlink (no recursion on link entries).
+        continue;
+      }
+      if (entry.isDirectory()) {
+        if (SKIP_DIRS.has(entry.name)) continue;
+        walk(full);
+      }
+    }
+  };
+
+  walk(root);
+
+  if (pruned.length === 0) {
+    logDeploy(`No dangling symlinks in ${root}`);
+    return;
+  }
+  logDeploy(`Pruned ${pruned.length} dangling symlink(s) from ${root}:`);
+  for (const p of pruned) {
+    logDeploy(`  removed dangling symlink: ${p}`);
+  }
+}
+
 function buildSlot(slot: Slot): boolean {
   const buildDir = join(BUILDS_DIR, slot);
   const standaloneDir = join(buildDir, "standalone");
@@ -637,6 +707,14 @@ function buildSlot(slot: Slot): boolean {
   if (!ensureDeploySrcAtOrigin()) {
     return false;
   }
+
+  // Step 1b: Prune dangling symlinks from the synced source tree BEFORE building.
+  // Next's standalone copy resolves symlinks to their real path and copyfile-
+  // ENOENTs on a committed broken symlink, failing the whole build. Pruning here
+  // (after the reset to origin/master, before `bun run build`) makes a future
+  // broken symlink unable to silently wedge prod. node_modules is excluded — its
+  // relative symlinks are valid and must never be touched.
+  pruneDanglingSymlinks(DEPLOY_SRC);
 
   // Step 2: Install dependencies (in the deploy-src worktree)
   if (
