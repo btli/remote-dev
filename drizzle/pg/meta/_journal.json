@@ -15,6 +15,13 @@
       "when": 1780512948277,
       "tag": "0001_past_swordsman",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780521414350,
+      "tag": "0002_real_jamie_braddock",
+      "breakpoints": true
     }
   ]
 }

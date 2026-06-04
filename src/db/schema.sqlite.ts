@@ -12,7 +12,7 @@ import type { AgentProviderType, WorktreeType } from "@/types/session";
 import type { TerminalType, AgentExitState } from "@/types/terminal-type";
 import type { AppearanceMode, ColorSchemeCategory, ColorSchemeId } from "@/types/appearance";
 import type { TaskPriority, TaskStatus, TaskSource } from "@/types/task";
-import type { NotificationType } from "@/types/notification";
+import type { NotificationType, NotificationSeverity, NotificationMeta } from "@/types/notification";
 import type { ChannelType } from "@/types/channels";
 
 export const users = sqliteTable(
@@ -918,14 +918,20 @@ export const notificationEvents = sqliteTable(
     sessionId: text("session_id").references(() => terminalSessions.id, { onDelete: "set null" }),
     sessionName: text("session_name"),
     type: text("type").$type<NotificationType>().notNull(),
+    severity: text("severity").$type<NotificationSeverity>().notNull().default("passive"),
     title: text("title").notNull(),
     body: text("body"),
+    coalesceKey: text("coalesce_key"),
+    count: integer("count").notNull().default(1),
+    meta: text("meta", { mode: "json" }).$type<NotificationMeta | null>(),
     readAt: integer("read_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
   },
   (table) => [
     index("notification_event_user_created_idx").on(table.userId, table.createdAt),
     index("notification_event_user_read_idx").on(table.userId, table.readAt),
+    index("notification_event_coalesce_idx").on(table.userId, table.sessionId, table.coalesceKey, table.readAt),
   ]
 );
 
@@ -944,6 +950,19 @@ export const pushTokens = sqliteTable(
     index("push_token_user_idx").on(table.userId),
     uniqueIndex("push_token_fcm_token_idx").on(table.fcmToken),
   ]
+);
+
+export const notificationPreferences = sqliteTable(
+  "notification_preferences",
+  {
+    userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+    pushByType: text("push_by_type", { mode: "json" }).$type<Record<string, boolean>>().notNull().default({}),
+    mutedSessionIds: text("muted_session_ids", { mode: "json" }).$type<string[]>().notNull().default([]),
+    quietHoursStart: integer("quiet_hours_start"),
+    quietHoursEnd: integer("quiet_hours_end"),
+    minPushSeverity: text("min_push_severity").$type<NotificationSeverity>().notNull().default("actionable"),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  }
 );
 
 export const agentPeerMessages = sqliteTable(

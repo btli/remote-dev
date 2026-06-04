@@ -273,8 +273,14 @@ export async function sendKeys(
     // Send command text in literal mode (-l) to avoid tmux interpreting
     // special characters like !, #, \, etc. This ensures the exact text
     // is sent to the terminal/application.
+    //
+    // The `--` end-of-options delimiter is required so a payload that itself
+    // starts with `-` (e.g. "-X", or a markdown "- item") is typed literally
+    // instead of being parsed by tmux as send-keys flags. Without it, such a
+    // payload is silently dropped/misinterpreted (literal-mode correctness +
+    // a minor injection surface as more dynamic commands route through here).
     if (command) {
-      await execFile("tmux", ["send-keys", "-t", sessionName, "-l", command]);
+      await execFile("tmux", ["send-keys", "-t", sessionName, "-l", "--", command]);
     }
 
     // Send Enter key separately. This works reliably across shells and

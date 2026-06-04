@@ -12,6 +12,7 @@ import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/re
 
 import { MobileNotificationRow } from "@/components/mobile/notifications/MobileNotificationRow";
 import type { NotificationEvent } from "@/types/notification";
+import { notificationSeverity } from "@/types/notification";
 
 // Mock the reduced-motion hook so individual tests can opt into the
 // reduced-motion code path. Default = false so the halo test below still
@@ -30,16 +31,21 @@ afterEach(() => {
 function makeNotification(
   over: Partial<NotificationEvent> = {}
 ): NotificationEvent {
+  const type = over.type ?? "agent_waiting";
   return {
     id: "n1",
     userId: "u1",
     sessionId: "s1",
     sessionName: "main",
-    type: "agent_waiting",
+    type,
+    severity: notificationSeverity(type),
     title: "Agent needs you",
     body: "Approve the pending edit",
+    count: 1,
+    meta: null,
     readAt: null,
     createdAt: new Date(Date.now() - 60_000),
+    updatedAt: new Date(Date.now() - 60_000),
     ...over,
   };
 }
@@ -76,7 +82,7 @@ describe("MobileNotificationRow", () => {
     expect(screen.queryByTestId("mobile-notification-halo")).toBeNull();
   });
 
-  it("does not render the halo for non-agent_waiting notifications even when unread", () => {
+  it("does not render the halo for passive notifications even when unread", () => {
     render(
       <MobileNotificationRow
         notification={makeNotification({ type: "info" })}
@@ -90,6 +96,47 @@ describe("MobileNotificationRow", () => {
     // But the dot still reads as unread.
     const dot = screen.getByTestId("mobile-notification-dot");
     expect(dot.className).toMatch(/bg-\[var\(--color-signal-attention-solid\)\]/);
+  });
+
+  it("[y5ch.8] renders the halo for an unread error-severity notification", () => {
+    render(
+      <MobileNotificationRow
+        notification={makeNotification({ type: "agent_error" })}
+        onTap={vi.fn()}
+        onLongPress={vi.fn()}
+        onDelete={vi.fn()}
+        onToggleRead={vi.fn()}
+      />
+    );
+    // Severity drives the halo now (agent_error → error → actionable signal).
+    expect(screen.queryByTestId("mobile-notification-halo")).not.toBeNull();
+  });
+
+  it("[y5ch.8] renders a ×N count badge when the row is coalesced", () => {
+    render(
+      <MobileNotificationRow
+        notification={makeNotification({ count: 3 })}
+        onTap={vi.fn()}
+        onLongPress={vi.fn()}
+        onDelete={vi.fn()}
+        onToggleRead={vi.fn()}
+      />
+    );
+    const badge = screen.getByTestId("mobile-notification-count");
+    expect(badge.textContent).toBe("×3");
+  });
+
+  it("[y5ch.8] omits the count badge when count is 1", () => {
+    render(
+      <MobileNotificationRow
+        notification={makeNotification({ count: 1 })}
+        onTap={vi.fn()}
+        onLongPress={vi.fn()}
+        onDelete={vi.fn()}
+        onToggleRead={vi.fn()}
+      />
+    );
+    expect(screen.queryByTestId("mobile-notification-count")).toBeNull();
   });
 
   it("does NOT render a colored side-stripe (no border-l-2)", () => {

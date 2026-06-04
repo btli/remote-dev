@@ -12,7 +12,7 @@ import type { AgentProviderType, WorktreeType } from "@/types/session";
 import type { TerminalType, AgentExitState } from "@/types/terminal-type";
 import type { AppearanceMode, ColorSchemeCategory, ColorSchemeId } from "@/types/appearance";
 import type { TaskPriority, TaskStatus, TaskSource } from "@/types/task";
-import type { NotificationType } from "@/types/notification";
+import type { NotificationType, NotificationSeverity, NotificationMeta } from "@/types/notification";
 import type { ChannelType } from "@/types/channels";
 
 export const users = pgTable(
@@ -917,14 +917,20 @@ export const notificationEvents = pgTable(
     sessionId: text("session_id").references(() => terminalSessions.id, { onDelete: "set null" }),
     sessionName: text("session_name"),
     type: text("type").$type<NotificationType>().notNull(),
+    severity: text("severity").$type<NotificationSeverity>().notNull().default("passive"),
     title: text("title").notNull(),
     body: text("body"),
+    coalesceKey: text("coalesce_key"),
+    count: integer("count").notNull().default(1),
+    meta: jsonb("meta").$type<NotificationMeta | null>(),
     readAt: timestamp("read_at", { withTimezone: true, mode: "date" }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
   },
   (table) => [
     index("notification_event_user_created_idx").on(table.userId, table.createdAt),
     index("notification_event_user_read_idx").on(table.userId, table.readAt),
+    index("notification_event_coalesce_idx").on(table.userId, table.sessionId, table.coalesceKey, table.readAt),
   ]
 );
 
@@ -943,6 +949,19 @@ export const pushTokens = pgTable(
     index("push_token_user_idx").on(table.userId),
     uniqueIndex("push_token_fcm_token_idx").on(table.fcmToken),
   ]
+);
+
+export const notificationPreferences = pgTable(
+  "notification_preferences",
+  {
+    userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+    pushByType: jsonb("push_by_type").$type<Record<string, boolean>>().notNull().default({}),
+    mutedSessionIds: jsonb("muted_session_ids").$type<string[]>().notNull().default([]),
+    quietHoursStart: integer("quiet_hours_start"),
+    quietHoursEnd: integer("quiet_hours_end"),
+    minPushSeverity: text("min_push_severity").$type<NotificationSeverity>().notNull().default("actionable"),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  }
 );
 
 export const agentPeerMessages = pgTable(

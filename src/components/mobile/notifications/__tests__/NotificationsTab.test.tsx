@@ -13,6 +13,7 @@ import userEvent from "@testing-library/user-event";
 
 import { NotificationsTab } from "@/components/mobile/notifications/NotificationsTab";
 import type { NotificationEvent } from "@/types/notification";
+import { notificationSeverity } from "@/types/notification";
 
 // Pending-delete + scheduling now lives in NotificationContext (see P1-A
 // fix). The test harness models the contract: scheduleDelete adds to the
@@ -109,16 +110,21 @@ import { toast } from "sonner";
 function makeNotification(
   over: Partial<NotificationEvent> = {}
 ): NotificationEvent {
+  const type = over.type ?? "agent_waiting";
   return {
     id: "n1",
     userId: "u1",
     sessionId: "s1",
     sessionName: "main",
-    type: "agent_waiting",
+    type,
+    severity: notificationSeverity(type),
     title: "Agent needs you",
     body: "Approve the pending edit",
+    count: 1,
+    meta: null,
     readAt: null,
     createdAt: new Date(Date.now() - 60_000),
+    updatedAt: new Date(Date.now() - 60_000),
     ...over,
   };
 }

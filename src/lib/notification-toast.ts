@@ -5,6 +5,7 @@ type ToastVariant = "default" | "error" | "success" | "warning";
 
 const TYPE_TO_VARIANT: Record<NotificationType, ToastVariant> = {
   agent_error: "error",
+  agent_stuck: "error", // [y5ch.9] liveness sweep: agent process gone
   build_fail: "error",
   agent_complete: "success",
   agent_exited: "default",

@@ -55,9 +55,13 @@ export function MobileNotificationRow({
 
   const isUnread = !notification.readAt;
 
-  // The halo only animates on session-waiting rows. Other notification
-  // types are unread-only and don't carry the "needs attention" semantic.
-  const showHalo = notification.type === "agent_waiting" && isUnread;
+  // [y5ch.8] Severity — not a hardcoded type check — drives the visual signal.
+  // actionable + error both carry the "needs attention" semantic; the pulsing
+  // halo animates on those when unread. Passive rows stay quiet.
+  const isActionable =
+    notification.severity === "actionable" || notification.severity === "error";
+  const showHalo = isActionable && isUnread;
+  const count = notification.count ?? 1;
 
   // Right-swipe = "mark unread". The server has no mark-unread endpoint, so
   // letting users swipe a read row right would commit a no-op gesture (and
@@ -272,6 +276,15 @@ export function MobileNotificationRow({
             )}
           >
             {notification.title}
+            {/* [y5ch.8] coalesced-count badge: N collapsed lifecycle pings. */}
+            {count > 1 ? (
+              <span
+                data-testid="mobile-notification-count"
+                className="ml-1.5 rounded-full bg-muted px-1.5 text-[10px] text-muted-foreground"
+              >
+                ×{count}
+              </span>
+            ) : null}
           </p>
           {notification.body ? (
             <p

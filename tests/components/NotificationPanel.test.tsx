@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 import { NotificationPanel } from "@/components/notifications/NotificationPanel";
 import type { NotificationEvent } from "@/types/notification";
+import { notificationSeverity } from "@/types/notification";
 
 // The panel pulls everything off context; we stub it so we can drive the
 // notifications array directly.
@@ -20,16 +21,21 @@ import { useNotificationContext } from "@/contexts/NotificationContext";
 import { toast } from "sonner";
 
 function makeNotification(overrides: Partial<NotificationEvent> = {}): NotificationEvent {
+  const type = overrides.type ?? "info";
   return {
     id: "n1",
     userId: "u1",
     sessionId: null,
     sessionName: null,
-    type: "info",
+    type,
+    severity: notificationSeverity(type),
     title: "Hello",
     body: null,
+    count: 1,
+    meta: null,
     readAt: null,
     createdAt: new Date("2026-04-30T12:00:00Z"),
+    updatedAt: new Date("2026-04-30T12:00:00Z"),
     ...overrides,
   };
 }

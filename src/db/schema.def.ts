@@ -17,11 +17,11 @@ import type { AgentProviderType, WorktreeType } from "@/types/session";
 import type { TerminalType, AgentExitState } from "@/types/terminal-type";
 import type { AppearanceMode, ColorSchemeCategory, ColorSchemeId } from "@/types/appearance";
 import type { TaskPriority, TaskStatus, TaskSource } from "@/types/task";
-import type { NotificationType } from "@/types/notification";
+import type { NotificationType, NotificationSeverity, NotificationMeta } from "@/types/notification";
 import type { ChannelType } from "@/types/channels";
 
 // Re-exported so the verbatim import block above (consumed by the codegen extractor) is not flagged as unused.
-export type { AdapterAccountType, SessionStatus, CIStatusState, PRState, ScheduleType, ScheduleStatus, ExecutionStatus, AgentProvider, AgentConfigType, MCPTransport, AgentProviderType, WorktreeType, TerminalType, AgentExitState, AppearanceMode, ColorSchemeCategory, ColorSchemeId, TaskPriority, TaskStatus, TaskSource, NotificationType, ChannelType };
+export type { AdapterAccountType, SessionStatus, CIStatusState, PRState, ScheduleType, ScheduleStatus, ExecutionStatus, AgentProvider, AgentConfigType, MCPTransport, AgentProviderType, WorktreeType, TerminalType, AgentExitState, AppearanceMode, ColorSchemeCategory, ColorSchemeId, TaskPriority, TaskStatus, TaskSource, NotificationType, NotificationSeverity, NotificationMeta, ChannelType };
 
 // DSL vocabulary lives in the shared generator core so both this app and the
 // supervisor app describe their schemas with one set of types. Re-exported here
@@ -960,14 +960,26 @@ export const schema: SchemaDefinition = [
       { field: "sessionId", dbName: "session_id", kind: "text", references: { table: "terminalSessions", column: "id", onDelete: "set null" } },
       { field: "sessionName", dbName: "session_name", kind: "text" },
       { field: "type", dbName: "type", kind: "text", notNull: true, typeBrand: "NotificationType" },
+      // [y5ch.1] Signal class derived from `type` (actionable | passive | error).
+      { field: "severity", dbName: "severity", kind: "text", notNull: true, typeBrand: "NotificationSeverity", default: { kind: "value", value: "\"passive\"" } },
       { field: "title", dbName: "title", kind: "text", notNull: true },
       { field: "body", dbName: "body", kind: "text" },
+      // [y5ch.5] Coalescing: rows sharing this key collapse into one open notification.
+      { field: "coalesceKey", dbName: "coalesce_key", kind: "text" },
+      // [y5ch.5] Number of collapsed events (1 normally).
+      { field: "count", dbName: "count", kind: "integer", notNull: true, default: { kind: "value", value: "1" } },
+      // [y5ch.8] Structured client-routing payload (deep-link, CTA, duration, result).
+      { field: "meta", dbName: "meta", kind: "json", typeBrand: "NotificationMeta | null" },
       { field: "readAt", dbName: "read_at", kind: "timestampMs" },
       { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+      // [y5ch.1] Last time the (possibly coalesced) row was touched.
+      { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
     ],
     indexes: [
       { name: "notification_event_user_created_idx", columns: ["userId","createdAt"] },
       { name: "notification_event_user_read_idx", columns: ["userId","readAt"] },
+      // [y5ch.5] Lookup for coalescing an open (unread) row in a group.
+      { name: "notification_event_coalesce_idx", columns: ["userId","sessionId","coalesceKey","readAt"] },
     ],
   },
   {
@@ -985,6 +997,25 @@ export const schema: SchemaDefinition = [
     indexes: [
       { name: "push_token_user_idx", columns: ["userId"] },
       { name: "push_token_fcm_token_idx", columns: ["fcmToken"], unique: true },
+    ],
+  },
+  {
+    // [y5ch.6] Per-user notification preferences: per-type push opt-out,
+    // per-session mute, quiet hours, and the minimum severity allowed to push.
+    exportName: "notificationPreferences",
+    sqlName: "notification_preferences",
+    columns: [
+      { field: "userId", dbName: "user_id", kind: "text", primaryKey: true, references: { table: "users", column: "id", onDelete: "cascade" } },
+      // Per-type push opt-out. JSON: { [NotificationType]: boolean }. Missing = on.
+      { field: "pushByType", dbName: "push_by_type", kind: "json", typeBrand: "Record<string, boolean>", notNull: true, default: { kind: "value", value: "{}" } },
+      // Per-session mute. JSON: array of sessionId strings.
+      { field: "mutedSessionIds", dbName: "muted_session_ids", kind: "json", typeBrand: "string[]", notNull: true, default: { kind: "value", value: "[]" } },
+      // Quiet hours (local tz, 0-23). null = disabled.
+      { field: "quietHoursStart", dbName: "quiet_hours_start", kind: "integer" },
+      { field: "quietHoursEnd", dbName: "quiet_hours_end", kind: "integer" },
+      // Minimum severity allowed to push. Default actionable (drops passive).
+      { field: "minPushSeverity", dbName: "min_push_severity", kind: "text", notNull: true, typeBrand: "NotificationSeverity", default: { kind: "value", value: "\"actionable\"" } },
+      { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
     ],
   },
   {

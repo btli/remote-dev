@@ -57,6 +57,7 @@ export const {
   taskDependencies,
   notificationEvents,
   pushTokens,
+  notificationPreferences,
   agentPeerMessages,
   channelGroups,
   channels,

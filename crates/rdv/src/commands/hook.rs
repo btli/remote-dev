@@ -37,6 +37,9 @@ enum HookCommand {
         /// Optional message body
         #[arg(long)]
         body: Option<String>,
+        /// [y5ch.8] Signal class: actionable | passive | error (default passive).
+        #[arg(long)]
+        severity: Option<String>,
     },
     /// Handle SessionEnd hook: report session ended
     SessionEnd,
@@ -472,8 +475,12 @@ async fn check_beads_unfinished() -> Option<String> {
 /// to continue working) and returns early without reporting idle.
 async fn handle_stop(
     client: &Client,
-    agent: Option<String>,
-    reason: Option<String>,
+    // [y5ch.2] agent/reason were only used to build the now-removed clean-stop
+    // notification. They stay in the signature (callers pass them positionally)
+    // but are unused; the leading underscore avoids an unused-variable warning
+    // without an #[allow].
+    _agent: Option<String>,
+    _reason: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let Some(sid) = client.session_id() else {
         return Ok(());
@@ -518,20 +525,15 @@ async fn handle_stop(
         eprintln!("warning: failed to report idle status: {e}");
     }
 
-    // Send notification
-    let title = match &agent {
-        Some(a) => format!("Agent stopped: {a}"),
-        None => "Agent stopped".to_string(),
-    };
-    let payload = json!({
-        "sessionId": sid,
-        "type": "agent_exited",
-        "title": title,
-        "body": reason.unwrap_or_else(|| "Session ended normally".to_string()),
-    });
-    let _ = client.post_json("/internal/notify", &payload).await;
+    // [y5ch.2] A clean stop is PASSIVE — it creates NO user notification here.
+    // The old "Session ended normally" notify POST was the single biggest source
+    // of notification noise and has been removed. Stuck/crashed agents now
+    // surface via the server-side PID-liveness sweep (y5ch.9, emits agent_stuck),
+    // and "agent needs you" surfaces via the Notification hook (waiting status).
+    // The idle status report above and the peer "finished work" broadcast below
+    // remain.
 
-    // Broadcast "finished work" to peers
+    // Broadcast "finished work" to peers (in-band signal, not a user notification).
     let finished_payload = json!({ "fromSessionId": sid, "body": "finished work" });
     let _ = client
         .post_json("/internal/peers/messages/send", &finished_payload)
@@ -601,16 +603,24 @@ pub async fn run(
         HookCommand::Stop { agent, reason } => {
             handle_stop(client, agent, reason).await?;
         }
-        HookCommand::Notify { event, body } => {
+        HookCommand::Notify {
+            event,
+            body,
+            severity,
+        } => {
             let Some(sid) = client.session_id() else {
                 return Ok(());
             };
 
+            // [y5ch.8] Forward an explicit severity so an agent can emit a
+            // CTA-bearing actionable notice (e.g. a permission-style prompt);
+            // defaults to passive/info to keep ad-hoc notifies low-noise.
             let payload = json!({
                 "sessionId": sid,
                 "type": "info",
                 "title": event,
                 "body": body.unwrap_or_default(),
+                "severity": severity.unwrap_or_else(|| "passive".to_string()),
             });
             let _ = client.post_json("/internal/notify", &payload).await;
         }
@@ -716,4 +726,36 @@ pub async fn run(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod stop_tests {
+    /// [y5ch.2] Guard: the clean-stop path must not POST to /internal/notify.
+    /// A clean agent stop is passive and must create NO user notification —
+    /// this source-level assertion proves the noise POST stays gone.
+    #[test]
+    fn handle_stop_source_has_no_notify_post() {
+        let src = include_str!("hook.rs");
+        let start = src
+            .find("async fn handle_stop")
+            .expect("handle_stop exists");
+        // End the slice at the NEXT top-level item — the immediately following
+        // `fn drain_stdin` (a plain fn). Searching only for `\nasync fn ` would
+        // overshoot past drain_stdin into `pub async fn run`, whose Notify arm
+        // legitimately POSTs /internal/notify, yielding a false positive.
+        let after = &src[start + 1..];
+        let end = after
+            .find("\nfn ")
+            .map(|i| start + 1 + i)
+            .unwrap_or(src.len());
+        let body = &src[start..end];
+        assert!(
+            !body.contains("/internal/notify"),
+            "handle_stop must not call /internal/notify (y5ch.2 noise source)"
+        );
+        assert!(
+            body.contains("finished work"),
+            "peer broadcast must remain after y5ch.2"
+        );
+    }
 }

@@ -161,7 +161,18 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
   const markReadRef = useRef<((ids: string[]) => void) | null>(null);
 
   const addNotification = useCallback((notification: NotificationEvent) => {
-    setNotifications((prev) => [notification, ...prev].slice(0, MAX_NOTIFICATIONS));
+    // [y5ch.5] Upsert by id: a coalesced server row arrives with the SAME id and
+    // a higher count, so replace the existing list entry in place (keeping its
+    // position) instead of stacking a duplicate. New ids prepend as before.
+    setNotifications((prev) => {
+      const idx = prev.findIndex((n) => n.id === notification.id);
+      if (idx >= 0) {
+        const next = prev.slice();
+        next[idx] = notification;
+        return next;
+      }
+      return [notification, ...prev].slice(0, MAX_NOTIFICATIONS);
+    });
     fireNotificationToast(notification, jumpHandlerRef.current, markReadRef.current);
   }, []);
 

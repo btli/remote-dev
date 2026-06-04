@@ -165,6 +165,20 @@ function getConnectionsForSession(sessionId: string): TerminalConnection[] {
   return result;
 }
 
+/**
+ * [y5ch.4] True when `userId` has a currently-visible (focused) WebSocket
+ * connection attached to `sessionId`. Drives push suppression: if the user is
+ * already looking at the session, an FCM push for it is noise (the in-app row
+ * is still stored). `isVisible` is maintained by the client_focus/client_blur
+ * messages below.
+ */
+function isSessionFocusedByUser(userId: string, sessionId: string): boolean {
+  for (const conn of getConnectionsForSession(sessionId)) {
+    if (conn.userId === userId && conn.isVisible) return true;
+  }
+  return false;
+}
+
 /** Get any single active connection for a session (for internal API lookups) */
 function getAnyConnectionForSession(sessionId: string): TerminalConnection | undefined {
   const connIds = sessionConnections.get(sessionId);
@@ -667,7 +681,11 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       )
       .catch((err) => agentStatusLog.error("Failed to persist activity status", { error: String(err) }));
 
-    // Create in-app notification for waiting/error statuses (fire-and-forget, with 5s debounce via service)
+    // [y5ch.3] Create an in-app notification only for waiting/error statuses
+    // (idle/ended/running/compacting/subagent never reach this branch — a clean
+    // stop is passive and produces no notification). Severity is explicit:
+    // waiting → actionable, error → error. Focus-awareness (y5ch.4) and
+    // coalescing/push-gating (y5ch.5/.10) are handled by createNotification.
     if (status === "waiting" || status === "error") {
       Promise.all([import("@/db"), import("@/db/schema"), import("drizzle-orm"), import("@/services/notification-service")])
         .then(async ([{ db }, { terminalSessions }, { eq }, NotificationService]) => {
@@ -677,26 +695,27 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
             columns: { name: true, userId: true },
           });
           if (!session) return;
-          const title = status === "waiting"
-            ? "Agent waiting for input"
-            : "Agent encountered an error";
-          const body = `Session "${session.name}" needs attention`;
+          const isWaiting = status === "waiting";
           const notification = await NotificationService.createNotification({
             userId: session.userId,
             sessionId,
             sessionName: session.name,
-            type: status === "waiting" ? "agent_waiting" : "agent_error",
-            title,
-            body,
+            type: isWaiting ? "agent_waiting" : "agent_error",
+            severity: isWaiting ? "actionable" : "error",
+            title: isWaiting ? "Agent waiting for input" : "Agent encountered an error",
+            body: `Session "${session.name}" needs attention`,
+            meta: { deepLinkSessionId: sessionId, cta: { label: "Open session", action: "open_session" } },
+            focused: isSessionFocusedByUser(session.userId, sessionId),
           });
-          if (!notification) return; // debounced
+          if (!notification) return; // coalesced or suppressed
           // Broadcast notification to clients for real-time update
           broadcastToClients({
             type: "notification",
             notification: {
               ...notification,
               createdAt: notification.createdAt instanceof Date ? notification.createdAt.toISOString() : notification.createdAt,
-              readAt: null,
+              updatedAt: notification.updatedAt instanceof Date ? notification.updatedAt.toISOString() : notification.updatedAt,
+              readAt: notification.readAt instanceof Date ? notification.readAt.toISOString() : notification.readAt,
             },
           });
         })
@@ -758,7 +777,8 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
   if (pathname === "/internal/notify" && req.method === "POST") {
     const payload = await parseRequestJson(req, res);
     if (!payload) return true; // invalid JSON already responded
-    const { sessionId, type, title, body: notifBody } = payload;
+    // [y5ch.3/.8] accept optional severity + meta from the CLI payload.
+    const { sessionId, type, title, body: notifBody, severity, meta } = payload;
     if (!sessionId || !type || !title) {
       sendJson(res, 400, { error: "Missing sessionId, type, or title" });
       return true;
@@ -778,14 +798,18 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
           type: type as import("@/types/notification").NotificationType,
           title: title as string,
           body: (notifBody as string) ?? undefined,
+          severity: (severity as import("@/types/notification").NotificationSeverity) ?? undefined,
+          meta: (meta as import("@/types/notification").NotificationMeta) ?? undefined,
+          focused: isSessionFocusedByUser(session.userId, sessionId as string),
         });
-        if (!notification) return; // debounced
+        if (!notification) return; // coalesced or suppressed
         broadcastToClients({
           type: "notification",
           notification: {
             ...notification,
             createdAt: notification.createdAt instanceof Date ? notification.createdAt.toISOString() : notification.createdAt,
-            readAt: null,
+            updatedAt: notification.updatedAt instanceof Date ? notification.updatedAt.toISOString() : notification.updatedAt,
+            readAt: notification.readAt instanceof Date ? notification.readAt.toISOString() : notification.readAt,
           },
         });
       })
@@ -1886,6 +1910,16 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       .then((PeerService) => PeerService.cleanupOldMessages())
       .catch((err) => peerLog.error("Periodic peer cleanup failed", { error: String(err) }));
   }, 60 * 60 * 1000);
+
+  // [y5ch.9] PID-liveness reconciliation sweep (30s). Clears stale
+  // running/waiting sessions whose agent process died and emits exactly one
+  // agent_stuck notification each. Lives here because the terminal server owns
+  // tmux; in multi-instance/supervisor mode each instance sweeps its own.
+  setInterval(() => {
+    import("@/services/session-liveness-service")
+      .then((svc) => svc.reconcileLiveness())
+      .catch((err) => log.error("Liveness sweep failed", { error: String(err) }));
+  }, 30_000);
 
   wss.on("connection", async (ws, req) => {
     const query = Object.fromEntries(new URL(req.url || "", "http://localhost").searchParams);
