@@ -3,7 +3,7 @@ mod commands;
 mod config;
 
 use clap::Parser;
-use commands::{agent, browser, channel, context, group, hook, indicator, notification, peer, project, screen, send, session, status, system, teams, tmux_compat, worktree};
+use commands::{agent, browser, channel, context, crown, delegate, group, hook, indicator, notification, peer, project, screen, send, session, status, system, teams, tmux_compat, worktree};
 
 #[derive(Parser)]
 #[command(name = "rdv", version, about = "CLI for Remote Dev terminal server")]
@@ -60,6 +60,10 @@ enum Command {
     Channel(channel::ChannelArgs),
     /// Multi-agent team orchestration
     Teams(teams::TeamsArgs),
+    /// Best-of-N run-and-compare (Crown)
+    Crown(crown::CrownArgs),
+    /// Delegate an agent run to another instance via the supervisor
+    Delegate(delegate::DelegateArgs),
     /// tmux compatibility layer
     Tmux(tmux_compat::TmuxCompatArgs),
 }
@@ -92,6 +96,8 @@ async fn main() {
         Command::Peer(args) => peer::run(args, &client, cli.human).await,
         Command::Channel(args) => channel::run(args, &client, cli.human).await,
         Command::Teams(args) => teams::run(args, &client, cli.human).await,
+        Command::Crown(args) => crown::run(args, &client, cli.human).await,
+        Command::Delegate(args) => delegate::run(args, cli.human).await,
         Command::Tmux(args) => tmux_compat::run(args, &client, cli.human).await,
     };
 

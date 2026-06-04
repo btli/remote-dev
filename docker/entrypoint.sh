@@ -187,24 +187,35 @@ echo "[entrypoint] kicking off background agent-CLI auto-update + provisioning (
     set +e
     {
         # ── Agent-CLI auto-update ──────────────────────────────────────────
-        # The agent CLIs are BAKED into the SYSTEM prefix /usr/local (image
-        # layer), NOT the new PVC prefix. NPM_CONFIG_PREFIX now points at the PVC,
-        # so the update MUST be prefix-EXPLICIT (`--prefix /usr/local`) or it would
-        # either no-op against the empty PVC prefix or duplicate the agents onto
-        # the PVC. (`sudo` resets env, so the exported NPM_CONFIG_PREFIX would not
-        # apply anyway — the explicit flag is what makes this correct.)
-        sudo npm update -g --prefix /usr/local \
-            @anthropic-ai/claude-code \
-            @openai/codex \
-            @google/gemini-cli \
-            opencode-ai
-        # Antigravity: best-effort. Use its own updater if present, else try the
-        # installer (whose URL is currently 404 — this will simply no-op until it
-        # is restored). All errors are swallowed by the enclosing `set +e`.
-        if command -v agy >/dev/null 2>&1 && agy update --help >/dev/null 2>&1; then
-            agy update
+        # [oyej] Opt-OUT gate (epic remote-dev-oyej.7): `AGENT_AUTO_UPDATE`
+        # controls whether the baked agent CLIs are refreshed on boot. Default
+        # `1` preserves the prior always-on behavior; set `AGENT_AUTO_UPDATE=0`
+        # to skip the npm refresh + agy retry (e.g. for fast-boot or pinned-
+        # version instances). The refresh already runs AFTER the servers are up
+        # and fully backgrounded, so it never delays readiness either way.
+        if [ "${AGENT_AUTO_UPDATE:-1}" = "1" ]; then
+            # The agent CLIs are BAKED into the SYSTEM prefix /usr/local (image
+            # layer), NOT the new PVC prefix. NPM_CONFIG_PREFIX now points at the
+            # PVC, so the update MUST be prefix-EXPLICIT (`--prefix /usr/local`)
+            # or it would either no-op against the empty PVC prefix or duplicate
+            # the agents onto the PVC. (`sudo` resets env, so the exported
+            # NPM_CONFIG_PREFIX would not apply anyway — the explicit flag is
+            # what makes this correct.)
+            sudo npm update -g --prefix /usr/local \
+                @anthropic-ai/claude-code \
+                @openai/codex \
+                @google/gemini-cli \
+                opencode-ai
+            # Antigravity: best-effort. Use its own updater if present, else try
+            # the installer (whose URL is currently 404 — this will simply no-op
+            # until it is restored). Errors swallowed by the enclosing `set +e`.
+            if command -v agy >/dev/null 2>&1 && agy update --help >/dev/null 2>&1; then
+                agy update
+            else
+                curl -fsSL https://google.dev/antigravity/install | sh
+            fi
         else
-            curl -fsSL https://google.dev/antigravity/install | sh
+            echo "[entrypoint] AGENT_AUTO_UPDATE=0 — skipping agent-CLI auto-update"
         fi
 
         # ── Per-instance package provisioning (remote-dev-uobt) ────────────

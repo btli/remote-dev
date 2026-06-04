@@ -19,9 +19,12 @@ import type { AppearanceMode, ColorSchemeCategory, ColorSchemeId } from "@/types
 import type { TaskPriority, TaskStatus, TaskSource } from "@/types/task";
 import type { NotificationType, NotificationSeverity, NotificationMeta } from "@/types/notification";
 import type { ChannelType } from "@/types/channels";
+// [oyej] Automation-platform schema brands (epic remote-dev-oyej).
+import type { AgentRunStatus, AgentRunSource, TriggerKind } from "@/types/agent-run";
+import type { CrownRunStatus } from "@/types/crown";
 
 // Re-exported so the verbatim import block above (consumed by the codegen extractor) is not flagged as unused.
-export type { AdapterAccountType, SessionStatus, CIStatusState, PRState, ScheduleType, ScheduleStatus, ExecutionStatus, AgentProvider, AgentConfigType, MCPTransport, AgentProviderType, WorktreeType, TerminalType, AgentExitState, AppearanceMode, ColorSchemeCategory, ColorSchemeId, TaskPriority, TaskStatus, TaskSource, NotificationType, NotificationSeverity, NotificationMeta, ChannelType };
+export type { AdapterAccountType, SessionStatus, CIStatusState, PRState, ScheduleType, ScheduleStatus, ExecutionStatus, AgentProvider, AgentConfigType, MCPTransport, AgentProviderType, WorktreeType, TerminalType, AgentExitState, AppearanceMode, ColorSchemeCategory, ColorSchemeId, TaskPriority, TaskStatus, TaskSource, NotificationType, NotificationSeverity, NotificationMeta, ChannelType, AgentRunStatus, AgentRunSource, TriggerKind, CrownRunStatus };
 
 // DSL vocabulary lives in the shared generator core so both this app and the
 // supervisor app describe their schemas with one set of types. Re-exported here
@@ -1347,4 +1350,173 @@ export const schema: SchemaDefinition = [
       { name: "ssh_connection_user_project_idx", columns: ["userId","projectId"] },
     ],
   },
+  // ===========================================================================
+  // [oyej] Agent automation & orchestration platform (epic remote-dev-oyej).
+  // Scheduled/triggered REAL agent runs, GitHub-webhook trigger configs, and
+  // Crown best-of-N. These are DISTINCT from the keystroke-only
+  // sessionSchedules/scheduleCommands above: an agent RUN creates a fresh
+  // `terminalType:"agent"` session (autoLaunchAgent) + delivers a prompt,
+  // rather than sending keystrokes to an existing session.
+  // ===========================================================================
+  {
+    // GitHub-webhook trigger configs (declared before agentRuns so the FK
+    // target exists; lazy `.references(() => ...)` makes order non-load-bearing
+    // at runtime, but this keeps the file readable).
+    exportName: "triggerConfigs",
+    sqlName: "trigger_config",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
+      { field: "userId", dbName: "user_id", kind: "text", notNull: true, references: { table: "users", column: "id", onDelete: "cascade" } },
+      { field: "projectId", dbName: "project_id", kind: "text", notNull: true, references: { table: "projects", column: "id", onDelete: "cascade" } },
+      { field: "githubRepoId", dbName: "github_repo_id", kind: "text", references: { table: "githubRepositories", column: "id", onDelete: "cascade" } },
+      { field: "name", dbName: "name", kind: "text", notNull: true },
+      { field: "kind", dbName: "kind", kind: "text", notNull: true, typeBrand: "TriggerKind" },
+      // Filter JSON, e.g. {"label":"agent:fix"} for pr_labeled.
+      { field: "filter", dbName: "filter", kind: "text", notNull: true, default: { kind: "value", value: "\"{}\"" } },
+      { field: "agentProvider", dbName: "agent_provider", kind: "text", notNull: true, default: { kind: "value", value: "\"claude\"" } },
+      { field: "agentFlags", dbName: "agent_flags", kind: "text", notNull: true, default: { kind: "value", value: "\"[]\"" } },
+      // {{repo}} {{prNumber}} {{issueNumber}} placeholders.
+      { field: "promptTemplate", dbName: "prompt_template", kind: "text", notNull: true },
+      { field: "worktreeType", dbName: "worktree_type", kind: "text" },
+      { field: "enabled", dbName: "enabled", kind: "boolean", notNull: true, default: { kind: "value", value: "true" } },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+      { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "trigger_config_user_idx", columns: ["userId"] },
+      { name: "trigger_config_repo_idx", columns: ["githubRepoId"] },
+    ],
+  },
+  {
+    // Scheduled REAL agent launches (distinct from keystroke-only
+    // sessionSchedules). Cron columns mirror sessionSchedules.
+    exportName: "agentSchedules",
+    sqlName: "agent_schedule",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
+      { field: "userId", dbName: "user_id", kind: "text", notNull: true, references: { table: "users", column: "id", onDelete: "cascade" } },
+      { field: "projectId", dbName: "project_id", kind: "text", notNull: true, references: { table: "projects", column: "id", onDelete: "cascade" } },
+      { field: "name", dbName: "name", kind: "text", notNull: true },
+      // Launch template.
+      { field: "agentProvider", dbName: "agent_provider", kind: "text", notNull: true, default: { kind: "value", value: "\"claude\"" } },
+      { field: "agentFlags", dbName: "agent_flags", kind: "text", notNull: true, default: { kind: "value", value: "\"[]\"" } },
+      { field: "prompt", dbName: "prompt", kind: "text", notNull: true },
+      { field: "worktreeType", dbName: "worktree_type", kind: "text" },
+      { field: "baseBranch", dbName: "base_branch", kind: "text" },
+      // Cron (mirrors sessionSchedules).
+      { field: "scheduleType", dbName: "schedule_type", kind: "text", notNull: true, typeBrand: "ScheduleType", default: { kind: "value", value: "\"recurring\"" } },
+      { field: "cronExpression", dbName: "cron_expression", kind: "text" },
+      { field: "scheduledAt", dbName: "scheduled_at", kind: "timestampMs" },
+      { field: "timezone", dbName: "timezone", kind: "text", notNull: true, default: { kind: "value", value: "\"America/Los_Angeles\"" } },
+      { field: "enabled", dbName: "enabled", kind: "boolean", notNull: true, default: { kind: "value", value: "true" } },
+      { field: "status", dbName: "status", kind: "text", notNull: true, typeBrand: "ScheduleStatus", default: { kind: "value", value: "\"active\"" } },
+      { field: "maxRetries", dbName: "max_retries", kind: "integer", notNull: true, default: { kind: "value", value: "0" } },
+      { field: "nextRunAt", dbName: "next_run_at", kind: "timestampMs" },
+      { field: "lastRunAt", dbName: "last_run_at", kind: "timestampMs" },
+      { field: "consecutiveFailures", dbName: "consecutive_failures", kind: "integer", notNull: true, default: { kind: "value", value: "0" } },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+      { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "agent_schedule_user_idx", columns: ["userId"] },
+      { name: "agent_schedule_next_run_idx", columns: ["enabled","nextRunAt"] },
+    ],
+  },
+  {
+    // One agent-run instance, regardless of trigger source
+    // (schedule | trigger | manual | crown).
+    exportName: "agentRuns",
+    sqlName: "agent_run",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
+      { field: "userId", dbName: "user_id", kind: "text", notNull: true, references: { table: "users", column: "id", onDelete: "cascade" } },
+      { field: "projectId", dbName: "project_id", kind: "text", notNull: true, references: { table: "projects", column: "id", onDelete: "cascade" } },
+      // Provenance — exactly one of these is set (others null).
+      { field: "scheduleId", dbName: "schedule_id", kind: "text", references: { table: "agentSchedules", column: "id", onDelete: "set null" } },
+      { field: "triggerConfigId", dbName: "trigger_config_id", kind: "text", references: { table: "triggerConfigs", column: "id", onDelete: "set null" } },
+      { field: "source", dbName: "source", kind: "text", notNull: true, typeBrand: "AgentRunSource" },
+      // Launch params snapshot.
+      { field: "agentProvider", dbName: "agent_provider", kind: "text", notNull: true },
+      { field: "agentFlags", dbName: "agent_flags", kind: "text", notNull: true, default: { kind: "value", value: "\"[]\"" } },
+      { field: "prompt", dbName: "prompt", kind: "text", notNull: true },
+      // The session this run created (null until launched).
+      { field: "sessionId", dbName: "session_id", kind: "text", references: { table: "terminalSessions", column: "id", onDelete: "set null" } },
+      // Dedupe key for trigger runs: the GitHub head SHA (null for schedule/manual).
+      { field: "headSha", dbName: "head_sha", kind: "text" },
+      { field: "status", dbName: "status", kind: "text", notNull: true, typeBrand: "AgentRunStatus", default: { kind: "value", value: "\"pending\"" } },
+      { field: "errorMessage", dbName: "error_message", kind: "text" },
+      { field: "startedAt", dbName: "started_at", kind: "timestampMs" },
+      { field: "completedAt", dbName: "completed_at", kind: "timestampMs" },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "agent_run_user_idx", columns: ["userId"] },
+      { name: "agent_run_schedule_idx", columns: ["scheduleId"] },
+      { name: "agent_run_trigger_idx", columns: ["triggerConfigId"] },
+      { name: "agent_run_status_idx", columns: ["status"] },
+      // Per-(triggerConfig, headSha) dedupe — nullable-composite: NULL headSha
+      // (schedule/manual runs) never collide (NULLs distinct in SQLite + PG).
+      { name: "agent_run_trigger_head_idx", columns: ["triggerConfigId","headSha"], unique: true },
+    ],
+  },
+  {
+    // Append-only log of inbound matched events (audit + dedupe support).
+    exportName: "triggerEvents",
+    sqlName: "trigger_event",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
+      { field: "triggerConfigId", dbName: "trigger_config_id", kind: "text", notNull: true, references: { table: "triggerConfigs", column: "id", onDelete: "cascade" } },
+      { field: "eventKind", dbName: "event_kind", kind: "text", notNull: true },
+      { field: "action", dbName: "action", kind: "text" },
+      { field: "headSha", dbName: "head_sha", kind: "text" },
+      { field: "matched", dbName: "matched", kind: "boolean", notNull: true, default: { kind: "value", value: "false" } },
+      { field: "runId", dbName: "run_id", kind: "text", references: { table: "agentRuns", column: "id", onDelete: "set null" } },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "trigger_event_config_idx", columns: ["triggerConfigId"] },
+    ],
+  },
+  {
+    // Crown best-of-N run (same prompt → N agents → N branches → judge).
+    exportName: "crownRuns",
+    sqlName: "crown_run",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
+      { field: "userId", dbName: "user_id", kind: "text", notNull: true, references: { table: "users", column: "id", onDelete: "cascade" } },
+      { field: "projectId", dbName: "project_id", kind: "text", notNull: true, references: { table: "projects", column: "id", onDelete: "cascade" } },
+      { field: "prompt", dbName: "prompt", kind: "text", notNull: true },
+      { field: "agentProvider", dbName: "agent_provider", kind: "text", notNull: true, default: { kind: "value", value: "\"claude\"" } },
+      { field: "candidateCount", dbName: "candidate_count", kind: "integer", notNull: true },
+      { field: "judgeModel", dbName: "judge_model", kind: "text" },
+      { field: "baseBranch", dbName: "base_branch", kind: "text" },
+      { field: "status", dbName: "status", kind: "text", notNull: true, typeBrand: "CrownRunStatus", default: { kind: "value", value: "\"running\"" } },
+      { field: "winnerCandidateId", dbName: "winner_candidate_id", kind: "text" },
+      { field: "crownReason", dbName: "crown_reason", kind: "text" },
+      { field: "prUrl", dbName: "pr_url", kind: "text" },
+      { field: "errorMessage", dbName: "error_message", kind: "text" },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "crown_run_user_idx", columns: ["userId"] },
+    ],
+  },
+  {
+    exportName: "crownCandidates",
+    sqlName: "crown_candidate",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
+      { field: "crownRunId", dbName: "crown_run_id", kind: "text", notNull: true, references: { table: "crownRuns", column: "id", onDelete: "cascade" } },
+      { field: "runId", dbName: "run_id", kind: "text", references: { table: "agentRuns", column: "id", onDelete: "set null" } },
+      { field: "branch", dbName: "branch", kind: "text", notNull: true },
+      { field: "worktreePath", dbName: "worktree_path", kind: "text" },
+      { field: "diff", dbName: "diff", kind: "text" },
+      { field: "diffStats", dbName: "diff_stats", kind: "text" },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "crown_candidate_run_idx", columns: ["crownRunId"] },
+    ],
+  },
+  // [oyej] end automation platform tables.
 ];

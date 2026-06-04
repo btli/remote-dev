@@ -7,6 +7,7 @@ import type {
   SupervisorRole,
   InstanceStatus,
   StorageTargetKind,
+  WarmPoolStatus, // [oyej]
 } from "./schema-types";
 
 export const supervisorUser = sqliteTable(
@@ -94,6 +95,24 @@ export const instanceSeed = sqliteTable(
     jobName: text("job_name"),
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
   }
+);
+
+export const warmPool = sqliteTable(
+  "warm_pool",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    instanceId: text("instance_id").notNull().unique().references(() => instance.id, { onDelete: "cascade" }),
+    status: text("status").$type<WarmPoolStatus>().notNull().default("provisioning"),
+    imageTag: text("image_tag"),
+    claimedByRunId: text("claimed_by_run_id"),
+    claimedAt: integer("claimed_at", { mode: "timestamp_ms" }),
+    ttlExpiresAt: integer("ttl_expires_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()).$onUpdateFn(() => new Date()),
+  },
+  (table) => [
+    index("warm_pool_status_idx").on(table.status),
+  ]
 );
 
 export const users = sqliteTable(

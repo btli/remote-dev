@@ -14,6 +14,8 @@ import type { AppearanceMode, ColorSchemeCategory, ColorSchemeId } from "@/types
 import type { TaskPriority, TaskStatus, TaskSource } from "@/types/task";
 import type { NotificationType, NotificationSeverity, NotificationMeta } from "@/types/notification";
 import type { ChannelType } from "@/types/channels";
+import type { AgentRunStatus, AgentRunSource, TriggerKind } from "@/types/agent-run";
+import type { CrownRunStatus } from "@/types/crown";
 
 export const users = pgTable(
   "user",
@@ -1281,5 +1283,146 @@ export const sshConnections = pgTable(
   },
   (table) => [
     index("ssh_connection_user_project_idx").on(table.userId, table.projectId),
+  ]
+);
+
+export const triggerConfigs = pgTable(
+  "trigger_config",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    githubRepoId: text("github_repo_id").references(() => githubRepositories.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    kind: text("kind").$type<TriggerKind>().notNull(),
+    filter: text("filter").notNull().default("{}"),
+    agentProvider: text("agent_provider").notNull().default("claude"),
+    agentFlags: text("agent_flags").notNull().default("[]"),
+    promptTemplate: text("prompt_template").notNull(),
+    worktreeType: text("worktree_type"),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("trigger_config_user_idx").on(table.userId),
+    index("trigger_config_repo_idx").on(table.githubRepoId),
+  ]
+);
+
+export const agentSchedules = pgTable(
+  "agent_schedule",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    agentProvider: text("agent_provider").notNull().default("claude"),
+    agentFlags: text("agent_flags").notNull().default("[]"),
+    prompt: text("prompt").notNull(),
+    worktreeType: text("worktree_type"),
+    baseBranch: text("base_branch"),
+    scheduleType: text("schedule_type").$type<ScheduleType>().notNull().default("recurring"),
+    cronExpression: text("cron_expression"),
+    scheduledAt: timestamp("scheduled_at", { withTimezone: true, mode: "date" }),
+    timezone: text("timezone").notNull().default("America/Los_Angeles"),
+    enabled: boolean("enabled").notNull().default(true),
+    status: text("status").$type<ScheduleStatus>().notNull().default("active"),
+    maxRetries: integer("max_retries").notNull().default(0),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true, mode: "date" }),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true, mode: "date" }),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("agent_schedule_user_idx").on(table.userId),
+    index("agent_schedule_next_run_idx").on(table.enabled, table.nextRunAt),
+  ]
+);
+
+export const agentRuns = pgTable(
+  "agent_run",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    scheduleId: text("schedule_id").references(() => agentSchedules.id, { onDelete: "set null" }),
+    triggerConfigId: text("trigger_config_id").references(() => triggerConfigs.id, { onDelete: "set null" }),
+    source: text("source").$type<AgentRunSource>().notNull(),
+    agentProvider: text("agent_provider").notNull(),
+    agentFlags: text("agent_flags").notNull().default("[]"),
+    prompt: text("prompt").notNull(),
+    sessionId: text("session_id").references(() => terminalSessions.id, { onDelete: "set null" }),
+    headSha: text("head_sha"),
+    status: text("status").$type<AgentRunStatus>().notNull().default("pending"),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
+    completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("agent_run_user_idx").on(table.userId),
+    index("agent_run_schedule_idx").on(table.scheduleId),
+    index("agent_run_trigger_idx").on(table.triggerConfigId),
+    index("agent_run_status_idx").on(table.status),
+    uniqueIndex("agent_run_trigger_head_idx").on(table.triggerConfigId, table.headSha),
+  ]
+);
+
+export const triggerEvents = pgTable(
+  "trigger_event",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    triggerConfigId: text("trigger_config_id").notNull().references(() => triggerConfigs.id, { onDelete: "cascade" }),
+    eventKind: text("event_kind").notNull(),
+    action: text("action"),
+    headSha: text("head_sha"),
+    matched: boolean("matched").notNull().default(false),
+    runId: text("run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("trigger_event_config_idx").on(table.triggerConfigId),
+  ]
+);
+
+export const crownRuns = pgTable(
+  "crown_run",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    prompt: text("prompt").notNull(),
+    agentProvider: text("agent_provider").notNull().default("claude"),
+    candidateCount: integer("candidate_count").notNull(),
+    judgeModel: text("judge_model"),
+    baseBranch: text("base_branch"),
+    status: text("status").$type<CrownRunStatus>().notNull().default("running"),
+    winnerCandidateId: text("winner_candidate_id"),
+    crownReason: text("crown_reason"),
+    prUrl: text("pr_url"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("crown_run_user_idx").on(table.userId),
+  ]
+);
+
+export const crownCandidates = pgTable(
+  "crown_candidate",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    crownRunId: text("crown_run_id").notNull().references(() => crownRuns.id, { onDelete: "cascade" }),
+    runId: text("run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+    branch: text("branch").notNull(),
+    worktreePath: text("worktree_path"),
+    diff: text("diff"),
+    diffStats: text("diff_stats"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("crown_candidate_run_idx").on(table.crownRunId),
   ]
 );

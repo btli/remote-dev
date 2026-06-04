@@ -34,7 +34,7 @@ type Equal<A, B> =
 // Compiles only when its argument resolves to the literal `true`.
 type Expect<T extends true> = T;
 
-// Per-table $inferSelect / $inferInsert parity for ALL 64 tables. A drift makes
+// Per-table $inferSelect / $inferInsert parity for ALL 70 tables. A drift makes
 // one of these `false`, which is a compile error on the `true[]` annotation.
 type _SchemaParity = [
   // users
@@ -220,6 +220,25 @@ type _SchemaParity = [
   // sshConnections
   Expect<Equal<(typeof sqliteSchema.sshConnections)["$inferSelect"], (typeof pgSchema.sshConnections)["$inferSelect"]>>,
   Expect<Equal<(typeof sqliteSchema.sshConnections)["$inferInsert"], (typeof pgSchema.sshConnections)["$inferInsert"]>>,
+  // [oyej] automation tables
+  // triggerConfigs
+  Expect<Equal<(typeof sqliteSchema.triggerConfigs)["$inferSelect"], (typeof pgSchema.triggerConfigs)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.triggerConfigs)["$inferInsert"], (typeof pgSchema.triggerConfigs)["$inferInsert"]>>,
+  // agentSchedules
+  Expect<Equal<(typeof sqliteSchema.agentSchedules)["$inferSelect"], (typeof pgSchema.agentSchedules)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.agentSchedules)["$inferInsert"], (typeof pgSchema.agentSchedules)["$inferInsert"]>>,
+  // agentRuns
+  Expect<Equal<(typeof sqliteSchema.agentRuns)["$inferSelect"], (typeof pgSchema.agentRuns)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.agentRuns)["$inferInsert"], (typeof pgSchema.agentRuns)["$inferInsert"]>>,
+  // triggerEvents
+  Expect<Equal<(typeof sqliteSchema.triggerEvents)["$inferSelect"], (typeof pgSchema.triggerEvents)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.triggerEvents)["$inferInsert"], (typeof pgSchema.triggerEvents)["$inferInsert"]>>,
+  // crownRuns
+  Expect<Equal<(typeof sqliteSchema.crownRuns)["$inferSelect"], (typeof pgSchema.crownRuns)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.crownRuns)["$inferInsert"], (typeof pgSchema.crownRuns)["$inferInsert"]>>,
+  // crownCandidates
+  Expect<Equal<(typeof sqliteSchema.crownCandidates)["$inferSelect"], (typeof pgSchema.crownCandidates)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.crownCandidates)["$inferInsert"], (typeof pgSchema.crownCandidates)["$inferInsert"]>>,
 ];
 
 // Force the assertion tuple to be evaluated: `true[]` only accepts a tuple
@@ -230,11 +249,12 @@ void _parityHolds;
 
 // Trivial runtime test so vitest treats this file as a (passing) suite. The
 // real guarantee is the compile-time tuple above, enforced by `tsc`.
-it("schema.sqlite and schema.pg expose the same 64 table exports", () => {
+it("schema.sqlite and schema.pg expose the same 70 table exports", () => {
   const sqliteTables = Object.keys(sqliteSchema).sort();
   const pgTables = Object.keys(pgSchema).sort();
   expect(sqliteTables).toEqual(pgTables);
-  // [y5ch.6] +1 notification_preferences; [aehq] +2 model_proxy_token,
-  // model_usage_event.
-  expect(sqliteTables).toHaveLength(64);
+  // 61 base +1 notification_preferences (y5ch) +2 model_proxy_token,
+  // model_usage_event (aehq) +6 oyej automation (agentSchedules, agentRuns,
+  // triggerConfigs, triggerEvents, crownRuns, crownCandidates).
+  expect(sqliteTables).toHaveLength(70);
 });

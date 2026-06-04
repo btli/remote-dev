@@ -1,0 +1,66 @@
+# [oyej] Reaper CronJob (epic remote-dev-oyej.9).
+#
+# Every 5 minutes, POST the supervisor's internal reaper endpoint with the
+# shared secret. The reaper runs the idle-suspend sweep (scale-to-zero for idle
+# claimed agent-run envs — PVC retained) + warm-pool GC (terminate unclaimed
+# `ready` envs past their TTL). This lets the suspend/GC sweep run on a schedule
+# even when the 30s reconciler is conservative.
+#
+# The shared secret is read from the SAME `rdv-supervisor-config` Secret the
+# supervisor web/controller containers use (key `SUPERVISOR_REAPER_SECRET`, see
+# secrets.example.yaml) — so one committed Secret wires both sides and the
+# CronJob can actually start. It MUST match `SUPERVISOR_REAPER_SECRET` on the
+# supervisor web container (which gates POST /api/internal/reaper).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rdv-reaper
+  namespace: rdv-system
+  labels:
+    app.kubernetes.io/name: rdv-reaper
+    app.kubernetes.io/part-of: rdv-supervisor
+spec:
+  schedule: "*/5 * * * *"
+  # Never overlap runs; if one is still going, skip the next tick.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 120
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: rdv-reaper
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: reaper
+              # Auto-update tag (global Docker policy — do not pin).
+              image: curlimages/curl:latest
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              command: ["sh", "-c"]
+              args:
+                - >
+                  curl -fsS -X POST
+                  -H "x-supervisor-internal-secret: $REAPER_SECRET"
+                  http://supervisor.rdv-system.svc.cluster.local:6003/api/internal/reaper
+              env:
+                - name: REAPER_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: rdv-supervisor-config
+                      key: SUPERVISOR_REAPER_SECRET
+              resources:
+                requests: { cpu: "10m", memory: "16Mi" }
+                limits: { cpu: "100m", memory: "32Mi" }

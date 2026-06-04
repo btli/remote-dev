@@ -102,6 +102,15 @@ spec:
               value: "0.0.0.0"
             - name: SUPERVISOR_DATA_DIR
               value: /var/lib/rdv-supervisor
+            # [oyej] Warm pool + scale-to-zero (epic remote-dev-oyej.8/.9).
+            # Non-secret tunables (defaults keep the pool DISABLED). The
+            # reaper/instance API keys are secrets — see rdv-supervisor-config.
+            - name: SUPERVISOR_WARM_POOL_SIZE
+              value: "0" # 0 = warm pool disabled (opt-in)
+            - name: SUPERVISOR_WARM_POOL_TTL_MS
+              value: "1800000" # 30 min unclaimed-env GC
+            - name: SUPERVISOR_AGENT_IDLE_TIMEOUT_MS
+              value: "1800000" # 30 min idle → scale-to-zero candidate
           # All operator-supplied config (CF Access AUDs, internal secret, admin
           # email, provisioning host/image/storage, instances' CF tags).
           envFrom:
@@ -154,6 +163,14 @@ spec:
           env:
             - name: SUPERVISOR_DATA_DIR
               value: /var/lib/rdv-supervisor
+            # [oyej] Warm pool + scale-to-zero (the controller runs the warm-pool
+            # reconciler arm). Mirror the web container's non-secret tunables.
+            - name: SUPERVISOR_WARM_POOL_SIZE
+              value: "0" # 0 = warm pool disabled (opt-in)
+            - name: SUPERVISOR_WARM_POOL_TTL_MS
+              value: "1800000"
+            - name: SUPERVISOR_AGENT_IDLE_TIMEOUT_MS
+              value: "1800000"
           # SAME config as web (it provisions against the k8s API + reads the
           # same SQLite DB).
           envFrom:

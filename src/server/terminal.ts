@@ -9,6 +9,8 @@ import * as fs from "node:fs";
 import { resolve as pathResolve } from "node:path";
 import { promisify } from "node:util";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
+// [oyej] Agent-run scheduler (REAL agent launches; epic remote-dev-oyej).
+import { agentSchedulerOrchestrator } from "../services/agent-scheduler-orchestrator.js";
 import { getSchedulerHealth } from "./scheduler-health.js";
 import { validateWsToken, getAuthSecret } from "../lib/ws-token.js";
 import { createLogger } from "../lib/logger.js";
@@ -1761,6 +1763,47 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
   }
 
   // --- end LiteLLM endpoints ---
+
+  // [oyej] Agent-run scheduler internal control endpoint (sibling of the
+  // keystroke scheduler below). Same Bearer AUTH_SECRET gate.
+  if (pathname?.startsWith("/internal/agent-scheduler/")) {
+    const agentAuth = req.headers.authorization;
+    if (agentAuth !== `Bearer ${getAuthSecret()}`) {
+      sendJson(res, 401, { error: "Unauthorized" });
+      return true;
+    }
+    const agentBody = req.method === "POST" ? await readRequestBody(req) : "";
+    const agentAction = pathname.replace("/internal/agent-scheduler/", "");
+    try {
+      const parsed = agentBody ? JSON.parse(agentBody) : {};
+      switch (agentAction) {
+        case "add":
+          await agentSchedulerOrchestrator.addJob(parsed.scheduleId);
+          sendJson(res, 200, { success: true });
+          break;
+        case "update":
+          await agentSchedulerOrchestrator.updateJob(parsed.scheduleId);
+          sendJson(res, 200, { success: true });
+          break;
+        case "remove":
+          agentSchedulerOrchestrator.removeJob(parsed.scheduleId);
+          sendJson(res, 200, { success: true });
+          break;
+        case "status":
+          sendJson(res, 200, {
+            running: agentSchedulerOrchestrator.isStarted(),
+            jobCount: agentSchedulerOrchestrator.getJobCount(),
+          });
+          break;
+        default:
+          sendJson(res, 404, { error: "Unknown action" });
+      }
+    } catch (error) {
+      internalLog.error("Agent scheduler error", { error: String(error) });
+      sendJson(res, 500, { error: "Internal error" });
+    }
+    return true;
+  }
 
   if (!pathname?.startsWith("/internal/scheduler/")) {
     return false;

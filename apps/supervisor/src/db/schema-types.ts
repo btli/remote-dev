@@ -31,3 +31,14 @@ export type StorageTargetKind =
   | "storage-class"
   | "nfs"
   | "cloud-csi";
+
+/**
+ * [oyej] Warm-pool entry status (epic remote-dev-oyej.8). A pooled instance is
+ * pre-provisioned (`provisioning`), becomes `ready` once its instance row hits
+ * `ready`, is `claimed` by an agent run, and `terminating` when GC'd.
+ */
+export type WarmPoolStatus =
+  | "provisioning"
+  | "ready"
+  | "claimed"
+  | "terminating";

@@ -276,6 +276,15 @@ RUN set -eu; \
 RUN command -v claude && command -v codex && command -v gemini \
     && command -v opencode
 
+# [oyej] Golden dev-env image flavor (epic remote-dev-oyej.7). The runtime stage
+# above ALREADY bakes all 5 agent CLIs + sudo/apt + gh; this build-arg just lets
+# the image self-identify so the warm pool can confirm a node can run agent runs,
+# and the entrypoint's opt-in AGENT_AUTO_UPDATE step can key off the flavor.
+# Default `dev-env` (the only flavor today). Do NOT pin the base images (global
+# Docker auto-update policy) — see ARG NODE_VERSION / BUN_VERSION above.
+ARG RDV_IMAGE_FLAVOR=dev-env
+ENV RDV_IMAGE_FLAVOR=${RDV_IMAGE_FLAVOR}
+
 WORKDIR /app
 
 # Copy built artifacts

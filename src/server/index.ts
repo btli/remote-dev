@@ -14,6 +14,8 @@ if (!process.env.TERM) process.env.TERM = "xterm-256color";
 import { config } from "dotenv";
 import { createTerminalServer, shutdownTerminalConnections } from "./terminal.js";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
+// [oyej] Agent-run scheduler (REAL agent launches; epic remote-dev-oyej).
+import { agentSchedulerOrchestrator } from "../services/agent-scheduler-orchestrator.js";
 import { updateScheduler } from "../services/update-scheduler.js";
 import { autoUpdateOrchestrator } from "../infrastructure/container.js";
 import { execFile } from "../lib/exec.js";
@@ -95,6 +97,15 @@ async function startServer(): Promise<void> {
     log.error("Failed to start scheduler", { error: String(error) });
   }
 
+  // [oyej] Agent-run scheduler — REAL agent launches on a cron (epic
+  // remote-dev-oyej). Sibling of the keystroke scheduler above.
+  try {
+    await agentSchedulerOrchestrator.start();
+    log.info("Agent scheduler started", { jobCount: agentSchedulerOrchestrator.getJobCount() });
+  } catch (error) {
+    log.error("Failed to start agent scheduler", { error: String(error) });
+  }
+
   // Start update checker (polls GitHub Releases on a configurable interval)
   try {
     updateScheduler.start();
@@ -154,6 +165,13 @@ async function startServer(): Promise<void> {
         log.info("Scheduler stopped");
       } catch (error) {
         log.error("Error stopping scheduler", { error: String(error) });
+      }
+
+      try {
+        await agentSchedulerOrchestrator.stop(); // [oyej]
+        log.info("Agent scheduler stopped");
+      } catch (error) {
+        log.error("Error stopping agent scheduler", { error: String(error) });
       }
 
       try {

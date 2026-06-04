@@ -13,6 +13,7 @@ import {
   Server,
   ScrollText,
   Smartphone,
+  Zap,
   X,
   Loader2,
 } from "lucide-react";
@@ -58,6 +59,10 @@ const MobileSection = lazy(() =>
 const BeadsSection = lazy(() =>
   import("./sections/BeadsSection").then((m) => ({ default: m.BeadsSection }))
 );
+// [oyej] Automation triggers (GitHub-event → agent run).
+const TriggersSection = lazy(() =>
+  import("./sections/TriggersSection").then((m) => ({ default: m.TriggersSection }))
+);
 
 export type SettingsSection =
   | "terminal"
@@ -69,6 +74,7 @@ export type SettingsSection =
   | "ssh"
   | "secrets"
   | "beads"
+  | "triggers"
   | "system"
   | "logs"
   | "mobile";
@@ -90,6 +96,7 @@ const NAV_ITEMS: (NavItem | "divider")[] = [
   { id: "ssh", label: "SSH", icon: Server },
   { id: "secrets", label: "Secrets", icon: KeyRound },
   { id: "beads", label: "Beads", icon: Circle },
+  { id: "triggers", label: "Triggers", icon: Zap },
   "divider",
   { id: "system", label: "System", icon: Server },
   { id: "logs", label: "Logs", icon: ScrollText },
@@ -165,6 +172,8 @@ export function SettingsView({
         return <LogsSection />;
       case "beads":
         return <BeadsSection />;
+      case "triggers":
+        return <TriggersSection />;
       case "mobile":
         return <MobileSection />;
     }

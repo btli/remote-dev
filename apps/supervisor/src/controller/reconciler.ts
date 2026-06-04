@@ -778,4 +778,43 @@ export async function reconcileInstances(
       });
     }
   }
+
+  // [oyej] Warm-pool arm (epic remote-dev-oyej.8) — runs after the per-instance
+  // loop. Isolated so a warm-pool error never aborts the instance reconcile.
+  try {
+    await reconcileWarmPool();
+  } catch (err) {
+    log.error("error reconciling warm pool", { error: String(err) });
+  }
+}
+
+/**
+ * [oyej] Warm-pool reconciler arm (epic remote-dev-oyej.8). Pre-warms toward
+ * `SUPERVISOR_WARM_POOL_SIZE` (default 0 = disabled), promotes pooled instances
+ * whose paired instance reached `ready` (provisioning → ready + TTL), and GCs
+ * unclaimed `ready` envs past their TTL. Each step is resilient on its own — it
+ * REUSES jvcx's create/terminate primitives (it does not re-implement them).
+ */
+export async function reconcileWarmPool(): Promise<void> {
+  const size = Number(process.env.SUPERVISOR_WARM_POOL_SIZE ?? "0");
+  if (!Number.isFinite(size) || size <= 0) return; // disabled
+
+  const warmPool = await import("@/lib/warm-pool");
+  try {
+    await warmPool.prewarm(size);
+  } catch (err) {
+    log.warn("warm-pool prewarm failed this tick", { error: String(err) });
+  }
+  try {
+    const promoted = await warmPool.promoteReady();
+    if (promoted > 0) log.info("warm-pool promoted ready instances", { promoted });
+  } catch (err) {
+    log.warn("warm-pool promote failed this tick", { error: String(err) });
+  }
+  try {
+    const gc = await warmPool.gcExpired();
+    if (gc > 0) log.info("warm-pool GC'd expired envs", { gc });
+  } catch (err) {
+    log.warn("warm-pool gc failed this tick", { error: String(err) });
+  }
 }

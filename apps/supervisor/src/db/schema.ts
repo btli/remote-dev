@@ -16,6 +16,7 @@ export const {
   registeredStorageTarget,
   instanceAuditLog,
   instanceSeed,
+  warmPool,
   users,
   accounts,
   sessions,

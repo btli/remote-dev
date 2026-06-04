@@ -22,12 +22,13 @@ import type {
   SupervisorRole,
   InstanceStatus,
   StorageTargetKind,
+  WarmPoolStatus, // [oyej]
 } from "./schema-types";
 
 // Re-exported so the verbatim import block above (consumed by the codegen
 // extractor) is not flagged as unused, and so the `@/db/schema` barrel keeps
 // surfacing these brand names to their consumers.
-export type { AdapterAccountType, SupervisorRole, InstanceStatus, StorageTargetKind };
+export type { AdapterAccountType, SupervisorRole, InstanceStatus, StorageTargetKind, WarmPoolStatus };
 
 // DSL vocabulary lives in the shared generator core. Imported BELOW the verbatim
 // brand-import block above so the codegen extractor (which stops at the first
@@ -156,6 +157,28 @@ export const schema: SchemaDefinition = [
       { field: "jobDispatched", dbName: "job_dispatched", kind: "boolean", notNull: true, default: { kind: "value", value: "false" } },
       { field: "jobName", dbName: "job_name", kind: "text" },
       { field: "completedAt", dbName: "completed_at", kind: "timestampMs" },
+    ],
+  },
+  // [oyej] Warm pool for agent-run envs (epic remote-dev-oyej.8). Each row
+  // pairs 1:1 with a pre-provisioned `instance` (created via jvcx's existing
+  // create path — this table does NOT re-implement provisioning). Drives the
+  // pooled instance through provisioning → ready → claimed → terminating.
+  {
+    exportName: "warmPool",
+    sqlName: "warm_pool",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
+      { field: "instanceId", dbName: "instance_id", kind: "text", notNull: true, unique: true, references: { table: "instance", column: "id", onDelete: "cascade" } },
+      { field: "status", dbName: "status", kind: "text", notNull: true, typeBrand: "WarmPoolStatus", default: { kind: "value", value: "\"provisioning\"" } },
+      { field: "imageTag", dbName: "image_tag", kind: "text" },
+      { field: "claimedByRunId", dbName: "claimed_by_run_id", kind: "text" },
+      { field: "claimedAt", dbName: "claimed_at", kind: "timestampMs" },
+      { field: "ttlExpiresAt", dbName: "ttl_expires_at", kind: "timestampMs" },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+      { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" }, onUpdateNow: true },
+    ],
+    indexes: [
+      { name: "warm_pool_status_idx", columns: ["status"] },
     ],
   },
   // --- NextAuth (Auth.js) identity tables -------------------------------------

@@ -70,6 +70,8 @@ Top-level commands from `main.rs`:
 | [`peer`](#peer) | Communicate with peer agents in the same project |
 | [`channel`](#channel) | Chat channels in the project |
 | [`teams`](#teams) | Multi-agent team orchestration |
+| [`crown`](#crown) | Best-of-N run-and-compare (fan-out → judge → auto-PR) |
+| [`delegate`](#delegate) | Delegate an agent run to another instance via the supervisor |
 | [`tmux`](#tmux) | tmux compatibility layer |
 
 ---
@@ -271,6 +273,30 @@ Multi-agent team orchestration — launch and coordinate child agent sessions.
 | `rdv teams list [--parent-id <id>]` | List agent sessions grouped by parent |
 | `rdv teams wait <parent-id> [--timeout <seconds>]` | Wait for child sessions to finish (default 300 s) |
 | `rdv teams broadcast <parent-id> <text…>` | Send text to all children of a parent |
+
+## crown
+
+Best-of-N run-and-compare (epic remote-dev-oyej). Fan out N agents on the **same
+prompt** into N worktree branches, let an LLM judge pick a winner, and auto-PR it.
+See [`AUTOMATION.md`](./AUTOMATION.md) §3.
+
+| Subcommand | Purpose |
+|------------|---------|
+| `rdv crown start --project-id <id> --prompt "<text>" [--count <n>] [--provider <p>] [--judge-model <m>] [--base-branch <b>]` | Start a Crown run (default count 2, provider `claude`); returns the `crownRunId` |
+| `rdv crown status <crown-run-id>` | Show the run's status, winner, PR URL, and candidates |
+| `rdv crown pr <crown-run-id> --candidate <candidate-id>` | Manually open a PR for a chosen candidate (overrides the judge) |
+
+## delegate
+
+Cross-instance delegation via the supervisor (epic remote-dev-oyej). Dispatch an
+agent run to **another** instance, optionally provisioning it first. The
+supervisor base URL + operator token come from `RDV_SUPERVISOR_URL` /
+`RDV_SUPERVISOR_TOKEN`.
+
+```bash
+rdv delegate --to <slug> --project-id <id> --prompt "<text>" \
+  [--provider <claude|codex|gemini|opencode>] [--provision-if-missing]
+```
 
 ## tmux
 

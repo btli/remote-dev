@@ -187,6 +187,65 @@ export async function notifySessionJobsRemoved(sessionId: string): Promise<boole
   return result.success;
 }
 
+// ── [oyej] Agent-schedule notifications (REAL agent runs) ────────────────────
+// Sibling of the keystroke-schedule notifications above; same socket/port +
+// Bearer AUTH_SECRET transport, but targets the terminal server's internal
+// `/internal/agent-scheduler/*` endpoint which drives the
+// `agentSchedulerOrchestrator`.
+
+async function agentSchedulerRequest(
+  action: string,
+  body?: Record<string, unknown>,
+): Promise<{ success: boolean; error?: string; data?: unknown }> {
+  const socketPath = getTerminalSocket();
+  const path = `/internal/agent-scheduler/${action}`;
+  if (socketPath) {
+    return socketRequest(socketPath, path, body);
+  }
+  const url = `${getTerminalServerUrl()}${path}`;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${getAuthSecret()}`,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      log.error("Agent-scheduler action failed", {
+        action,
+        status: response.status,
+        errorData,
+      });
+      return { success: false, error: errorData.error || `HTTP ${response.status}` };
+    }
+    return { success: true, data: await response.json() };
+  } catch (error) {
+    log.warn("Failed to notify terminal server (agent scheduler)", {
+      action,
+      error: String(error),
+    });
+    return { success: false, error: "Terminal server unavailable" };
+  }
+}
+
+export async function notifyAgentScheduleCreated(scheduleId: string): Promise<boolean> {
+  const result = await agentSchedulerRequest("add", { scheduleId });
+  return result.success;
+}
+
+export async function notifyAgentScheduleUpdated(scheduleId: string): Promise<boolean> {
+  const result = await agentSchedulerRequest("update", { scheduleId });
+  return result.success;
+}
+
+export async function notifyAgentScheduleDeleted(scheduleId: string): Promise<boolean> {
+  const result = await agentSchedulerRequest("remove", { scheduleId });
+  return result.success;
+}
+
 /**
  * Get scheduler status from the terminal server
  */

@@ -75,4 +75,10 @@ export const {
   projectProfileLinks,
   projectRepositories,
   sshConnections,
+  triggerConfigs,
+  agentSchedules,
+  agentRuns,
+  triggerEvents,
+  crownRuns,
+  crownCandidates,
 } = active;

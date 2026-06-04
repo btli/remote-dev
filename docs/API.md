@@ -123,6 +123,7 @@ by session/key auth:
 | Setup | `/api/setup` | [Setup](#setup) |
 | Health probes | `/api/healthz`, `/api/readyz` | [Health probes](#health-probes) |
 | Deploy webhook | `/api/deploy` | [Deploy webhook](#deploy-webhook) |
+| Automation | `/api/agent-schedules`, `/api/agent-runs`, `/api/trigger-configs`, `/api/webhooks/github`, `/api/crown` | [Automation](#automation) |
 | Cron | `/api/cron/*` | [Cron](#cron) |
 | Auth | `/api/auth/*` | [Auth](#auth) |
 
@@ -1366,6 +1367,64 @@ Receives a GitHub-style push webhook to trigger a blue-green deploy.
 - Header `X-GitHub-Event: push`; only pushes to `refs/heads/master` deploy.
 - Returns `202 Accepted` `{ message, commit, pid }` on trigger, `409` if a deploy is already running, `401` on bad signature, `503` if unconfigured.
 - Returns `410 Gone` (`WEBHOOK_DEPRECATED`) when `AUTO_UPDATE_ENABLED=true` (poll-based auto-update supersedes the webhook).
+
+---
+
+## Automation
+
+Agent automation & orchestration (epic remote-dev-oyej). Full guide:
+[`AUTOMATION.md`](./AUTOMATION.md). All `withApiAuth` (dual session / API-key)
+unless noted.
+
+### Agent schedules & runs
+
+```http
+GET  /api/agent-schedules               # list (?projectId)
+POST /api/agent-schedules               # create a scheduled REAL agent run
+GET    /api/agent-schedules/:id
+PATCH  /api/agent-schedules/:id
+DELETE /api/agent-schedules/:id
+GET  /api/agent-runs                    # list runs (?scheduleId/?triggerConfigId/?status)
+POST /api/agent-runs                    # immediate manual launch (202)
+```
+
+An agent run creates a fresh `terminalType:"agent"` session and delivers a
+prompt — distinct from the keystroke-only `/api/schedules`. State machine:
+`pending→running→completed|failed` (+`superseded`).
+
+### Trigger configs + GitHub webhook
+
+```http
+GET  /api/trigger-configs               # list (?projectId)
+POST /api/trigger-configs               # create (kind: pr_labeled|issue_opened|ci_failed)
+GET    /api/trigger-configs/:id
+PATCH  /api/trigger-configs/:id
+DELETE /api/trigger-configs/:id
+POST /api/webhooks/github               # HMAC-SHA256 (NOT session/key auth)
+```
+
+`/api/webhooks/github` mirrors `/api/deploy`: `X-Hub-Signature-256` verified
+against `GITHUB_WEBHOOK_SECRET` (constant-time); `ping`→`200 pong`; matched
+events dispatch a deduped run fire-and-forget and return `202`; `401` bad
+signature, `400` non-JSON, `503` unconfigured. Per-head-SHA dedupe via a unique
+`(triggerConfigId, headSha)` index.
+
+### Crown best-of-N
+
+```http
+GET  /api/crown                         # list runs
+POST /api/crown                         # start (async; 202 { crownRunId, status })
+GET  /api/crown/:id                     # run + candidates + diffs + judge result
+POST /api/crown/:id                     # { action:"pr", candidateId } — manual override
+```
+
+### Supervisor (separate app — `apps/supervisor`)
+
+```http
+POST /api/instances/:id/agent           # operator — launch an agent run on an instance (proxy)
+POST /api/delegate                      # operator — cross-instance delegation (resolve-or-provision)
+POST /api/internal/reaper               # SUPERVISOR_REAPER_SECRET — idle-suspend + warm-pool GC
+```
 
 ---
 

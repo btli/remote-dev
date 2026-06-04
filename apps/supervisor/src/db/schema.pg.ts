@@ -7,6 +7,7 @@ import type {
   SupervisorRole,
   InstanceStatus,
   StorageTargetKind,
+  WarmPoolStatus, // [oyej]
 } from "./schema-types";
 
 export const supervisorUser = pgTable(
@@ -94,6 +95,24 @@ export const instanceSeed = pgTable(
     jobName: text("job_name"),
     completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
   }
+);
+
+export const warmPool = pgTable(
+  "warm_pool",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    instanceId: text("instance_id").notNull().unique().references(() => instance.id, { onDelete: "cascade" }),
+    status: text("status").$type<WarmPoolStatus>().notNull().default("provisioning"),
+    imageTag: text("image_tag"),
+    claimedByRunId: text("claimed_by_run_id"),
+    claimedAt: timestamp("claimed_at", { withTimezone: true, mode: "date" }),
+    ttlExpiresAt: timestamp("ttl_expires_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()).$onUpdateFn(() => new Date()),
+  },
+  (table) => [
+    index("warm_pool_status_idx").on(table.status),
+  ]
 );
 
 export const users = pgTable(
