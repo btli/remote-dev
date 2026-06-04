@@ -79,6 +79,7 @@ export const {
   agentSchedules,
   agentRuns,
   triggerEvents,
+  webhookDeliveries,
   crownRuns,
   crownCandidates,
   messageDelivery,

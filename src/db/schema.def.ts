@@ -1478,6 +1478,25 @@ export const schema: SchemaDefinition = [
     ],
   },
   {
+    // Replay/dedupe ledger for inbound GitHub webhook deliveries
+    // (epic remote-dev-oyej.14). GitHub assigns a unique `X-GitHub-Delivery`
+    // UUID per delivery and REUSES it on redelivery, so an atomic
+    // insert-or-conflict on `deliveryId` lets the webhook layer process each
+    // delivery at most once — covering issue/label events (headSha == null),
+    // which the per-(triggerConfig, headSha) `agentRuns` unique index cannot.
+    exportName: "webhookDeliveries",
+    sqlName: "webhook_delivery",
+    columns: [
+      { field: "deliveryId", dbName: "delivery_id", kind: "text", primaryKey: true },
+      { field: "eventKind", dbName: "event_kind", kind: "text", notNull: true },
+      { field: "receivedAt", dbName: "received_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      // Supports retention pruning of old delivery rows.
+      { name: "webhook_delivery_received_idx", columns: ["receivedAt"] },
+    ],
+  },
+  {
     // Crown best-of-N run (same prompt → N agents → N branches → judge).
     exportName: "crownRuns",
     sqlName: "crown_run",

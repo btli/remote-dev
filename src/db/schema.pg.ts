@@ -1387,6 +1387,18 @@ export const triggerEvents = pgTable(
   ]
 );
 
+export const webhookDeliveries = pgTable(
+  "webhook_delivery",
+  {
+    deliveryId: text("delivery_id").primaryKey(),
+    eventKind: text("event_kind").notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("webhook_delivery_received_idx").on(table.receivedAt),
+  ]
+);
+
 export const crownRuns = pgTable(
   "crown_run",
   {

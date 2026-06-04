@@ -12,6 +12,7 @@ vi.mock("@/db/schema", () => ({
   triggerEvents: {},
   githubRepositories: {},
   agentRuns: {},
+  webhookDeliveries: {},
 }));
 vi.mock("@/lib/logger", () => ({
   createLogger: () => ({
@@ -33,6 +34,7 @@ vi.mock("../tmux-service", () => ({ sendKeys: vi.fn(), capturePane: vi.fn() }));
 
 import {
   handleEvent,
+  claimDelivery,
   renderTemplate,
   type TriggerDeps,
   type TriggerConfigLike,
@@ -78,6 +80,7 @@ function makeDeps(over: Partial<TriggerDeps> = {}): {
     record: vi.fn(async (configId, _e, matched, runId) => {
       records.push({ configId, matched, runId });
     }),
+    recordDelivery: vi.fn(async () => true),
     ...over,
   };
   return {
@@ -220,5 +223,26 @@ describe("TriggerService.handleEvent", () => {
     expect(h.deps.launchAgentRun).toHaveBeenCalledWith(
       expect.objectContaining({ prompt: "Triage issue 42" }),
     );
+  });
+});
+
+describe("claimDelivery (delivery-id replay dedupe)", () => {
+  it("returns true the first time a delivery id is seen, false on redelivery", async () => {
+    const seen = new Set<string>();
+    // Simulate the atomic ON CONFLICT DO NOTHING + RETURNING store.
+    const recordDelivery = vi.fn(async (id: string) => {
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+    expect(await claimDelivery("uuid-1", "issues", recordDelivery)).toBe(true);
+    expect(await claimDelivery("uuid-1", "issues", recordDelivery)).toBe(false);
+    expect(recordDelivery).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats a blank delivery id as a first delivery without touching the store", async () => {
+    const recordDelivery = vi.fn(async () => true);
+    expect(await claimDelivery("", "issues", recordDelivery)).toBe(true);
+    expect(recordDelivery).not.toHaveBeenCalled();
   });
 });

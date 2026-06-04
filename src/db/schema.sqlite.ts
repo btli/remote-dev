@@ -1388,6 +1388,18 @@ export const triggerEvents = sqliteTable(
   ]
 );
 
+export const webhookDeliveries = sqliteTable(
+  "webhook_delivery",
+  {
+    deliveryId: text("delivery_id").primaryKey(),
+    eventKind: text("event_kind").notNull(),
+    receivedAt: integer("received_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("webhook_delivery_received_idx").on(table.receivedAt),
+  ]
+);
+
 export const crownRuns = sqliteTable(
   "crown_run",
   {
