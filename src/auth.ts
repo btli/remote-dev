@@ -244,7 +244,14 @@ async function isLocalhostRequest(): Promise<boolean> {
  * Exported for unit testing (see `src/lib/__tests__/auth-basepath.test.ts`).
  */
 export function reconcileAuthUrlWithBasePath(
-  env: { AUTH_URL?: string; NEXTAUTH_URL?: string } = process.env,
+  // `process.env` is `NodeJS.ProcessEnv` (an index-signature type), which is
+  // not directly assignable to this closed object literal — cast it. Optional
+  // properties are intentional so callers (incl. the unit tests) can pass
+  // partial env shapes like `{ AUTH_URL }` or `{}`.
+  env: { AUTH_URL?: string; NEXTAUTH_URL?: string } = process.env as {
+    AUTH_URL?: string;
+    NEXTAUTH_URL?: string;
+  },
   basePath: string = BASE_PATH,
 ): { authUrl?: string; nextAuthUrl?: string } {
   // Single-server: nothing to reconcile.
