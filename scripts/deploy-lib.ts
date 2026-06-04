@@ -5,6 +5,22 @@ import { dirname, join } from "path";
 export const SSR_PROBE_PATHS = ["/", "/login"] as const;
 
 /**
+ * Whether the deploy's `db:push` (which is `drizzle-kit push --dialect sqlite`)
+ * should run, given a DATABASE_URL.
+ *
+ * The webhook now forwards DATABASE_URL to the deploy (remote-dev-6lf3), so a
+ * `postgresql://…` / `postgres://…` URL would otherwise be fed to the SQLite
+ * drizzle-kit push and hard-abort every deploy on a Postgres host. db:push is
+ * SQLite-only (the PG schema is applied via the drizzle/pg migrate-on-boot path),
+ * so we skip it on Postgres. Mirrors `src/db/is-postgres.ts`. Pure/testable.
+ */
+export function shouldRunSqlitePush(databaseUrl: string | undefined): boolean {
+  const u = databaseUrl ?? "";
+  const isPg = u.startsWith("postgresql://") || u.startsWith("postgres://");
+  return !isPg;
+}
+
+/**
  * Whether an HTTP status from an SSR probe of `path` is acceptable.
  *
  * The local health check otherwise only exercises `/api/*`, so a build whose
@@ -124,6 +140,69 @@ export function ancestryGuardDecision(exitCode: number): AncestryDecision {
   if (exitCode === 0) return "proceed";
   if (exitCode === 1) return "diverged";
   return "git-error";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Native-module ABI rebuild (remote-dev-7wgn)
+//
+// Prod runs `next-server` under /opt/homebrew/bin/node (Homebrew Node, currently
+// v26 / NODE_MODULE_VERSION 147). The app's logging/analytics sidecars use the
+// `better-sqlite3` NATIVE addon. bun installs a prebuilt binary; if Homebrew
+// silently bumps Node's ABI (as happened 141→147), that prebuilt binary no
+// longer loads and logs.db writes silently die (the logger swallows the error).
+// To keep the ABI in lockstep we rebuild the addon FROM SOURCE against the exact
+// runtime Node, in DEPLOY_SRC, BEFORE `bun run build` — so Next's standalone
+// trace copies the correctly-built `.node` into the served bundle.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Native packages rebuilt from source against the runtime Node on each deploy. */
+export const NATIVE_MODULES_TO_REBUILD = ["better-sqlite3"] as const;
+
+/**
+ * The argv to rebuild the given native modules from source via npm. `npm rebuild`
+ * correctly resolves bun's isolated node_modules layout (it walks the installed
+ * tree) and `--build-from-source` forces a real compile against the headers of
+ * whatever `node` is first on PATH — so the caller MUST invoke this with the
+ * RUNTIME node (the one that runs next-server) ahead of any others on PATH.
+ * `--foreground-scripts` surfaces compiler output into the captured stdout/stderr
+ * so a failed compile is diagnosable from the deploy log.
+ *
+ * Pure (returns argv only) so it is unit-testable without spawning a toolchain.
+ */
+export function nativeRebuildCommand(
+  modules: readonly string[] = NATIVE_MODULES_TO_REBUILD,
+): string[] {
+  return [
+    "npm",
+    "rebuild",
+    ...modules,
+    "--build-from-source",
+    "--foreground-scripts",
+  ];
+}
+
+/**
+ * Compute the PATH that puts the runtime Node's directory FIRST, so `npm rebuild`
+ * compiles against the runtime Node's headers rather than whatever `node` bun or
+ * the deploy shell would otherwise resolve. Given the absolute path to the
+ * runtime node binary and the current PATH, returns a new PATH with the binary's
+ * directory prepended (de-duplicated if already leading). Pure/testable.
+ *
+ * @param runtimeNodePath absolute path to the runtime node (e.g. /opt/homebrew/bin/node)
+ * @param currentPath     the inherited PATH (process.env.PATH)
+ * @param pathSeparator   the platform PATH list separator (Node `path.delimiter`)
+ * @param dirOf           extracts a file's directory (inject `path.dirname` — keeps this pure)
+ */
+export function pathWithRuntimeNodeFirst(
+  runtimeNodePath: string,
+  currentPath: string,
+  pathSeparator: string,
+  dirOf: (p: string) => string,
+): string {
+  const binDir = dirOf(runtimeNodePath);
+  const parts = currentPath ? currentPath.split(pathSeparator) : [];
+  const deduped = parts.filter((p) => p !== binDir);
+  return [binDir, ...deduped].join(pathSeparator);
 }
 
 /**

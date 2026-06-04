@@ -40,7 +40,7 @@ import {
   readlinkSync,
   readdirSync,
 } from "fs";
-import { join, sep, isAbsolute, dirname, resolve } from "path";
+import { join, sep, isAbsolute, dirname, resolve, delimiter as pathDelimiter } from "path";
 import { homedir, hostname as osHostname } from "os";
 import http from "http";
 import {
@@ -51,13 +51,26 @@ import {
   gitSyncCommands,
   ancestryGuardDecision,
   isSafeDeploySrcToRemove,
+  nativeRebuildCommand,
+  pathWithRuntimeNodeFirst,
+  NATIVE_MODULES_TO_REBUILD,
+  shouldRunSqlitePush,
 } from "./deploy-lib";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-const PROJECT_ROOT = join(import.meta.dir, "..");
+// The LIVE serving dir (where the running next-server's .next/standalone lives
+// and where rdv.ts restarts from). Normally this IS the script's own repo root
+// (import.meta.dir/..). But the webhook may run the ORIGIN/MASTER copy of this
+// script from the deploy-src worktree (remote-dev-6lf3 orchestrator-lag fix), in
+// which case import.meta.dir points at deploy-src — the WRONG live dir. The
+// webhook therefore passes DEPLOY_PROJECT_ROOT to pin the real live serving dir
+// explicitly; honor it when set so restoreSlotToLive / restartViaRdvAsync always
+// target the live tree regardless of which copy of deploy.ts is executing.
+const PROJECT_ROOT =
+  process.env.DEPLOY_PROJECT_ROOT || join(import.meta.dir, "..");
 const DATA_DIR = process.env.RDV_DATA_DIR || join(homedir(), ".remote-dev");
 const DEPLOY_DIR = join(DATA_DIR, "deploy");
 const BUILDS_DIR = join(DATA_DIR, "builds");
@@ -74,6 +87,13 @@ const RESULT_FILE = join(DEPLOY_DIR, "last-deploy.json");
 
 const NEXTJS_SOCKET = join(SOCKET_DIR, "nextjs.sock");
 const TERMINAL_SOCKET = join(SOCKET_DIR, "terminal.sock");
+
+// The Node binary that actually runs next-server in prod (rdv.ts `prod.nextCmd`
+// is `["node", "scripts/standalone-server.js"]`, and `node` on this host's PATH
+// is Homebrew's). Native addons (better-sqlite3) MUST be ABI-compatible with
+// THIS node. Overridable for non-standard hosts (remote-dev-7wgn).
+const RUNTIME_NODE =
+  process.env.DEPLOY_RUNTIME_NODE || "/opt/homebrew/bin/node";
 
 const EXTERNAL_URL =
   process.env.DEPLOY_EXTERNAL_URL || "https://dev.bryanli.net";
@@ -691,6 +711,58 @@ function pruneDanglingSymlinks(root: string): void {
   }
 }
 
+// Rebuild native addons (better-sqlite3) FROM SOURCE against the runtime Node so
+// their ABI matches the node that runs next-server (remote-dev-7wgn). Runs in
+// DEPLOY_SRC AFTER `bun install` and BEFORE `bun run build`, so Next's standalone
+// trace copies the freshly-built `.node` into the served bundle. Best-effort: a
+// rebuild failure (missing toolchain, etc.) must NOT abort an otherwise-good
+// deploy — bun's prebuilt binary stays in place and the startup self-check in
+// src/instrumentation.ts will loudly flag any resulting ABI mismatch. We prepend
+// the runtime node's dir to PATH so npm/node-gyp compile against the right
+// headers regardless of what `node` the deploy shell would otherwise resolve.
+function rebuildNativeModules(cwd: string): void {
+  if (!existsSync(RUNTIME_NODE)) {
+    logDeploy(
+      `WARNING: runtime node not found at ${RUNTIME_NODE}; skipping native-module rebuild. ` +
+        `better-sqlite3 will use bun's prebuilt binary (set DEPLOY_RUNTIME_NODE if the path differs).`,
+    );
+    return;
+  }
+
+  const rebuildPath = pathWithRuntimeNodeFirst(
+    RUNTIME_NODE,
+    process.env.PATH ?? "",
+    pathDelimiter,
+    dirname,
+  );
+
+  logDeploy(
+    `Rebuilding native modules [${NATIVE_MODULES_TO_REBUILD.join(", ")}] against ${RUNTIME_NODE}...`,
+  );
+  const result = spawnSync(nativeRebuildCommand(), {
+    cwd,
+    env: { ...process.env, PATH: rebuildPath },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stdout = result.stdout?.toString().trim();
+  const stderr = result.stderr?.toString().trim();
+  if (stdout) {
+    for (const line of stdout.split("\n").slice(-10)) logDeploy(`  ${line}`);
+  }
+  if (result.exitCode !== 0) {
+    if (stderr) {
+      for (const line of stderr.split("\n").slice(-15)) logError(`  ${line}`);
+    }
+    logError(
+      `Native-module rebuild failed (exit ${result.exitCode}); continuing with bun's prebuilt binary. ` +
+        `If the runtime Node's ABI differs, the startup NativeModuleCheck will flag it.`,
+    );
+    return;
+  }
+  logDeploy("Native modules rebuilt against runtime Node");
+}
+
 function buildSlot(slot: Slot): boolean {
   const buildDir = join(BUILDS_DIR, slot);
   const standaloneDir = join(buildDir, "standalone");
@@ -752,6 +824,11 @@ function buildSlot(slot: Slot): boolean {
   ) {
     return false;
   }
+
+  // Step 2b: Rebuild native addons (better-sqlite3) from source against the
+  // RUNTIME node BEFORE the Next build, so the standalone trace copies an
+  // ABI-correct `.node` into the served bundle (remote-dev-7wgn). Best-effort.
+  rebuildNativeModules(DEPLOY_SRC);
 
   // Step 3: Build rdv CLI (soft requirement — warn and continue if cargo is unavailable)
   const cargoPath = join(homedir(), ".cargo", "bin", "cargo");
@@ -841,7 +918,18 @@ function runMigration(): boolean {
     return false;
   }
 
-  if (!runCommand(
+  // db:push is `drizzle-kit push --dialect sqlite`, whose getDatabasePath()
+  // returns DATABASE_URL verbatim. The webhook now forwards DATABASE_URL
+  // (remote-dev-6lf3), so on a Postgres host a `postgresql://…` URL would be fed
+  // to the SQLite drizzle-kit push → error → hard abort → every webhook deploy
+  // blocked. Gate it: only SQLite uses db:push; the PG schema is applied via the
+  // drizzle/pg migrate-on-boot path (src/db/migrate.ts), so skip the push on PG.
+  // The backfills + db:verify-backfills below are dialect-portable and still run.
+  if (!shouldRunSqlitePush(process.env.DATABASE_URL)) {
+    logDeploy(
+      "DATABASE_URL is Postgres — skipping db:push (SQLite-only); PG schema is applied via migrate-on-boot",
+    );
+  } else if (!runCommand(
     ["bun", "run", "db:push"],
     DEPLOY_SRC,
     "database migration"
@@ -871,6 +959,28 @@ function runMigration(): boolean {
     DEPLOY_SRC,
     "user_email index backfill"
   )) {
+    return false;
+  }
+
+  // GENERALIZABLE POST-CONDITION GUARD (remote-dev-6lf3). After migrations +
+  // backfills, assert each registered backfill actually TOOK EFFECT against the
+  // LIVE DB (e.g. every user has a primary user_email row). This closes the gap
+  // that let the #338 deploy go green with an empty user_email table: the live
+  // server's deploy.ts orchestrator was STALE and never ran the backfill step,
+  // and nothing surfaced it. The check runs from DEPLOY_SRC (origin/master), so
+  // it can't itself be skipped by an out-of-date orchestrator, and it targets
+  // the same live DB (resolution is env-only, not cwd-relative). A failure
+  // ABORTS the deploy loudly rather than serving with a broken invariant. New
+  // backfills register a post-condition in src/db/backfill-postcondition.ts.
+  if (!runCommand(
+    ["bun", "run", "db:verify-backfills"],
+    DEPLOY_SRC,
+    "backfill post-condition verification"
+  )) {
+    logError(
+      "Backfill post-condition verification FAILED — a backfill did not take effect on the live DB. " +
+        "Aborting deploy rather than going green with a broken invariant.",
+    );
     return false;
   }
 
