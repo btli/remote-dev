@@ -108,3 +108,75 @@ describe("normalizeProxyCloseCode (RFC 6455 §7.4)", () => {
     }
   });
 });
+
+describe("isAllowedProxyOrigin (remote-dev-kn0q)", () => {
+  const ORIGINAL_AUTH_URL = process.env.AUTH_URL;
+
+  afterEach(() => {
+    if (ORIGINAL_AUTH_URL === undefined) delete process.env.AUTH_URL;
+    else process.env.AUTH_URL = ORIGINAL_AUTH_URL;
+  });
+
+  /** No forwarded headers — origin must be matched against AUTH_URL only. */
+  const noHeaders = () => undefined;
+
+  it("rejects a missing Origin (browsers always send one)", async () => {
+    process.env.AUTH_URL = "https://rdv.joyful.house";
+    const { isAllowedProxyOrigin } = await loadBridge("");
+    expect(isAllowedProxyOrigin(undefined, noHeaders)).toBe(false);
+  });
+
+  it("accepts an Origin matching AUTH_URL", async () => {
+    process.env.AUTH_URL = "https://rdv.joyful.house";
+    const { isAllowedProxyOrigin } = await loadBridge("");
+    expect(isAllowedProxyOrigin("https://rdv.joyful.house", noHeaders)).toBe(
+      true,
+    );
+  });
+
+  it("rejects a cross-origin Origin (different host)", async () => {
+    process.env.AUTH_URL = "https://rdv.joyful.house";
+    const { isAllowedProxyOrigin } = await loadBridge("");
+    expect(isAllowedProxyOrigin("https://evil.example", noHeaders)).toBe(false);
+  });
+
+  it("rejects a scheme/port mismatch against AUTH_URL", async () => {
+    process.env.AUTH_URL = "https://rdv.joyful.house";
+    const { isAllowedProxyOrigin } = await loadBridge("");
+    // http vs https, and an explicit port, both differ from the https origin.
+    expect(isAllowedProxyOrigin("http://rdv.joyful.house", noHeaders)).toBe(
+      false,
+    );
+    expect(
+      isAllowedProxyOrigin("https://rdv.joyful.house:8443", noHeaders),
+    ).toBe(false);
+  });
+
+  it("accepts an Origin matching the edge-forwarded public host", async () => {
+    delete process.env.AUTH_URL;
+    const { isAllowedProxyOrigin } = await loadBridge("");
+    const headers = (name: string): string | undefined =>
+      ({
+        "x-forwarded-host": "rdv.joyful.house",
+        "x-forwarded-proto": "https",
+      })[name];
+    expect(isAllowedProxyOrigin("https://rdv.joyful.house", headers)).toBe(true);
+    expect(isAllowedProxyOrigin("https://evil.example", headers)).toBe(false);
+  });
+
+  it("accepts a localhost dev Origin matching AUTH_URL", async () => {
+    process.env.AUTH_URL = "http://localhost:6001";
+    const { isAllowedProxyOrigin } = await loadBridge("");
+    expect(isAllowedProxyOrigin("http://localhost:6001", noHeaders)).toBe(true);
+    expect(isAllowedProxyOrigin("http://localhost:6002", noHeaders)).toBe(
+      false,
+    );
+  });
+
+  it("rejects an unparseable Origin value", async () => {
+    process.env.AUTH_URL = "https://rdv.joyful.house";
+    const { isAllowedProxyOrigin } = await loadBridge("");
+    expect(isAllowedProxyOrigin("null", noHeaders)).toBe(false);
+    expect(isAllowedProxyOrigin("not a url", noHeaders)).toBe(false);
+  });
+});

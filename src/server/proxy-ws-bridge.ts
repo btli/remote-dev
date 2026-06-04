@@ -17,15 +17,23 @@
 
 import { WebSocket, type RawData } from "ws";
 import type { IncomingMessage } from "node:http";
-import { validateWsToken } from "../lib/ws-token.js";
+import { validateProxyWsToken } from "../lib/ws-token.js";
 import { isPortProxyable } from "../lib/proxy-port-utils.js";
 import { BASE_PATH } from "../lib/base-path.js";
+import { resolveExternalOrigin } from "../lib/request-origin.js";
 import { createLogger } from "../lib/logger.js";
 
 const proxyLog = createLogger("PortProxyWs");
 
 /** How long to wait for the upstream (in-pod dev server) WS to open (ms). */
 const UPSTREAM_CONNECT_TIMEOUT_MS = 10_000;
+
+/**
+ * Max client→upstream frames buffered before the upstream WS opens (DoS bound).
+ * Mirrors the supervisor router's `MAX_PENDING` (`apps/supervisor-router/src/lib/
+ * proxy.ts`) so a client can't buffer unbounded data pre-open.
+ */
+const MAX_PENDING = 512;
 
 /**
  * Matches a port-proxy WebSocket path and captures the target port.
@@ -94,23 +102,95 @@ export function normalizeProxyCloseCode(code: number): number {
   return 1011;
 }
 
+/** Lower-case a header that `ws`/`http` may surface as `string | string[]`. */
+function firstHeader(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
+
+/**
+ * Validate the WebSocket `Origin` against this instance's public origin
+ * (remote-dev-kn0q). The port-proxy WS is a BROWSER-only feature (HMR / live
+ * reload from the proxied iframe), and browsers ALWAYS send an `Origin` on the
+ * WS handshake — so a missing or cross-origin `Origin` is rejected. This blocks a
+ * leaked token being driven from an attacker page on another origin.
+ *
+ * The allowed origin is derived the same way the rest of the app derives its
+ * public origin: the edge-forwarded `x-forwarded-host` / `host` (the router and
+ * cloudflared set these to the real public host), with `AUTH_URL` as the
+ * fallback. We compare scheme+host+port (the URL `origin`), tolerating only a
+ * trailing-slash difference.
+ *
+ * @param origin - The raw `Origin` header from the upgrade request (may be absent).
+ * @param getHeader - Accessor for the upgrade request's headers.
+ * @returns true iff `origin` is present and matches the instance's public origin.
+ */
+export function isAllowedProxyOrigin(
+  origin: string | undefined,
+  getHeader: (name: string) => string | undefined,
+): boolean {
+  if (!origin) return false;
+
+  let originValue: string;
+  try {
+    originValue = new URL(origin).origin;
+  } catch {
+    // Not a parseable absolute origin (e.g. "null", "" or garbage) → reject.
+    return false;
+  }
+
+  const allowed = new Set<string>();
+
+  // Edge-forwarded public host (router/cloudflared/Traefik set this). Fallback
+  // origin is irrelevant here because we only keep entries we can fully parse.
+  const external = resolveExternalOrigin(
+    (name) => getHeader(name) ?? null,
+    "",
+  );
+  if (external) {
+    try {
+      allowed.add(new URL(external).origin);
+    } catch {
+      // ignore an unparseable derived origin
+    }
+  }
+
+  // AUTH_URL is the canonical public base for single-server / localhost deploys
+  // (where there is no edge `x-forwarded-host`).
+  const authUrl = process.env.AUTH_URL ?? process.env.NEXTAUTH_URL ?? "";
+  if (authUrl) {
+    try {
+      allowed.add(new URL(authUrl).origin);
+    } catch {
+      // ignore a malformed AUTH_URL
+    }
+  }
+
+  return allowed.has(originValue);
+}
+
 /**
  * Handle an accepted port-proxy WebSocket connection (emitted by the dedicated
  * `proxyWss` in `terminal.ts`, NEVER the terminal-session `wss`).
  *
- * Steps:
- *   1. Authenticate via `?token=` → `validateWsToken` (HMAC).
- *      AUTH CAVEAT (5-min TTL): we reuse the session ws-token per the B3 plan.
- *      `validateWsToken` rejects tokens older than 5 minutes, so an HMR socket
- *      that the dev server opens >5 min after page load can 401 here. A
- *      longer-TTL / `kind:"proxy"` token is DEFERRED to B4 — see the report.
- *   2. Re-derive + syntactically gate the port via `isPortProxyable`.
- *   3. Open an upstream `ws://127.0.0.1:<port><upstreamPath><query-minus-token>`
+ * Defense-in-depth gates (remote-dev-kn0q + remote-dev-urjg), in order:
+ *   1. Parse the path → target `port` (needed to verify the port-bound token).
+ *   2. `Origin` allowlist — the WS must come from this instance's public origin
+ *      ({@link isAllowedProxyOrigin}); a leaked token can't be driven cross-origin.
+ *   3. Authenticate via `?token=` → {@link validateProxyWsToken}, which requires
+ *      a `kind:"proxy"` token BOUND to this exact `port` (a terminal-session
+ *      token is rejected here, and vice-versa).
+ *   4. Syntactic port gate via `isPortProxyable` (privileged / hard-blocked).
+ *   5. Runtime membership — the port must be in the token owner's live
+ *      `(listening ∪ claimed)` set ({@link isPortProxyableForUser}).
+ *   6. Open an upstream `ws://127.0.0.1:<port><upstreamPath><query-minus-token>`
  *      and bridge both directions faithfully (text + binary), propagating close.
  *
  * Close codes match the terminal handler's convention: 4001 (auth required),
- * 4002 (invalid/expired token); plus 1008 (policy — bad port) and 1011
- * (internal — upstream connect/error).
+ * 4002 (invalid/expired/wrong-kind/wrong-port token); plus 1008 (policy — bad
+ * origin / bad port / not in proxyable set) and 1011 (internal — upstream
+ * connect/error). Client→upstream frames are buffered (bounded by
+ * {@link MAX_PENDING}) until the upstream opens.
  */
 export function handleProxyWsUpgrade(
   clientWs: WebSocket,
@@ -121,22 +201,8 @@ export function handleProxyWsUpgrade(
   const reqUrl = new URL(req.url || "", "http://127.0.0.1");
   const pathOnly = reqUrl.pathname;
 
-  // 1. Authenticate. Mirror the terminal handler's codes/messages.
-  const token = reqUrl.searchParams.get("token");
-  if (!token) {
-    clientWs.close(4001, "Authentication required");
-    return;
-  }
-  const authResult = validateWsToken(token);
-  if (!authResult) {
-    // NOTE (5-min TTL): a late-opening HMR socket can land here even with a
-    // token that was valid at page load. B4 hardens this with a longer-TTL
-    // proxy-scoped token.
-    clientWs.close(4002, "Invalid or expired token");
-    return;
-  }
-
-  // 2. Parse + gate the port.
+  // 1. Parse + syntactically gate the port FIRST — we need it to verify the
+  //    port-bound proxy token below.
   const parsed = parseProxyWsPath(pathOnly);
   if (!parsed) {
     // Shouldn't happen — the upgrade gate in terminal.ts only routes matching
@@ -152,7 +218,66 @@ export function handleProxyWsUpgrade(
     return;
   }
 
-  // 3. Build the upstream URL: ws://127.0.0.1:<port> + upstreamPath + the
+  // 2. Origin allowlist. Browsers always send an Origin on the WS handshake, so
+  //    a missing/cross-origin value is a non-browser or cross-site caller.
+  const origin = firstHeader(req.headers.origin);
+  if (!isAllowedProxyOrigin(origin, (name) => firstHeader(req.headers[name]))) {
+    proxyLog.warn("Rejected proxy WS with disallowed Origin", {
+      port,
+      origin: origin ?? null,
+    });
+    clientWs.close(1008, "Origin not allowed");
+    return;
+  }
+
+  // 3. Authenticate with a PROXY-kind token BOUND to this port. A terminal
+  //    session token (or a proxy token minted for a different port) is rejected.
+  const token = reqUrl.searchParams.get("token");
+  if (!token) {
+    clientWs.close(4001, "Authentication required");
+    return;
+  }
+  const authResult = validateProxyWsToken(token, port);
+  if (!authResult) {
+    clientWs.close(4002, "Invalid or expired token");
+    return;
+  }
+  const { userId } = authResult;
+
+  // 4 (build) + 5 (runtime membership). The membership check is async (DB +
+  // `lsof`); the client handshake is already complete, so we hold the socket,
+  // run the check, then either bridge or close. Errors fail CLOSED.
+  void (async () => {
+    let allowed: boolean;
+    try {
+      // Dynamic import keeps the DB/`lsof`-backed membership service OUT of this
+      // module's static graph (so the pure path/origin helpers stay importable
+      // without DB side effects) — mirrors how `terminal.ts` loads services.
+      const { isPortProxyableForUser } = await import(
+        "../services/proxyable-ports-service.js"
+      );
+      allowed = await isPortProxyableForUser(userId, port);
+    } catch (error) {
+      proxyLog.warn("Proxy WS membership check failed", {
+        error: String(error),
+        port,
+        userId,
+      });
+      clientWs.close(1011, "membership check failed");
+      return;
+    }
+    if (!allowed) {
+      proxyLog.warn("Rejected proxy WS port not in user's proxyable set", {
+        port,
+        userId,
+      });
+      clientWs.close(1008, "Port not in your proxyable set");
+      return;
+    }
+    connectAndBridge();
+  })();
+
+  // 6. Build the upstream URL: ws://127.0.0.1:<port> + upstreamPath + the
   //    original query MINUS our `token` param (don't leak the auth token to the
   //    in-pod dev server).
   reqUrl.searchParams.delete("token");
@@ -170,6 +295,20 @@ export function handleProxyWsUpgrade(
           .map((p) => p.trim())
           .filter(Boolean)
       : [];
+
+  /**
+   * Open the upstream socket and wire both directions. Deferred until the async
+   * membership gate above resolves OK (the client handshake is already done).
+   */
+  function connectAndBridge(): void {
+  // The client may have gone away during the async membership check; if so,
+  // don't bother opening an upstream that would only dangle until timeout.
+  if (
+    clientWs.readyState === WebSocket.CLOSING ||
+    clientWs.readyState === WebSocket.CLOSED
+  ) {
+    return;
+  }
 
   let upstream: WebSocket;
   try {
@@ -261,9 +400,20 @@ export function handleProxyWsUpgrade(
     if (closing) return;
     if (upstreamOpen) {
       upstream.send(data, { binary: isBinary });
-    } else {
-      pending.push({ data, isBinary });
+      return;
     }
+    // Upstream not open yet — buffer until its `open` fires, but BOUND the queue
+    // (mirrors the router's MAX_PENDING) so a client streaming at a stalled
+    // upstream can't grow memory without limit.
+    if (pending.length >= MAX_PENDING) {
+      proxyLog.warn("Proxy WS pre-open buffer overflow; closing", {
+        port,
+        max: MAX_PENDING,
+      });
+      teardown(1011, "buffer overflow before upstream open");
+      return;
+    }
+    pending.push({ data, isBinary });
   });
 
   clientWs.on("close", (code: number, reason: Buffer) => {
@@ -286,4 +436,5 @@ export function handleProxyWsUpgrade(
     });
     teardown(1011, "client error");
   });
+  }
 }
