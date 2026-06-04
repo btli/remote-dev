@@ -1224,6 +1224,22 @@ paths:
         - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 50 } }
       responses: { '200': { description: Sessions, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
 
+  /api/agent/sessions:
+    get:
+      tags: [ClaudeSessions]
+      summary: List resumable agent sessions (provider-generic)
+      description: >-
+        Provider-generic generalization of /api/agent/claude-sessions covering
+        every resume-capable provider (claude, codex, gemini, opencode).
+      parameters:
+        - { name: provider, in: query, required: true, schema: { type: string, enum: [claude, codex, gemini, opencode] } }
+        - { name: projectPath, in: query, required: true, schema: { type: string } }
+        - { name: profileId, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 50 } }
+      responses:
+        '200': { description: Sessions, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '400': { description: Invalid provider or projectPath, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+
   # ===================== MCP server registry =====================
   /api/mcp-servers:
     get:

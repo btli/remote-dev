@@ -102,6 +102,7 @@ by session/key auth:
 | Agent providers | `/api/agent-providers` | [Agent providers](#agent-providers) |
 | Agent config files | `/api/agent-configs` | [Agent config files](#agent-config-files) |
 | Resumable Claude sessions | `/api/agent/claude-sessions` | [Resumable Claude sessions](#resumable-claude-sessions) |
+| Resumable agent sessions (all providers) | `/api/agent/sessions` | [Resumable agent sessions](#resumable-agent-sessions-all-providers) |
 | MCP server registry | `/api/mcp-servers` | [MCP server registry](#mcp-server-registry) |
 | Secrets | `/api/secrets` | [Secrets](#secrets) |
 | SSH connections | `/api/ssh-connections` | [SSH connections](#ssh-connections) |
@@ -836,6 +837,36 @@ GET /api/agent/claude-sessions?projectPath=…&profileId=…&limit=20
 **[session | key]**. Lists resumable Claude Code sessions for a project by
 scanning `.jsonl` files under `~/.claude/projects/<encoded-path>/` (or the
 profile-isolated equivalent). `projectPath` required; `limit` default 20, max 50.
+
+> Claude-specific legacy route. New clients should prefer the provider-generic
+> [`/api/agent/sessions`](#resumable-agent-sessions-all-providers) below, which
+> covers Claude plus every other resume-capable provider.
+
+---
+
+## Resumable agent sessions (all providers)
+
+```http
+GET /api/agent/sessions?provider=…&projectPath=…&profileId=…&limit=20
+```
+
+**[session | key]**. Provider-generic generalization of
+`/api/agent/claude-sessions` — lists resumable agent sessions for any
+resume-capable provider by delegating to per-provider on-disk discovery.
+
+Query params:
+
+| Param | Required | Notes |
+|-------|----------|-------|
+| `provider` | yes | One of `claude` \| `codex` \| `gemini` \| `opencode`. `antigravity` and `none` are rejected `400 INVALID_PROVIDER` (no resume support). |
+| `projectPath` | yes | Absolute path of the project directory; otherwise `400 INVALID_PROJECT_PATH`. |
+| `profileId` | no | Agent profile ID; scopes discovery to that profile's isolated CLI home dir. |
+| `limit` | no | Default 20, clamped to 1–50. |
+
+Response: `{ provider, sessions: ResumableSessionSummary[] }`. Claude entries
+carry rich previews (first message + git branch) from their `.jsonl` history;
+`codex`/`gemini`/`opencode` entries return id + timestamp from disk discovery
+(no preview).
 
 ---
 
