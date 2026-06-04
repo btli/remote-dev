@@ -16,7 +16,8 @@
 
 import { mkdir, writeFile, readFile, rm, access, chmod } from "node:fs/promises";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
-import { join, resolve, sep } from "node:path";
+import { sep } from "node:path";
+import { runtimeJoin as join, runtimeResolve as resolve } from "@/lib/dynamic-fs";
 import { db } from "@/db";
 import { sshConnections } from "@/db/schema";
 import { and, desc, eq, isNull } from "drizzle-orm";

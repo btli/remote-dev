@@ -4,7 +4,7 @@
  * Validates that a projectPath belongs to the authenticated user's folders.
  */
 
-import { resolve, join } from "node:path";
+import { runtimeResolve as resolve, runtimeJoin as join } from "@/lib/dynamic-fs";
 import { homedir } from "node:os";
 import { db } from "@/db";
 import { projects, nodePreferences, userSettings } from "@/db/schema";

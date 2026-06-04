@@ -77,7 +77,7 @@
 
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { hostname as osHostname } from "node:os";
-import { join } from "node:path";
+import { runtimeJoin as join } from "@/lib/dynamic-fs";
 import { randomUUID } from "node:crypto";
 
 import { BASE_PATH } from "@/lib/base-path";

@@ -11,7 +11,7 @@
  * driven by the declarative registry, not inline branching.
  */
 
-import { join } from "node:path";
+import { runtimeJoin as join } from "@/lib/dynamic-fs";
 import { homedir } from "node:os";
 import { readdir, stat } from "node:fs/promises";
 import type { AgentProviderType } from "@/types/session";

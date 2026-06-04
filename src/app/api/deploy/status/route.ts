@@ -12,7 +12,7 @@
  */
 import { NextResponse } from "next/server";
 import { existsSync, readFileSync } from "fs";
-import { join } from "path";
+import { runtimeJoin as join } from "@/lib/dynamic-fs";
 import { homedir } from "os";
 import { createLogger } from "@/lib/logger";
 import { verifySignature } from "@/lib/deploy-webhook-auth";

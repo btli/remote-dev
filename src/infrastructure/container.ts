@@ -110,7 +110,7 @@ import {
 import { AutoUpdateOrchestrator } from "@/services/auto-update-orchestrator";
 import { AppVersion } from "@/domain/value-objects/AppVersion";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { runtimeResolve as resolve } from "@/lib/dynamic-fs";
 
 // Logs
 import { getLogStore } from "./persistence/sidecar-factory";

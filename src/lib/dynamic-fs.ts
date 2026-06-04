@@ -27,12 +27,17 @@ export function runtimeJoin(...segments: string[]): string {
   return _path.join(...segments);
 }
 
+/** path.resolve that bypasses Turbopack file tracing */
+export function runtimeResolve(...segments: string[]): string {
+  return _path.resolve(...segments);
+}
+
 /** path.dirname that bypasses Turbopack file tracing */
 export function runtimeDirname(p: string): string {
   return _path.dirname(p);
 }
 
 /** path.basename that bypasses Turbopack file tracing */
-export function runtimeBasename(p: string): string {
-  return _path.basename(p);
+export function runtimeBasename(p: string, suffix?: string): string {
+  return _path.basename(p, suffix);
 }

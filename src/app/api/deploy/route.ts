@@ -14,7 +14,7 @@
 
 import { NextResponse } from "next/server";
 import { existsSync, readFileSync } from "fs";
-import { join } from "path";
+import { runtimeJoin as join } from "@/lib/dynamic-fs";
 import { homedir } from "os";
 import { spawn } from "child_process";
 import { createLogger } from "@/lib/logger";

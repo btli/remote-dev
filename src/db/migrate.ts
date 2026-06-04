@@ -18,7 +18,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { runtimeJoin as join } from "@/lib/dynamic-fs";
 import { isPostgres } from "@/db/is-postgres";
 import { createLogger } from "@/lib/logger";
 

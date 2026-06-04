@@ -20,7 +20,7 @@
  */
 
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { runtimeJoin as join } from "@/lib/dynamic-fs";
 import { existsSync, mkdirSync } from "node:fs";
 
 /**
