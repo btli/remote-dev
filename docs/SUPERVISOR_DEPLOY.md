@@ -247,6 +247,15 @@ kubectl apply -f deploy/k8s/supervisor/supervisor.yaml
 kubectl apply -f deploy/k8s/supervisor/router.yaml
 ```
 
+> **`NODE_EXTRA_CA_CERTS` (set in `supervisor.yaml`, both containers).** The
+> manifest bakes `NODE_EXTRA_CA_CERTS=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`
+> into the `web` and `controller` containers. Bun (the supervisor runtime)
+> ignores `@kubernetes/client-node`'s per-request CA, so without this global
+> trust anchor in-cluster k8s API calls fail TLS with `self signed certificate in
+> certificate chain` on clusters with a private CA (the supervisor then can't
+> create/list namespaces). It points at the in-pod ServiceAccount CA, so no
+> Secret/operator action is needed.
+
 > **Instance namespaces/objects are created at runtime by the Supervisor.** When
 > an operator provisions an instance, the reconciler creates the `rdv-<slug>`
 > namespace and its Service/Secret(s)/StatefulSet (+ optional seed Job). There
@@ -377,6 +386,7 @@ the deferred per-port **subdomain** scheme.
 |---|---|
 | Supervisor pod `CrashLoopBackOff`, "CF Access … must be configured" | `SUPERVISOR_CF_ACCESS_*` missing in the Secret (prod refuses to start). |
 | `/api/internal/routes` returns 503 to the router | `SUPERVISOR_INTERNAL_SECRET` mismatch (it must be identical in the Secret the supervisor and router both read). |
+| k8s API calls fail `self signed certificate in certificate chain` (no namespaces created/listed) | `NODE_EXTRA_CA_CERTS` missing — Bun ignores `@kubernetes/client-node`'s per-request CA. `supervisor.yaml` sets it to the in-pod ServiceAccount CA (`/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`) on both containers; ensure it's present if you templated your own manifest. |
 | Supervisor PVC won't bind | `storageClassName` placeholder not replaced, or the SC isn't installed. Use a replicated class. |
 | Provisioning stuck in `provisioning`/`error` | Check RBAC (`kubectl auth can-i --as=system:serviceaccount:rdv-system:rdv-supervisor create statefulsets -n rdv-alpha`) and the instance pod's readiness at `/<slug>/api/readyz`. |
 | Instance 404 at the router | slug not yet `ready` in the allowlist, or a reserved/invalid slug. |

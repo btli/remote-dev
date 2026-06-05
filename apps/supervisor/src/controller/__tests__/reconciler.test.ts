@@ -107,6 +107,10 @@ function baseDeps(over: Partial<ReconcilerDeps>): ReconcilerDeps {
     checkInstanceReady: vi.fn(async () => ({ ready: true })),
     terminateInstance: vi.fn(async () => undefined),
     namespaceExists: vi.fn(async () => false),
+    // Default to NO labels → the label-gated image auto-roll (tpb5) is off, so
+    // every existing test preserves its pre-tpb5 behavior even though the global
+    // beforeEach sets SUPERVISOR_INSTANCE_IMAGE.
+    getNamespaceLabels: vi.fn(async () => ({}) as Record<string, string>),
     // Phase 2 steady-state deps — default to "nothing to converge" so existing
     // requested/provisioning/terminating tests are unaffected.
     getStatefulSet: vi.fn(async () => ({
@@ -653,6 +657,169 @@ describe("reconcileInstances — steady-state convergence (Phase 2)", () => {
     expect(setStatefulSetReplicas).not.toHaveBeenCalled();
     expect(updates.length).toBe(0);
     expect(inserts.length).toBe(0);
+  });
+});
+
+describe("reconcileSteadyState — label-gated image auto-roll (tpb5)", () => {
+  // Save/restore SUPERVISOR_INSTANCE_IMAGE so per-test overrides (incl. unset)
+  // never leak — independent of the suite-wide beforeEach/afterEach.
+  const ORIGINAL_IMAGE = process.env.SUPERVISOR_INSTANCE_IMAGE;
+  afterEach(() => {
+    if (ORIGINAL_IMAGE === undefined) {
+      delete process.env.SUPERVISOR_INSTANCE_IMAGE;
+    } else {
+      process.env.SUPERVISOR_INSTANCE_IMAGE = ORIGINAL_IMAGE;
+    }
+  });
+
+  // The global image a bump publishes; instances on the old pin should follow it
+  // only when their namespace opts in via rdv.io/auto-update=true.
+  const GLOBAL = "ghcr.io/x@sha256:global";
+  const OLD = "ghcr.io/x@sha256:old";
+
+  // A ready instance pinned to the OLD image, with a live STS still on OLD, so a
+  // successful auto-roll both syncs row.imageTag AND rolls the StatefulSet.
+  function readyOnOld() {
+    return makeDb([row("ready", { imageTag: OLD })]);
+  }
+  const stsOnOld = () =>
+    vi.fn(async () => ({
+      found: true,
+      replicas: 1,
+      readyReplicas: 1,
+      image: OLD,
+    }));
+
+  it("(a) label rdv.io/auto-update=true + envImage differs → syncs imageTag, rolls STS, audits image:autoroll", async () => {
+    process.env.SUPERVISOR_INSTANCE_IMAGE = GLOBAL;
+    const { db, updates, inserts } = readyOnOld();
+    const getNamespaceLabels = vi.fn(async () => ({ "rdv.io/auto-update": "true" }));
+    const setStatefulSetImage = vi.fn(async () => undefined);
+    await reconcileInstances(
+      baseDeps({ db, getNamespaceLabels, setStatefulSetImage, getStatefulSet: stsOnOld() }),
+    );
+
+    // Labels read with the FULL namespace name (row.namespace), not the slug.
+    expect(getNamespaceLabels).toHaveBeenCalledWith("rdv-alpha", fakeClients);
+    // imageTag persisted to the global image (+ updatedAt bumped).
+    const pin = updates.find((u) => u.set.imageTag === GLOBAL);
+    expect(pin).toBeDefined();
+    expect(pin?.set.updatedAt).toBeInstanceOf(Date);
+    // No status change.
+    expect(updates.some((u) => "status" in u.set)).toBe(false);
+    // StatefulSet rolled to the global image THIS tick (step 2 picks up the
+    // mutated row.imageTag).
+    expect(setStatefulSetImage).toHaveBeenCalledWith("alpha", GLOBAL, fakeClients);
+    // image:autoroll audit (from OLD → GLOBAL).
+    const audit = inserts.find((i) => i.values.action === "image:autoroll");
+    expect(audit).toBeDefined();
+    const meta = JSON.parse(String(audit?.values.metadata));
+    expect(meta).toEqual({ from: OLD, to: GLOBAL });
+    // The follow-on rollout audit is the existing image:rollout row.
+    expect(inserts.some((i) => i.values.action === "image:rollout")).toBe(true);
+  });
+
+  it("(b) label absent → no imageTag change, no roll, no autoroll audit", async () => {
+    process.env.SUPERVISOR_INSTANCE_IMAGE = GLOBAL;
+    const { db, updates, inserts } = readyOnOld();
+    const getNamespaceLabels = vi.fn(async () => ({})); // no labels
+    const setStatefulSetImage = vi.fn(async () => undefined);
+    await reconcileInstances(
+      baseDeps({ db, getNamespaceLabels, setStatefulSetImage, getStatefulSet: stsOnOld() }),
+    );
+
+    expect(updates.some((u) => u.set.imageTag === GLOBAL)).toBe(false);
+    // STS stays on its OLD pin (row.imageTag === OLD === sts.image → no roll).
+    expect(setStatefulSetImage).not.toHaveBeenCalled();
+    expect(inserts.some((i) => i.values.action === "image:autoroll")).toBe(false);
+  });
+
+  it('(c) label rdv.io/auto-update="false" → no change, no roll, no autoroll audit', async () => {
+    process.env.SUPERVISOR_INSTANCE_IMAGE = GLOBAL;
+    const { db, updates, inserts } = readyOnOld();
+    const getNamespaceLabels = vi.fn(async () => ({ "rdv.io/auto-update": "false" }));
+    const setStatefulSetImage = vi.fn(async () => undefined);
+    await reconcileInstances(
+      baseDeps({ db, getNamespaceLabels, setStatefulSetImage, getStatefulSet: stsOnOld() }),
+    );
+
+    expect(updates.some((u) => u.set.imageTag === GLOBAL)).toBe(false);
+    expect(setStatefulSetImage).not.toHaveBeenCalled();
+    expect(inserts.some((i) => i.values.action === "image:autoroll")).toBe(false);
+  });
+
+  it("(d) envImage === imageTag → no-op (label not even read; no change/roll)", async () => {
+    // Instance already pinned to the global image → nothing to auto-roll.
+    process.env.SUPERVISOR_INSTANCE_IMAGE = GLOBAL;
+    const { db, updates, inserts } = makeDb([row("ready", { imageTag: GLOBAL })]);
+    const getNamespaceLabels = vi.fn(async () => ({ "rdv.io/auto-update": "true" }));
+    const setStatefulSetImage = vi.fn(async () => undefined);
+    await reconcileInstances(
+      baseDeps({
+        db,
+        getNamespaceLabels,
+        setStatefulSetImage,
+        // STS already on the global image too → no rollout either.
+        getStatefulSet: vi.fn(async () => ({
+          found: true,
+          replicas: 1,
+          readyReplicas: 1,
+          image: GLOBAL,
+        })),
+      }),
+    );
+
+    // envImage === row.imageTag short-circuits BEFORE the label read.
+    expect(getNamespaceLabels).not.toHaveBeenCalled();
+    expect(updates.some((u) => u.set.imageTag === GLOBAL)).toBe(false);
+    expect(setStatefulSetImage).not.toHaveBeenCalled();
+    expect(inserts.some((i) => i.values.action === "image:autoroll")).toBe(false);
+  });
+
+  it("(e) SUPERVISOR_INSTANCE_IMAGE unset → getNamespaceLabels NOT called, no change", async () => {
+    delete process.env.SUPERVISOR_INSTANCE_IMAGE;
+    const { db, updates, inserts } = readyOnOld();
+    const getNamespaceLabels = vi.fn(async () => ({ "rdv.io/auto-update": "true" }));
+    const setStatefulSetImage = vi.fn(async () => undefined);
+    await reconcileInstances(
+      baseDeps({ db, getNamespaceLabels, setStatefulSetImage, getStatefulSet: stsOnOld() }),
+    );
+
+    // No env image → the label read is skipped entirely (no extra API call).
+    expect(getNamespaceLabels).not.toHaveBeenCalled();
+    expect(updates.some((u) => u.set.imageTag === GLOBAL)).toBe(false);
+    // row.imageTag (OLD) still matches sts.image (OLD) → no rollout.
+    expect(setStatefulSetImage).not.toHaveBeenCalled();
+    expect(inserts.some((i) => i.values.action === "image:autoroll")).toBe(false);
+  });
+
+  it("(f) getNamespaceLabels throws → NON-FATAL: no status/error transition, no roll", async () => {
+    process.env.SUPERVISOR_INSTANCE_IMAGE = GLOBAL;
+    const { db, updates, inserts } = readyOnOld();
+    const getNamespaceLabels = vi.fn(async () => {
+      throw new Error("transient namespace read error");
+    });
+    const setStatefulSetImage = vi.fn(async () => undefined);
+    const terminateInstance = vi.fn(async () => undefined);
+    await expect(
+      reconcileInstances(
+        baseDeps({
+          db,
+          getNamespaceLabels,
+          setStatefulSetImage,
+          terminateInstance,
+          getStatefulSet: stsOnOld(),
+        }),
+      ),
+    ).resolves.toBeUndefined();
+
+    // Read failure is swallowed: no imageTag sync, no roll, no autoroll audit.
+    expect(updates.some((u) => u.set.imageTag === GLOBAL)).toBe(false);
+    expect(setStatefulSetImage).not.toHaveBeenCalled();
+    expect(inserts.some((i) => i.values.action === "image:autoroll")).toBe(false);
+    // Crucially: never transitions to error and never tears the namespace down.
+    expect(updates.some((u) => u.set.status === "error")).toBe(false);
+    expect(terminateInstance).not.toHaveBeenCalled();
   });
 });
 

@@ -100,6 +100,11 @@ spec:
             # set explicitly so the probe + Service can reach it).
             - name: HOSTNAME
               value: "0.0.0.0"
+            # Bun ignores @kubernetes/client-node's per-request CA but honors
+            # NODE_EXTRA_CA_CERTS as a global trust anchor — needed so in-cluster
+            # k8s API calls TLS-verify the apiserver on clusters with a private CA.
+            - name: NODE_EXTRA_CA_CERTS
+              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
             - name: SUPERVISOR_DATA_DIR
               value: /var/lib/rdv-supervisor
             # [oyej] Warm pool + scale-to-zero (epic remote-dev-oyej.8/.9).
@@ -161,6 +166,11 @@ spec:
               type: RuntimeDefault
             readOnlyRootFilesystem: true
           env:
+            # Bun ignores @kubernetes/client-node's per-request CA but honors
+            # NODE_EXTRA_CA_CERTS as a global trust anchor — needed so in-cluster
+            # k8s API calls TLS-verify the apiserver on clusters with a private CA.
+            - name: NODE_EXTRA_CA_CERTS
+              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
             - name: SUPERVISOR_DATA_DIR
               value: /var/lib/rdv-supervisor
             # [oyej] Warm pool + scale-to-zero (the controller runs the warm-pool

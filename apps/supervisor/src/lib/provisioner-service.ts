@@ -495,6 +495,25 @@ export async function namespaceExists(
   }
 }
 
+/**
+ * Read an instance namespace's labels (`metadata.labels`), e.g. the
+ * operator-set `rdv.io/auto-update` opt-in flag the reconciler reads to decide
+ * whether an EXISTING instance should follow a global `SUPERVISOR_INSTANCE_IMAGE`
+ * bump (remote-dev-tpb5). Returns `{}` when the namespace has no labels.
+ *
+ * Takes the FULL namespace name (`rdv-<slug>`) — NOT the slug — because the
+ * reconciler passes `row.namespace` directly. Errors propagate; the reconciler
+ * treats a read failure as NON-FATAL (logs + skips the auto-roll, converging
+ * next tick) rather than letting it transition the instance to `error`.
+ */
+export async function getNamespaceLabels(
+  namespace: string,
+  clients: K8sClients = defaultClients(),
+): Promise<Record<string, string>> {
+  const ns = await clients.core.readNamespace({ name: namespace });
+  return ns.metadata?.labels ?? {};
+}
+
 // ── Phase 2 lifecycle helpers (suspend/resume, image rollout, resize, logs,
 //    events) — spec §6.3/§6.7/§9. All k8s WRITES here are issued ONLY from the
 //    reconciler (the single writer); the read-only helpers (getPodLogs,
