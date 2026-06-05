@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
@@ -22,6 +24,7 @@ import 'infrastructure/biometric/biometric_settings_store.dart';
 import 'infrastructure/biometric/local_auth_service.dart';
 import 'infrastructure/deep_link/deep_link_stream_provider.dart';
 import 'infrastructure/device/device_id_provider.dart';
+import 'infrastructure/network/connectivity_plus_adapter.dart';
 import 'infrastructure/push/fcm_push_service.dart';
 import 'infrastructure/push/push_token_registrar.dart';
 import 'infrastructure/storage/flutter_secure_storage_port.dart';
@@ -201,6 +204,8 @@ List<Override> buildServerScopedOverrides({required String deviceId}) {
               ref.read(reauthSignalProvider.notifier).request(),
         ),
         deviceId: deviceId,
+        connectivity: ConnectivityPlusAdapter(),
+        backoffBase: const Duration(seconds: 15),
       ),
     ),
     biometricPortProvider.overrideWithValue(LocalAuthService()),
@@ -262,7 +267,12 @@ void main() async {
   // Fire-and-forget: registers the FCM token with every saved server and
   // subscribes to refresh. See PushTokenRegistrar.start(). Surface failures
   // in logs rather than swallowing them with `unawaited`.
-  container.read(pushTokenRegistrarProvider).start().then((ok) {
+  final pushRegistrar = container.read(pushTokenRegistrarProvider);
+  // Foregrounding lifts Doze network restrictions, so app-resume is the most
+  // reliable moment to flush any registrations that failed while the app was
+  // launched behind the screensaver (remote-dev-0ir2).
+  WidgetsBinding.instance.addObserver(_PushRetryOnResume(pushRegistrar));
+  pushRegistrar.start().then((ok) {
     if (!ok) debugPrint('[Push] registrar.start returned false; push disabled');
   }).catchError((Object e) {
     debugPrint('[Push] registrar.start threw: $e');
@@ -282,3 +292,20 @@ void main() async {
 /// so this handler is intentionally a no-op.
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {}
+
+/// Drives a push-registration retry each time the app returns to the
+/// foreground. Foregrounding is what lifts Doze network restrictions, so it is
+/// the most reliable moment to flush any registrations that failed while the
+/// app was launched behind the screensaver (remote-dev-0ir2).
+class _PushRetryOnResume with WidgetsBindingObserver {
+  _PushRetryOnResume(this._registrar);
+
+  final PushTokenRegistrar _registrar;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_registrar.retryPending());
+    }
+  }
+}

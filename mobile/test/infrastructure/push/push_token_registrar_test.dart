@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:remote_dev/application/ports/api_client_port.dart';
+import 'package:remote_dev/application/ports/connectivity_port.dart';
 import 'package:remote_dev/application/ports/host_workspace_store.dart';
 import 'package:remote_dev/application/ports/push_port.dart';
 import 'package:remote_dev/domain/auth_cookie.dart';
@@ -18,6 +19,16 @@ class _MockStore extends Mock implements HostWorkspaceStore {}
 class _MockCredentials extends Mock implements MobileCredentialsStore {}
 
 class _MockClient extends Mock implements ApiClientPort {}
+
+class _FakeConnectivity implements ConnectivityPort {
+  final controller = StreamController<bool>.broadcast();
+
+  @override
+  Stream<bool> get onConnectivityChanged => controller.stream;
+
+  @override
+  Future<bool> isOnline() async => true;
+}
 
 /// The endpoint every registration / unregistration POSTs/DELETEs against.
 const _pushTokenPath = '/api/notifications/push-token';
@@ -399,5 +410,142 @@ void main() {
       deviceId: 'dev-1',
     );
     expect(await registrar.start(), isFalse);
+  });
+
+  test('failed registration is remembered and retried by retryPending',
+      () async {
+    final clientA = _MockClient();
+    var calls = 0;
+    when(() => clientA.post(any(), body: any(named: 'body')))
+        .thenAnswer((_) async {
+      calls++;
+      if (calls == 1) throw Exception('offline');
+      return null;
+    });
+
+    final h = host('h1');
+    when(store.loadWorkspaces).thenAnswer((_) async => [ws('a', hostId: 'h1')]);
+    when(() => store.loadHost('h1')).thenAnswer((_) async => h);
+    when(() => credentials.getWorkspaceApiKey('a'))
+        .thenAnswer((_) async => 'key-a');
+
+    final registrar = PushTokenRegistrar(
+      push: push,
+      store: store,
+      credentials: credentials,
+      clientFactory: (_, __) => clientA,
+      deviceId: 'dev-1',
+    );
+
+    await registrar.registerWithAll('tok-1'); // attempt 1 fails → pending {a}
+    expect(calls, 1);
+
+    await registrar.retryPending(); // attempt 2 succeeds → pending empty
+    expect(calls, 2);
+
+    await registrar.retryPending(); // nothing pending → no further POST
+    expect(calls, 2);
+  });
+
+  test('connectivity-restored retries pending registrations', () async {
+    final clientA = _MockClient();
+    var calls = 0;
+    when(() => clientA.post(any(), body: any(named: 'body')))
+        .thenAnswer((_) async {
+      calls++;
+      if (calls == 1) throw Exception('offline');
+      return null;
+    });
+    when(() => push.initialize()).thenAnswer((_) async => true);
+    when(() => push.getToken()).thenAnswer((_) async => 'tok-1');
+
+    final h = host('h1');
+    when(store.loadWorkspaces).thenAnswer((_) async => [ws('a', hostId: 'h1')]);
+    when(() => store.loadHost('h1')).thenAnswer((_) async => h);
+    when(() => credentials.getWorkspaceApiKey('a'))
+        .thenAnswer((_) async => 'key-a');
+
+    final conn = _FakeConnectivity();
+    final registrar = PushTokenRegistrar(
+      push: push,
+      store: store,
+      credentials: credentials,
+      clientFactory: (_, __) => clientA,
+      deviceId: 'dev-1',
+      connectivity: conn,
+    );
+
+    await registrar.start(); // initial attempt fails → pending {a}
+    expect(calls, 1);
+
+    conn.controller.add(false); // offline event must NOT trigger a retry
+    await pumpEventQueue();
+    expect(calls, 1);
+
+    conn.controller.add(true); // connectivity regained → retry succeeds
+    await pumpEventQueue();
+    expect(calls, 2);
+
+    conn.controller.add(true); // nothing pending now → no extra POST
+    await pumpEventQueue();
+    expect(calls, 2);
+
+    await registrar.stop();
+    await conn.controller.close();
+  });
+
+  test('retryPending is a no-op before any registration', () async {
+    final clientA = _MockClient();
+
+    final registrar = PushTokenRegistrar(
+      push: push,
+      store: store,
+      credentials: credentials,
+      clientFactory: (_, __) => clientA,
+      deviceId: 'dev-1',
+    );
+
+    await registrar.retryPending();
+
+    verifyNever(() => clientA.post(any(), body: any(named: 'body')));
+    verifyNever(store.loadWorkspaces);
+  });
+
+  test('backoff timer retries pending registrations without external triggers',
+      () async {
+    final clientA = _MockClient();
+    var calls = 0;
+    when(() => clientA.post(any(), body: any(named: 'body')))
+        .thenAnswer((_) async {
+      calls++;
+      if (calls == 1) throw Exception('offline');
+      return null;
+    });
+
+    final h = host('h1');
+    when(store.loadWorkspaces).thenAnswer((_) async => [ws('a', hostId: 'h1')]);
+    when(() => store.loadHost('h1')).thenAnswer((_) async => h);
+    when(() => credentials.getWorkspaceApiKey('a'))
+        .thenAnswer((_) async => 'key-a');
+
+    final registrar = PushTokenRegistrar(
+      push: push,
+      store: store,
+      credentials: credentials,
+      clientFactory: (_, __) => clientA,
+      deviceId: 'dev-1',
+      backoffBase: const Duration(milliseconds: 20),
+    );
+
+    await registrar.registerWithAll('tok-1'); // fails → pending, timer armed
+    expect(calls, 1);
+
+    await Future<void>.delayed(const Duration(milliseconds: 90));
+    expect(calls, 2); // timer fired → retry succeeded
+
+    await Future<void>.delayed(const Duration(milliseconds: 90));
+    expect(calls, 2); // pending empty → timer cancelled
+
+    await registrar.stop();
   });
 }
