@@ -345,7 +345,32 @@ export function SessionProvider({
       if (checkAuthResponse(response)) return;
       if (!response.ok) throw new Error("Failed to fetch sessions");
       const data = await response.json();
-      dispatch({ type: "LOAD_SESSIONS", sessions: data.sessions });
+      const sessions: TerminalSession[] = data.sessions;
+      dispatch({ type: "LOAD_SESSIONS", sessions });
+      // [remote-dev-f9y9] Re-seed the live activity-status cache from DB truth.
+      // agentActivityStatuses is fed by one-shot WS pushes that can be missed while
+      // the tab is hidden/asleep (no replay), and getAgentActivityStatus() prefers
+      // that cache over the DB row — so a stale "running" would otherwise shadow a
+      // fresh "idle" forever. On every authoritative reload, overwrite the cache
+      // with the persisted status (only when the DB has a concrete valid value, so a
+      // just-pushed status whose fire-and-forget DB write hasn't landed is never
+      // wrongly cleared). Subsequent WS pushes keep updating the cache live.
+      setAgentActivityStatuses((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const s of sessions) {
+          const dbStatus = s.agentActivityStatus;
+          if (
+            dbStatus &&
+            VALID_ACTIVITY_STATUSES.has(dbStatus as AgentActivityStatus) &&
+            next[s.id] !== dbStatus
+          ) {
+            next[s.id] = dbStatus as AgentActivityStatus;
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
     } catch (error) {
       console.error("Error fetching sessions:", error);
     }

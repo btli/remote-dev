@@ -5,7 +5,11 @@ import { Terminal, GitBranch, Pin, X, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
 import type { AgentActivityStatus } from "@/types/terminal-type";
-import { getSessionIconColor } from "./sessionIconColor";
+import {
+  getSessionIconColor,
+  getAttentionGlowClass,
+  type SessionAttentionLevel,
+} from "./sessionIconColor";
 import { SessionMetadataBar } from "../SessionMetadataBar";
 import { TerminalTypeClientRegistry } from "@/lib/terminal-plugins/client";
 import {
@@ -31,6 +35,10 @@ export interface SessionRowProps {
   editValue?: string;
   hasUnread: boolean;
   agentStatus: AgentActivityStatus | null;
+  // Unread actionable/error severity for this session, derived from the
+  // notification feed. Drives the icon GLOW alongside live status so a
+  // backgrounded agent that already went idle still surfaces a pending signal.
+  attentionSeverity?: SessionAttentionLevel;
   scheduleCount: number;
   onClick: () => void;
   onClose: () => void;
@@ -78,6 +86,7 @@ export function SessionRow({
   editValue,
   hasUnread,
   agentStatus,
+  attentionSeverity = null,
   scheduleCount,
   onClick,
   onClose,
@@ -142,9 +151,23 @@ export function SessionRow({
   const derivedTitle = plugin?.deriveTitle?.(session) ?? null;
   const displayTitle = derivedTitle ?? session.name;
 
+  const attentionGlow = getAttentionGlowClass(agentStatus, attentionSeverity);
   function renderIcon() {
-    return <Icon className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
+    return <Icon className={cn("w-3.5 h-3.5 shrink-0", iconColor, attentionGlow)} />;
   }
+
+  // Status announcement for screen readers. The glow halo (and the breathe) is
+  // now the only visual signal for waiting/error, so mirror MobileSessionRow and
+  // fold the state into the row's accessible name. Driven by BOTH live status
+  // and the highest unread notification severity (whichever raised the glow).
+  // Anything calmer than waiting/error announces just the name to avoid verbose
+  // repetition down long lists.
+  const statusAnnouncement: string | null =
+    agentStatus === "error" || attentionSeverity === "error"
+      ? "error"
+      : agentStatus === "waiting" || attentionSeverity === "actionable"
+        ? "waiting for input"
+        : null;
 
   // Indent with inline paddingLeft (matches GroupRow/ProjectRow). The inline
   // paddingLeft overrides Tailwind `px-2`'s padding-left (inline > class),
@@ -187,7 +210,9 @@ export function SessionRow({
       <div
         role="button"
         tabIndex={isEditing ? -1 : 0}
-        aria-label={displayTitle}
+        aria-label={
+          statusAnnouncement ? `${displayTitle}, ${statusAnnouncement}` : displayTitle
+        }
         // [n6uc] Jump-to-attention targets rows by id and reads this flag to
         // pick the next session needing attention; also drives the ring below.
         data-session-id={session.id}

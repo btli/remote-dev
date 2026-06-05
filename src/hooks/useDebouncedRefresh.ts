@@ -34,17 +34,26 @@ export function useDebouncedRefresh(
     };
   }, []);
 
-  // Refresh when page becomes visible (e.g. after sleep, tab switch)
+  // Refresh when page becomes visible (e.g. after sleep, tab switch) AND when
+  // the window regains focus. `focus` covers alt/⌘-tabbing back to a tab that
+  // was already `visible` (so visibilitychange wouldn't fire) — the case where
+  // a missed status push would otherwise leave the sidebar stale. Both paths
+  // share the 150ms debounce so a focus+visibility double-fire coalesces.
   useEffect(() => {
     function handleVisibilityChange(): void {
       if (!document.hidden) {
         debouncedRefresh();
       }
     }
+    function handleFocus(): void {
+      debouncedRefresh();
+    }
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleFocus);
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleFocus);
     };
   }, [debouncedRefresh]);
 

@@ -100,6 +100,10 @@ export function useTerminalWebSocket({
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const intentionalExitRef = useRef(false);
+  // [remote-dev-f9y9] Distinguishes the very first open from a later reopen so we
+  // only trigger a sessions refresh on RE-connect (the initial connect is already
+  // covered by SessionManager's mount refresh).
+  const hasConnectedBeforeRef = useRef(false);
 
   // Notifications hook for command completion
   const { recordActivity } = useNotifications({
@@ -195,6 +199,11 @@ export function useTerminalWebSocket({
     let mounted = true;
     isUnmountingRef.current = false;
     intentionalExitRef.current = false;
+    // [remote-dev-f9y9] Fresh effect run == a new session/socket (deps include
+    // sessionId), so the upcoming open is a FIRST connect, not a reconnect.
+    // Reset here (not on each connect()) so the ref still stays true across
+    // reconnect attempts within this same effect run.
+    hasConnectedBeforeRef.current = false;
 
     async function connect() {
       if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -246,6 +255,16 @@ export function useTerminalWebSocket({
         updateStatus("connected");
         reconnectAttemptsRef.current = 0;
         onWebSocketReadyRef.current?.(ws);
+        // [remote-dev-f9y9] On a RE-open (not the first connect), reconcile all
+        // sessions from the DB. A socket that silently dropped while the tab was
+        // hidden could have missed running→idle status pushes; the server replays
+        // this session's in-memory indicators on attach, and this refresh pulls
+        // the authoritative agentActivityStatus for every session.
+        if (hasConnectedBeforeRef.current) {
+          document.dispatchEvent(new CustomEvent("rdv:sidebar-changed"));
+        } else {
+          hasConnectedBeforeRef.current = true;
+        }
       };
 
       ws.onmessage = (event) => {

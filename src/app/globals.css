@@ -700,6 +700,16 @@
   animation: agent-breathing 2s ease-in-out infinite;
 }
 
+/* Needs-attention glow halo on the status icon. Decoupled from the icon's text
+   color so an idle/running icon can still glow when something needs attention.
+   When paired with .agent-breathing the halo gently pulses with the icon. */
+.agent-glow-attention {
+  filter: drop-shadow(0 0 2px rgb(234 179 8 / 0.95)) drop-shadow(0 0 5px rgb(234 179 8 / 0.7));
+}
+.agent-glow-error {
+  filter: drop-shadow(0 0 2px rgb(239 68 68 / 0.95)) drop-shadow(0 0 5px rgb(239 68 68 / 0.7));
+}
+
 /* Terminal pane notification ring (blue glow for agents needing attention).
    Uses --signal-attention so the one chromatic accent in chrome has a name.
    Outer glow uses color-mix to derive softer alpha steps from the token. */

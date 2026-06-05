@@ -52,12 +52,14 @@ describe("SessionMetadataBar", () => {
     expect(screen.getByText(/3000/)).toBeTruthy(); // port chip
   });
 
-  it("renders an attention dot when metadata.attention is set", async () => {
+  it("no longer renders the attention dot (replaced by the icon glow)", async () => {
+    // [remote-dev-f9y9] The needs-attention ● dot moved to a glow halo on the
+    // session ICON (SessionRow / getAttentionGlowClass). The bar must not render
+    // it even when metadata.attention is set.
     const { SessionMetadataBar } = await import("../SessionMetadataBar");
     render(<SessionMetadataBar session={session} />);
-    expect(
-      document.querySelector('[data-attention="actionable"]'),
-    ).toBeTruthy();
+    expect(document.querySelector("[data-attention]")).toBeNull();
+    expect(screen.queryByText("●")).toBeNull();
   });
 
   it("renders nothing when collapsed", async () => {

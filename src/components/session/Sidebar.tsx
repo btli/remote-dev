@@ -39,7 +39,7 @@ import {
   type ProjectTreeSidebarHandle,
 } from "./ProjectTreeSidebar";
 import { TrashButtonContextMenu } from "./TrashButtonContextMenu";
-import { getSessionIconColor } from "./project-tree/sessionIconColor";
+import { getSessionIconColor, getAttentionGlowClass } from "./project-tree/sessionIconColor";
 import { AGENT_VISUALS } from "./project-tree/agentVisuals";
 import { TerminalTypeClientRegistry } from "@/lib/terminal-plugins/client";
 import {
@@ -598,7 +598,16 @@ export function Sidebar({
                                   : "hover:bg-accent")
                           )}
                         >
-                          <Icon className={cn("w-3.5 h-3.5", iconColor)} />
+                          <Icon
+                            className={cn(
+                              "w-3.5 h-3.5",
+                              iconColor,
+                              // [remote-dev-f9y9] Live-status glow for parity with
+                              // the expanded rows. Notification severity isn't
+                              // readily available here, so glow on live status only.
+                              getAttentionGlowClass(getAgentActivityStatus(s.id)),
+                            )}
+                          />
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent side="right">{displayTitle}</TooltipContent>

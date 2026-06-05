@@ -1,4 +1,11 @@
 import type { TerminalSession } from "@/types/session";
+import type { AgentActivityStatus } from "@/types/terminal-type";
+
+// Re-export the canonical attention type (single source of truth lives in
+// session-metadata) under the name SessionRow consumers use, so callers don't
+// have to thread two identical "error | actionable | null" unions.
+export type { SessionAttention as SessionAttentionLevel } from "@/types/session-metadata";
+import type { SessionAttention } from "@/types/session-metadata";
 
 /**
  * Whether a session type has agent-like behavior (activity status tracking, exit states).
@@ -39,4 +46,25 @@ export function getSessionIconColor(
     default:
       return isActive ? "text-primary" : "text-muted-foreground";
   }
+}
+
+/**
+ * Needs-attention glow halo classes for a session's status icon. Kept separate
+ * from getSessionIconColor (which owns the text color reflecting LIVE status)
+ * so an idle/running icon can still glow when a notification needs attention.
+ * Replaces the old separate ● attention dot. Error outranks actionable.
+ *
+ * Returns ONLY the glow class (no animation): the gentle pulse for live
+ * `waiting` already comes from getSessionIconColor's `agent-breathing`, while a
+ * notification-only / idle attention shows a calm static halo — matching the
+ * old static dot rather than introducing a new pulsing element.
+ */
+export function getAttentionGlowClass(
+  status: AgentActivityStatus | string | null,
+  unreadSeverity: SessionAttention = null,
+): string {
+  if (status === "error" || unreadSeverity === "error") return "agent-glow-error";
+  if (status === "waiting" || unreadSeverity === "actionable")
+    return "agent-glow-attention";
+  return "";
 }

@@ -31,8 +31,9 @@ interface SessionMetadataBarProps {
  * [n6uc] At-a-glance per-session observability for a tree row: live branch +
  * dirty count + ahead/behind, the linked PR (with review/CI tone), the
  * session's OWN listening ports (PID-tree attributed) with quick-open through
- * the existing authenticated port-proxy, a worktree-diff link, and a
- * needs-attention dot. Reads `useSessionMetadata` (polled + WS-pushed).
+ * the existing authenticated port-proxy, and a worktree-diff link. Reads
+ * `useSessionMetadata` (polled + WS-pushed). Needs-attention is now shown as a
+ * glow halo on the session ICON (see getAttentionGlowClass), not a dot here.
  */
 export function SessionMetadataBar({
   session,
@@ -59,7 +60,6 @@ export function SessionMetadataBar({
   const git = metadata?.git;
   const pr = metadata?.pr;
   const ports = metadata?.ports ?? [];
-  const attention = metadata?.attention ?? null;
 
   const isAgentTerminal =
     session.terminalType === "agent" || session.terminalType === "loop";
@@ -70,13 +70,7 @@ export function SessionMetadataBar({
       AGENT_VISUALS[session.agentProvider],
   );
 
-  if (
-    !git?.branch &&
-    ports.length === 0 &&
-    !pr &&
-    !hasAgent &&
-    !attention
-  ) {
+  if (!git?.branch && ports.length === 0 && !pr && !hasAgent) {
     return null;
   }
 
@@ -209,26 +203,6 @@ export function SessionMetadataBar({
           </span>
         );
       })}
-
-      {/* Needs-attention dot (highest unmet severity) */}
-      {attention && (
-        <span
-          data-attention={attention}
-          title={
-            attention === "error"
-              ? "Agent error — needs attention"
-              : "Agent waiting — needs attention"
-          }
-          className={cn(
-            "inline-flex items-center text-[10px] rounded px-1 py-0.5 font-bold leading-none",
-            attention === "error"
-              ? "text-red-400 bg-red-400/10"
-              : "text-yellow-400 bg-yellow-400/10",
-          )}
-        >
-          ●
-        </span>
-      )}
     </div>
   );
 }

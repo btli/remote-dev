@@ -481,8 +481,14 @@ function cleanupConnection(connectionId: string): void {
     sessionConnections.delete(conn.sessionId);
     sessionPrimaryConnection.delete(conn.sessionId);
     sessionLastPromotionAt.delete(conn.sessionId);
-    sessionStatusIndicators.delete(conn.sessionId);
-    sessionProgressBars.delete(conn.sessionId);
+    // [remote-dev-f9y9] Keep status indicators + progress in memory across a
+    // transient WS disconnect (tmux/agent still alive) so a reconnecting client
+    // recovers them via the attach-time replay below — they have no DB fallback.
+    // Only drop them when the session itself has ended (tmux gone).
+    if (!tmuxSessionExists(conn.tmuxSessionName)) {
+      sessionStatusIndicators.delete(conn.sessionId);
+      sessionProgressBars.delete(conn.sessionId);
+    }
     for (const [claudeId, rdvId] of claudeSessionMap) {
       if (rdvId === conn.sessionId) {
         claudeSessionMap.delete(claudeId);
@@ -2740,6 +2746,26 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
     // Send ready signal
     ws.send(JSON.stringify({ type: "ready", sessionId, tmuxSessionName }));
+    // [remote-dev-f9y9] Replay current in-memory status indicators + progress to
+    // the (re)connecting client. WS pushes are one-shot; a tab that was hidden or
+    // whose socket silently dropped misses them and they have no DB fallback.
+    // (agentActivityStatus is recovered separately via the client's reconnect
+    // refresh from the DB.)
+    const replayIndicators = sessionStatusIndicators.get(sessionId);
+    if (replayIndicators) {
+      for (const [key, indicator] of replayIndicators) {
+        ws.send(JSON.stringify({ type: "session_status_update", sessionId, key, indicator }));
+      }
+    }
+    const replayProgress = sessionProgressBars.get(sessionId);
+    if (replayProgress) {
+      ws.send(JSON.stringify({
+        type: "session_progress_update",
+        sessionId,
+        value: replayProgress.value,
+        label: replayProgress.label,
+      }));
+    }
     // Inform every session client of the new primary set (this connection became
     // primary on connect; previously-primary clients will flip to secondary).
     broadcastPrimaryChanged(sessionId);
@@ -2773,4 +2799,9 @@ export function shutdownTerminalConnections(): void {
   sessionConnections.clear();
   sessionPrimaryConnection.clear();
   sessionLastPromotionAt.clear();
+  // [remote-dev-f9y9] cleanupConnection now only drops these when tmux is gone
+  // (so they survive a transient WS disconnect for the attach-time replay), so
+  // full teardown must clear them explicitly.
+  sessionStatusIndicators.clear();
+  sessionProgressBars.clear();
 }

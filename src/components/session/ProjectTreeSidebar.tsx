@@ -9,6 +9,7 @@ import { useNotificationContext } from "@/contexts/NotificationContext";
 import { GroupRow } from "./project-tree/GroupRow";
 import { ProjectRow } from "./project-tree/ProjectRow";
 import { SessionRow } from "./project-tree/SessionRow";
+import { hasAgentBehavior } from "./project-tree/sessionIconColor";
 import { TreeConnector } from "./project-tree/TreeConnector";
 import { CreateNodeInline } from "./project-tree/CreateNodeInline";
 import { GroupContextMenu } from "./project-tree/GroupContextMenu";
@@ -164,14 +165,27 @@ export const ProjectTreeSidebar = forwardRef<
     return ind.position;
   };
 
-  const sessionUnread = useMemo(() => {
-    const m = new Map<string, number>();
+  // [remote-dev-f9y9] Single pass over notifications builds both the unread
+  // COUNT (blue dot) and the highest unread SEVERITY (icon glow) per session.
+  // Severity: "error" outranks "actionable"; "passive" never glows. Feeds
+  // SessionRow.attentionSeverity so a needs-human / errored agent surfaces even
+  // if its live status already settled to idle.
+  //
+  // Note: we keep the HIGHEST severity across all unread notifications, whereas
+  // the server's deriveAttention uses the single most-recent unread one. Highest
+  // is intentional here: the glow is a persistent "this session still needs you"
+  // cue, so a recent passive ping shouldn't mask an older unresolved error.
+  const { sessionUnread, sessionAttention } = useMemo(() => {
+    const unread = new Map<string, number>();
+    const attention = new Map<string, "error" | "actionable">();
     for (const n of notifications) {
-      if (n.readAt == null && n.sessionId) {
-        m.set(n.sessionId, (m.get(n.sessionId) ?? 0) + 1);
-      }
+      if (n.readAt != null || !n.sessionId) continue;
+      unread.set(n.sessionId, (unread.get(n.sessionId) ?? 0) + 1);
+      if (n.severity === "error") attention.set(n.sessionId, "error");
+      else if (n.severity === "actionable" && attention.get(n.sessionId) !== "error")
+        attention.set(n.sessionId, "actionable");
     }
-    return m;
+    return { sessionUnread: unread, sessionAttention: attention };
   }, [notifications]);
 
   // Project options for session move submenu
@@ -482,7 +496,8 @@ export const ProjectTreeSidebar = forwardRef<
               isActive={s.id === activeSessionId}
               isEditing={editingNode?.id === s.id && editingNode?.type === "session"}
               hasUnread={(sessionUnread.get(s.id) ?? 0) > 0}
-              agentStatus={s.terminalType === "agent" ? getAgentActivityStatus(s.id) : null}
+              agentStatus={hasAgentBehavior(s) ? getAgentActivityStatus(s.id) : null}
+              attentionSeverity={sessionAttention.get(s.id) ?? null}
               scheduleCount={0}
               dragTranslateStyle={swipe.getRowStyle(s.id)}
               swipeRevealed={swipe.swipedSessionId === s.id}
@@ -869,6 +884,7 @@ export const ProjectTreeSidebar = forwardRef<
                 }
                 hasUnread={(sessionUnread.get(s.id) ?? 0) > 0}
                 agentStatus={null}
+                attentionSeverity={sessionAttention.get(s.id) ?? null}
                 scheduleCount={0}
                 dragTranslateStyle={swipe.getRowStyle(s.id)}
                 swipeRevealed={swipe.swipedSessionId === s.id}
@@ -1084,6 +1100,7 @@ export const ProjectTreeSidebar = forwardRef<
                           }
                           hasUnread={(sessionUnread.get(s.id) ?? 0) > 0}
                           agentStatus={null}
+                          attentionSeverity={sessionAttention.get(s.id) ?? null}
                           scheduleCount={0}
                           dragTranslateStyle={swipe.getRowStyle(s.id)}
                           swipeRevealed={swipe.swipedSessionId === s.id}
