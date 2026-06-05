@@ -16,14 +16,18 @@ import '../../../infrastructure/webview/bridge_controller.dart';
 import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
 import '../sessions/sessions_tab_screen.dart' show sessionsApiProvider;
+import '../server_picker/server_picker_screen.dart'
+    show serverPickerDataProvider;
 import '../webview_host/session_route_host.dart'
     show
         activeWorkspaceProvider,
+        hostWorkspaceStoreProvider,
         mobileCredentialsStoreProvider,
         webViewCookieSeederProvider;
 import 'activity_pip.dart';
 import 'mobile_input_bar.dart';
 import 'session_status_bar.dart';
+import 'session_switcher_sheet.dart';
 import 'smart_key_strip.dart';
 
 /// Production session view for `/home/session/:id`.
@@ -108,6 +112,37 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
       // crash the terminal. The header keeps showing 'Session'.
       debugPrint('[SessionView] name resolution failed: $err');
     }
+  }
+
+  /// Opens the session switcher (tapped via the title caret). On a pick: when
+  /// the chosen session lives in a DIFFERENT workspace, switch the active
+  /// workspace first (setActiveWorkspace + invalidate so the next screen
+  /// rebinds its API client + WebView target), then replace this route with the
+  /// chosen session. Same-session picks are a no-op.
+  Future<void> _openSwitcher() async {
+    final conn = await ref.read(activeWorkspaceProvider.future);
+    if (!mounted || conn == null) return;
+    final target = await showSessionSwitcher(
+      context,
+      currentSessionId: widget.sessionId,
+      currentWorkspaceId: conn.workspace.id,
+    );
+    if (target == null || !mounted) return;
+    final isSame = target.session.id == widget.sessionId &&
+        target.workspace.id == conn.workspace.id;
+    if (isSame) return;
+    if (target.workspace.id != conn.workspace.id) {
+      await ref
+          .read(hostWorkspaceStoreProvider)
+          .setActiveWorkspace(target.workspace.id);
+      ref.invalidate(activeWorkspaceProvider);
+      ref.invalidate(serverPickerDataProvider);
+      if (!mounted) return;
+    }
+    context.pushReplacement(
+      '/home/session/${target.session.id}',
+      extra: target.session,
+    );
   }
 
   void _registerBridgeHandlers(InAppWebViewController controller) {
@@ -354,6 +389,7 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
                         projectName: _projectName.isEmpty ? null : _projectName,
                         sessionName: title,
                         activity: _activity,
+                        onTap: () => unawaited(_openSwitcher()),
                         onMenuAction: _handleMenuAction,
                       ),
                     ),
