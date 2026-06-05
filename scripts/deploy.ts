@@ -51,6 +51,7 @@ import {
   pathWithRuntimeNodeFirst,
   NATIVE_MODULES_TO_REBUILD,
   shouldRunSqlitePush,
+  resolveForgejoMirrorUrl,
 } from "./deploy-lib";
 import { parseLockContent } from "./deploy-lock";
 import {
@@ -1225,6 +1226,47 @@ async function healthCheckExternal(): Promise<boolean> {
 // Deploy orchestration
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Keep the in-cluster Forgejo mirror (joyfulhouse/remote-dev) current with the
+// commit we just shipped, so the homelab build-rdv-platform pipeline — which now
+// clones Forgejo instead of GitHub (no GitHub PAT) — builds the same master.
+// Best-effort: a mirror-push failure must NEVER affect a green deploy. SSH-key
+// auth; GH_TOKEN/GITHUB_TOKEN are cleared so a GitHub credential can't hijack the
+// push, and the Forgejo host key is auto-accepted on first contact.
+function pushToForgejoMirror(): void {
+  const url = resolveForgejoMirrorUrl();
+  if (!url) {
+    logDeploy("Forgejo mirror push disabled (RDV_FORGEJO_MIRROR_URL empty).");
+    return;
+  }
+  try {
+    const res = spawnSync(
+      ["git", "-C", DEPLOY_SRC, "push", url, "HEAD:refs/heads/master"],
+      {
+        cwd: DEPLOY_SRC,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          GIT_SSH_COMMAND:
+            "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10",
+          GH_TOKEN: "",
+          GITHUB_TOKEN: "",
+        },
+      },
+    );
+    if (res.exitCode === 0) {
+      logDeploy(`Mirrored ${getGitCommit(DEPLOY_SRC)} to Forgejo (${url}).`);
+    } else {
+      const err = res.stderr?.toString().trim();
+      logDeploy(
+        `Forgejo mirror push failed (non-fatal): ${err || `exit ${res.exitCode}`}`,
+      );
+    }
+  } catch (err) {
+    logDeploy(`Forgejo mirror push errored (non-fatal): ${String(err)}`);
+  }
+}
+
 // The deploy BODY. Runs UNDER an already-held deploy flock (acquired by the
 // top-level runWithDeployFlock orchestrator, NOT here). Returns an exit code:
 // 0 = success, non-zero = failure. The single owning `finally` in
@@ -1351,6 +1393,10 @@ async function deploy(): Promise<number> {
     logDeploy(
       `=== Deploy successful === (${activeSlot} -> ${inactiveSlot}, commit: ${getGitCommit(DEPLOY_SRC)})`
     );
+
+    // Mirror the just-shipped commit to the in-cluster Forgejo (best-effort;
+    // never fails the green deploy) so the homelab build pipeline clones it.
+    pushToForgejoMirror();
     return 0;
   }
 }

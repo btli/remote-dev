@@ -205,6 +205,38 @@ export function pathWithRuntimeNodeFirst(
   return [binDir, ...deduped].join(pathSeparator);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Forgejo mirror push (after a green deploy)
+//
+// The homelab `build-rdv-platform` pipeline now CLONES the in-cluster Forgejo
+// mirror of this repo (joyfulhouse/remote-dev) rather than GitHub, so it doesn't
+// need a GitHub PAT. To keep that mirror current with whatever we just shipped,
+// the deploy success path pushes the deployed commit to the mirror — best-effort:
+// a mirror-push failure must NEVER fail or roll back a green deploy. The URL
+// resolution is pulled out here as a PURE helper so it's unit-testable without
+// touching git or the network.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Default in-cluster Forgejo mirror push URL (SSH-key auth). */
+export const FORGEJO_MIRROR_URL_DEFAULT =
+  "ssh://git@git.joyful.house/joyfulhouse/remote-dev.git";
+
+/**
+ * Resolve the Forgejo mirror push URL. `RDV_FORGEJO_MIRROR_URL` overrides the
+ * default; an explicit empty string (or whitespace-only) DISABLES the push
+ * (returns null). When the var is unset, the default URL is used. Pure.
+ */
+export function resolveForgejoMirrorUrl(
+  env: Record<string, string | undefined> = process.env,
+): string | null {
+  const override = env.RDV_FORGEJO_MIRROR_URL;
+  if (override !== undefined) {
+    const t = override.trim();
+    return t === "" ? null : t;
+  }
+  return FORGEJO_MIRROR_URL_DEFAULT;
+}
+
 /**
  * Defense-in-depth guard for self-healing a pruned/corrupt deploy-src: only a
  * path that is EXACTLY the derived `<dataDir>/deploy-src` may be recursively

@@ -16,6 +16,8 @@ import {
   pathWithRuntimeNodeFirst,
   NATIVE_MODULES_TO_REBUILD,
   shouldRunSqlitePush,
+  resolveForgejoMirrorUrl,
+  FORGEJO_MIRROR_URL_DEFAULT,
 } from "../scripts/deploy-lib";
 
 describe("isAcceptableSsrStatus", () => {
@@ -293,5 +295,31 @@ describe("shouldRunSqlitePush (remote-dev-6lf3)", () => {
   it("does not misclassify a SQLite path that merely contains 'postgres'", () => {
     // Only a leading scheme counts — a db file named postgres.db is still SQLite.
     expect(shouldRunSqlitePush("file:/data/postgres-backup.db")).toBe(true);
+  });
+});
+
+describe("resolveForgejoMirrorUrl (remote-dev-xz2j)", () => {
+  it("returns the in-cluster default when RDV_FORGEJO_MIRROR_URL is unset", () => {
+    expect(resolveForgejoMirrorUrl({})).toBe(FORGEJO_MIRROR_URL_DEFAULT);
+    expect(resolveForgejoMirrorUrl({})).toBe(
+      "ssh://git@git.joyful.house/joyfulhouse/remote-dev.git",
+    );
+  });
+  it("uses RDV_FORGEJO_MIRROR_URL (trimmed) when set", () => {
+    expect(
+      resolveForgejoMirrorUrl({
+        RDV_FORGEJO_MIRROR_URL: "ssh://git@other.host/x/y.git",
+      }),
+    ).toBe("ssh://git@other.host/x/y.git");
+    // Surrounding whitespace is stripped.
+    expect(
+      resolveForgejoMirrorUrl({
+        RDV_FORGEJO_MIRROR_URL: "  ssh://git@other.host/x/y.git  ",
+      }),
+    ).toBe("ssh://git@other.host/x/y.git");
+  });
+  it("DISABLES the push (null) when set to an empty or whitespace-only string", () => {
+    expect(resolveForgejoMirrorUrl({ RDV_FORGEJO_MIRROR_URL: "" })).toBeNull();
+    expect(resolveForgejoMirrorUrl({ RDV_FORGEJO_MIRROR_URL: "   " })).toBeNull();
   });
 });
