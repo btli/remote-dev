@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The `dev-env-image` CI smoke checks now bypass the image's server entrypoint (`docker run --entrypoint sh …`) so they actually assert Node v24 + the agent CLIs on PATH instead of booting the instance servers and timing out. (remote-dev-i0le)
 - The `Supervisor Router E2E` CI workflow now frees ~20–30 GB of preinstalled runner toolchains before building its three images — `ubuntu-latest`'s ~14 GB of free space was exhausted by the heavy dev-env instance image (`no space left on device`). (remote-dev-6vqr)
 - **Dev-Env Image CI green again** — the `dev-env-image` workflow built with `NODE_VERSION=24` (Debian bookworm, glibc 2.36), which fails the image's own `rdv` glibc gate (needs GLIBC_2.39); pinned to `24-trixie-slim` (still Node 24) to match the Dockerfile default and the supervisor-router-e2e workflow. (remote-dev-i0le)
 - Mobile session view no longer flashes the "No active server configured" blank state on keyboard/layout rebuilds — the WebView target Future is now resolved once and cached instead of rebuilt every frame (remote-dev-9c5j).
