@@ -72,6 +72,33 @@ export interface TableCols {
    * verified here.
    */
   indexes: string[];
+  /**
+   * Canonical column-set signatures of every UNIQUE constraint on the table,
+   * INCLUDING the inline column-level `.unique()` ones backed by
+   * `sqlite_autoindex_*` (and NAMED `CREATE UNIQUE INDEX`). Each entry is
+   * `JSON.stringify(sortedColumnNames)`, so it is a stable, order-independent
+   * identity for "these columns are unique together" — auto-index NAMES are not
+   * stable identifiers, the column SET is.
+   *
+   * PRIMARY KEY uniqueness is deliberately EXCLUDED (origin `pk`): it is already
+   * covered by the per-column `pk` flag, so including it would double-report.
+   * Unique indexes over an EXPRESSION/partial column (which `pragma_index_info`
+   * reports with a null column name) are excluded too — their signature is not
+   * normalization-stable, and missing such a rare drift is preferable to risking
+   * a false positive that wedges every deploy.
+   */
+  uniqueSignatures: string[];
+  /**
+   * Ordered column lists for each NAMED (`CREATE INDEX` / `CREATE UNIQUE INDEX`,
+   * i.e. non-`sqlite_autoindex_*`) index, keyed by index name, in
+   * `pragma_index_info` `seqno` order. Lets the diff catch a same-NAME index
+   * whose column set or ORDER changed (the name-only check misses that). An
+   * EXPRESSION column (null name from `pragma_index_info`) is recorded as the
+   * sentinel `"<expr>"` so an all-named index still has a comparable, stable
+   * shape without leaking unstable details (collation / sort direction / partial
+   * WHERE are intentionally NOT compared — they are normalization-noisy).
+   */
+  namedIndexColumns: Record<string, string[]>;
 }
 
 /** One table's worth of differences between expected and live. */
@@ -91,6 +118,26 @@ export interface TableDrift {
   }>;
   /** Named indexes expected (in schema.ts) but absent in the live DB. */
   missingIndexes: string[];
+  /**
+   * UNIQUE-constraint column signatures expected (in schema.ts) but absent live
+   * — catches an inline `.unique()` added to a populated column whose table
+   * rebuild `db:push` SKIPPED. Each entry is a `JSON.stringify(sortedColumns)`
+   * signature (see `TableCols.uniqueSignatures`). Extra LIVE unique constraints
+   * are NOT drift (db:push never drops), matching the one-way index/column
+   * policy.
+   */
+  missingUniqueConstraints: string[];
+  /**
+   * NAMED indexes present in BOTH expected and live whose ordered column list
+   * differs (set or order) — the same-name-different-columns drift the name-only
+   * check misses. An index missing live entirely is reported via
+   * `missingIndexes`, not here.
+   */
+  changedIndexes: Array<{
+    index: string;
+    expectedColumns: string[];
+    liveColumns: string[];
+  }>;
 }
 
 export interface DriftReport {
@@ -104,14 +151,29 @@ function isIgnoredTable(name: string): boolean {
 }
 
 /**
+ * Canonical, order-independent signature for a UNIQUE constraint over a set of
+ * column names: `JSON.stringify` of the names sorted ascending. Order-independent
+ * because `UNIQUE(a, b)` and `UNIQUE(b, a)` enforce the same constraint; JSON so
+ * the separator can never collide with a column identifier. Both the live read
+ * and the expected read funnel through this, so the two sides are guaranteed to
+ * use an identical format.
+ */
+export function uniqueColumnSignature(columns: string[]): string {
+  return JSON.stringify(columns.slice().sort());
+}
+
+/**
  * Pure column- and index-level diff of an EXPECTED schema (from schema.ts)
- * against the LIVE schema. For every expected table: a missing table, a
- * missing/extra column, a column whose type or notnull flag differs, or a named
- * index present in expected but absent live is recorded as drift. Extra LIVE
- * tables/columns/indexes (present live, absent in expected) are intentionally
- * ignored — db:push never DROPs, so leftover schema objects are not a
- * deploy-breaking drift and would only produce false alarms for renamed/retired
- * objects.
+ * against the LIVE schema. For every expected table, the following are recorded
+ * as drift: a missing table, a missing/extra column, a column whose
+ * type/notnull/pk differs, a named index present in expected but absent live, a
+ * UNIQUE-constraint column signature present in expected but absent live
+ * (catches inline `.unique()` that `db:push` skipped on a populated table), and
+ * a same-NAME index whose ordered column list changed. Extra LIVE
+ * tables/columns/indexes/unique-constraints (present live, absent in expected)
+ * are intentionally ignored — db:push never DROPs, so leftover schema objects
+ * are not a deploy-breaking drift and would only produce false alarms for
+ * renamed/retired objects.
  *
  * Exported and dependency-free so the diff contract is unit-tested without
  * spawning drizzle-kit or opening any real database.
@@ -122,9 +184,13 @@ export function diffSchemas(
 ): DriftReport {
   const liveByTable = new Map<string, Map<string, ColumnInfo>>();
   const liveIndexesByTable = new Map<string, Set<string>>();
+  const liveUniqueByTable = new Map<string, Set<string>>();
+  const liveNamedIndexColsByTable = new Map<string, Record<string, string[]>>();
   for (const t of live) {
     liveByTable.set(t.table, new Map(t.columns.map((c) => [c.name, c])));
     liveIndexesByTable.set(t.table, new Set(t.indexes));
+    liveUniqueByTable.set(t.table, new Set(t.uniqueSignatures));
+    liveNamedIndexColsByTable.set(t.table, t.namedIndexColumns);
   }
 
   const tables: TableDrift[] = [];
@@ -133,7 +199,7 @@ export function diffSchemas(
     const liveCols = liveByTable.get(exp.table);
     if (!liveCols) {
       // Whole table is missing — we already report it in full; don't separately
-      // enumerate the indexes it would have carried.
+      // enumerate the indexes/unique constraints it would have carried.
       tables.push({
         table: exp.table,
         missingTable: true,
@@ -141,6 +207,8 @@ export function diffSchemas(
         extraColumns: [],
         changedColumns: [],
         missingIndexes: [],
+        missingUniqueConstraints: [],
+        changedIndexes: [],
       });
       continue;
     }
@@ -181,11 +249,44 @@ export function diffSchemas(
     const liveIndexes = liveIndexesByTable.get(exp.table) ?? new Set<string>();
     const missingIndexes = exp.indexes.filter((idx) => !liveIndexes.has(idx));
 
+    // UNIQUE constraints expected (by column SET signature) but absent live —
+    // catches an inline `.unique()` whose table rebuild db:push skipped. Compared
+    // by column SIGNATURE (not auto-index name, which is unstable). One-way:
+    // extra live unique constraints are NOT drift.
+    const liveUnique =
+      liveUniqueByTable.get(exp.table) ?? new Set<string>();
+    const missingUniqueConstraints = exp.uniqueSignatures.filter(
+      (sig) => !liveUnique.has(sig),
+    );
+
+    // NAMED indexes present in BOTH sides whose ordered columns differ — the
+    // same-name/different-columns drift the name check misses. An index absent
+    // live is already covered by `missingIndexes`, so skip those here.
+    const liveNamedIdxCols =
+      liveNamedIndexColsByTable.get(exp.table) ?? {};
+    const changedIndexes: TableDrift["changedIndexes"] = [];
+    for (const [idxName, expCols] of Object.entries(exp.namedIndexColumns)) {
+      const liveCols = liveNamedIdxCols[idxName];
+      if (liveCols === undefined) continue; // missing → reported via missingIndexes
+      if (
+        liveCols.length !== expCols.length ||
+        liveCols.some((c, i) => c !== expCols[i])
+      ) {
+        changedIndexes.push({
+          index: idxName,
+          expectedColumns: expCols,
+          liveColumns: liveCols,
+        });
+      }
+    }
+
     if (
       missingColumns.length > 0 ||
       extraColumns.length > 0 ||
       changedColumns.length > 0 ||
-      missingIndexes.length > 0
+      missingIndexes.length > 0 ||
+      missingUniqueConstraints.length > 0 ||
+      changedIndexes.length > 0
     ) {
       tables.push({
         table: exp.table,
@@ -194,6 +295,8 @@ export function diffSchemas(
         extraColumns,
         changedColumns,
         missingIndexes,
+        missingUniqueConstraints,
+        changedIndexes,
       });
     }
   }
@@ -201,8 +304,13 @@ export function diffSchemas(
   return { hasDrift: tables.length > 0, tables };
 }
 
-/** Read the app tables + columns from a SQLite file (readonly). */
-function readSchema(dbFile: string, readonly: boolean): TableCols[] {
+/**
+ * Read the app tables + columns + indexes + unique signatures from a SQLite
+ * file. Exported so the real-libsql read path (pragma_index_info parsing of
+ * inline-unique / named / named-unique indexes) is smoke-tested against an
+ * actual database, not just the pure `diffSchemas` contract.
+ */
+export function readSchema(dbFile: string, readonly: boolean): TableCols[] {
   const db = new Database(dbFile, { readonly });
   try {
     const tableRows = db
@@ -225,16 +333,62 @@ function readSchema(dbFile: string, readonly: boolean): TableCols[] {
         notnull: number;
         pk: number;
       }>;
-      // pragma_index_list → { seq, name, unique, origin, partial }. Keep only
-      // explicit `CREATE INDEX` indexes; drop `sqlite_autoindex_*` (the ones
-      // SQLite auto-creates for UNIQUE/PK column constraints), which track their
-      // column and would match whenever the column exists.
+      // pragma_index_list → { seq, name, unique, origin, partial }.
+      //   origin: 'c' = CREATE INDEX, 'u' = UNIQUE column/table constraint,
+      //           'pk' = PRIMARY KEY. `unique` is a SQLite keyword → quote it.
       const idxRows = db
-        .prepare("SELECT name FROM pragma_index_list(?)")
-        .all(name) as Array<{ name: string }>;
+        .prepare(
+          'SELECT name, "unique", origin FROM pragma_index_list(?)',
+        )
+        .all(name) as Array<{
+        name: string;
+        unique: number;
+        origin: string;
+      }>;
+
+      // Named (`CREATE INDEX`/`CREATE UNIQUE INDEX`) indexes — drop the
+      // `sqlite_autoindex_*` ones SQLite auto-creates for inline UNIQUE/PK.
       const indexes = idxRows
         .map((r) => r.name)
         .filter((idxName) => !idxName.startsWith("sqlite_autoindex_"));
+
+      // Resolve each index's COLUMNS via pragma_index_info (seqno order). An
+      // expression/partial column has a null name (cid < 0) → sentinel "<expr>"
+      // so a named index still has a comparable, stable shape.
+      const namedIndexColumns: Record<string, string[]> = {};
+      const uniqueSignatures: string[] = [];
+      for (const idx of idxRows) {
+        // pragma_index_info → { seqno, cid, name }; bound param, no injection.
+        const infoRows = db
+          .prepare("SELECT seqno, cid, name FROM pragma_index_info(?)")
+          .all(idx.name) as Array<{
+          seqno: number;
+          cid: number;
+          name: string | null;
+        }>;
+        const ordered = infoRows
+          .slice()
+          .sort((a, b) => a.seqno - b.seqno)
+          .map((r) => r.name);
+
+        if (!idx.name.startsWith("sqlite_autoindex_")) {
+          namedIndexColumns[idx.name] = ordered.map((c) => c ?? "<expr>");
+        }
+
+        // UNIQUE signatures (inline + named unique), EXCLUDING the PK (origin
+        // 'pk' — already covered by the per-column pk flag, so including it would
+        // double-report). Skip any expression/partial unique index (a null
+        // column name): its signature is not normalization-stable, and a missed
+        // rare drift there is preferable to a deploy-wedging false positive.
+        if (idx.unique === 1 && idx.origin !== "pk") {
+          if (ordered.every((c) => c !== null)) {
+            uniqueSignatures.push(
+              uniqueColumnSignature(ordered as string[]),
+            );
+          }
+        }
+      }
+
       result.push({
         table: name,
         columns: cols.map((c) => ({
@@ -244,6 +398,8 @@ function readSchema(dbFile: string, readonly: boolean): TableCols[] {
           pk: c.pk,
         })),
         indexes,
+        uniqueSignatures,
+        namedIndexColumns,
       });
     }
     return result;
@@ -308,11 +464,25 @@ function printReport(report: DriftReport): void {
     if (t.missingIndexes.length > 0) {
       parts.push(`missing indexes: ${t.missingIndexes.join(", ")}`);
     }
+    if (t.missingUniqueConstraints.length > 0) {
+      // Each signature is JSON of the sorted column names — render the columns.
+      const sigs = t.missingUniqueConstraints
+        .map((s) => `(${(JSON.parse(s) as string[]).join(", ")})`)
+        .join(", ");
+      parts.push(`missing UNIQUE constraints on: ${sigs}`);
+    }
     for (const c of t.changedColumns) {
       parts.push(
         `column '${c.column}' changed ` +
           `(expected type=${c.expected.type || "''"} notnull=${c.expected.notnull} pk=${c.expected.pk}, ` +
           `live type=${c.live.type || "''"} notnull=${c.live.notnull} pk=${c.live.pk})`,
+      );
+    }
+    for (const ci of t.changedIndexes) {
+      parts.push(
+        `index '${ci.index}' columns changed ` +
+          `(expected [${ci.expectedColumns.join(", ")}], ` +
+          `live [${ci.liveColumns.join(", ")}])`,
       );
     }
     console.error(`[schema-drift]   table '${t.table}': ${parts.join("; ")}`);
