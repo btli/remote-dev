@@ -231,6 +231,11 @@ kubectl -n rdv-system create secret generic rdv-supervisor-config \
 # native code need a C toolchain, so include "build-essential" in the same
 # manifest's `apt` list (apt is applied before cargo in the entrypoint):
 #   --from-literal=SUPERVISOR_INSTANCE_BASELINE_PACKAGES='{"apt":["build-essential"],"npm":["typescript"],"pip":["ruff"]}'
+# Optional — how long (ms) a provisioning instance has to pass readiness before
+# the reconciler marks it `error` and DELETES its namespace. Default 360000
+# (6 min); raise for slow cold starts (large image pull + Next boot + PG
+# migrate-on-boot + the instance's own waitForSchemaReady). See remote-dev-qy7t.
+#   --from-literal=SUPERVISOR_READINESS_BUDGET_MS=360000
 
 # 3c. RBAC (ServiceAccount + ClusterRole + ClusterRoleBinding)
 kubectl apply -f deploy/k8s/supervisor/rbac.yaml

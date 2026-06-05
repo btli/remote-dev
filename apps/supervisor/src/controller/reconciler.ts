@@ -10,11 +10,13 @@
  *                  promotes to ready); a ProvisioningError → `error` (rollback
  *                  already deleted the namespace inside the service).
  *   provisioning → checkInstanceReady: ready → `ready` (+ provisionedAt, baseUrl);
- *                  within the 120s budget but the StatefulSet is MISSING → re-run
- *                  provisionInstance (idempotent self-heal of a crashed/partial
- *                  provision); past the 120s budget → `error` AND delete the
+ *                  within the readiness budget but the StatefulSet is MISSING →
+ *                  re-run provisionInstance (idempotent self-heal of a crashed/
+ *                  partial provision); past the budget → `error` AND delete the
  *                  namespace so no partial objects are orphaned. The budget is
- *                  anchored to the claim write and is NOT reset by ticks.
+ *                  anchored to the claim write and is NOT reset by ticks. It
+ *                  defaults to 6 min and is overridable via
+ *                  SUPERVISOR_READINESS_BUDGET_MS — see READINESS_BUDGET_MS.
  *   terminating  → if the namespace is already gone → `deleted` (+ deletedAt);
  *                  otherwise (re)issue the namespace delete.
  *   ready/suspended/error/deleted → no action this PR (suspend scaling is Phase 2).
@@ -66,8 +68,40 @@ import { createLogger } from "@/lib/logger";
 
 const log = createLogger("Reconciler");
 
-/** Readiness budget: provisioning → error if not ready within this window (§6.3). */
-export const READINESS_BUDGET_MS = 120_000;
+/** Default readiness budget when SUPERVISOR_READINESS_BUDGET_MS is unset/invalid (6 min). */
+const DEFAULT_READINESS_BUDGET_MS = 360_000;
+
+/**
+ * Parse the readiness budget (ms) from `SUPERVISOR_READINESS_BUDGET_MS`.
+ *
+ * Accepts only a FINITE, POSITIVE integer number of milliseconds; anything else
+ * (unset, empty, non-numeric, zero, negative, fractional, NaN/Infinity) falls
+ * back to {@link DEFAULT_READINESS_BUDGET_MS}. Exported for unit testing.
+ */
+export function parseReadinessBudgetMs(
+  raw: string | undefined = process.env.SUPERVISOR_READINESS_BUDGET_MS,
+): number {
+  if (raw === undefined || raw.trim() === "") return DEFAULT_READINESS_BUDGET_MS;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) return DEFAULT_READINESS_BUDGET_MS;
+  return n;
+}
+
+/**
+ * Readiness budget: provisioning → error (AND namespace delete) if not ready
+ * within this window (§6.3). Anchored to the claim write, NOT reset by ticks.
+ *
+ * Default 6 min (360_000 ms), overridable via SUPERVISOR_READINESS_BUDGET_MS.
+ * Raised from the original 120s (remote-dev-qy7t): a cold fresh-PG instance's
+ * create→ready path (large dev-env image pull + Next boot + PG migrate-on-boot
+ * + the instance's own waitForSchemaReady, itself fail-open at 120s per PR #358,
+ * + terminal-server start) routinely exceeds 120s. Live audit evidence: a
+ * SUCCESSFUL provision took 115s (only 5s of headroom) while others hit
+ * provision:timeout at ~120-150s and were reaped + namespace-deleted just before
+ * they would have become ready. The generous default fixes this with no k8s
+ * config change; operators can still tune it via the env var.
+ */
+export const READINESS_BUDGET_MS = parseReadinessBudgetMs();
 
 /**
  * Statuses the reconciler never acts on. `error` and `deleted` are terminal /
@@ -481,8 +515,9 @@ async function reconcileRequested(
   clients: K8sClients,
 ): Promise<void> {
   // Claim the row first so a crash mid-provision doesn't re-run from `requested`.
-  // This claim write is the STABLE timeout anchor (`updatedAt`) for the 120s
-  // readiness budget — reconcileProvisioning must not bump it on later ticks.
+  // This claim write is the STABLE timeout anchor (`updatedAt`) for the
+  // READINESS_BUDGET_MS window — reconcileProvisioning must not bump it on later
+  // ticks.
   await transition(deps, row, "provisioning", "provision:start");
   const claimed: InstanceRow = { ...row, status: "provisioning" };
   await attemptProvision(deps, claimed, clients);
@@ -491,8 +526,8 @@ async function reconcileRequested(
 /**
  * provisioning →
  *   ready    when readyReplicas≥1;
- *   error    when past the 120s budget (AND clean up — delete the namespace so a
- *            partial/failed provision leaves no orphaned k8s objects);
+ *   error    when past READINESS_BUDGET_MS (AND clean up — delete the namespace so
+ *            a partial/failed provision leaves no orphaned k8s objects);
  *   (self-heal) when within budget but the StatefulSet is missing — re-run
  *            provisionInstance (idempotent, 409=success) to finish a crashed or
  *            partial provision instead of passively waiting for the timeout.

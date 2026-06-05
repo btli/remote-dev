@@ -219,3 +219,4 @@ Provisioning (read by the **controller** process):
 - `SUPERVISOR_DEFAULT_STORAGE_SIZE` — default PVC size (default `10Gi`)
 - `CF_ACCESS_TEAM` / `CF_ACCESS_AUD` — injected into each instance's `rdv-shared` Secret
 - `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` — optional, injected into `rdv-<slug>` Secret
+- `SUPERVISOR_READINESS_BUDGET_MS` — optional; how long (ms) a `provisioning` instance has to pass readiness before the reconciler marks it `error` and deletes its namespace. Default `360000` (6 min); invalid/empty/≤0 falls back to the default. Raise it for slow cold starts (large image pulls + PG migrate-on-boot); see remote-dev-qy7t.
