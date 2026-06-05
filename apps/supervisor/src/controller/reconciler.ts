@@ -53,6 +53,7 @@ import {
   checkInstanceReady as defaultCheckInstanceReady,
   terminateInstance as defaultTerminateInstance,
   namespaceExists as defaultNamespaceExists,
+  getNamespaceLabels as defaultGetNamespaceLabels,
   getStatefulSet as defaultGetStatefulSet,
   setStatefulSetReplicas as defaultSetStatefulSetReplicas,
   setStatefulSetImage as defaultSetStatefulSetImage,
@@ -121,6 +122,8 @@ export interface ReconcilerDeps {
   checkInstanceReady: typeof defaultCheckInstanceReady;
   terminateInstance: typeof defaultTerminateInstance;
   namespaceExists: typeof defaultNamespaceExists;
+  // Reads a namespace's labels for the label-gated image auto-roll (tpb5).
+  getNamespaceLabels: typeof defaultGetNamespaceLabels;
   // Phase 2 steady-state convergence helpers (injected for unit tests).
   getStatefulSet: typeof defaultGetStatefulSet;
   setStatefulSetReplicas: typeof defaultSetStatefulSetReplicas;
@@ -139,6 +142,7 @@ function defaultDeps(): ReconcilerDeps {
     checkInstanceReady: defaultCheckInstanceReady,
     terminateInstance: defaultTerminateInstance,
     namespaceExists: defaultNamespaceExists,
+    getNamespaceLabels: defaultGetNamespaceLabels,
     getStatefulSet: defaultGetStatefulSet,
     setStatefulSetReplicas: defaultSetStatefulSetReplicas,
     setStatefulSetImage: defaultSetStatefulSetImage,
@@ -621,6 +625,12 @@ async function reconcileTerminating(
  * (desiredReplicas=0) — spec §6.3/§9/§15 B3.
  *
  * Converges the LIVE StatefulSet toward the row's desired spec:
+ *   0. (opt-in, tpb5) label-gated image auto-roll — when SUPERVISOR_INSTANCE_IMAGE
+ *      is set AND the instance namespace carries `rdv.io/auto-update=true`, sync
+ *      row.imageTag to the global image (persisted + audited `image:autoroll`)
+ *      so step 2 rolls the StatefulSet this tick. Default (no label / ≠"true")
+ *      auto-rolls NOTHING. The label read is NON-FATAL (failure → log + skip,
+ *      converge next tick) and is skipped entirely when the env var is unset.
  *   1. replicas → desiredReplicas (scale subresource patch). A `suspended`
  *      instance is scaled to 0 (PVC retained); a `ready` one to 1. Because
  *      `/api/internal/routes` only serves `status === "ready"`, suspending an
@@ -639,10 +649,11 @@ async function reconcileTerminating(
  *      instance.
  *
  * This NEVER changes the instance status, NEVER deletes the namespace, and
- * NEVER writes the `instance` row on a pure no-op tick (only audit rows are
- * written, and only when an action was actually issued — mirroring
- * reconcileProvisioning's "must not write on a non-transition tick"). A
- * transient `getStatefulSet` read failure → log + return (no error/no delete).
+ * (apart from step 0's deliberate imageTag pin on an actual auto-roll) never
+ * writes the `instance` row on a pure no-op tick (only audit rows are written,
+ * and only when an action was actually issued — mirroring reconcileProvisioning's
+ * "must not write on a non-transition tick"). A transient `getStatefulSet` read
+ * failure → log + return (no error/no delete).
  */
 export async function reconcileSteadyState(
   deps: ReconcilerDeps,
@@ -671,6 +682,55 @@ export async function reconcileSteadyState(
       status: row.status,
     });
     return;
+  }
+
+  // 0. Label-gated image auto-roll (tpb5). An EXISTING instance pins its image
+  //    via row.imageTag, so a global SUPERVISOR_INSTANCE_IMAGE bump does NOT
+  //    reach it on its own. When (and ONLY when) SUPERVISOR_INSTANCE_IMAGE is
+  //    set AND the instance's NAMESPACE carries the operator-set opt-in label
+  //    `rdv.io/auto-update=true`, sync row.imageTag to the global image so the
+  //    image-rollout block below (step 2) actuates the StatefulSet update THIS
+  //    tick. Default (label absent or ≠ "true") = NOTHING auto-rolls — current
+  //    behavior is preserved exactly. The reconciler only READS the label
+  //    (`kubectl label ns rdv-<slug> rdv.io/auto-update=true` is the opt-in).
+  //
+  //    Reading the label is NON-FATAL: a transient API failure logs + skips the
+  //    auto-roll (it converges next tick) and NEVER throws/errors/reaps. The
+  //    label read is skipped entirely when SUPERVISOR_INSTANCE_IMAGE is unset so
+  //    we don't add a per-tick API call to deployments that don't use it. This
+  //    runs for both `ready` and `suspended` instances (both reach here); a
+  //    suspended instance simply syncs its image at replicas=0 — harmless, the
+  //    new image takes effect when it next scales up.
+  const envImage = process.env.SUPERVISOR_INSTANCE_IMAGE;
+  if (envImage && envImage !== row.imageTag) {
+    let labels: Record<string, string> | undefined;
+    try {
+      labels = await deps.getNamespaceLabels(row.namespace, clients);
+    } catch (err) {
+      // Non-fatal: skip the auto-roll this tick and converge later. Must NOT
+      // transition the instance to error or tear anything down.
+      log.warn("steady-state getNamespaceLabels failed; skipping image auto-roll this tick", {
+        slug: row.slug,
+        namespace: row.namespace,
+        status: row.status,
+        error: String(err),
+      });
+      labels = undefined;
+    }
+    if (labels?.["rdv.io/auto-update"] === "true") {
+      const fromImageTag = row.imageTag;
+      // Persist the new pin so the row stays in sync even across restarts; then
+      // mutate the in-memory row so step 2 rolls the StatefulSet this same tick.
+      await deps.db
+        .update(instance)
+        .set({ imageTag: envImage, updatedAt: deps.now() })
+        .where(eq(instance.id, row.id));
+      row.imageTag = envImage;
+      await auditAction(deps, row, "image:autoroll", {
+        from: fromImageTag,
+        to: envImage,
+      });
+    }
   }
 
   // 1. Replicas convergence (only when they actually differ).
