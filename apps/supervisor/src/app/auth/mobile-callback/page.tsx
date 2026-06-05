@@ -16,15 +16,34 @@ import { resolveSupervisorMobileCallback } from "@/lib/mobile-callback";
  * All identity resolution and deep-link construction live in
  * `src/lib/mobile-callback.ts` (testable without a browser).
  */
-export default async function MobileCallbackPage() {
-  const result = await resolveSupervisorMobileCallback();
+export default async function MobileCallbackPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const sp = await searchParams;
+  // Anti-hijack nonce the app generated for THIS login attempt (remote-dev-gkuo).
+  // Echoed unchanged on the deep link so the app rejects callbacks it didn't
+  // initiate. Absent for older app builds (then nothing is echoed).
+  const rawState = sp.state;
+  const state = Array.isArray(rawState) ? rawState[0] : rawState;
+
+  const result = await resolveSupervisorMobileCallback({ state });
 
   if (result.kind === "redirect") {
     redirect(result.url);
   }
 
   if (result.kind === "login") {
-    redirect("/login?callbackUrl=%2Fauth%2Fmobile-callback");
+    // Preserve `state` across the login round-trip: NextAuth returns the user to
+    // this `callbackUrl` after sign-in, so the nonce must ride inside it (the
+    // top-level query param is dropped during the OIDC bounce). `safeCallbackPath`
+    // on the login page accepts this relative path + query as a same-origin
+    // redirect.
+    const inner =
+      "/auth/mobile-callback" +
+      (state ? `?state=${encodeURIComponent(state)}` : "");
+    redirect(`/login?callbackUrl=${encodeURIComponent(inner)}`);
   }
 
   // kind === "error"

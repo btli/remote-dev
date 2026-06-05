@@ -102,9 +102,27 @@ function deepLink(params: Record<string, string | undefined>): string {
  *     key plus sends the CF token for subsequent API requests.
  *  2. NextAuth OIDC session cookie — sends the session cookie(s) so the app
  *     can replay them on subsequent requests.  No API key is created.
+ *
+ * ANTI-HIJACK STATE (remote-dev-gkuo): the `remotedev://` callback is a custom
+ * scheme any app could register, so a malicious app could intercept the
+ * credential payload. The Flutter app therefore generates a single-use,
+ * high-entropy `state` per login attempt and passes it on the inbound
+ * `/auth/mobile-callback?state=…` URL; we ECHO it unchanged on the deep link
+ * (for ALL credential modes — CF / OIDC) so the app can reject any callback it
+ * did not initiate. This is orthogonal to the credential type: it is purely an
+ * unforgeable nonce. When `state` is absent (older app), we omit it — but an
+ * updated app talks to updated servers, so a missing echo from an updated
+ * server cannot happen (instance + supervisor both echo). See the matching
+ * validation in `mobile/lib/infrastructure/auth/mobile_callback_login_launcher.dart`.
+ *
+ * @param opts.state - the app-supplied anti-hijack nonce to echo back, or
+ *   `undefined` when the inbound request carried none.
  */
-export async function resolveInstanceMobileCallback(): Promise<MobileCallbackResult> {
+export async function resolveInstanceMobileCallback(opts?: {
+  state?: string;
+}): Promise<MobileCallbackResult> {
   const store = await cookies();
+  const state = opts?.state;
 
   // ── Path 1: Cloudflare Access JWT ─────────────────────────────────────────
   const cfToken = store.get("CF_Authorization")?.value;
@@ -125,6 +143,7 @@ export async function resolveInstanceMobileCallback(): Promise<MobileCallbackRes
           ]),
           userId: user.id,
           email: user.email ?? "",
+          state,
         }),
       };
     }
@@ -146,6 +165,7 @@ export async function resolveInstanceMobileCallback(): Promise<MobileCallbackRes
           authCookies: encodeAuthCookies(authCookies),
           userId: session.user.id,
           email: session.user.email ?? "",
+          state,
         }),
       };
     }

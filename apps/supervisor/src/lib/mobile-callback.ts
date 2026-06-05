@@ -150,15 +150,41 @@ function resolveSessionCookieBaseName(
 // ---------------------------------------------------------------------------
 
 /**
+ * Append the anti-hijack `state` nonce (remote-dev-gkuo) to a deep-link URL when
+ * present. Echoed unchanged for ALL credential modes (CF / OIDC) so the Flutter
+ * app can reject any `remotedev://auth/callback` it did not initiate. `state`
+ * is hex/base64url (URL-safe) but we still percent-encode defensively, matching
+ * the other params. Omitted entirely when absent (older app) so we never emit a
+ * bare `&state=`. See validation in
+ * `mobile/lib/infrastructure/auth/mobile_callback_login_launcher.dart`.
+ */
+function stateSuffix(state: string | undefined): string {
+  return state ? `&state=${encodeURIComponent(state)}` : "";
+}
+
+/**
  * Core logic for the supervisor host-scope mobile-callback route.
  *
  * Uses `cookies()` from `next/headers` (server component / Route Handler
  * context). Does NOT accept a `NextRequest` — this is a Server Component.
  *
+ * ANTI-HIJACK STATE (remote-dev-gkuo): the app supplies a single-use,
+ * high-entropy `state` on the inbound `/auth/mobile-callback?state=…` URL; we
+ * echo it back on the `remotedev://auth/callback` deep link so the app rejects
+ * callbacks it did not initiate. Strictly additive — does not alter the existing
+ * CF/OIDC multi-mode behavior. Instance + supervisor both echo, so an updated
+ * app always talks to an updated server (version coupling). The supervisor page
+ * threads `state` through here AND embeds it into the `?callbackUrl=` it sends to
+ * `/login`, so the nonce survives the OIDC round-trip.
+ *
+ * @param opts.state - the app-supplied nonce to echo, or `undefined`.
  * @see `apps/supervisor/src/app/auth/mobile-callback/page.tsx` (thin wrapper)
  */
-export async function resolveSupervisorMobileCallback(): Promise<MobileCallbackResult> {
+export async function resolveSupervisorMobileCallback(opts?: {
+  state?: string;
+}): Promise<MobileCallbackResult> {
   const cookieStore = await cookies();
+  const state = opts?.state;
 
   // ------------------------------------------------------------------
   // Path 1: Cloudflare Access (preserve current behavior)
@@ -184,7 +210,8 @@ export async function resolveSupervisorMobileCallback(): Promise<MobileCallbackR
         `&cfToken=${encodeURIComponent(cfToken)}` +
         `&authCookies=${encodeURIComponent(encodeAuthCookies(authCookies))}` +
         `&email=${encodeURIComponent(user.email ?? "")}` +
-        `&userId=${encodeURIComponent(user.id)}`;
+        `&userId=${encodeURIComponent(user.id)}` +
+        stateSuffix(state);
 
       return { kind: "redirect", url };
     }
@@ -265,7 +292,8 @@ export async function resolveSupervisorMobileCallback(): Promise<MobileCallbackR
       `?scope=host` +
       `&authCookies=${encodeURIComponent(encodeAuthCookies(authCookies))}` +
       `&email=${encodeURIComponent(user.email ?? "")}` +
-      `&userId=${encodeURIComponent(user.id)}`;
+      `&userId=${encodeURIComponent(user.id)}` +
+      stateSuffix(state);
 
     return { kind: "redirect", url };
   }

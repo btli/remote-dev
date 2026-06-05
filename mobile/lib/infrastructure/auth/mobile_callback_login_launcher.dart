@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -14,6 +16,43 @@ import 'mobile_credentials.dart';
 /// triggering a fresh `disallowed_useragent` challenge.
 Future<bool> _defaultUrlLauncher(Uri uri) async {
   return launchUrl(uri, mode: LaunchMode.externalApplication);
+}
+
+/// Number of random bytes in a login [state] nonce. 32 bytes = 256 bits of
+/// entropy — comfortably above the 128-bit floor in remote-dev-gkuo, making a
+/// collision/guess by a hostile app that registered the `remotedev://` scheme
+/// computationally infeasible.
+const int _kStateEntropyBytes = 32;
+
+/// Generate a single-use, high-entropy anti-hijack `state` nonce for one mobile
+/// login attempt (remote-dev-gkuo).
+///
+/// The mobile login round-trips credentials through a `remotedev://auth/callback`
+/// CUSTOM-SCHEME deep link, which any app on the device could also register and
+/// intercept. The app appends this nonce to the `/auth/mobile-callback?state=…`
+/// URL it opens; the server echoes it unchanged on the deep link; the app then
+/// accepts the callback ONLY if the echoed nonce matches the one it generated —
+/// so a callback the app did not initiate (a hijack/replay) is rejected.
+///
+/// Uses [Random.secure] (a cryptographically-secure RNG) and base64url (no
+/// padding) so the value is URL-safe and needs no extra escaping. 256 bits.
+String generateLoginState() {
+  final rng = Random.secure();
+  final bytes = List<int>.generate(
+    _kStateEntropyBytes,
+    (_) => rng.nextInt(256),
+  );
+  // base64Url + strip '=' padding → fully URL-safe (no +, /, =).
+  return base64Url.encode(bytes).replaceAll('=', '');
+}
+
+/// Append `state=<nonce>` to [callbackUrl]'s query string, preserving any
+/// existing query parameters (there are none today, but this keeps the helper
+/// total). Pure + testable.
+Uri appendStateParam(Uri callbackUrl, String state) {
+  final params = Map<String, String>.from(callbackUrl.queryParameters);
+  params['state'] = state;
+  return callbackUrl.replace(queryParameters: params);
 }
 
 /// Builds the callback URL for a given base URL, preserving any workspace
@@ -224,13 +263,28 @@ class MobileCallbackLoginLauncher {
     required Stream<Uri> deepLinkStream,
     Future<bool> Function(Uri uri) urlLauncher = _defaultUrlLauncher,
     Duration timeout = const Duration(minutes: 2),
+    String Function() stateGenerator = generateLoginState,
   })  : _stream = deepLinkStream,
         _launch = urlLauncher,
-        _timeout = timeout;
+        _timeout = timeout,
+        _generateState = stateGenerator;
 
   final Stream<Uri> _stream;
   final Future<bool> Function(Uri uri) _launch;
   final Duration _timeout;
+
+  /// Anti-hijack nonce factory (remote-dev-gkuo). Injectable so tests can assert
+  /// the launched URL carries the generated nonce and that mismatches reject.
+  final String Function() _generateState;
+
+  /// The expected `state` for the SINGLE in-flight login (see
+  /// `_awaitCallback`'s single-in-flight contract). Set when a flow launches,
+  /// cleared the instant that flow resolves/fails so the nonce is single-use:
+  /// a replayed deep link arriving after the flow finished finds `null` here
+  /// and is rejected. Concurrent logins are not supported (each call overwrites
+  /// this), matching the existing single-in-flight assumption — every call site
+  /// awaits one flow before starting another.
+  String? _expectedState;
 
   /// Opens the system browser at `<serverUrl>/auth/mobile-callback` and
   /// resolves with the credentials parsed from the
@@ -359,9 +413,39 @@ class MobileCallbackLoginLauncher {
   /// Throws [_LaunchFailed] if the launcher reports failure, [TimeoutException]
   /// on no callback within [_timeout], or rethrows a stream error. The
   /// subscription is always cancelled.
+  ///
+  /// ANTI-HIJACK STATE (remote-dev-gkuo): before launching we generate a
+  /// single-use, high-entropy `state` nonce, append it to the
+  /// `/auth/mobile-callback?state=…` URL, and remember it as [_expectedState].
+  /// The server echoes it on the `remotedev://auth/callback` deep link. We
+  /// accept a callback ONLY when its `state` EXACTLY matches [_expectedState];
+  /// a callback with a missing or mismatched `state` is treated as one we did
+  /// NOT initiate (a hostile-app hijack or a replay) and is IGNORED — we keep
+  /// waiting and ultimately time out rather than ever completing on, or
+  /// applying credentials from, an unsolicited callback. Exact (constant)
+  /// string equality is sufficient because the nonce is an opaque,
+  /// uniformly-random 256-bit token with no structure to canonicalise — there
+  /// is no semantically-equal-but-textually-different form to normalise, so a
+  /// byte-for-byte compare is both necessary and complete. The nonce is cleared
+  /// in `finally` so it is single-use: a callback replayed AFTER this flow
+  /// resolves finds [_expectedState] == null and is rejected.
+  ///
+  /// VERSION COUPLING: both the instance and supervisor servers echo `state`
+  /// (src/lib/mobile-callback.ts + apps/supervisor/src/lib/mobile-callback.ts),
+  /// so an app build that sends a nonce always talks to a server build that
+  /// returns it. There is no "updated app vs old server" window in which a
+  /// legitimate callback would arrive without the echoed nonce — hence the
+  /// strict reject on a missing `state` is safe.
   Future<Uri> _awaitCallback(Uri baseUrl) async {
     final completer = Completer<Uri>();
     StreamSubscription<Uri>? sub;
+
+    // Generate + STORE the expected nonce for THIS attempt before launching.
+    // The stream filter reads the FIELD (not a local) so that clearing it in
+    // `finally` makes the nonce single-use: a callback that arrives after this
+    // flow resolves finds `_expectedState == null` and is rejected.
+    final expectedState = _generateState();
+    _expectedState = expectedState;
 
     // Subscribe BEFORE launching so we never miss a fast-path callback —
     // a sufficiently quick `remotedev://auth/callback` could fire before
@@ -370,6 +454,25 @@ class MobileCallbackLoginLauncher {
       (uri) {
         if (completer.isCompleted) return;
         if (!_isCallbackUri(uri)) return;
+        // Anti-hijack gate: only complete on a callback whose echoed `state`
+        // EXACTLY matches the single-use nonce we stored. Anything else — a
+        // mismatch, a missing `state`, or a callback after the nonce was
+        // cleared (replay) — is ignored (we keep waiting), so a hijacked /
+        // forged / replayed callback can neither complete our login nor inject
+        // its credentials. Constant exact-string compare: the nonce is an
+        // opaque uniformly-random token, so there is no canonicalisation to do.
+        final expected = _expectedState;
+        final returnedState = uri.queryParameters['state'];
+        if (expected == null ||
+            returnedState == null ||
+            returnedState != expected) {
+          debugPrint(
+            '[MobileCallbackLogin] rejecting callback with mismatched/missing '
+            'state (expected ${expected == null ? 'no in-flight nonce' : 'a value'}, '
+            'got ${returnedState == null ? 'none' : 'a different value'})',
+          );
+          return;
+        }
         completer.complete(uri);
       },
       onError: (Object e) {
@@ -380,8 +483,9 @@ class MobileCallbackLoginLauncher {
     );
 
     try {
-      // Use buildCallbackUrl to preserve workspace path prefixes.
-      final callbackUrl = buildCallbackUrl(baseUrl);
+      // Use buildCallbackUrl to preserve workspace path prefixes, then append
+      // the anti-hijack nonce as a query param.
+      final callbackUrl = appendStateParam(buildCallbackUrl(baseUrl), expectedState);
       final launched = await _launch(callbackUrl);
       if (!launched) {
         debugPrint(
@@ -391,6 +495,9 @@ class MobileCallbackLoginLauncher {
       }
       return await completer.future.timeout(_timeout);
     } finally {
+      // Single-use: clear the nonce the moment this flow resolves or fails so a
+      // replayed callback arriving later cannot be reused.
+      _expectedState = null;
       await sub.cancel();
     }
   }
