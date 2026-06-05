@@ -133,6 +133,89 @@ describe("GET /api/deploy/status", () => {
     expect(body.source).toBeUndefined();
   });
 
+  it("reads a JSON {pid,token} HANDOFF lock as held (remote-dev-v7gi) — not misparsed as 'not held'", async () => {
+    // During a v7gi handoff deploy the lock content is JSON, not a bare PID. A
+    // bare parseInt would yield NaN → lockHeld:false, which could let the
+    // state-fallback wrongly short-circuit an in-flight deploy to "success". The
+    // shared parseLockContent must extract the live PID from the JSON form.
+    fsFiles.set(
+      STATE_FILE,
+      JSON.stringify({ activeCommit: COMMIT, deployedAt: "2026-04-04T00:00:00.000Z" }),
+    );
+    fsFiles.set(LOCK_FILE, JSON.stringify({ pid: process.pid, token: "handoff-token" }));
+    const { GET } = await loadRoute();
+
+    const response = await GET(makeRequest(COMMIT, sign(COMMIT)));
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { status: string; lockHeld: boolean };
+    // Live JSON-handoff lock → held → the in-flight guard prevents the success
+    // short-circuit (mirrors the bare-PID in-flight test below).
+    expect(body.lockHeld).toBe(true);
+    expect(body.status).toBe("in_progress");
+  });
+
+  it("treats an EPERM kill -0 as ALIVE (lock held), mirroring the shared engine — does NOT short-circuit to success", async () => {
+    // Codex round-2 LOW: under a user that cannot SIGNAL the deploy owner,
+    // process.kill(pid, 0) throws EPERM — but the process EXISTS, so it is ALIVE.
+    // The shared lock engine treats EPERM as alive; the status route must too, or
+    // it could false-report lockHeld:false and let the state-fallback short-circuit
+    // an in-flight deploy of an already-live SHA to "success". PID 1 (init) is owned
+    // by root, so a non-root test process gets EPERM from kill(1, 0).
+    expect(process.getuid?.()).not.toBe(0); // guard: this assertion needs non-root
+    fsFiles.set(
+      STATE_FILE,
+      JSON.stringify({ activeCommit: COMMIT, deployedAt: "2026-05-05T00:00:00.000Z" }),
+    );
+    fsFiles.set(LOCK_FILE, "1"); // PID 1 → kill(1,0) throws EPERM for non-root
+    const { GET } = await loadRoute();
+
+    const response = await GET(makeRequest(COMMIT, sign(COMMIT)));
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { status: string; lockHeld: boolean; source: string };
+    // EPERM ⇒ alive ⇒ lock held ⇒ the in-flight guard blocks the success fallback.
+    expect(body.lockHeld).toBe(true);
+    expect(body.status).toBe("in_progress");
+    expect(body.source).toBe("no-record");
+  });
+
+  it("treats an EPERM kill -0 as ALIVE for a JSON-handoff lock too", async () => {
+    // Same EPERM-is-alive rule, but the lock is the v7gi JSON {pid,token} shape.
+    expect(process.getuid?.()).not.toBe(0);
+    fsFiles.set(LOCK_FILE, JSON.stringify({ pid: 1, token: "handoff" }));
+    fsFiles.set(
+      RESULT_FILE,
+      JSON.stringify({
+        status: "in_progress",
+        requestedCommit: COMMIT,
+        activeCommit: null,
+        stage: "build",
+        startedAt: "2026-05-05T00:00:00.000Z",
+      }),
+    );
+    const { GET } = await loadRoute();
+    const response = await GET(makeRequest(COMMIT, sign(COMMIT)));
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { lockHeld: boolean };
+    expect(body.lockHeld).toBe(true);
+  });
+
+  it("a DEAD pid (ESRCH) is NOT alive → lockHeld:false (the success fallback may proceed)", async () => {
+    // The counterpart: an unlikely-live high PID yields ESRCH, which is genuinely
+    // dead → lockHeld:false → a live-commit state-fallback is allowed to succeed.
+    fsFiles.set(
+      STATE_FILE,
+      JSON.stringify({ activeCommit: COMMIT, deployedAt: "2026-05-05T00:00:00.000Z" }),
+    );
+    fsFiles.set(LOCK_FILE, "2147480000"); // ESRCH (no such process)
+    const { GET } = await loadRoute();
+    const response = await GET(makeRequest(COMMIT, sign(COMMIT)));
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { status: string; lockHeld: boolean; source: string };
+    expect(body.lockHeld).toBe(false);
+    expect(body.status).toBe("success");
+    expect(body.source).toBe("state-fallback");
+  });
+
   it("falls back to state.json when the live commit matches and there is no attempt record", async () => {
     // No last-deploy.json; state.json says this commit is live → genuine success.
     fsFiles.set(
