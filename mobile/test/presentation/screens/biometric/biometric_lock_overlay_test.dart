@@ -69,55 +69,18 @@ class _ChildSentinel extends StatelessWidget {
 void main() {
   group('BiometricLockOverlay', () {
     testWidgets('does not lock when biometrics are disabled', (tester) async {
+      final port = _FakeBiometricPort();
       await tester.pumpWidget(
-        _wrap(
-          initial: const BiometricSettings(),
-          port: _FakeBiometricPort(),
-        ),
+        _wrap(initial: const BiometricSettings(), port: port),
       );
       await tester.pumpAndSettle();
 
       expect(find.byType(BiometricLockScreen), findsNothing);
       expect(find.text('child-content'), findsOneWidget);
+      expect(port.authCalls, 0); // disabled → never prompts
     });
 
-    testWidgets('cold-start locks when enabled + requireOnColdStart',
-        (tester) async {
-      await tester.pumpWidget(
-        _wrap(
-          initial: const BiometricSettings(
-            enabled: true,
-            requireOnColdStart: true,
-          ),
-          port: _FakeBiometricPort(),
-        ),
-      );
-      // Two pump cycles: one to flush initState's microtask, one for setState.
-      await tester.pumpAndSettle();
-
-      expect(find.byType(BiometricLockScreen), findsOneWidget);
-      expect(find.text('Remote Dev locked'), findsOneWidget);
-      // Child still mounted under the overlay (Stack-based).
-      expect(find.text('child-content'), findsOneWidget);
-    });
-
-    testWidgets('cold-start does not lock when requireOnColdStart is false',
-        (tester) async {
-      await tester.pumpWidget(
-        _wrap(
-          initial: const BiometricSettings(
-            enabled: true,
-            requireOnColdStart: false,
-          ),
-          port: _FakeBiometricPort(),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.byType(BiometricLockScreen), findsNothing);
-    });
-
-    testWidgets('successful authenticate hides the lock screen',
+    testWidgets('cold-start auto-presents the prompt and unlocks on success',
         (tester) async {
       final port = _FakeBiometricPort(authResult: true);
       await tester.pumpWidget(
@@ -131,16 +94,14 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.byType(BiometricLockScreen), findsOneWidget);
-
-      await tester.tap(find.text('Authenticate'));
-      await tester.pumpAndSettle();
-
+      // The prompt fired automatically (no tap); on success the lock is
+      // dismissed — the user never sees the "Authenticate" button.
       expect(port.authCalls, 1);
       expect(find.byType(BiometricLockScreen), findsNothing);
+      expect(find.text('child-content'), findsOneWidget);
     });
 
-    testWidgets('failed authenticate keeps the lock screen visible',
+    testWidgets('cold-start auto-prompt failure keeps lock visible with error',
         (tester) async {
       final port = _FakeBiometricPort(authResult: false);
       await tester.pumpWidget(
@@ -154,11 +115,104 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Authenticate'));
-      await tester.pumpAndSettle();
-
+      // Auto-prompt fired once, failed → lock stays up with an inline error and
+      // the manual button as fallback.
       expect(port.authCalls, 1);
       expect(find.byType(BiometricLockScreen), findsOneWidget);
+      expect(find.text('Authentication failed'), findsOneWidget);
+      expect(find.text('Authenticate'), findsOneWidget);
+    });
+
+    testWidgets('does not auto-loop the prompt after a failure', (tester) async {
+      final port = _FakeBiometricPort(authResult: false);
+      await tester.pumpWidget(
+        _wrap(
+          initial: const BiometricSettings(
+            enabled: true,
+            requireOnColdStart: true,
+          ),
+          port: port,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Extra frames must not trigger further prompts — exactly one auto-prompt.
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+      expect(port.authCalls, 1);
+      expect(find.byType(BiometricLockScreen), findsOneWidget);
+    });
+
+    testWidgets('manual button retries after an auto-prompt failure',
+        (tester) async {
+      final port = _FakeBiometricPort(authResult: false);
+      await tester.pumpWidget(
+        _wrap(
+          initial: const BiometricSettings(
+            enabled: true,
+            requireOnColdStart: true,
+          ),
+          port: port,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(port.authCalls, 1); // auto-prompt
+
+      await tester.tap(find.text('Authenticate'));
+      await tester.pumpAndSettle();
+      expect(port.authCalls, 2); // manual retry still works
+      expect(find.byType(BiometricLockScreen), findsOneWidget);
+    });
+
+    testWidgets('cold-start does not lock when requireOnColdStart is false',
+        (tester) async {
+      final port = _FakeBiometricPort();
+      await tester.pumpWidget(
+        _wrap(
+          initial: const BiometricSettings(
+            enabled: true,
+            requireOnColdStart: false,
+          ),
+          port: port,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(BiometricLockScreen), findsNothing);
+      expect(port.authCalls, 0);
+    });
+
+    testWidgets(
+        'resume after grace auto-presents the prompt and unlocks on success',
+        (tester) async {
+      final port = _FakeBiometricPort(authResult: true);
+      await tester.pumpWidget(
+        _wrap(
+          initial: const BiometricSettings(
+            enabled: true,
+            requireOnColdStart: false, // no cold lock; we drive a resume
+            gracePeriodSeconds: 0,
+          ),
+          port: port,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(BiometricLockScreen), findsNothing);
+
+      // Drive a background→foreground cycle through valid lifecycle states.
+      // Only `resumed` triggers the overlay's handler.
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+
+      // Resume locked the app AND auto-presented the prompt (no tap); success
+      // dismissed it.
+      expect(port.authCalls, 1);
+      expect(find.byType(BiometricLockScreen), findsNothing);
     });
   });
 }
