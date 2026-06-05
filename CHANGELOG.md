@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Mobile session view no longer flashes the "No active server configured" blank state on keyboard/layout rebuilds — the WebView target Future is now resolved once and cached instead of rebuilt every frame (remote-dev-9c5j).
 - Sidebar session status: replaced the redundant needs-attention dot with a glow on the status icon (driven by both live status and unread actionable/error notifications; the row's accessible name now also announces "waiting for input"/"error" so the colour-only glow isn't the sole signal), and stopped showing stale "running"/green status after the tab regains focus or the WebSocket reconnects (the in-memory status cache now reconciles from the DB on every refresh; refresh also fires on window focus; the terminal server replays in-memory status indicators/progress on reattach). (remote-dev-f9y9)
 - Mobile biometric lock now auto-presents the OS biometric/device-credential prompt the moment the lock screen appears, instead of requiring a tap on "Authenticate"; the button remains as a manual-retry fallback after a cancel/failure. (remote-dev-u8sq)
 - Mobile push: the FCM token registrar now retries failed workspace registrations on connectivity-restored, app-resume, and a bounded backoff timer instead of silently giving up at launch (e.g. when the app starts behind the screensaver and Doze blocks the network). (remote-dev-0ir2)
