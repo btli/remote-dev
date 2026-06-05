@@ -229,6 +229,7 @@ export function readProvisionEnv(): {
   cfAccess: { team: string; aud: string };
   github?: { clientId: string; clientSecret: string };
   oidc?: { issuer: string; clientId: string; clientSecret: string; name: string };
+  fcm?: { projectId: string; serviceAccountJson: string };
   imagePullSecret?: { name: string; dockerConfigJson?: string };
   nodeSelector?: Record<string, string>;
   provisionBaseline?: string;
@@ -280,6 +281,23 @@ export function readProvisionEnv(): {
         }
       : undefined;
 
+  // Optional Firebase/FCM creds injected so provisioned instances can SEND FCM
+  // push (remote-dev-wnl4). The instance's container.ts enables FcmPushGateway
+  // only when BOTH FCM_PROJECT_ID and FCM_SERVICE_ACCOUNT_PATH are set, so this
+  // is ALL-OR-NOTHING (mirrors the OIDC gate above): present ONLY when BOTH
+  // SUPERVISOR_INSTANCE_FCM_PROJECT_ID and ..._FCM_SERVICE_ACCOUNT_JSON are set;
+  // when either is missing, no FCM is injected. The service-account JSON is a
+  // SECRET — never logged (it becomes a mounted Secret file in the instance).
+  const fcm =
+    process.env.SUPERVISOR_INSTANCE_FCM_PROJECT_ID &&
+    process.env.SUPERVISOR_INSTANCE_FCM_SERVICE_ACCOUNT_JSON
+      ? {
+          projectId: process.env.SUPERVISOR_INSTANCE_FCM_PROJECT_ID,
+          serviceAccountJson:
+            process.env.SUPERVISOR_INSTANCE_FCM_SERVICE_ACCOUNT_JSON,
+        }
+      : undefined;
+
   // Optional image-pull credential for PRIVATE instance images (remote-dev-2xhg).
   // The dockerconfigjson is a SECRET — never logged. A dockerconfigjson with no
   // name can be neither created nor referenced, so that combination throws loud.
@@ -314,6 +332,7 @@ export function readProvisionEnv(): {
     cfAccess: { team, aud },
     github,
     oidc,
+    fcm,
     imagePullSecret,
     nodeSelector,
     provisionBaseline,
@@ -430,6 +449,7 @@ function buildProvisionOptions(row: InstanceRow): ProvisionOptions {
     cfAccess: env.cfAccess,
     github: env.github,
     oidc: env.oidc,
+    fcm: env.fcm,
     imagePullSecret: env.imagePullSecret,
     nodeSelector: env.nodeSelector,
     provisionBaseline: env.provisionBaseline,

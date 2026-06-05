@@ -29,6 +29,7 @@ import {
   buildSharedSecret,
   buildAuthSecret,
   buildDbSecret,
+  buildFcmSecret,
   buildImagePullSecret,
   buildService,
   buildStatefulSet,
@@ -69,6 +70,7 @@ export type ProvisioningStage =
   | "shared-secret"
   | "auth-secret"
   | "db-secret"
+  | "fcm-secret"
   | "service"
   | "statefulset";
 
@@ -172,6 +174,13 @@ export interface ProvisionOptions {
    * clientSecret is secret-backed. SECURITY: never log `clientSecret`.
    */
   oidc?: { issuer: string; clientId: string; clientSecret: string; name: string };
+  /**
+   * Optional Firebase/FCM creds so the instance can SEND FCM push. `projectId`
+   * rides in the non-secret env (FCM_PROJECT_ID); `serviceAccountJson` is mounted
+   * as a Secret file (FCM_SERVICE_ACCOUNT_PATH points at it). All-or-nothing:
+   * present only when BOTH are configured. SECURITY: never log `serviceAccountJson`.
+   */
+  fcm?: { projectId: string; serviceAccountJson: string };
   /**
    * Optional image-pull credential for PRIVATE instance images (remote-dev-2xhg).
    * When `name` is set it is referenced in the StatefulSet's `imagePullSecrets`;
@@ -341,6 +350,23 @@ export async function provisionInstance(
       );
     }
 
+    // 3c. Per-instance FCM service-account Secret (`rdv-<slug>-fcm`) — ONLY when
+    //     the supervisor is configured with FCM creds (opts.fcm set). Lets the
+    //     instance SEND FCM push (the StatefulSet mounts it via `withFcm`; the
+    //     non-secret FCM env rides in buildInstanceEnv). All-or-nothing: when
+    //     unset, no FCM Secret/mount/env at all (back-compat).
+    //     SECURITY: never log the built Secret / serviceAccountJson.
+    if (opts.fcm) {
+      await createStep("fcm-secret", () =>
+        core.createNamespacedSecret({
+          namespace,
+          body: buildFcmSecret(slug, {
+            serviceAccountJson: opts.fcm!.serviceAccountJson,
+          }),
+        }),
+      );
+    }
+
     // 4. Governing Service `rdv`.
     await createStep("service", () =>
       core.createNamespacedService({ namespace, body: buildService(slug) }),
@@ -353,6 +379,9 @@ export async function provisionInstance(
         ? { issuer: opts.oidc.issuer, clientId: opts.oidc.clientId, name: opts.oidc.name }
         : undefined,
       provisionBaseline: opts.provisionBaseline,
+      // FCM: non-secret projectId + the mount path ride in env; the JSON is a
+      // mounted Secret file (created above, mounted via withFcm below).
+      fcm: opts.fcm,
     });
     await createStep("statefulset", () =>
       apps.createNamespacedStatefulSet({
@@ -363,6 +392,8 @@ export async function provisionInstance(
           volumeClaimTemplate: toVolumeClaimTemplate(opts.storage),
           withGithub: Boolean(opts.github),
           withOidc: Boolean(opts.oidc),
+          // FCM: mount the `rdv-<slug>-fcm` Secret read-only when FCM is set.
+          withFcm: Boolean(opts.fcm),
           // Postgres dual-backend (Unit 8): DATABASE_URL from `rdv-<slug>-db`.
           withDatabase,
           // Referenced whenever the name is set — even without a dockerConfigJson

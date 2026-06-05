@@ -264,6 +264,82 @@ describe("provisionInstance — provision baseline (remote-dev-uobt)", () => {
   });
 });
 
+describe("provisionInstance — FCM push provisioning (remote-dev-wnl4)", () => {
+  it("with fcm creates the rdv-<slug>-fcm Secret (before the Service) AND the STS mounts it", async () => {
+    const { clients, order } = makeClients();
+    await provisionInstance(
+      row(),
+      {
+        ...OPTS,
+        fcm: {
+          projectId: "my-firebase-project",
+          serviceAccountJson: '{"type":"service_account"}',
+        },
+      },
+      clients,
+    );
+    // The FCM Secret is created after the auth secret and BEFORE the Service.
+    expect(order).toEqual([
+      "namespace",
+      "secret:rdv-shared",
+      "secret:rdv-alpha",
+      "secret:rdv-alpha-fcm",
+      "service",
+      "statefulset",
+    ]);
+    // The created FCM Secret carries the service-account JSON under the right key.
+    const fcmSecret = (clients.core.createNamespacedSecret as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => c[0].body)
+      .find((b: { metadata?: { name?: string } }) => b.metadata?.name === "rdv-alpha-fcm");
+    expect(fcmSecret.type).toBe("Opaque");
+    expect(fcmSecret.stringData["service-account.json"]).toBe('{"type":"service_account"}');
+
+    // The STS injects FCM_PROJECT_ID + FCM_SERVICE_ACCOUNT_PATH and mounts the vol.
+    const stsBody = (clients.apps.createNamespacedStatefulSet as ReturnType<typeof vi.fn>)
+      .mock.calls[0][0].body;
+    const env: Array<{ name: string; value?: string }> =
+      stsBody.spec.template.spec.containers[0].env;
+    expect(env.find((e) => e.name === "FCM_PROJECT_ID")?.value).toBe("my-firebase-project");
+    expect(env.find((e) => e.name === "FCM_SERVICE_ACCOUNT_PATH")?.value).toBe(
+      "/etc/rdv-fcm/service-account.json",
+    );
+    const fcmMount = stsBody.spec.template.spec.containers[0].volumeMounts.find(
+      (m: { name: string }) => m.name === "fcm",
+    );
+    expect(fcmMount.mountPath).toBe("/etc/rdv-fcm");
+    expect(fcmMount.readOnly).toBe(true);
+    const fcmVol = stsBody.spec.template.spec.volumes.find(
+      (v: { name: string }) => v.name === "fcm",
+    );
+    expect(fcmVol.secret.secretName).toBe("rdv-alpha-fcm");
+  });
+
+  it("back-compat: no fcm → no FCM Secret, no FCM env, no fcm volume/mount", async () => {
+    const { clients, order } = makeClients();
+    await provisionInstance(row(), OPTS, clients);
+    expect(order).toEqual([
+      "namespace",
+      "secret:rdv-shared",
+      "secret:rdv-alpha",
+      "service",
+      "statefulset",
+    ]);
+    expect(order).not.toContain("secret:rdv-alpha-fcm");
+    const stsBody = (clients.apps.createNamespacedStatefulSet as ReturnType<typeof vi.fn>)
+      .mock.calls[0][0].body;
+    const env: Array<{ name: string }> = stsBody.spec.template.spec.containers[0].env;
+    expect(env.find((e) => e.name === "FCM_PROJECT_ID")).toBeUndefined();
+    expect(env.find((e) => e.name === "FCM_SERVICE_ACCOUNT_PATH")).toBeUndefined();
+    // No pod volumes at all (data rides in volumeClaimTemplates).
+    expect(stsBody.spec.template.spec.volumes).toBeUndefined();
+    expect(
+      stsBody.spec.template.spec.containers[0].volumeMounts.find(
+        (m: { name: string }) => m.name === "fcm",
+      ),
+    ).toBeUndefined();
+  });
+});
+
 describe("provisionInstance — Postgres dual-backend (Unit 8)", () => {
   const CNPG_ENV = {
     CNPG_CLUSTER_NAME: "rdv-pg",
