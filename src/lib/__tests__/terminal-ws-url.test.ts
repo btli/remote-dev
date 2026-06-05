@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
-import { resolveTerminalWsUrlFromHost } from "@/lib/terminal-ws-url";
+import { resolveTerminalWsUrlFromHeaders, resolveTerminalWsUrlFromHost } from "@/lib/terminal-ws-url";
 
 describe("resolveTerminalWsUrlFromHost", () => {
   const originalEnv = process.env.NEXT_PUBLIC_TERMINAL_PORT;
@@ -111,5 +111,63 @@ describe("resolveTerminalWsUrlFromHost", () => {
         protocol: "http",
       }),
     ).toBe("ws://localhost:3001/ws");
+  });
+});
+
+/**
+ * Tests for the header-driven `resolveTerminalWsUrlFromHeaders`, used by the
+ * `/m/session/[id]` Server Component. Behind the supervisor-router the raw
+ * `Host` header is the INTERNAL cluster upstream
+ * (`rdv.<ns>.svc.cluster.local:6001`), so the WS URL must be derived from the
+ * edge-forwarded host (`x-forwarded-host` → `host`) — the same precedence the
+ * proxy uses for redirects — or the WebView connects to an unreachable address.
+ */
+describe("resolveTerminalWsUrlFromHeaders", () => {
+  const originalEnv = process.env.NEXT_PUBLIC_TERMINAL_PORT;
+
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_TERMINAL_PORT = "6002";
+  });
+
+  afterEach(() => {
+    if (originalEnv === undefined) {
+      delete process.env.NEXT_PUBLIC_TERMINAL_PORT;
+    } else {
+      process.env.NEXT_PUBLIC_TERMINAL_PORT = originalEnv;
+    }
+  });
+
+  /** Build a case-insensitive header getter from a plain record. */
+  function makeGetHeader(headers: Record<string, string>): (name: string) => string | undefined {
+    const lower = new Map(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
+    return (name: string) => lower.get(name.toLowerCase());
+  }
+
+  it("prefers x-forwarded-host over the internal Host (supervisor-router) → wss://public/dev/ws", () => {
+    const getHeader = makeGetHeader({
+      "x-forwarded-host": "rdv.joyful.house",
+      "x-forwarded-proto": "https",
+      host: "rdv.rdv-dev.svc.cluster.local:6001",
+    });
+    expect(resolveTerminalWsUrlFromHeaders(getHeader, "/dev")).toBe("wss://rdv.joyful.house/dev/ws");
+  });
+
+  it("uses the first value of a comma-separated forwarded chain", () => {
+    const getHeader = makeGetHeader({
+      "x-forwarded-host": "rdv.joyful.house, internal",
+      "x-forwarded-proto": "https",
+      host: "rdv.rdv-dev.svc.cluster.local:6001",
+    });
+    expect(resolveTerminalWsUrlFromHeaders(getHeader, "/dev")).toBe("wss://rdv.joyful.house/dev/ws");
+  });
+
+  it("falls back to Host and defaults a non-loopback host to wss", () => {
+    const getHeader = makeGetHeader({ host: "rdv.example.com" });
+    expect(resolveTerminalWsUrlFromHeaders(getHeader, "")).toBe("wss://rdv.example.com/ws");
+  });
+
+  it("treats a localhost host as loopback → ws://localhost:port/ws", () => {
+    const getHeader = makeGetHeader({ host: "localhost:6001", "x-forwarded-proto": "http" });
+    expect(resolveTerminalWsUrlFromHeaders(getHeader, "")).toBe("ws://localhost:6002/ws");
   });
 });
