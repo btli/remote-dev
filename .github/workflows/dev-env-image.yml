@@ -68,8 +68,15 @@ jobs:
         # antigravity (`agy`) is BEST-EFFORT (its installer 404s) — intentionally
         # NOT asserted here, mirroring the Dockerfile's build-time smoke gate. A
         # non-zero exit from this command fails the job.
+        #
+        # `--entrypoint sh`: the image's entrypoint (docker/entrypoint.sh) starts
+        # the instance servers (terminal server + Next.js + background
+        # auto-update) and IGNORES the CMD, so a plain `docker run … sh -lc …`
+        # boots the servers (which run forever) instead of running the checks and
+        # the step times out. Override the entrypoint to assert image *contents*
+        # without booting the servers.
         run: |
-          docker run --rm rdv-dev-env:ci sh -lc '
+          docker run --rm --entrypoint sh rdv-dev-env:ci -lc '
             node --version | grep -q "^v24" \
               && command -v claude \
               && command -v codex \
@@ -80,4 +87,4 @@ jobs:
       - name: Smoke test — RDV_IMAGE_FLAVOR is dev-env
         timeout-minutes: 5
         run: |
-          docker run --rm rdv-dev-env:ci sh -lc '[ "$RDV_IMAGE_FLAVOR" = "dev-env" ]'
+          docker run --rm --entrypoint sh rdv-dev-env:ci -lc '[ "$RDV_IMAGE_FLAVOR" = "dev-env" ]'
