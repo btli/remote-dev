@@ -287,18 +287,27 @@ class AppRouter {
         ),
         GoRoute(
           path: '/home/session/:id',
-          builder: (context, state) => SessionViewScreen(
-            sessionId: state.pathParameters['id']!,
-            // Pre-resolved summary when navigation carries one (Sessions
-            // list / freshly-created session). Notification/deep-link
-            // cold-starts pass no extra, so the screen resolves the name
-            // from the sessions list instead. Guard the cast: GoRouter may
-            // hand back arbitrary extras (e.g. a ServerConfig from an
-            // unrelated push) so only accept a SessionSummary.
-            initialSummary: state.extra is SessionSummary
-                ? state.extra! as SessionSummary
-                : null,
-          ),
+          builder: (context, state) {
+            final id = state.pathParameters['id']!;
+            // Key by session id so the screen REMOUNTS whenever the session
+            // changes. SessionViewScreen + _Webview cache per-session state in
+            // initState (resolved name, resolved WebView target); without a key a
+            // future context.go(...) or route restoration could reuse this element
+            // across sessions and leave those caches stale (remote-dev-9c5j).
+            return SessionViewScreen(
+              key: ValueKey('session-$id'),
+              sessionId: id,
+              // Pre-resolved summary when navigation carries one (Sessions
+              // list / freshly-created session). Notification/deep-link
+              // cold-starts pass no extra, so the screen resolves the name
+              // from the sessions list instead. Guard the cast: GoRouter may
+              // hand back arbitrary extras (e.g. a ServerConfig from an
+              // unrelated push) so only accept a SessionSummary.
+              initialSummary: state.extra is SessionSummary
+                  ? state.extra! as SessionSummary
+                  : null,
+            );
+          },
         ),
         GoRoute(
           path: '/home/channel/:id',

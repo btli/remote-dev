@@ -451,19 +451,47 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
   }
 }
 
-class _Webview extends ConsumerWidget {
+class _Webview extends ConsumerStatefulWidget {
   const _Webview({required this.sessionId, required this.onWebViewCreated});
 
   final String sessionId;
   final void Function(InAppWebViewController) onWebViewCreated;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_Webview> createState() => _WebviewState();
+}
+
+class _WebviewState extends ConsumerState<_Webview> {
+  /// The resolved WebView target, computed exactly ONCE in [initState] and
+  /// cached. Resolving in `build()` would create a fresh Future every frame,
+  /// so any cosmetic parent rebuild (e.g. a keyboard-inset change recomputing
+  /// `webViewHeight`) would restart the [FutureBuilder] from
+  /// `ConnectionState.waiting` — briefly flashing the blank 'No active server
+  /// configured.' state and re-running the cookie-seeding side effect. The
+  /// target depends only on the active workspace, and this view is pinned to
+  /// its session for its lifetime, so caching once is correct.
+  late final Future<_WebviewTarget?> _targetFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _targetFuture = _resolveTarget();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return FutureBuilder<_WebviewTarget?>(
-      future: _resolveTarget(ref),
+      future: _targetFuture,
       builder: (context, snap) {
+        // Still resolving: show a neutral dark placeholder, NOT the error
+        // text. Distinguishing waiting from a genuine null target is what
+        // stops the blank-state flash during the first async resolve.
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const ColoredBox(color: Color(0xFF1A1B26));
+        }
         final target = snap.data;
         if (target == null) {
+          // Resolution is done and yielded no server — genuinely unconfigured.
           return const ColoredBox(
             color: Color(0xFF1A1B26),
             child: Center(
@@ -480,7 +508,7 @@ class _Webview extends ConsumerWidget {
         final origin = target.origin;
         final basePath = target.basePath;
         final urls = WorkspaceUrls(origin.toString(), basePath);
-        final url = Uri.parse(urls.web('/m/session/$sessionId'));
+        final url = Uri.parse(urls.web('/m/session/${widget.sessionId}'));
         return WebViewFactory().build(
           initialUrl: url,
           policy: NavigationPolicy(
@@ -498,7 +526,7 @@ class _Webview extends ConsumerWidget {
             // See bd remote-dev-pmhg.
             unawaited(_openExternal(uri));
           },
-          onWebViewCreated: onWebViewCreated,
+          onWebViewCreated: widget.onWebViewCreated,
           // Diagnostic logging (bd remote-dev-l4q6 Bug 4). Without an on-
           // device repro of the blank-screen / submit-does-nothing bug we
           // surface page-load + console output to `flutter logs` so the
@@ -519,7 +547,7 @@ class _Webview extends ConsumerWidget {
   /// with the persisted CF JWT before the WebView mounts. Seeding failures
   /// are swallowed so they don't block the WebView (the WebView will hit a
   /// CF Access challenge instead, and the user re-auths via /reauth).
-  Future<_WebviewTarget?> _resolveTarget(WidgetRef ref) async {
+  Future<_WebviewTarget?> _resolveTarget() async {
     final conn = await ref.read(activeWorkspaceProvider.future);
     if (conn == null) return null;
     // The WebView loads `<origin><basePath>/m/session/<id>`. The cookie is
