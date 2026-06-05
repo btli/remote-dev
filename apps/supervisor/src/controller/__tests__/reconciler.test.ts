@@ -4,6 +4,8 @@ import {
   readProvisionEnv,
   parseNodeSelector,
   parseProvisionBaseline,
+  parseReadinessBudgetMs,
+  READINESS_BUDGET_MS,
   type ReconcilerDeps,
 } from "@/controller/reconciler";
 import { ProvisioningError } from "@/lib/provisioner-service";
@@ -279,15 +281,19 @@ describe("reconcileInstances — provisioning → ready / error", () => {
     expect(readyUpdate?.set.baseUrl).toBe("https://dev.example.com/alpha");
   });
 
-  it("past the 120s budget → error AND deletes the namespace (Fix 1 cleanup)", async () => {
-    const old = new Date("2026-05-30T00:00:00Z"); // long ago
+  it("past the readiness budget → error AND deletes the namespace (Fix 1 cleanup)", async () => {
+    const now = new Date("2026-05-31T00:00:00Z");
+    // Anchor the claim just PAST the (configurable) budget, computed from the
+    // imported constant so this stays correct if the default ever changes.
+    const past = new Date(now.getTime() - (READINESS_BUDGET_MS + 1_000));
     const { db, updates } = makeDb([
-      row("provisioning", { updatedAt: old, createdAt: old }),
+      row("provisioning", { updatedAt: past, createdAt: past }),
     ]);
     const terminateInstance = vi.fn(async () => undefined);
     await reconcileInstances(
       baseDeps({
         db,
+        now: () => now,
         terminateInstance,
         checkInstanceReady: vi.fn(async () => ({ ready: false, reason: "pending" })),
       }),
@@ -299,8 +305,10 @@ describe("reconcileInstances — provisioning → ready / error", () => {
 
   it("within budget + StatefulSet MISSING → re-runs provisionInstance (self-heal, Fix 1)", async () => {
     const now = new Date("2026-05-31T00:00:00Z");
+    // Aged but still 30s inside the (configurable) budget.
+    const claimed = new Date(now.getTime() - (READINESS_BUDGET_MS - 30_000));
     const { db, updates } = makeDb([
-      row("provisioning", { updatedAt: now, createdAt: now }),
+      row("provisioning", { updatedAt: claimed, createdAt: claimed }),
     ]);
     const provisionInstance = vi.fn(async () => null);
     await reconcileInstances(
@@ -323,8 +331,10 @@ describe("reconcileInstances — provisioning → ready / error", () => {
 
   it("within budget + still coming up (not SS-missing) → NO write, deadline preserved (Fix 1 anchor)", async () => {
     const now = new Date("2026-05-31T00:00:00Z");
+    // Aged but still 30s inside the (configurable) budget.
+    const claimed = new Date(now.getTime() - (READINESS_BUDGET_MS - 30_000));
     const { db, updates } = makeDb([
-      row("provisioning", { updatedAt: now, createdAt: now }),
+      row("provisioning", { updatedAt: claimed, createdAt: claimed }),
     ]);
     const provisionInstance = vi.fn(async () => null);
     await reconcileInstances(
@@ -822,5 +832,53 @@ describe("readProvisionEnv — provision baseline (remote-dev-uobt)", () => {
     expect(() => readProvisionEnv()).toThrow(
       /SUPERVISOR_INSTANCE_BASELINE_PACKAGES is not valid JSON/,
     );
+  });
+});
+
+describe("parseReadinessBudgetMs (remote-dev-qy7t)", () => {
+  const DEFAULT = 360_000;
+
+  // Save/restore so the env override never leaks between tests.
+  const ORIGINAL_BUDGET = process.env.SUPERVISOR_READINESS_BUDGET_MS;
+  afterEach(() => {
+    if (ORIGINAL_BUDGET === undefined) {
+      delete process.env.SUPERVISOR_READINESS_BUDGET_MS;
+    } else {
+      process.env.SUPERVISOR_READINESS_BUDGET_MS = ORIGINAL_BUDGET;
+    }
+  });
+
+  it("defaults to 360000 (6 min) when the env var is unset", () => {
+    expect(parseReadinessBudgetMs(undefined)).toBe(DEFAULT);
+  });
+
+  it("accepts a valid positive integer override", () => {
+    expect(parseReadinessBudgetMs("300000")).toBe(300_000);
+    expect(parseReadinessBudgetMs("120000")).toBe(120_000);
+  });
+
+  it("falls back to the default for empty / whitespace", () => {
+    expect(parseReadinessBudgetMs("")).toBe(DEFAULT);
+    expect(parseReadinessBudgetMs("   ")).toBe(DEFAULT);
+  });
+
+  it("falls back to the default for non-numeric / NaN", () => {
+    expect(parseReadinessBudgetMs("abc")).toBe(DEFAULT);
+    expect(parseReadinessBudgetMs("12x")).toBe(DEFAULT);
+    expect(parseReadinessBudgetMs("NaN")).toBe(DEFAULT);
+  });
+
+  it("falls back to the default for zero / negative / fractional / Infinity", () => {
+    expect(parseReadinessBudgetMs("0")).toBe(DEFAULT);
+    expect(parseReadinessBudgetMs("-5000")).toBe(DEFAULT);
+    expect(parseReadinessBudgetMs("1500.5")).toBe(DEFAULT);
+    expect(parseReadinessBudgetMs("Infinity")).toBe(DEFAULT);
+  });
+
+  it("reads SUPERVISOR_READINESS_BUDGET_MS from the environment by default", () => {
+    process.env.SUPERVISOR_READINESS_BUDGET_MS = "450000";
+    expect(parseReadinessBudgetMs()).toBe(450_000);
+    delete process.env.SUPERVISOR_READINESS_BUDGET_MS;
+    expect(parseReadinessBudgetMs()).toBe(DEFAULT);
   });
 });
