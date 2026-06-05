@@ -21,8 +21,11 @@ import '../auth/mobile_credentials.dart';
 /// Host/Workspace store rather than the legacy per-server store. For each
 /// workspace it builds a [RemoteDevClient.forWorkspace] (origin + basePath +
 /// per-workspace API key + host-wide CF cookie) and POSTs the token to
-/// `/api/notifications/push-token`. Workspaces with no stored API key are
-/// skipped (they were never signed into).
+/// `/api/notifications/push-token`. Workspaces with no stored API key AND no
+/// session cookies are skipped (they were never signed into). OIDC workspaces
+/// authenticate by cookie and have no API key, so a stored auth cookie is just
+/// as valid a "signed-in" signal as an API key — the client built by
+/// [clientFactory] cookie-authenticates the POST either way.
 ///
 /// Background-POST constraint: the workspace clients are constructed with NO
 /// interactive refresh, so a token POST against a workspace with a stale CF
@@ -44,8 +47,8 @@ class PushTokenRegistrar {
   /// store the registrar used pre-migration.
   final HostWorkspaceStore store;
 
-  /// Reads the per-workspace API key (to decide whether a workspace was ever
-  /// signed into) before building a client for it.
+  /// Reads the per-workspace API key and/or auth cookies (to decide whether a
+  /// workspace was ever signed into) before building a client for it.
   final MobileCredentialsStore credentials;
 
   /// Builds an [ApiClientPort] for a (host, workspace) pair. Production wires
@@ -74,16 +77,20 @@ class PushTokenRegistrar {
     return true;
   }
 
-  /// POST the token to every saved workspace that has a stored API key.
-  /// Per-workspace failures (and unresolvable hosts) don't block the others.
+  /// POST the token to every saved workspace that has a stored API key OR
+  /// stored session cookies. Per-workspace failures (and unresolvable hosts)
+  /// don't block the others.
   Future<void> registerWithAll(String token) async {
     final workspaces = await store.loadWorkspaces();
     final platform = Platform.isIOS ? 'ios' : 'android';
     for (final ws in workspaces) {
       try {
-        // Never signed into this workspace → nothing to register against.
+        // Never signed into this workspace (no API key AND no session cookies)
+        // → nothing to register against. OIDC workspaces authenticate by cookie
+        // and have no API key; the clientFactory still cookie-auths the POST.
         final apiKey = await credentials.getWorkspaceApiKey(ws.id);
-        if (apiKey == null || apiKey.isEmpty) continue;
+        final cookies = await credentials.getWorkspaceAuthCookies(ws.id);
+        if ((apiKey == null || apiKey.isEmpty) && cookies.isEmpty) continue;
 
         final host = await store.loadHost(ws.hostId);
         if (host == null) continue;
@@ -104,9 +111,10 @@ class PushTokenRegistrar {
   }
 
   /// DELETE the token from a single workspace (used on sign-out /
-  /// delete-workspace). Best-effort: a missing workspace, missing API key, or
-  /// network failure is swallowed (logged) so the caller's delete/sign-out is
-  /// never blocked.
+  /// delete-workspace). Best-effort: a missing workspace, a workspace that was
+  /// never signed into (no API key AND no session cookies), or a network
+  /// failure is swallowed (logged) so the caller's delete/sign-out is never
+  /// blocked.
   Future<void> unregisterWorkspace(String workspaceId) async {
     final token = await push.getToken();
     if (token == null) return;
@@ -124,8 +132,12 @@ class PushTokenRegistrar {
     }
     if (target == null) return;
 
+    // Never signed into this workspace (no API key AND no session cookies) →
+    // nothing to unregister against. OIDC workspaces authenticate by cookie and
+    // have no API key; the clientFactory still cookie-auths the DELETE.
     final apiKey = await credentials.getWorkspaceApiKey(target.id);
-    if (apiKey == null || apiKey.isEmpty) return;
+    final cookies = await credentials.getWorkspaceAuthCookies(target.id);
+    if ((apiKey == null || apiKey.isEmpty) && cookies.isEmpty) return;
 
     final host = await store.loadHost(target.hostId);
     if (host == null) return;
