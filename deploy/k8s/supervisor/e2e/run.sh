@@ -89,19 +89,20 @@ echo ">> starting stack (waiting for health gates)…"
 "${DC[@]}" up -d --wait --wait-timeout "${E2E_WAIT_TIMEOUT_S:-240}" \
   supervisor instance-alpha instance-beta router
 
-# Run the seed one-shot to completion. `docker compose wait` blocks until the
-# container stops and EXITS WITH the container's own exit code (it also prints a
-# human-readable line to stdout — we key off the exit status, not the text). The
-# explicit `if` keeps `set -e` from aborting on a non-zero seed before we can log.
+# Run the seed one-shot to completion. `docker compose run` runs the `seed`
+# service's own command (the seed script) and RETURNS THE ONE-OFF PROCESS EXIT
+# STATUS — the documented, unambiguous way to gate on a one-shot (unlike
+# `up`+`wait`, whose exit semantics are under-specified). `--no-deps` skips
+# re-pulling-up the dependency (the supervisor is already healthy from the
+# `up --wait` above); `--rm` cleans up the one-off container. The explicit `if`
+# keeps `set -e` from aborting before we can surface logs.
 echo ">> seeding ready instances…"
-"${DC[@]}" up -d seed
-if "${DC[@]}" wait seed; then
-  echo ">> seed OK"
-else
-  echo ">> seed did not exit 0; logs:" >&2
+if ! "${DC[@]}" run --rm --no-deps seed; then
+  echo ">> seed failed; logs:" >&2
   "${DC[@]}" logs --no-color seed || true
   exit 1
 fi
+echo ">> seed OK"
 
 # Give the router one allowlist poll cycle to pick up the seeded routes (it polls
 # every ROUTER_ALLOWLIST_POLL_MS=2000ms in the compose).

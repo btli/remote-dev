@@ -19,27 +19,30 @@
 
 name: Supervisor Router E2E
 
+# One shared path list (YAML anchor) so pull_request and push trigger on the
+# SAME set — the surfaces this smoke guards. Beyond the obvious harness + image
+# inputs it includes the product files the harness MIRRORS, so a change there
+# re-runs the guard: src/server/terminal.ts (WS upgrade gate),
+# src/lib/base-path.ts (basePath/_next derivation), src/lib/ws-token.ts (smoke.ts
+# reimplements its HMAC token format), and next.config.ts (basePath / _next
+# materialization baked at build).
 on:
   workflow_dispatch:
   pull_request:
-    paths:
+    paths: &trigger-paths
       - "apps/supervisor-router/**"
       - "apps/supervisor/**"
       - "Dockerfile"
       - "docker/**"
       - "src/server/terminal.ts"
       - "src/lib/base-path.ts"
+      - "src/lib/ws-token.ts"
+      - "next.config.ts"
       - "deploy/k8s/supervisor/**"
       - ".github/workflows/supervisor-router-e2e.yml"
   push:
     branches: [master]
-    paths:
-      - "apps/supervisor-router/**"
-      - "apps/supervisor/**"
-      - "Dockerfile"
-      - "docker/**"
-      - "deploy/k8s/supervisor/e2e/**"
-      - ".github/workflows/supervisor-router-e2e.yml"
+    paths: *trigger-paths
 
 # Cancel an in-flight run when a newer commit supersedes it.
 concurrency:

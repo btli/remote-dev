@@ -76,7 +76,12 @@ function section(title: string): void {
 async function httpGet(
   path: string,
   init?: RequestInit,
-): Promise<{ status: number; body: string; contentType: string }> {
+): Promise<{
+  status: number;
+  body: string;
+  contentType: string;
+  location: string;
+}> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
   try {
@@ -90,6 +95,9 @@ async function httpGet(
       status: res.status,
       body,
       contentType: res.headers.get("content-type") ?? "",
+      // The redirect target (empty for non-3xx). Lets a caller assert WHERE a
+      // 3xx points, not just that it is a 3xx.
+      location: res.headers.get("location") ?? "",
     };
   } finally {
     clearTimeout(timeout);
@@ -142,15 +150,32 @@ async function assertSupervisorRoot(): Promise<void> {
     fail("GET /login", `request failed: ${String(err)}`);
   }
 
-  // The dashboard root `/`: in insecure-auth dev mode the Supervisor serves it
-  // (200) or redirects to `/login` (3xx) — either proves the router fronts the
-  // Supervisor at root (it is NOT a 404 from the router / an instance).
+  // The dashboard root `/`: in insecure-auth dev mode the Supervisor either
+  // serves the dashboard (200 HTML) OR redirects to its own `/login` (3xx). Both
+  // prove the router fronts the Supervisor at root. We REJECT a bare 3xx that
+  // redirects ELSEWHERE (a misrouted front door would surface as a redirect off
+  // the Supervisor login flow) — a 3xx only passes when its Location targets the
+  // Supervisor login.
   try {
-    const { status } = await httpGet("/");
-    if (status === 200 || (status >= 300 && status < 400)) {
-      pass("GET / → Supervisor dashboard (200 or redirect to login)", `status=${status}`);
+    const { status, body, location } = await httpGet("/");
+    const isHtml200 = status === 200 && /<html/i.test(body);
+    const isRedirect = status >= 300 && status < 400;
+    // The Location may be absolute (`http://host/login?…`) or relative
+    // (`/login?…`); match the `/login` path either way, anchored so it can't be
+    // fooled by `/notlogin` or a query value.
+    const redirectsToLogin =
+      isRedirect && /(^|\/\/[^/]+)\/login(\?|$|#|\/)/.test(location);
+    if (isHtml200) {
+      pass("GET / → Supervisor dashboard (200 HTML)");
+    } else if (redirectsToLogin) {
+      pass("GET / → redirect to Supervisor login", `status=${status} location=${location}`);
+    } else if (isRedirect) {
+      fail(
+        "GET /",
+        `redirects off the Supervisor login flow (status=${status} location=${location || "<none>"})`,
+      );
     } else {
-      fail("GET /", `status=${status} (expected 200 or 3xx, got a non-Supervisor response)`);
+      fail("GET /", `status=${status} (expected 200 HTML or a redirect to /login)`);
     }
   } catch (err) {
     fail("GET /", `request failed: ${String(err)}`);
@@ -273,6 +298,11 @@ function assertWsTerminal(slug: string): Promise<WsTerminalResult> {
 
     const result: WsTerminalResult = { created: false, echoed: false };
     let settled = false;
+    // Accumulate every `output` frame so we can match the sentinel on a CLEAN,
+    // newline-split, STANDALONE line (the command's stdout) rather than a plain
+    // `includes`, which would false-pass on the typed keystroke echo line
+    // `echo <sentinel>` before the shell ever runs the command.
+    let outBuf = "";
     const ws = new WebSocket(url);
 
     const timer = setTimeout(() => {
@@ -316,12 +346,17 @@ function assertWsTerminal(slug: string): Promise<WsTerminalResult> {
         return;
       }
       if (msg.type === "output" && typeof msg.data === "string") {
-        // The shell echoes the typed command AND its output; either contains the
-        // sentinel. Guard against matching only the keystroke echo by requiring
-        // the sentinel to appear on its own (the command line has `echo `+sentinel,
-        // the output line has just the sentinel) — a plain includes() is enough
-        // and robust to terminal control codes around it.
-        if (msg.data.includes(sentinel)) {
+        // Accumulate, then match the sentinel on a STANDALONE output line. The
+        // shell emits TWO sentinel-bearing lines: the echoed keystroke line
+        // `echo <sentinel>` (trims to `echo …`, ≠ sentinel) and the command's
+        // actual stdout (trims to exactly the bare sentinel). Requiring an
+        // equality match on a cleaned line means only real EXECUTION passes —
+        // a plain includes() would false-green on the keystroke echo.
+        outBuf += msg.data;
+        // Strip CSI escapes, then normalize CR / CRLF to LF so line-splitting is
+        // reliable across terminal cursor control.
+        const clean = stripAnsi(outBuf).replace(/\r\n?/g, "\n");
+        if (clean.split("\n").some((line) => line.trim() === sentinel)) {
           result.echoed = true;
           finish(result);
         }
@@ -374,6 +409,17 @@ async function assertInstanceWs(slug: string): Promise<void> {
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** ESC (0x1B), sourced from its code point so no control char sits in a regex
+ *  literal (which `no-control-regex` forbids — so we build the CSI matcher via
+ *  `new RegExp` from a string instead). */
+const ESC = String.fromCharCode(0x1b);
+const CSI_RE = new RegExp(`${ESC}\\[[0-9;?]*[ -/]*[@-~]`, "g");
+
+/** Strip ANSI CSI escape sequences (colors, cursor moves) from terminal output. */
+function stripAnsi(s: string): string {
+  return s.replace(CSI_RE, "");
 }
 
 function decodeHtmlEntities(s: string): string {
