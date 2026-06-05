@@ -5,6 +5,7 @@ import 'package:mocktail/mocktail.dart';
 import 'package:remote_dev/application/ports/api_client_port.dart';
 import 'package:remote_dev/application/ports/host_workspace_store.dart';
 import 'package:remote_dev/application/ports/push_port.dart';
+import 'package:remote_dev/domain/auth_cookie.dart';
 import 'package:remote_dev/domain/host_config.dart';
 import 'package:remote_dev/domain/workspace_config.dart';
 import 'package:remote_dev/infrastructure/auth/mobile_credentials.dart';
@@ -37,6 +38,11 @@ void main() {
     credentials = _MockCredentials();
     refresh = StreamController<String>.broadcast();
     when(() => push.onTokenRefresh).thenAnswer((_) => refresh.stream);
+    // Default: no session cookies for any workspace. Cookie-only (OIDC) tests
+    // override this per-workspace. API-key tests rely on this default so the
+    // registrar's "API key OR cookies" gate sees only the API key.
+    when(() => credentials.getWorkspaceAuthCookies(any()))
+        .thenAnswer((_) async => const <AuthCookie>[]);
   });
 
   tearDown(() async {
@@ -142,6 +148,75 @@ void main() {
 
     // Only the signed-in workspace (b) is registered; a is skipped.
     verifyPosted(clientB);
+  });
+
+  test(
+      'registerWithAll POSTs to a cookie-only (OIDC) workspace with no API key',
+      () async {
+    final clientA = _MockClient();
+    when(() => clientA.post(any(), body: any(named: 'body')))
+        .thenAnswer((_) async => null);
+
+    final h = host('h1');
+    // OIDC workspace: no API key, but a stored session cookie.
+    final wsA = ws('a', hostId: 'h1', slug: 'dev', basePath: '/dev');
+    when(store.loadWorkspaces).thenAnswer((_) async => [wsA]);
+    when(() => store.loadHost('h1')).thenAnswer((_) async => h);
+    when(() => credentials.getWorkspaceApiKey('a'))
+        .thenAnswer((_) async => null);
+    when(() => credentials.getWorkspaceAuthCookies('a')).thenAnswer(
+      (_) async => const [
+        AuthCookie(name: '__session', value: 'sess-jwt', path: '/'),
+      ],
+    );
+
+    final registrar = PushTokenRegistrar(
+      push: push,
+      store: store,
+      credentials: credentials,
+      clientFactory: (_, __) => clientA,
+      deviceId: 'dev-1',
+    );
+
+    await registrar.registerWithAll('tok-1');
+
+    // The cookie-only workspace IS registered: the clientFactory cookie-auths
+    // the POST even though no API key exists.
+    final captured = verify(
+      () => clientA.post(_pushTokenPath, body: captureAny(named: 'body')),
+    ).captured.single as Map<String, dynamic>;
+    expect(captured['token'], 'tok-1');
+    expect(captured['deviceId'], 'dev-1');
+  });
+
+  test(
+      'registerWithAll skips a workspace with neither API key nor cookies',
+      () async {
+    final clientA = _MockClient();
+    when(() => clientA.post(any(), body: any(named: 'body')))
+        .thenAnswer((_) async => null);
+
+    final h = host('h1');
+    final wsA = ws('a', hostId: 'h1');
+    when(store.loadWorkspaces).thenAnswer((_) async => [wsA]);
+    when(() => store.loadHost('h1')).thenAnswer((_) async => h);
+    when(() => credentials.getWorkspaceApiKey('a'))
+        .thenAnswer((_) async => null);
+    when(() => credentials.getWorkspaceAuthCookies('a'))
+        .thenAnswer((_) async => const <AuthCookie>[]);
+
+    final registrar = PushTokenRegistrar(
+      push: push,
+      store: store,
+      credentials: credentials,
+      clientFactory: (_, __) => clientA,
+      deviceId: 'dev-1',
+    );
+
+    await registrar.registerWithAll('tok-1');
+
+    // Never signed in (no API key AND no cookies) → no POST.
+    verifyNever(() => clientA.post(any(), body: any(named: 'body')));
   });
 
   test('per-workspace failure does not block subsequent workspaces', () async {
@@ -277,6 +352,41 @@ void main() {
     await registrar.unregisterWorkspace('a');
 
     verifyNever(() => clientA.delete(any(), body: any(named: 'body')));
+  });
+
+  test('unregisterWorkspace DELETEs from a cookie-only (OIDC) workspace',
+      () async {
+    final clientA = _MockClient();
+    when(() => clientA.delete(any(), body: any(named: 'body')))
+        .thenAnswer((_) async {});
+    when(() => push.getToken()).thenAnswer((_) async => 'tok-1');
+
+    final h = host('h1');
+    when(store.loadWorkspaces).thenAnswer((_) async => [ws('a', hostId: 'h1')]);
+    when(() => store.loadHost('h1')).thenAnswer((_) async => h);
+    // OIDC workspace: no API key, but a stored session cookie.
+    when(() => credentials.getWorkspaceApiKey('a'))
+        .thenAnswer((_) async => null);
+    when(() => credentials.getWorkspaceAuthCookies('a')).thenAnswer(
+      (_) async => const [
+        AuthCookie(name: '__session', value: 'sess-jwt', path: '/'),
+      ],
+    );
+
+    final registrar = PushTokenRegistrar(
+      push: push,
+      store: store,
+      credentials: credentials,
+      clientFactory: (_, __) => clientA,
+      deviceId: 'dev-1',
+    );
+
+    await registrar.unregisterWorkspace('a');
+
+    final captured = verify(
+      () => clientA.delete(_pushTokenPath, body: captureAny(named: 'body')),
+    ).captured.single as Map<String, dynamic>;
+    expect(captured['token'], 'tok-1');
   });
 
   test('start returns false when push.initialize fails', () async {
