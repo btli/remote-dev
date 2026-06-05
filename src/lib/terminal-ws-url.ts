@@ -18,6 +18,8 @@
  * (`"https"`); the trailing colon is normalized away.
  */
 
+import { resolveExternalOrigin } from "@/lib/request-origin";
+
 export function resolveTerminalWsUrlFromHost(input: {
   protocol: string;
   host: string;
@@ -47,6 +49,28 @@ export function resolveTerminalWsUrlFromHost(input: {
   }
   const wsProtocol = normalizedProto === "https" ? "wss:" : "ws:";
   return `${wsProtocol}//${hostname}${port ? `:${port}` : ""}${prefix}/ws`;
+}
+
+/**
+ * Server-side terminal WS URL resolver that derives the EXTERNAL host/scheme
+ * from edge-forwarded headers (`x-forwarded-host` → `host`, `x-forwarded-proto`),
+ * mirroring `resolveExternalOrigin` / the proxy. Behind the supervisor-router the
+ * raw `Host` header is the internal cluster upstream
+ * (`rdv.<ns>.svc.cluster.local:6001`); using it would point the WebView at an
+ * unreachable address. Use this (not the raw `host`) from server components that
+ * pass a `wsUrl` into a client embed.
+ */
+export function resolveTerminalWsUrlFromHeaders(
+  getHeader: (name: string) => string | null | undefined,
+  basePath: string,
+): string {
+  const origin = resolveExternalOrigin(getHeader, "http://localhost");
+  const url = new URL(origin);
+  return resolveTerminalWsUrlFromHost({
+    host: url.host, // includes :port if present
+    protocol: url.protocol, // "https:"/"http:" — resolveTerminalWsUrlFromHost strips the colon
+    basePath,
+  });
 }
 
 function splitHost(host: string): [string, string | undefined] {
