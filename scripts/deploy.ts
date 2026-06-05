@@ -937,6 +937,24 @@ function runMigration(): boolean {
     return false;
   }
 
+  // Schema drift guard (remote-dev-9qni): db:push silently SKIPS data-loss
+  // changes (e.g. adding a NOT NULL column to a populated table) and exits 0,
+  // leaving the live schema drifted from schema.ts — which already broke prod
+  // (notification_event lost columns → notifications/push dead). Verify the live
+  // SQLite schema matches schema.ts and ABORT the deploy loudly on any drift,
+  // rather than going green with a broken schema. SQLite-only (PG: migrate-on-boot).
+  if (shouldRunSqlitePush(process.env.DATABASE_URL) && !runCommand(
+    ["bun", "run", "db:check-drift"],
+    DEPLOY_SRC,
+    "schema drift verification",
+  )) {
+    logError(
+      "Schema drift verification FAILED — db:push left the live schema out of sync " +
+        "with schema.ts (a data-loss change was likely skipped). Aborting deploy.",
+    );
+    return false;
+  }
+
   // Backfill github_account_metadata for any OAuth accounts missing metadata
   runCommand(
     ["bun", "run", "db:migrate-github-accounts"],
