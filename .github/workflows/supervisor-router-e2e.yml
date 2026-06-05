@@ -1,0 +1,128 @@
+# Supervisor-router E2E smoke (spec §11 M8 / bd remote-dev-jvcx.11).
+#
+# The CONTAINERIZED, repeatable regression-guard for the single-front-door
+# router. Builds the three platform images on Node 24 (matching the repo's other
+# image workflows — see dev-env-image.yml), boots the whole data path via
+# docker-compose (Supervisor control plane + router + TWO slug-aware instances +
+# the seed), and asserts END-TO-END THROUGH THE ROUTER:
+#   • the Supervisor login page at ROOT (/login) + static assets,
+#   • each instance login at /<slug>/login + its MATERIALIZED /<slug>/_next asset
+#     prefix loads, and
+#   • a LIVE WebSocket terminal over /<slug>/ws (the §15 M5 exit criterion).
+#
+# Harness: deploy/k8s/supervisor/e2e/ (docker-compose.yml + run.sh + smoke.ts +
+# seed-instances.ts). The instance dev-env image is heavy (5 agent CLIs), so the
+# build dominates wall time; GHA layer cache keeps re-runs fast.
+#
+# SCOPE: build into the LOCAL daemon (`--load`) and smoke-test only — this never
+# pushes or tags a registry image (that is a separate release step).
+
+name: Supervisor Router E2E
+
+# One shared path list (YAML anchor) so pull_request and push trigger on the
+# SAME set — the surfaces this smoke guards. Beyond the obvious harness + image
+# inputs it includes the product files the harness MIRRORS, so a change there
+# re-runs the guard: src/server/terminal.ts (WS upgrade gate),
+# src/lib/base-path.ts (basePath/_next derivation), src/lib/ws-token.ts (smoke.ts
+# reimplements its HMAC token format), and next.config.ts (basePath / _next
+# materialization baked at build).
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: &trigger-paths
+      - "apps/supervisor-router/**"
+      - "apps/supervisor/**"
+      - "Dockerfile"
+      - "docker/**"
+      - "src/server/terminal.ts"
+      - "src/lib/base-path.ts"
+      - "src/lib/ws-token.ts"
+      - "next.config.ts"
+      - "deploy/k8s/supervisor/**"
+      - ".github/workflows/supervisor-router-e2e.yml"
+  push:
+    branches: [master]
+    paths: *trigger-paths
+
+# Cancel an in-flight run when a newer commit supersedes it.
+concurrency:
+  group: supervisor-router-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Build images + smoke (Node 24)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      # Lint + typecheck the harness scripts FIRST (cheap; fails fast before the
+      # heavy image builds if a smoke/seed script is broken).
+      - name: Typecheck + lint the smoke harness
+        working-directory: deploy/k8s/supervisor/e2e
+        run: |
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun run lint
+
+      # Build the three images into the LOCAL daemon with the *:e2e tags the
+      # compose references, so the smoke runs with `--no-build`. Each build uses a
+      # SCOPED GHA cache so they don't evict one another.
+
+      - name: Build router image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/supervisor-router/Dockerfile
+          load: true
+          push: false
+          tags: rdv-router:e2e
+          cache-from: type=gha,scope=router
+          cache-to: type=gha,mode=max,scope=router
+
+      - name: Build supervisor image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/supervisor/Dockerfile
+          load: true
+          push: false
+          tags: rdv-supervisor:e2e
+          cache-from: type=gha,scope=supervisor
+          cache-to: type=gha,mode=max,scope=supervisor
+
+      - name: Build instance (dev-env) image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          push: false
+          tags: rdv-instance:e2e
+          # NODE_VERSION is the Dockerfile's documented default `24-trixie-slim`
+          # (Node 24 / ABI 137 AND Debian trixie glibc 2.41) — the bare `24`
+          # (Debian bookworm, glibc 2.36) fails the image's own `rdv --version`
+          # glibc gate (GLIBC_2.39 not found). It is Node 24, just the codename
+          # the runtime needs.
+          build-args: |
+            NODE_VERSION=24-trixie-slim
+            RDV_IMAGE_FLAVOR=dev-env
+          cache-from: type=gha,scope=instance
+          cache-to: type=gha,mode=max,scope=instance
+
+      - name: Run E2E smoke through the router
+        timeout-minutes: 15
+        run: ./deploy/k8s/supervisor/e2e/run.sh --no-build
+
+      - name: Dump compose logs on failure
+        if: failure()
+        run: |
+          docker compose -p rdv-router-e2e \
+            -f deploy/k8s/supervisor/e2e/docker-compose.yml logs --no-color || true

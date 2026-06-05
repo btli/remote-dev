@@ -1,0 +1,9 @@
+# Local dev-tooling deps for typecheck/lint (installed on demand; not committed).
+# bun.lock IS committed (this dir is NOT a workspace member, so it has no
+# root-lock coverage — its own lock keeps CI installs reproducible).
+/node_modules
+/.eslintcache
+/coverage
+
+# The root .gitignore ignores all `.env*`; opt the committed template back in.
+!.env.example
