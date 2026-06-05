@@ -73,30 +73,36 @@ export interface TableCols {
    */
   indexes: string[];
   /**
-   * Canonical column-set signatures of every UNIQUE constraint on the table,
-   * INCLUDING the inline column-level `.unique()` ones backed by
-   * `sqlite_autoindex_*` (and NAMED `CREATE UNIQUE INDEX`). Each entry is
-   * `JSON.stringify(sortedColumnNames)`, so it is a stable, order-independent
+   * Canonical column-set signatures of every FULL (non-partial) UNIQUE
+   * constraint on the table, INCLUDING the inline column-level `.unique()` ones
+   * backed by `sqlite_autoindex_*` (and NAMED `CREATE UNIQUE INDEX`). Each entry
+   * is `JSON.stringify(sortedColumnNames)`, so it is a stable, order-independent
    * identity for "these columns are unique together" — auto-index NAMES are not
    * stable identifiers, the column SET is.
    *
-   * PRIMARY KEY uniqueness is deliberately EXCLUDED (origin `pk`): it is already
-   * covered by the per-column `pk` flag, so including it would double-report.
-   * Unique indexes over an EXPRESSION/partial column (which `pragma_index_info`
-   * reports with a null column name) are excluded too — their signature is not
-   * normalization-stable, and missing such a rare drift is preferable to risking
-   * a false positive that wedges every deploy.
+   * Deliberately EXCLUDED (each would risk a normalization-fragile false positive
+   * on the deploy-critical path, and a missed rare drift there is the safer
+   * trade):
+   *  - PRIMARY KEY uniqueness (origin `pk`) — already covered by the per-column
+   *    `pk` flag, so including it would double-report;
+   *  - PARTIAL unique indexes (`CREATE UNIQUE INDEX … WHERE …`, `partial=1`) —
+   *    partial uniqueness is not comparable by column-SET alone (its meaning
+   *    depends on the WHERE predicate, which we intentionally don't normalize);
+   *  - EXPRESSION unique indexes (a null column name from `pragma_index_info`).
    */
   uniqueSignatures: string[];
   /**
    * Ordered column lists for each NAMED (`CREATE INDEX` / `CREATE UNIQUE INDEX`,
-   * i.e. non-`sqlite_autoindex_*`) index, keyed by index name, in
-   * `pragma_index_info` `seqno` order. Lets the diff catch a same-NAME index
-   * whose column set or ORDER changed (the name-only check misses that). An
-   * EXPRESSION column (null name from `pragma_index_info`) is recorded as the
-   * sentinel `"<expr>"` so an all-named index still has a comparable, stable
-   * shape without leaking unstable details (collation / sort direction / partial
-   * WHERE are intentionally NOT compared — they are normalization-noisy).
+   * i.e. non-`sqlite_autoindex_*`) index whose columns are ALL plain columns,
+   * keyed by index name, in `pragma_index_info` `seqno` order. Lets the diff
+   * catch a same-NAME index whose column set or ORDER changed (the name-only
+   * check misses that). An index that contains ANY EXPRESSION column (null name
+   * from `pragma_index_info`) is OMITTED entirely from this map — an expression
+   * is not comparable by column-name (two same-name indexes over DIFFERENT
+   * expressions would otherwise compare equal) — so its column-signature is left
+   * unverified, consistent with not comparing collation / sort direction /
+   * partial WHERE. Such an index is still tracked by NAME via `indexes`, so a
+   * wholesale drop is still caught.
    */
   namedIndexColumns: Record<string, string[]>;
 }
@@ -335,15 +341,17 @@ export function readSchema(dbFile: string, readonly: boolean): TableCols[] {
       }>;
       // pragma_index_list → { seq, name, unique, origin, partial }.
       //   origin: 'c' = CREATE INDEX, 'u' = UNIQUE column/table constraint,
-      //           'pk' = PRIMARY KEY. `unique` is a SQLite keyword → quote it.
+      //           'pk' = PRIMARY KEY. partial: 1 if the index has a WHERE clause.
+      //   `unique` is a SQLite keyword → quote it.
       const idxRows = db
         .prepare(
-          'SELECT name, "unique", origin FROM pragma_index_list(?)',
+          'SELECT name, "unique", origin, partial FROM pragma_index_list(?)',
         )
         .all(name) as Array<{
         name: string;
         unique: number;
         origin: string;
+        partial: number;
       }>;
 
       // Named (`CREATE INDEX`/`CREATE UNIQUE INDEX`) indexes — drop the
@@ -353,8 +361,7 @@ export function readSchema(dbFile: string, readonly: boolean): TableCols[] {
         .filter((idxName) => !idxName.startsWith("sqlite_autoindex_"));
 
       // Resolve each index's COLUMNS via pragma_index_info (seqno order). An
-      // expression/partial column has a null name (cid < 0) → sentinel "<expr>"
-      // so a named index still has a comparable, stable shape.
+      // expression column has a null name (cid < 0).
       const namedIndexColumns: Record<string, string[]> = {};
       const uniqueSignatures: string[] = [];
       for (const idx of idxRows) {
@@ -370,18 +377,32 @@ export function readSchema(dbFile: string, readonly: boolean): TableCols[] {
           .slice()
           .sort((a, b) => a.seqno - b.seqno)
           .map((r) => r.name);
+        const hasExprColumn = ordered.some((c) => c === null);
 
-        if (!idx.name.startsWith("sqlite_autoindex_")) {
-          namedIndexColumns[idx.name] = ordered.map((c) => c ?? "<expr>");
+        // NAMED-index column signature, BUT only when every column is a plain
+        // column (no expression). An expression column (null name) is NOT
+        // comparable by column-name alone — two same-name indexes over DIFFERENT
+        // expressions would compare equal via a sentinel — so we skip the whole
+        // index's column-signature comparison (consistent with not comparing
+        // partial-WHERE / collation). Such an index is still tracked by NAME via
+        // `indexes` (so a wholesale drop is still caught).
+        if (!idx.name.startsWith("sqlite_autoindex_") && !hasExprColumn) {
+          namedIndexColumns[idx.name] = ordered as string[];
         }
 
-        // UNIQUE signatures (inline + named unique), EXCLUDING the PK (origin
-        // 'pk' — already covered by the per-column pk flag, so including it would
-        // double-report). Skip any expression/partial unique index (a null
-        // column name): its signature is not normalization-stable, and a missed
-        // rare drift there is preferable to a deploy-wedging false positive.
-        if (idx.unique === 1 && idx.origin !== "pk") {
-          if (ordered.every((c) => c !== null)) {
+        // UNIQUE signatures (inline + named unique), EXCLUDING:
+        //  - the PK (origin 'pk' — already covered by the per-column pk flag, so
+        //    including it would double-report);
+        //  - PARTIAL unique indexes (`CREATE UNIQUE INDEX … WHERE …`, partial=1)
+        //    — partial uniqueness is NOT reliably comparable by column-SET alone
+        //    (the WHERE predicate, which we deliberately don't normalize, changes
+        //    its meaning), so a partial-unique change between the fresh-pushed
+        //    EXPECTED temp DB and LIVE would otherwise false-positive-abort;
+        //  - expression unique indexes (a null column name) — same un-normalizable
+        //    reason.
+        // A missed rare drift in these cases is preferable to wedging deploys.
+        if (idx.unique === 1 && idx.origin !== "pk" && idx.partial !== 1) {
+          if (!hasExprColumn) {
             uniqueSignatures.push(
               uniqueColumnSignature(ordered as string[]),
             );

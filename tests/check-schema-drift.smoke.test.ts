@@ -186,4 +186,80 @@ describe("readSchema (real libsql) — index/unique signature extraction", () =>
     const report = diffSchemas(expSchema, liveSchema);
     expect(report.hasDrift).toBe(false);
   });
+
+  it("SKIPS a PARTIAL unique index from the unique-signature comparison", () => {
+    // A `CREATE UNIQUE INDEX … WHERE …` has non-null column names, so a naive
+    // reader would fold it into uniqueSignatures exactly like a FULL unique index
+    // on the same column. Partial uniqueness is not comparable by column-SET
+    // alone (the WHERE predicate, which we don't normalize, changes its meaning),
+    // so a partial-unique change must NOT surface as a unique signature.
+    const p = join(dir, "partial-uq.db");
+    makeDb(
+      p,
+      `CREATE TABLE t (id TEXT PRIMARY KEY NOT NULL, email TEXT, deleted INTEGER);
+       CREATE UNIQUE INDEX t_email_live_uq ON t (email) WHERE deleted = 0;`,
+    );
+
+    const [t] = readSchema(p, true).filter((x) => x.table === "t");
+    // The partial unique index contributes NO unique signature (only the PK
+    // would, and the PK is excluded by the pk flag) → empty.
+    expect(t.uniqueSignatures).toEqual([]);
+    // It is still tracked by NAME (so a wholesale drop is caught) and, since it
+    // is an all-plain-column index, by column list.
+    expect(t.indexes).toContain("t_email_live_uq");
+    expect(t.namedIndexColumns.t_email_live_uq).toEqual(["email"]);
+
+    // End-to-end: two DBs differing ONLY by the partial unique index's WHERE
+    // predicate must NOT be drift (the column SET is identical; the WHERE is not
+    // compared). This is the false-positive the skip guards against.
+    const a = join(dir, "partial-a.db");
+    const b = join(dir, "partial-b.db");
+    makeDb(
+      a,
+      `CREATE TABLE t (id TEXT PRIMARY KEY NOT NULL, email TEXT, deleted INTEGER);
+       CREATE UNIQUE INDEX t_email_live_uq ON t (email) WHERE deleted = 0;`,
+    );
+    makeDb(
+      b,
+      `CREATE TABLE t (id TEXT PRIMARY KEY NOT NULL, email TEXT, deleted INTEGER);
+       CREATE UNIQUE INDEX t_email_live_uq ON t (email) WHERE deleted = 1;`,
+    );
+    const report = diffSchemas(readSchema(a, true), readSchema(b, true));
+    expect(report.hasDrift).toBe(false);
+  });
+
+  it("OMITS an expression named index from column-signature comparison", () => {
+    // An expression index column has a null name from pragma_index_info; mapping
+    // it to a sentinel would let two same-name indexes over DIFFERENT expressions
+    // compare equal, so the whole index is omitted from namedIndexColumns. It is
+    // still tracked by NAME via `indexes`.
+    const p = join(dir, "expr-idx.db");
+    makeDb(
+      p,
+      `CREATE TABLE t (id TEXT PRIMARY KEY NOT NULL, email TEXT);
+       CREATE INDEX t_email_lower_idx ON t (lower(email));`,
+    );
+
+    const [t] = readSchema(p, true).filter((x) => x.table === "t");
+    expect(t.indexes).toContain("t_email_lower_idx");
+    expect(t.namedIndexColumns.t_email_lower_idx).toBeUndefined();
+
+    // Two DBs whose same-name expression index differs ONLY by expression are NOT
+    // flagged (documented out-of-scope; the index is still name-tracked so a drop
+    // is caught). This asserts the missed-drift is intentional, not accidental.
+    const a = join(dir, "expr-a.db");
+    const b = join(dir, "expr-b.db");
+    makeDb(
+      a,
+      `CREATE TABLE t (id TEXT PRIMARY KEY NOT NULL, email TEXT);
+       CREATE INDEX t_email_expr_idx ON t (lower(email));`,
+    );
+    makeDb(
+      b,
+      `CREATE TABLE t (id TEXT PRIMARY KEY NOT NULL, email TEXT);
+       CREATE INDEX t_email_expr_idx ON t (upper(email));`,
+    );
+    const report = diffSchemas(readSchema(a, true), readSchema(b, true));
+    expect(report.hasDrift).toBe(false);
+  });
 });
