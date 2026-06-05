@@ -83,6 +83,9 @@ const eslintConfig = defineConfig([
     "packages/**",
     // Supervisor & other apps workspaces (each has its own eslint config)
     "apps/**",
+    // Supervisor-router E2E smoke harness (Bun scripts; has its own eslint +
+    // tsconfig, mirroring apps/supervisor-router — see its package.json).
+    "deploy/k8s/supervisor/e2e/**",
     // Git worktrees (separate checkouts with their own lint)
     ".worktrees/**",
     // Agent worktrees (stale isolated checkouts inside .claude/)

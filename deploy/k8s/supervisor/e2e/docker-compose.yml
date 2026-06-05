@@ -1,0 +1,224 @@
+# Supervisor-router E2E smoke harness (spec §11 M8 / bd remote-dev-jvcx.11).
+#
+# A repeatable, containerized regression-guard for the single-front-door router.
+# Boots the WHOLE data path — Supervisor control plane + router + TWO slug-aware
+# instances — and the smoke (deploy/k8s/supervisor/e2e/smoke.ts) asserts
+# end-to-end THROUGH THE ROUTER only (login at root + /<slug>/ + a live WS
+# terminal). See ./README.md and ./run.sh.
+#
+# Topology (the router is the ONLY service the smoke talks to):
+#
+#   smoke ──http/ws──▶ router:6004 ──┬─ /            ▶ supervisor:6003  (dashboard)
+#                                    ├─ /alpha/*     ▶ instance-alpha:6001 (+ :6002 ws)
+#                                    └─ /beta/*      ▶ instance-beta:6001  (+ :6002 ws)
+#
+# No Kubernetes: the router resolves instances by the cluster-DNS CONVENTION
+# `rdv.rdv-<slug>.svc.cluster.local` (from the Supervisor allowlist). We give each
+# instance container that exact name as a Docker network ALIAS, so the router's
+# unmodified in-cluster authority resolves here verbatim. The Supervisor runs with
+# NO k8s client call (provisioning never fires); the seed one-shot inserts the two
+# `ready` instance rows the allowlist endpoint serves.
+#
+# Build context for all three images is the REPO ROOT (../../../.. from here) —
+# the images are monorepo-aware and build FROM the workspace root.
+
+name: rdv-router-e2e
+
+x-common-env: &common-env
+  # A deterministic AUTH_SECRET SHARED by both instances so the smoke can mint a
+  # terminal WS token (HMAC over the same secret). Test-only; never a real key.
+  AUTH_SECRET: ${E2E_INSTANCE_AUTH_SECRET:-rdv-e2e-smoke-shared-auth-secret-000000000000}
+
+services:
+  # ── Supervisor control plane (dashboard + /api/internal/routes allowlist) ──
+  supervisor:
+    image: ${SUPERVISOR_IMAGE:-rdv-supervisor:e2e}
+    build:
+      context: ../../../..
+      dockerfile: apps/supervisor/Dockerfile
+      args:
+        BUN_VERSION: ${BUN_VERSION:-debian}
+    command: ["node", ".next/standalone/apps/supervisor/server.js"]
+    environment:
+      NODE_ENV: production
+      PORT: "6003"
+      HOSTNAME: "0.0.0.0"
+      SUPERVISOR_DATA_DIR: /var/lib/rdv-supervisor
+      # Insecure-auth escape hatch: boot in prod with NEITHER CF Access NOR OIDC.
+      # The Supervisor's instrumentation refuses to start in prod otherwise; this
+      # flag is documented as "testing only" (apps/supervisor/src/instrumentation.ts).
+      SUPERVISOR_ALLOW_INSECURE_AUTH: "1"
+      SUPERVISOR_ADMIN_EMAIL: ${SUPERVISOR_ADMIN_EMAIL:-smoke@example.com}
+      # The router presents this on GET /api/internal/routes; it MUST match the
+      # router's SUPERVISOR_INTERNAL_SECRET below.
+      SUPERVISOR_INTERNAL_SECRET: ${SUPERVISOR_INTERNAL_SECRET:-rdv-e2e-internal-secret}
+      # Warm pool off (no k8s) — keep the controller path inert.
+      SUPERVISOR_WARM_POOL_SIZE: "0"
+    volumes:
+      - supervisor-data:/var/lib/rdv-supervisor
+    healthcheck:
+      # The image has curl? No — keep it dependency-free: bun is on PATH in the
+      # supervisor image, so probe with a tiny bun fetch.
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "fetch('http://127.0.0.1:6003/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  # ── Seed: insert the two `ready` instance rows the allowlist endpoint serves ──
+  # One-shot. Runs the seed against the SAME supervisor.db (shared volume) once
+  # the Supervisor is healthy (so migrate-on-boot has created the tables), then
+  # exits 0. The router's next allowlist poll (≤10s) picks the rows up.
+  seed:
+    image: ${SUPERVISOR_IMAGE:-rdv-supervisor:e2e}
+    # Run from the supervisor app dir AND mount the script inside that tree: bun
+    # resolves a bare `@libsql/client/node` import upward from the IMPORTING FILE,
+    # so the script must live under /app/apps/supervisor for the workspace
+    # node_modules (the bun-isolated symlink farm) to resolve. cwd alone is not
+    # enough.
+    working_dir: /app/apps/supervisor
+    command: ["bun", "/app/apps/supervisor/seed-instances.ts"]
+    environment:
+      SUPERVISOR_DATA_DIR: /var/lib/rdv-supervisor
+      SUPERVISOR_ADMIN_EMAIL: ${SUPERVISOR_ADMIN_EMAIL:-smoke@example.com}
+      E2E_SLUGS: ${E2E_SLUGS:-alpha,beta}
+    volumes:
+      - supervisor-data:/var/lib/rdv-supervisor
+      - ./seed-instances.ts:/app/apps/supervisor/seed-instances.ts:ro
+    depends_on:
+      supervisor:
+        condition: service_healthy
+    restart: "no"
+
+  # ── Instance ALPHA (slug-aware data plane, materialized to /alpha) ──────────
+  instance-alpha:
+    image: ${INSTANCE_IMAGE:-rdv-instance:e2e}
+    build:
+      context: ../../../..
+      dockerfile: Dockerfile
+      args:
+        # Dockerfile-default Node 24 codename: `24-trixie-slim` satisfies BOTH the
+        # native-module ABI (137) AND the Rust `rdv` binary's glibc (2.39+ → trixie
+        # 2.41). The bare `24` (bookworm, glibc 2.36) fails the image's own
+        # `rdv --version` gate. Still Node 24, just the runtime-correct codename.
+        NODE_VERSION: ${NODE_VERSION:-24-trixie-slim}
+        RDV_IMAGE_FLAVOR: dev-env
+    environment:
+      <<: *common-env
+      RDV_BASE_PATH: /alpha
+      RDV_INSTANCE_SLUG: alpha
+      RDV_DATA_DIR: /var/lib/rdv
+      PORT: "6001"
+      TERMINAL_PORT: "6002"
+      NEXT_PUBLIC_TERMINAL_PORT: "6002"
+      ENABLE_LOCAL_CREDENTIALS: "false"
+      # Skip the boot-time agent-CLI auto-update + provisioning (network-heavy,
+      # never needed for the smoke; it is non-blocking anyway but this keeps CI
+      # logs clean and avoids outbound calls).
+      AGENT_AUTO_UPDATE: "0"
+    networks:
+      default:
+        aliases:
+          # The router's convention authority for slug `alpha` (§15 B2):
+          # service `rdv` in namespace `rdv-alpha`.
+          - rdv.rdv-alpha.svc.cluster.local
+    healthcheck:
+      # Instance ships curl (root Dockerfile installs it). Probe the slug-scoped
+      # readiness endpoint the router would see.
+      test:
+        ["CMD", "curl", "-fsS", "http://127.0.0.1:6001/alpha/api/readyz"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 90s
+
+  # ── Instance BETA (slug-aware data plane, materialized to /beta) ────────────
+  instance-beta:
+    image: ${INSTANCE_IMAGE:-rdv-instance:e2e}
+    # SAME image + build as alpha — one slug-aware image, two runtime slugs (the
+    # whole point of the materialization design). The identical build/context/tag
+    # means Docker builds it ONCE and the cache satisfies the second service, so
+    # `docker compose up --build` (no explicit pre-build) works without a build
+    # race between the two instance services.
+    build:
+      context: ../../../..
+      dockerfile: Dockerfile
+      args:
+        # Dockerfile-default Node 24 codename: `24-trixie-slim` satisfies BOTH the
+        # native-module ABI (137) AND the Rust `rdv` binary's glibc (2.39+ → trixie
+        # 2.41). The bare `24` (bookworm, glibc 2.36) fails the image's own
+        # `rdv --version` gate. Still Node 24, just the runtime-correct codename.
+        NODE_VERSION: ${NODE_VERSION:-24-trixie-slim}
+        RDV_IMAGE_FLAVOR: dev-env
+    environment:
+      <<: *common-env
+      RDV_BASE_PATH: /beta
+      RDV_INSTANCE_SLUG: beta
+      RDV_DATA_DIR: /var/lib/rdv
+      PORT: "6001"
+      TERMINAL_PORT: "6002"
+      NEXT_PUBLIC_TERMINAL_PORT: "6002"
+      ENABLE_LOCAL_CREDENTIALS: "false"
+      AGENT_AUTO_UPDATE: "0"
+    networks:
+      default:
+        aliases:
+          - rdv.rdv-beta.svc.cluster.local
+    healthcheck:
+      test:
+        ["CMD", "curl", "-fsS", "http://127.0.0.1:6001/beta/api/readyz"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 90s
+
+  # ── Router (the artifact under test — the single front door) ────────────────
+  router:
+    image: ${ROUTER_IMAGE:-rdv-router:e2e}
+    build:
+      context: ../../../..
+      dockerfile: apps/supervisor-router/Dockerfile
+      args:
+        BUN_VERSION: ${BUN_VERSION:-alpine}
+    environment:
+      NODE_ENV: production
+      ROUTER_PORT: "6004"
+      ROUTER_SUPERVISOR_URL: http://supervisor:6003
+      SUPERVISOR_INTERNAL_SECRET: ${SUPERVISOR_INTERNAL_SECRET:-rdv-e2e-internal-secret}
+      # Poll fast so the seeded routes appear quickly in CI.
+      ROUTER_ALLOWLIST_POLL_MS: "2000"
+    ports:
+      # The ONLY published port — the smoke asserts exclusively through the router.
+      - "${ROUTER_HOST_PORT:-6004}:6004"
+    depends_on:
+      supervisor:
+        condition: service_healthy
+      instance-alpha:
+        condition: service_healthy
+      instance-beta:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "fetch('http://127.0.0.1:6004/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+
+volumes:
+  supervisor-data:
+
+networks:
+  default:
+    name: rdv-router-e2e
