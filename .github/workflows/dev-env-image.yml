@@ -11,11 +11,13 @@
 # is a SEPARATE, later step (a future release workflow or a manual
 # `docker buildx ... --push`) that should run ONLY after this gate is green.
 #
-# NODE_VERSION: passed as `24` per the task. The Dockerfile's production default
-# is the more specific `24-trixie-slim` tag (Node 24 ABI 137 + Debian trixie
-# glibc 2.41 — see the Dockerfile header); `24` here pins the same Node MAJOR for
-# the smoke assertion while exercising the full multi-stage build + agent-CLI
-# install path.
+# NODE_VERSION: pinned to `24-trixie-slim` — still Node 24, just the Debian
+# *trixie* codename rather than the default `24` (Debian *bookworm*, glibc 2.36).
+# The image's own runtime smoke gate runs `rdv --version`, and the Rust `rdv`
+# binary is compiled against trixie's glibc, so a bookworm runtime fails the gate
+# with "GLIBC_2.39 not found". `24-trixie-slim` (Node 24 ABI 137 + Debian trixie
+# glibc 2.41 — see the Dockerfile header) clears it, mirroring the Dockerfile's
+# production default and `.github/workflows/supervisor-router-e2e.yml`.
 
 name: Dev-Env Image CI
 
@@ -55,7 +57,7 @@ jobs:
           push: false
           tags: rdv-dev-env:ci
           build-args: |
-            NODE_VERSION=24
+            NODE_VERSION=24-trixie-slim
             RDV_IMAGE_FLAVOR=dev-env
           cache-from: type=gha
           cache-to: type=gha,mode=max
