@@ -143,6 +143,8 @@ afterEach(() => {
   delete process.env.SUPERVISOR_INSTANCE_IMAGE_PULL_DOCKERCONFIGJSON;
   delete process.env.SUPERVISOR_INSTANCE_NODE_SELECTOR;
   delete process.env.SUPERVISOR_INSTANCE_BASELINE_PACKAGES;
+  delete process.env.SUPERVISOR_INSTANCE_FCM_PROJECT_ID;
+  delete process.env.SUPERVISOR_INSTANCE_FCM_SERVICE_ACCOUNT_JSON;
   setNodeEnv(ORIGINAL_NODE_ENV);
   vi.clearAllMocks();
 });
@@ -999,6 +1001,44 @@ describe("readProvisionEnv — provision baseline (remote-dev-uobt)", () => {
     expect(() => readProvisionEnv()).toThrow(
       /SUPERVISOR_INSTANCE_BASELINE_PACKAGES is not valid JSON/,
     );
+  });
+});
+
+describe("readProvisionEnv — FCM (remote-dev-wnl4)", () => {
+  const PROJECT_ID = "my-firebase-project";
+  const SA_JSON = '{"type":"service_account","project_id":"my-firebase-project"}';
+
+  beforeEach(() => {
+    process.env.SUPERVISOR_INSTANCE_IMAGE = "ghcr.io/x@sha256:abc";
+    process.env.SUPERVISOR_INSTANCE_HOST = "dev.example.com";
+    setNodeEnv("development");
+  });
+
+  it("populates fcm only when BOTH project id + service-account JSON are set", () => {
+    process.env.SUPERVISOR_INSTANCE_FCM_PROJECT_ID = PROJECT_ID;
+    process.env.SUPERVISOR_INSTANCE_FCM_SERVICE_ACCOUNT_JSON = SA_JSON;
+    expect(readProvisionEnv().fcm).toEqual({
+      projectId: PROJECT_ID,
+      serviceAccountJson: SA_JSON,
+    });
+  });
+
+  it("fcm undefined when only the project id is set", () => {
+    process.env.SUPERVISOR_INSTANCE_FCM_PROJECT_ID = PROJECT_ID;
+    delete process.env.SUPERVISOR_INSTANCE_FCM_SERVICE_ACCOUNT_JSON;
+    expect(readProvisionEnv().fcm).toBeUndefined();
+  });
+
+  it("fcm undefined when only the service-account JSON is set", () => {
+    delete process.env.SUPERVISOR_INSTANCE_FCM_PROJECT_ID;
+    process.env.SUPERVISOR_INSTANCE_FCM_SERVICE_ACCOUNT_JSON = SA_JSON;
+    expect(readProvisionEnv().fcm).toBeUndefined();
+  });
+
+  it("fcm undefined when neither is set", () => {
+    delete process.env.SUPERVISOR_INSTANCE_FCM_PROJECT_ID;
+    delete process.env.SUPERVISOR_INSTANCE_FCM_SERVICE_ACCOUNT_JSON;
+    expect(readProvisionEnv().fcm).toBeUndefined();
   });
 });
 

@@ -49,6 +49,17 @@ export const DATA_DIR = "/var/lib/rdv";
 /** Read-only mount point the inspector Job mounts the data PVC at (§ storage browser). */
 export const INSPECT_DIR = "/inspect";
 
+/**
+ * Directory the per-instance FCM service-account Secret is mounted into, and the
+ * absolute path the file lands at inside the container. The DIRECTORY is the
+ * volumeMount target (so the secret's single `service-account.json` key becomes
+ * the file `/etc/rdv-fcm/service-account.json`); the FILE path is injected as the
+ * non-secret env `FCM_SERVICE_ACCOUNT_PATH` so the instance's container.ts enables
+ * FcmPushGateway (it reads FCM_PROJECT_ID + FCM_SERVICE_ACCOUNT_PATH).
+ */
+export const FCM_SERVICE_ACCOUNT_MOUNT_DIR = "/etc/rdv-fcm";
+export const FCM_SERVICE_ACCOUNT_MOUNT_PATH = `${FCM_SERVICE_ACCOUNT_MOUNT_DIR}/service-account.json`;
+
 /** StatefulSet termination grace (matches the app's graceful tmux shutdown). */
 const TERMINATION_GRACE_SECONDS = 30;
 
@@ -64,6 +75,15 @@ export function authSecretName(slug: string): string {
  */
 export function dbSecretName(slug: string): string {
   return `rdv-${slug}-db`;
+}
+
+/**
+ * Per-instance FCM service-account secret name (`rdv-<slug>-fcm`). Created only
+ * when the supervisor is configured to inject FCM credentials; the StatefulSet
+ * mounts it (read-only) at {@link FCM_SERVICE_ACCOUNT_MOUNT_DIR} when `withFcm`.
+ */
+export function fcmSecretName(slug: string): string {
+  return `rdv-${slug}-fcm`;
 }
 
 /** Labels shared by all objects for an instance. */
@@ -192,6 +212,34 @@ export function buildDbSecret(
 }
 
 /**
+ * V1Secret `rdv-<slug>-fcm` — the per-instance Firebase/FCM service-account JSON,
+ * so the instance can SEND FCM push (the app's container.ts enables FcmPushGateway
+ * only when BOTH FCM_PROJECT_ID and FCM_SERVICE_ACCOUNT_PATH are set). The JSON is
+ * stored under the single key `service-account.json`; the StatefulSet mounts it
+ * read-only at {@link FCM_SERVICE_ACCOUNT_MOUNT_DIR} so the file lands at
+ * {@link FCM_SERVICE_ACCOUNT_MOUNT_PATH}. Created ONLY when the supervisor is
+ * configured with FCM creds (else no FCM Secret / mount / env at all).
+ *
+ * SECURITY: callers MUST NOT log the returned object or `opts.serviceAccountJson`.
+ */
+export function buildFcmSecret(
+  slug: string,
+  opts: { serviceAccountJson: string },
+): V1Secret {
+  return {
+    metadata: {
+      name: fcmSecretName(slug),
+      namespace: namespaceForSlug(slug),
+      labels: instanceLabels(slug),
+    },
+    type: "Opaque",
+    stringData: {
+      "service-account.json": opts.serviceAccountJson,
+    },
+  };
+}
+
+/**
  * V1Secret of `type: kubernetes.io/dockerconfigjson` — a per-instance image-pull
  * credential for PRIVATE instance images (spec §15 B2; remote-dev-2xhg). Created
  * in the instance namespace and referenced from the pod's `imagePullSecrets` so a
@@ -266,6 +314,15 @@ export function buildService(slug: string): V1Service {
  * (a JSON manifest string) is injected as RDV_PROVISION_BASELINE (remote-dev-uobt)
  * so the instance entrypoint can merge it with the per-instance PVC manifest at
  * boot. Spread in ONLY when set so existing callers/tests stay byte-identical.
+ *
+ * When `opts.fcm` is set, the NON-SECRET FCM config is injected so the instance
+ * can SEND FCM push: FCM_PROJECT_ID (the Firebase project id) and
+ * FCM_SERVICE_ACCOUNT_PATH (the in-container path the FCM service-account Secret
+ * is mounted at — itself non-secret, just a mount location). The service-account
+ * JSON is NOT here — it is a mounted Secret file (see {@link buildFcmSecret} /
+ * the `withFcm` volume in {@link buildStatefulSet}). The instance's container.ts
+ * enables FcmPushGateway only when BOTH vars are set. Added ONLY when set so
+ * existing callers/tests stay byte-identical.
  */
 export function buildInstanceEnv(
   slug: string,
@@ -273,6 +330,7 @@ export function buildInstanceEnv(
     host: string;
     oidc?: { issuer: string; clientId: string; name: string };
     provisionBaseline?: string;
+    fcm?: { projectId: string; serviceAccountJson: string };
   },
 ): Record<string, string> {
   const env: Record<string, string> = {
@@ -295,6 +353,12 @@ export function buildInstanceEnv(
   }
   if (opts.provisionBaseline) {
     env.RDV_PROVISION_BASELINE = opts.provisionBaseline;
+  }
+  if (opts.fcm) {
+    env.FCM_PROJECT_ID = opts.fcm.projectId;
+    // The service-account JSON is a mounted Secret file; this is just where it
+    // lands inside the container (non-secret mount path).
+    env.FCM_SERVICE_ACCOUNT_PATH = FCM_SERVICE_ACCOUNT_MOUNT_PATH;
   }
   return env;
 }
@@ -344,6 +408,15 @@ export interface BuildStatefulSetOptions {
    * sqlite.db). The non-secret env is unchanged — DATABASE_URL is secret-backed.
    */
   withDatabase?: boolean;
+  /**
+   * Mount the per-instance FCM service-account Secret (`rdv-<slug>-fcm`) read-only
+   * at {@link FCM_SERVICE_ACCOUNT_MOUNT_DIR} so the instance can SEND FCM push.
+   * Set from `!!opts.fcm` by the caller (mirrors how `withOidc` is plumbed). The
+   * non-secret FCM env (FCM_PROJECT_ID / FCM_SERVICE_ACCOUNT_PATH) rides in `env`
+   * via buildInstanceEnv; the service-account JSON is the mounted Secret file.
+   * Omitted when unset, preserving current output for non-FCM instances.
+   */
+  withFcm?: boolean;
   /**
    * Name of an image-pull Secret in the instance namespace, referenced in the
    * pod's `imagePullSecrets` (private-registry instance images; remote-dev-2xhg).
@@ -458,9 +531,38 @@ export function buildStatefulSet(
                 timeoutSeconds: 3,
                 failureThreshold: 3,
               },
-              volumeMounts: [{ name: "data", mountPath: DATA_DIR }],
+              volumeMounts: [
+                { name: "data", mountPath: DATA_DIR },
+                // FCM service-account Secret mounted read-only at the DIRECTORY so
+                // the `service-account.json` key lands at FCM_SERVICE_ACCOUNT_PATH.
+                // Spread in ONLY when withFcm so non-FCM specs are byte-identical.
+                // readOnlyRootFilesystem allows this — it's its own mount, not the
+                // root fs.
+                ...(opts.withFcm
+                  ? [
+                      {
+                        name: "fcm",
+                        mountPath: FCM_SERVICE_ACCOUNT_MOUNT_DIR,
+                        readOnly: true,
+                      },
+                    ]
+                  : []),
+              ],
             },
           ],
+          // Pod-level volumes (the `data` volume comes from volumeClaimTemplates).
+          // The FCM secret volume is added ONLY when withFcm, so the spec is
+          // unchanged (no `volumes` field at all) for non-FCM instances.
+          ...(opts.withFcm
+            ? {
+                volumes: [
+                  {
+                    name: "fcm",
+                    secret: { secretName: fcmSecretName(slug) },
+                  },
+                ],
+              }
+            : {}),
         },
       },
       volumeClaimTemplates: [opts.volumeClaimTemplate],

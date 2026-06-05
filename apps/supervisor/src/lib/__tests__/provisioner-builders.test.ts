@@ -5,6 +5,7 @@ import {
   buildSharedSecret,
   buildAuthSecret,
   buildDbSecret,
+  buildFcmSecret,
   buildImagePullSecret,
   buildService,
   buildStatefulSet,
@@ -13,6 +14,7 @@ import {
   buildInstanceEnv,
   authSecretName,
   dbSecretName,
+  fcmSecretName,
   MANAGED_BY,
   SERVICE_NAME,
   SHARED_SECRET_NAME,
@@ -22,6 +24,8 @@ import {
   DATA_DIR,
   INSPECT_DIR,
   INSPECTOR_ROLE,
+  FCM_SERVICE_ACCOUNT_MOUNT_DIR,
+  FCM_SERVICE_ACCOUNT_MOUNT_PATH,
 } from "@/lib/provisioner-builders";
 
 const SLUG = "alpha";
@@ -118,6 +122,27 @@ describe("buildDbSecret (Postgres dual-backend, Unit 8)", () => {
     expect(s.stringData?.DATABASE_URL).toBe(
       "postgresql://rdv_alpha:p%40ss%3Aw%2Ford%3F@pooler.cnpg.svc:5432/rdv_alpha",
     );
+  });
+});
+
+describe("buildFcmSecret (FCM push provisioning, remote-dev-wnl4)", () => {
+  it("is an Opaque Secret named rdv-<slug>-fcm in the instance namespace with instance labels", () => {
+    const s = buildFcmSecret(SLUG, { serviceAccountJson: '{"type":"service_account"}' });
+    expect(s.type).toBe("Opaque");
+    expect(s.metadata?.name).toBe(fcmSecretName(SLUG));
+    expect(s.metadata?.name).toBe("rdv-alpha-fcm");
+    expect(s.metadata?.namespace).toBe("rdv-alpha");
+    expect(s.metadata?.labels?.["managed-by"]).toBe(MANAGED_BY);
+    expect(s.metadata?.labels?.["rdv.io/slug"]).toBe(SLUG);
+  });
+
+  it("stores the service-account JSON verbatim under the service-account.json key", () => {
+    const json =
+      '{"type":"service_account","project_id":"my-fb","private_key":"-----BEGIN-----"}';
+    const s = buildFcmSecret(SLUG, { serviceAccountJson: json });
+    expect(s.stringData?.["service-account.json"]).toBe(json);
+    // No other keys leak in.
+    expect(Object.keys(s.stringData ?? {})).toEqual(["service-account.json"]);
   });
 });
 
@@ -218,6 +243,28 @@ describe("buildInstanceEnv", () => {
     expect(env.AUTH_TRUST_HOST).toBe("true");
     // The client SECRET must NOT leak into the non-secret env.
     expect(env.OIDC_CLIENT_SECRET).toBeUndefined();
+  });
+
+  it("omits FCM env unless fcm is provided (remote-dev-wnl4)", () => {
+    const env = buildInstanceEnv(SLUG, { host: "dev.example.com" });
+    expect(env.FCM_PROJECT_ID).toBeUndefined();
+    expect(env.FCM_SERVICE_ACCOUNT_PATH).toBeUndefined();
+  });
+
+  it("sets FCM_PROJECT_ID + FCM_SERVICE_ACCOUNT_PATH only when fcm is set (remote-dev-wnl4)", () => {
+    const env = buildInstanceEnv(SLUG, {
+      host: "dev.example.com",
+      fcm: {
+        projectId: "my-firebase-project",
+        serviceAccountJson: '{"type":"service_account"}',
+      },
+    });
+    expect(env.FCM_PROJECT_ID).toBe("my-firebase-project");
+    // The PATH is the in-container mount location (non-secret); the JSON itself
+    // must NEVER appear in the non-secret env.
+    expect(env.FCM_SERVICE_ACCOUNT_PATH).toBe(FCM_SERVICE_ACCOUNT_MOUNT_PATH);
+    expect(env.FCM_SERVICE_ACCOUNT_PATH).toBe("/etc/rdv-fcm/service-account.json");
+    expect(JSON.stringify(env)).not.toContain("service_account");
   });
 
   it("omits RDV_PROVISION_BASELINE unless a baseline is provided (remote-dev-uobt)", () => {
@@ -344,6 +391,35 @@ describe("buildStatefulSet", () => {
     expect(databaseUrl?.valueFrom?.secretKeyRef?.name).toBe(dbSecretName(SLUG));
     expect(databaseUrl?.valueFrom?.secretKeyRef?.name).toBe("rdv-alpha-db");
     expect(databaseUrl?.valueFrom?.secretKeyRef?.key).toBe("DATABASE_URL");
+  });
+
+  it("adds the fcm volume + read-only mount ONLY when withFcm (remote-dev-wnl4)", () => {
+    // Default options (top-of-describe `sts`) have no FCM → no fcm volume/mount,
+    // and (since the data volume rides in volumeClaimTemplates) NO pod `volumes`.
+    expect(container?.volumeMounts?.find((m) => m.name === "fcm")).toBeUndefined();
+    expect(sts.spec?.template.spec?.volumes).toBeUndefined();
+
+    const withFcm = buildStatefulSet(SLUG, {
+      image: "img",
+      env: buildInstanceEnv(SLUG, { host: "h" }),
+      volumeClaimTemplate: PVC,
+      withFcm: true,
+    });
+    const fcmContainer = withFcm.spec?.template.spec?.containers[0];
+    // Read-only volumeMount at the DIRECTORY so service-account.json lands at
+    // FCM_SERVICE_ACCOUNT_PATH.
+    const fcmMount = fcmContainer?.volumeMounts?.find((m) => m.name === "fcm");
+    expect(fcmMount?.mountPath).toBe(FCM_SERVICE_ACCOUNT_MOUNT_DIR);
+    expect(fcmMount?.mountPath).toBe("/etc/rdv-fcm");
+    expect(fcmMount?.readOnly).toBe(true);
+    // The data mount is still present.
+    expect(fcmContainer?.volumeMounts?.find((m) => m.name === "data")?.mountPath).toBe(
+      DATA_DIR,
+    );
+    // Pod-level fcm volume sources the rdv-<slug>-fcm Secret.
+    const fcmVolume = withFcm.spec?.template.spec?.volumes?.find((v) => v.name === "fcm");
+    expect(fcmVolume?.secret?.secretName).toBe(fcmSecretName(SLUG));
+    expect(fcmVolume?.secret?.secretName).toBe("rdv-alpha-fcm");
   });
 
   it("mounts the data volume at /var/lib/rdv and includes the volumeClaimTemplate", () => {
