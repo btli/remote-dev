@@ -70,21 +70,36 @@ final switcherSessionsProvider = FutureProvider.autoDispose
   return ref.watch(switcherSessionsApiFactoryProvider)(host, ws).list();
 });
 
-/// Shows the session switcher as a modal bottom sheet. Resolves to the picked
-/// [SessionSwitchTarget], or null if dismissed.
+/// Shows the session switcher as a TOP sheet that drops down from under the
+/// status bar — matching the downward caret on the title it launches from.
+/// Resolves to the picked [SessionSwitchTarget], or null if dismissed.
 Future<SessionSwitchTarget?> showSessionSwitcher(
   BuildContext context, {
   required String currentSessionId,
   required String currentWorkspaceId,
 }) {
-  return showModalBottomSheet<SessionSwitchTarget>(
+  return showGeneralDialog<SessionSwitchTarget>(
     context: context,
-    backgroundColor: const Color(0xFF1A1B26),
-    isScrollControlled: true,
-    showDragHandle: true,
-    builder: (_) => SessionSwitcherSheet(
+    useRootNavigator: false,
+    barrierDismissible: true,
+    barrierLabel: 'Switch session',
+    barrierColor: Colors.black54,
+    transitionDuration: const Duration(milliseconds: 220),
+    pageBuilder: (context, _, __) => SessionSwitcherSheet(
       currentSessionId: currentSessionId,
       currentWorkspaceId: currentWorkspaceId,
+    ),
+    transitionBuilder: (context, animation, _, child) => Align(
+      alignment: Alignment.topCenter,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, -1),
+          end: Offset.zero,
+        ).animate(
+          CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+        ),
+        child: child,
+      ),
     ),
   );
 }
@@ -124,71 +139,99 @@ class _SessionSwitcherSheetState extends ConsumerState<SessionSwitcherSheet> {
   Widget build(BuildContext context) {
     final dataAsync = ref.watch(serverPickerDataProvider);
     final maxHeight = MediaQuery.sizeOf(context).height * 0.7;
+    // Top sheet: anchored under the status bar with rounded BOTTOM corners, it
+    // drops down from the top to match the downward caret it launches from. The
+    // explicit Material also provides the ancestor the ListTiles/InkWells need
+    // (showGeneralDialog, unlike showModalBottomSheet, supplies none).
     return SafeArea(
-      top: false,
+      bottom: false,
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: maxHeight),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 4, 20, 12),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Switch session',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
+        child: Material(
+          color: const Color(0xFF1A1B26),
+          borderRadius:
+              const BorderRadius.vertical(bottom: Radius.circular(16)),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 8, 8),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Switch session',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white54),
+                      tooltip: 'Close',
+                      onPressed: () => Navigator.of(context).maybePop(),
+                    ),
+                  ],
                 ),
               ),
-            ),
-            Flexible(
-              child: dataAsync.when(
-                loading: () => const Padding(
-                  padding: EdgeInsets.all(32),
-                  child: CupertinoActivityIndicator(color: Colors.white70),
-                ),
-                error: (e, _) => Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Text(
-                    'Failed to load servers: $e',
-                    style: const TextStyle(color: Colors.white70),
+              const Divider(color: Color(0xFF2F334D), height: 1),
+              Flexible(
+                child: dataAsync.when(
+                  loading: () => const Padding(
+                    padding: EdgeInsets.all(32),
+                    child: CupertinoActivityIndicator(color: Colors.white70),
                   ),
-                ),
-                data: (data) {
-                  final rows = <_WorkspaceRowData>[];
-                  for (final entry in data.entries) {
-                    for (final ws in entry.workspaces) {
-                      rows.add(
-                        _WorkspaceRowData(
-                          host: entry.host,
-                          workspace: ws,
-                          isSingleWorkspaceRow: entry.isSingleWorkspaceRow,
+                  error: (e, _) => Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      'Failed to load servers: $e',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  ),
+                  data: (data) {
+                    final rows = <_WorkspaceRowData>[];
+                    for (final entry in data.entries) {
+                      for (final ws in entry.workspaces) {
+                        rows.add(
+                          _WorkspaceRowData(
+                            host: entry.host,
+                            workspace: ws,
+                            isSingleWorkspaceRow: entry.isSingleWorkspaceRow,
+                          ),
+                        );
+                      }
+                    }
+                    if (rows.isEmpty) {
+                      return const Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Text(
+                          'No workspaces opened yet.',
+                          style: TextStyle(color: Colors.white70),
                         ),
                       );
                     }
-                  }
-                  if (rows.isEmpty) {
-                    return const Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Text(
-                        'No workspaces opened yet.',
-                        style: TextStyle(color: Colors.white70),
-                      ),
+                    return ListView(
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.only(bottom: 8),
+                      children: [for (final r in rows) _buildSection(r)],
                     );
-                  }
-                  return ListView(
-                    shrinkWrap: true,
-                    padding: const EdgeInsets.only(bottom: 8),
-                    children: [for (final r in rows) _buildSection(r)],
-                  );
-                },
+                  },
+                ),
               ),
-            ),
-          ],
+              Container(
+                margin: const EdgeInsets.symmetric(vertical: 8),
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
