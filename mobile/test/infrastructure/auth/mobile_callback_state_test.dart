@@ -290,4 +290,120 @@ void main() {
       await stream.close();
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Single-in-flight enforcement — concurrent logins cannot cross (Codex #2)
+  // -------------------------------------------------------------------------
+  group('MobileCallbackLoginLauncher single-in-flight', () {
+    test(
+        'a second concurrent loginInstance is refused (null) while the first '
+        'is pending, and does NOT disturb the first flow', () async {
+      final stream = StreamController<Uri>.broadcast();
+      // Distinct nonce per call so a cross-completion would be observable.
+      var counter = 0;
+      final launcher = MobileCallbackLoginLauncher(
+        deepLinkStream: stream.stream,
+        stateGenerator: () => 'concurrent-${counter++}',
+        urlLauncher: (_) async => true,
+        timeout: const Duration(seconds: 5),
+      );
+
+      // Flow A launches and stays pending (no callback yet). Uses nonce
+      // 'concurrent-0'.
+      final flowA = launcher.loginInstance(serverUrl: Uri.parse('https://h'));
+
+      // Yield so flow A has set the in-flight guard before flow B starts.
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      // Flow B starts WHILE A is pending → must be refused immediately. It must
+      // NOT have generated a second nonce that consumes A's slot.
+      final flowB = await launcher.loginInstance(
+        serverUrl: Uri.parse('https://h'),
+      );
+      expect(
+        flowB,
+        isNull,
+        reason: 'concurrent second login must be refused',
+      );
+      // Only flow A generated a nonce (B was refused before generating one).
+      expect(counter, 1);
+
+      // Now deliver A's genuine callback (its own nonce) — A still completes.
+      stream.add(
+        Uri.parse(
+          'remotedev://auth/callback?scope=instance&apiKey=sk-A'
+          '&state=concurrent-0',
+        ),
+      );
+      final resultA = await flowA;
+      expect(resultA, isNotNull);
+      expect(resultA!.apiKey, 'sk-A');
+      await stream.close();
+    });
+
+    test(
+        'after the first flow resolves, a fresh login is allowed again '
+        '(in-flight guard is released)', () async {
+      final stream = StreamController<Uri>.broadcast();
+      var counter = 0;
+      final launcher = MobileCallbackLoginLauncher(
+        deepLinkStream: stream.stream,
+        stateGenerator: () => 'seq-${counter++}',
+        urlLauncher: (_) async => true,
+        timeout: const Duration(milliseconds: 60),
+      );
+
+      // First flow times out (no callback) → releases the guard.
+      final first =
+          await launcher.loginInstance(serverUrl: Uri.parse('https://h'));
+      expect(first, isNull);
+
+      // A brand-new flow must be permitted and complete with its OWN nonce.
+      final secondFuture =
+          launcher.loginInstance(serverUrl: Uri.parse('https://h'));
+      scheduleMicrotask(() {
+        stream.add(
+          Uri.parse(
+            'remotedev://auth/callback?scope=instance&apiKey=sk-2&state=seq-1',
+          ),
+        );
+      });
+      final second = await secondFuture;
+      expect(second, isNotNull);
+      expect(second!.apiKey, 'sk-2');
+      await stream.close();
+    });
+
+    test('a concurrent loginHost is refused with a MobileCallbackException',
+        () async {
+      final stream = StreamController<Uri>.broadcast();
+      var counter = 0;
+      final launcher = MobileCallbackLoginLauncher(
+        deepLinkStream: stream.stream,
+        stateGenerator: () => 'host-${counter++}',
+        urlLauncher: (_) async => true,
+        timeout: const Duration(seconds: 5),
+      );
+
+      // Flow A (host) pending.
+      final flowA = launcher.loginHost(origin: Uri.parse('https://sup'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      // Concurrent host login → typed host failure (not a silent hang).
+      await expectLater(
+        launcher.loginHost(origin: Uri.parse('https://sup')),
+        throwsA(isA<MobileCallbackException>()),
+      );
+
+      // Flow A still completes on its own callback.
+      stream.add(
+        Uri.parse(
+          'remotedev://auth/callback?scope=host&cfToken=host-jwt&state=host-0',
+        ),
+      );
+      final hostA = await flowA;
+      expect(hostA.cfToken, 'host-jwt');
+      await stream.close();
+    });
+  });
 }
