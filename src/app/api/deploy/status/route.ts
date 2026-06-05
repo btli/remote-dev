@@ -16,6 +16,7 @@ import { runtimeJoin as join } from "@/lib/dynamic-fs";
 import { homedir } from "os";
 import { createLogger } from "@/lib/logger";
 import { verifySignature } from "@/lib/deploy-webhook-auth";
+import { parseLockContent } from "../../../../../scripts/deploy-lock";
 
 const log = createLogger("DeployStatus");
 
@@ -35,13 +36,30 @@ function readJson<T>(file: string): T | null {
 
 function isDeployLockAlive(): boolean {
   if (!existsSync(LOCK_FILE)) return false;
+  let pid: number | null;
   try {
-    const pid = parseInt(readFileSync(LOCK_FILE, "utf-8").trim(), 10);
-    if (Number.isNaN(pid)) return false;
-    process.kill(pid, 0);
-    return true; // process alive
+    // The lock content is the bare PID written by the deploy.ts flock holder
+    // (the steady state). The legacy JSON {pid,token} form is parsed too, but it
+    // is TRANSITION-ONLY (a one-time DEPLOY_LOCK_HANDOFF webhook) — new deploys
+    // never write JSON. Parsing both via the shared codec means a held lock of
+    // either shape is not misread as "not held" (a bare parseInt('{...}') would be
+    // NaN and could wrongly let the status fallback short-circuit an in-progress
+    // deploy to "success").
+    pid = parseLockContent(readFileSync(LOCK_FILE, "utf-8")).pid;
   } catch {
-    return false; // dead/stale lock or unreadable → treat as not held
+    return false; // unreadable / malformed lock → treat as not held
+  }
+  if (pid === null) return false;
+  try {
+    process.kill(pid, 0);
+    return true; // process alive (we can signal it)
+  } catch (err) {
+    // EPERM ⇒ the process EXISTS but is owned by another user → it is ALIVE. Mirror
+    // the shared lock engine's isPidAlive (and deploy.ts's isLockHolderAlive): under
+    // a user that cannot signal the deploy owner we must NOT false-report the lock as
+    // free, or the state-fallback could short-circuit an in-flight deploy to
+    // "success". Any OTHER error (ESRCH = no such process) → dead/stale → not held.
+    return (err as NodeJS.ErrnoException | undefined)?.code === "EPERM";
   }
 }
 

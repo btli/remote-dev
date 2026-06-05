@@ -10,6 +10,22 @@
  *   X-GitHub-Event: push
  * Body:
  *   { ref: "refs/heads/main", after: "<commit-sha>", ... }
+ *
+ * ── Concurrency model (remote-dev-v7gi flock redesign) ──────────────────────
+ * This route does NOT acquire the deploy mutex. The authoritative mutex is now an
+ * OS `flock(2)` lock owned entirely by scripts/deploy.ts (via scripts/deploy-flock.ts,
+ * a bun:ffi module that MUST NOT be imported here — Turbopack can't bundle bun:ffi).
+ * The route only:
+ *   1. authenticates + parses the push,
+ *   2. does a BEST-EFFORT read of deploy.lock's PID and 409s if that PID is live
+ *      (a cheap early reject; not load-bearing),
+ *   3. spawns PROJECT_ROOT/scripts/deploy.ts detached and returns 202.
+ * Two webhooks that both race past the best-effort check may both 202, but only
+ * ONE deploy proceeds: deploy.ts's flock serializes them (the loser's
+ * flock(LOCK_EX|LOCK_NB) fails with EWOULDBLOCK and it exits cleanly).
+ *
+ * The route imports ONLY the pure `parseLockContent` codec from
+ * scripts/deploy-lock.ts (no fs/process/bun:ffi), so it stays bundle-safe.
  */
 
 import { NextResponse } from "next/server";
@@ -19,21 +35,35 @@ import { homedir } from "os";
 import { spawn } from "child_process";
 import { createLogger } from "@/lib/logger";
 import { verifySignature } from "@/lib/deploy-webhook-auth";
+import { parseLockContent } from "../../../../scripts/deploy-lock";
 
 const log = createLogger("Deploy");
 
 const DATA_DIR = process.env.RDV_DATA_DIR || join(homedir(), ".remote-dev");
 const LOCK_FILE = join(DATA_DIR, "deploy", "deploy.lock");
 
-function isLockHeld(): boolean {
-  if (!existsSync(LOCK_FILE)) return false;
+/**
+ * Best-effort: is a deploy already running? Reads deploy.lock's PID (parsing both
+ * the steady-state plain-PID form and the legacy JSON form) and reports whether
+ * that PID is alive. EPERM ⇒ the process EXISTS but is owned by another user →
+ * alive (err toward "in progress" so we don't double-trigger). This is a cheap
+ * early reject ONLY — the authoritative serialization is deploy.ts's flock, so a
+ * false "free" here is harmless (the loser's flock fails and it exits cleanly).
+ */
+function isDeployRunning(): boolean {
   try {
-    const lockPid = parseInt(readFileSync(LOCK_FILE, "utf-8").trim());
-    if (isNaN(lockPid)) return false;
-    process.kill(lockPid, 0);
-    return true; // Process is alive
+    if (!existsSync(LOCK_FILE)) return false;
+    const pid = parseLockContent(readFileSync(LOCK_FILE, "utf-8")).pid;
+    if (pid === null) return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (err) {
+      return (err as NodeJS.ErrnoException | undefined)?.code === "EPERM";
+    }
   } catch {
-    return false; // Process dead or can't read file
+    // Unreadable lock → don't block a deploy on a best-effort check.
+    return false;
   }
 }
 
@@ -98,124 +128,85 @@ export async function POST(request: Request) {
     });
   }
 
-  // Check for concurrent deploy
-  if (isLockHeld()) {
-    log.info("Deploy already in progress, rejecting");
+  // Best-effort early reject: a live deploy is in progress. NOT authoritative —
+  // deploy.ts's flock is the real mutex — so a race past this check is harmless
+  // (only one deploy wins the flock; the loser exits cleanly).
+  if (isDeployRunning()) {
+    log.info("Deploy already in progress (best-effort PID check), rejecting");
     return NextResponse.json(
       { error: "Deploy already in progress" },
       { status: 409 }
     );
   }
 
-  // Spawn deploy script as detached background process.
-  //
-  // ORCHESTRATOR-LAG FIX (remote-dev-6lf3). PROJECT_ROOT is the live dev/agent
-  // working tree and is intentionally NEVER synced to origin/master, so its
-  // scripts/deploy.ts can lag master by arbitrary commits. The #338 deploy
-  // created the user_email table (db:push ran from the origin/master deploy-src)
-  // but never ran the backfill, because PROJECT_ROOT's deploy.ts predated the
-  // backfill wiring — the step didn't exist in the orchestrator that executed.
-  //
-  // Prefer the ORIGIN/MASTER copy of deploy.ts from the deploy-src worktree
-  // (DATA_DIR/deploy-src), which a prior deploy already pinned to origin/master.
-  // That makes the orchestration logic itself track master, not the stale dev
-  // tree. Chicken-and-egg: deploy-src is created BY deploy.ts, so on the very
-  // first deploy (or right after deploy-src is wiped) it won't exist yet — fall
-  // back to PROJECT_ROOT's copy, which will (re)materialize deploy-src so the
-  // NEXT deploy uses the fresh origin/master orchestrator. The post-condition
-  // guard (db:verify-backfills) is the belt-and-suspenders backstop for the
-  // window where the fallback orchestrator is itself stale.
+  // Spawn the STABLE PROJECT_ROOT entry point detached. It owns the OS flock and
+  // (under the flock) bootstraps deploy-src to origin/master and re-execs the
+  // fresh origin/master orchestrator with --skip-lock + the locked fd — so the
+  // orchestrator-lag window (a stale PROJECT_ROOT deploy.ts) is closed inside
+  // deploy.ts itself, NOT here. The route always spawns the same stable entry.
   const projectRoot =
     process.env.DEPLOY_PROJECT_ROOT ||
     join(homedir(), "Projects", "btli", "remote-dev");
-  const projectRootScript = join(projectRoot, "scripts", "deploy.ts");
-  const deploySrcDir = join(DATA_DIR, "deploy-src");
-  const deploySrcScript = join(deploySrcDir, "scripts", "deploy.ts");
-  // deploy.ts statically `import`s `./deploy-lib`, so a HALF-synced deploy-src
-  // (deploy.ts present but deploy-lib.ts missing/stale) would crash the
-  // orchestrator at import — silently, since the spawn is detached + stdio
-  // "ignore" (CI would just time out polling). Require BOTH files before trusting
-  // the deploy-src copy; otherwise fall back to PROJECT_ROOT.
-  const deploySrcLib = join(deploySrcDir, "scripts", "deploy-lib.ts");
-
-  const useDeploySrc = existsSync(deploySrcScript) && existsSync(deploySrcLib);
-  const scriptPath = useDeploySrc ? deploySrcScript : projectRootScript;
-  // The script reads PROJECT_ROOT via import.meta.dir ("<scriptDir>/.."), so when
-  // running the deploy-src copy, cwd is its own worktree root; PROJECT_ROOT (the
-  // live serving dir restored by restoreSlotToLive) is resolved by deploy.ts from
-  // DEPLOY_PROJECT_ROOT below, not from cwd.
-  const scriptCwd = useDeploySrc ? deploySrcDir : projectRoot;
+  const scriptPath = join(projectRoot, "scripts", "deploy.ts");
 
   log.info("Triggering deploy", {
     commit: body.after?.slice(0, 7) ?? "unknown",
     pusher: body.pusher?.name ?? "unknown",
     script: scriptPath,
-    orchestratorSource: useDeploySrc ? "deploy-src (origin/master)" : "project-root (fallback)",
   });
 
-  try {
-    // Use a clean environment for the deploy script. The Next.js server
-    // process has internal __NEXT_* vars and NODE_ENV=production that
-    // interfere with `next build` (causes "generate is not a function").
-    // Omit NODE_ENV — next build controls this internally.
-    // Pre-setting it to "development" or "production" breaks the build.
-    const cleanEnv: Record<string, string> = {
-      HOME: process.env.HOME ?? "",
-      PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-      SHELL: process.env.SHELL ?? "/bin/zsh",
-      USER: process.env.USER ?? "",
-      LANG: process.env.LANG ?? "en_US.UTF-8",
-      TERM: process.env.TERM ?? "xterm-256color",
-      // App-specific
-      DEPLOY_EXTERNAL_URL:
-        process.env.DEPLOY_EXTERNAL_URL || "https://dev.bryanli.net",
-      DEPLOY_WEBHOOK_SECRET: process.env.DEPLOY_WEBHOOK_SECRET ?? "",
-      DEPLOY_REQUESTED_COMMIT: body.after ?? "",
-      // Pin deploy.ts's notion of the LIVE serving dir explicitly. When we run
-      // the deploy-src copy of deploy.ts, its import.meta.dir-derived
-      // PROJECT_ROOT would point at the deploy-src worktree, NOT the live tree —
-      // so restoreSlotToLive / the rdv.ts restart would target the wrong dir.
-      // Passing DEPLOY_PROJECT_ROOT makes deploy.ts resolve PROJECT_ROOT to the
-      // real live serving dir regardless of which copy of the script runs.
-      DEPLOY_PROJECT_ROOT: projectRoot,
-    };
-    // Forward the DB-TARGETING env so the spawned migration/backfill resolves
-    // the SAME database the live server serves (remote-dev-6lf3). The DB path is
-    // chosen purely from env (DATABASE_URL > RDV_DATA_DIR/sqlite.db >
-    // ~/.remote-dev/sqlite.db; see src/lib/paths.ts) — never cwd-relative — so
-    // forwarding these is what guarantees the backfill hits the live DB rather
-    // than a stray default. DATABASE_URL is the highest-priority selector and was
-    // previously NOT forwarded: a server configured with DATABASE_URL would have
-    // had its deploy backfill silently fall back to ~/.remote-dev/sqlite.db (a
-    // DIFFERENT DB). Forward both, only when set.
-    if (process.env.RDV_DATA_DIR) {
-      cleanEnv.RDV_DATA_DIR = process.env.RDV_DATA_DIR;
-    }
-    if (process.env.DATABASE_URL) {
-      cleanEnv.DATABASE_URL = process.env.DATABASE_URL;
-    }
+  // Use a clean environment for the deploy script. The Next.js server process has
+  // internal __NEXT_* vars and NODE_ENV=production that interfere with
+  // `next build`. Omit NODE_ENV — next build controls this internally.
+  const cleanEnv: Record<string, string> = {
+    HOME: process.env.HOME ?? "",
+    PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+    SHELL: process.env.SHELL ?? "/bin/zsh",
+    USER: process.env.USER ?? "",
+    LANG: process.env.LANG ?? "en_US.UTF-8",
+    TERM: process.env.TERM ?? "xterm-256color",
+    DEPLOY_EXTERNAL_URL:
+      process.env.DEPLOY_EXTERNAL_URL || "https://dev.bryanli.net",
+    DEPLOY_WEBHOOK_SECRET: process.env.DEPLOY_WEBHOOK_SECRET ?? "",
+    DEPLOY_REQUESTED_COMMIT: body.after ?? "",
+    // Pin deploy.ts's notion of the LIVE serving dir explicitly (the deploy-src
+    // copy's import.meta.dir would otherwise resolve PROJECT_ROOT to deploy-src).
+    DEPLOY_PROJECT_ROOT: projectRoot,
+  };
+  // Forward the DB-targeting env so the spawned migration/backfill resolves the
+  // SAME database the live server serves (remote-dev-6lf3). The DB path is chosen
+  // purely from env (DATABASE_URL > RDV_DATA_DIR/sqlite.db > ~/.remote-dev/sqlite.db),
+  // never cwd-relative — forward both, only when set.
+  if (process.env.RDV_DATA_DIR) {
+    cleanEnv.RDV_DATA_DIR = process.env.RDV_DATA_DIR;
+  }
+  if (process.env.DATABASE_URL) {
+    cleanEnv.DATABASE_URL = process.env.DATABASE_URL;
+  }
 
-    const child = spawn("bun", ["run", scriptPath], {
-      cwd: scriptCwd,
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn("bun", ["run", scriptPath], {
+      cwd: projectRoot,
       detached: true,
       stdio: "ignore",
       env: cleanEnv as unknown as NodeJS.ProcessEnv,
     });
-    child.unref();
-
-    return NextResponse.json(
-      {
-        message: "Deploy triggered",
-        commit: body.after?.slice(0, 7) ?? "unknown",
-        pid: child.pid,
-      },
-      { status: 202 }
-    );
-  } catch (err) {
-    log.error("Failed to spawn deploy script", { error: String(err) });
+  } catch (spawnErr) {
+    log.error("Failed to spawn deploy script", { error: String(spawnErr) });
     return NextResponse.json(
       { error: "Failed to trigger deploy" },
       { status: 500 }
     );
   }
+  child.unref();
+
+  return NextResponse.json(
+    {
+      message: "Deploy triggered",
+      commit: body.after?.slice(0, 7) ?? "unknown",
+      pid: child.pid,
+    },
+    { status: 202 }
+  );
 }

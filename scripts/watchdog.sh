@@ -84,13 +84,38 @@ echo "$(date): FAIL healthz=$HEALTHZ_CODE ssr(/login)=$SSR_CODE, consecutive fai
 if [ "$FAILURES" -ge "$MAX_FAILURES" ]; then
   echo "$(date): Triggering restart after $FAILURES consecutive failures"
 
-  # Check if a deploy is in progress
+  # Check if a deploy is in progress. The lock content is the bare PID written by
+  # the deploy.ts flock holder (the steady state). The JSON {"pid":N,"token":"…"}
+  # form is LEGACY-TRANSITION-ONLY (a one-time DEPLOY_LOCK_HANDOFF webhook;
+  # remote-dev-v7gi) — new deploys never write it. Parse the PID out of BOTH
+  # shapes anyway, so a `cat` of a legacy JSON lock can't make `kill -0 '{"pid"…}'`
+  # fail and wrongly conclude "no deploy", restarting the servers mid-deploy.
   LOCK_FILE="$DEPLOY_DIR/deploy.lock"
   if [ -f "$LOCK_FILE" ]; then
-    LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
-    if [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
-      echo "$(date): Deploy in progress (PID: $LOCK_PID), skipping restart"
-      exit 0
+    LOCK_RAW=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
+    case "$LOCK_RAW" in
+      \{*) # JSON handoff form: extract the first integer "pid" field value.
+        LOCK_PID=$(printf '%s' "$LOCK_RAW" | sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
+        ;;
+      *) # Bare PID form: strip to a leading integer (ignore any trailing noise).
+        LOCK_PID=$(printf '%s' "$LOCK_RAW" | sed -n 's/^[[:space:]]*\([0-9][0-9]*\).*/\1/p')
+        ;;
+    esac
+    # Liveness with EPERM-is-alive semantics, mirroring the shared lock engine
+    # (scripts/deploy-lock.ts isPidAlive) + deploy.ts isLockHolderAlive + the status
+    # route. `kill -0` succeeding (exit 0) means the PID is alive AND signalable. A
+    # FAILURE is ambiguous: ESRCH ("No such process") = dead, but EPERM ("Operation
+    # not permitted") = the process EXISTS but is owned by another user → ALIVE.
+    # Treating EPERM as "dead" would let the watchdog RESTART servers mid-deploy when
+    # the deploy owner runs as a different user. Capture stderr and treat the
+    # permission-denied case as alive; only a clean success OR an EPERM means "deploy
+    # in progress, skip restart".
+    if [ -n "$LOCK_PID" ]; then
+      KILL_ERR=$(kill -0 "$LOCK_PID" 2>&1) && KILL_RC=0 || KILL_RC=$?
+      if [ "$KILL_RC" -eq 0 ] || printf '%s' "$KILL_ERR" | grep -qiE 'not permitted|operation not permitted|EPERM'; then
+        echo "$(date): Deploy in progress (PID: $LOCK_PID), skipping restart"
+        exit 0
+      fi
     fi
   fi
 

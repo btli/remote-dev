@@ -32,11 +32,7 @@ import {
   cpSync,
   rmSync,
   appendFileSync,
-  openSync,
-  writeSync,
-  closeSync,
   renameSync,
-  lstatSync,
   readlinkSync,
   readdirSync,
 } from "fs";
@@ -56,6 +52,15 @@ import {
   NATIVE_MODULES_TO_REBUILD,
   shouldRunSqlitePush,
 } from "./deploy-lib";
+import { parseLockContent } from "./deploy-lock";
+import {
+  acquireDeployFlock,
+  adoptInheritedFlock,
+  FlockUnavailableError,
+  FlockForgedFdError,
+  type FlockHandle,
+  type FlockLog,
+} from "./deploy-flock";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -202,62 +207,35 @@ function writeDeployResult(result: DeployResult): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Lock management
+// Lock management — OS flock(2) (remote-dev-v7gi flock redesign)
+//
+// The deploy mutex is an OS `flock(2)` advisory lock on deploy.lock (held by
+// scripts/deploy-flock.ts via bun:ffi). The kernel guarantees atomic mutual
+// exclusion AND auto-releases the lock on holder death, so the userland
+// stale-reclaim protocol that previous rounds kept re-racing is GONE. deploy.lock
+// also doubles as the PID-visibility file (PID-liveness readers — the status
+// route, watchdog, `--status` — parse it without bun:ffi).
+//
+// Two locking roles:
+//   - DEFAULT (PROJECT_ROOT entry): acquire the flock here, bootstrap deploy-src,
+//     then SPAWN the fresh origin/master deploy-src deploy.ts with `--skip-lock`,
+//     passing the LOCKED fd as the child's fd 3. The kernel keeps the flock held
+//     across the handoff (the child inherits the same open file description).
+//   - CHILD (`--skip-lock`): adopt the inherited fd 3 (after verifying it IS the
+//     real deploy.lock inode — a forged fd is rejected), write OUR pid in place,
+//     run the deploy body, release (unlock + close — deploy.lock is a PERMANENT
+//     file that is NEVER unlinked) in a single finally.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function acquireLock(): boolean {
-  // Check for stale locks first
-  if (existsSync(LOCK_FILE)) {
-    try {
-      const lockPid = parseInt(readFileSync(LOCK_FILE, "utf-8").trim());
-      if (!isNaN(lockPid)) {
-        try {
-          process.kill(lockPid, 0);
-          // Process is alive — lock is held
-          logError(`Deploy already in progress (PID: ${lockPid})`);
-          return false;
-        } catch {
-          // Process is dead — stale lock, remove it
-          logDeploy(`Removing stale lock (PID: ${lockPid} is dead)`);
-          unlinkSync(LOCK_FILE);
-        }
-      } else {
-        unlinkSync(LOCK_FILE);
-      }
-    } catch {
-      try { unlinkSync(LOCK_FILE); } catch { /* Ignore */ }
-    }
-  }
+const FLOCK_LOG: FlockLog = {
+  info: (msg) => logDeploy(msg),
+  warn: (msg) => logError(msg),
+};
 
-  // Atomic lock acquisition using O_EXCL (kernel-level exclusive create)
-  try {
-    const fd = openSync(LOCK_FILE, "wx"); // O_WRONLY | O_CREAT | O_EXCL
-    writeSync(fd, process.pid.toString());
-    closeSync(fd);
-    return true;
-  } catch (err: unknown) {
-    if (err && typeof err === "object" && "code" in err && err.code === "EEXIST") {
-      // Another process acquired the lock between our check and create
-      logError("Deploy lock acquired by another process");
-      return false;
-    }
-    throw err;
-  }
-}
-
-function releaseLock(): void {
-  try {
-    if (existsSync(LOCK_FILE)) {
-      // Only release if we own the lock
-      const lockPid = parseInt(readFileSync(LOCK_FILE, "utf-8").trim());
-      if (isNaN(lockPid) || lockPid === process.pid) {
-        unlinkSync(LOCK_FILE);
-      }
-    }
-  } catch {
-    // Ignore
-  }
-}
+// The inherited locked fd index when spawned as a `--skip-lock` child. The parent
+// passes its locked fd as the child's fd 3 (Bun.spawn stdio index 3); the env var
+// names that descriptor so the child can adopt it.
+const CHILD_LOCK_FD = 3;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Process management
@@ -1247,19 +1225,13 @@ async function healthCheckExternal(): Promise<boolean> {
 // Deploy orchestration
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function deploy(): Promise<void> {
-  ensureDirs();
-
-  if (!acquireLock()) {
-    // Lost a deploy-lock race (the POST /api/deploy lock check passed, then
-    // another deploy grabbed the lock first). Deliberately write NO result
-    // record here: the winner may be deploying this same commit, and a "failed"
-    // record would clobber its in_progress/success record (a false failure).
-    // CI degrades to a poll timeout instead — the safe direction.
-    process.exit(1);
-  }
-
-  try {
+// The deploy BODY. Runs UNDER an already-held deploy flock (acquired by the
+// top-level runWithDeployFlock orchestrator, NOT here). Returns an exit code:
+// 0 = success, non-zero = failure. The single owning `finally` in
+// runWithDeployFlock releases the flock regardless of which branch returns — so
+// every failure branch here just `return 1` (no inline releaseLock()/exit()).
+async function deploy(): Promise<number> {
+  {
     const state = readDeployState();
     const activeSlot = state?.activeSlot || "blue";
     const inactiveSlot: Slot = activeSlot === "blue" ? "green" : "blue";
@@ -1296,8 +1268,7 @@ async function deploy(): Promise<void> {
     if (!buildSlot(inactiveSlot)) {
       logError("Build failed, aborting deploy");
       writeFailure("build", "Build failed");
-      releaseLock();
-      process.exit(1);
+      return 1;
     }
 
     // The commit we actually built/shipped is DEPLOY_SRC's HEAD (origin/master),
@@ -1319,8 +1290,7 @@ async function deploy(): Promise<void> {
       writeFailure("migration", "Migration failed");
       restartViaRdvAsync();
       await Bun.sleep(5000);
-      releaseLock();
-      process.exit(1);
+      return 1;
     }
 
     // Activate the freshly-built slot AFTER migration: copy it over the live
@@ -1334,8 +1304,7 @@ async function deploy(): Promise<void> {
       logError("Failed to activate built slot over live dir, rolling back...");
       writeFailure("activate", `Could not restore ${inactiveSlot} slot to live dir`);
       await rollbackTo(activeSlot);
-      releaseLock();
-      process.exit(1);
+      return 1;
     }
 
     // Restart servers via rdv.ts (known working server startup path)
@@ -1348,8 +1317,7 @@ async function deploy(): Promise<void> {
       writeFailure("health-local", "Local health check failed");
       stopCurrentServers();
       await rollbackTo(activeSlot);
-      releaseLock();
-      process.exit(1);
+      return 1;
     }
 
     // External health check
@@ -1359,8 +1327,7 @@ async function deploy(): Promise<void> {
       writeFailure("health-external", "External health check failed");
       stopCurrentServers();
       await rollbackTo(activeSlot);
-      releaseLock();
-      process.exit(1);
+      return 1;
     }
 
     // Update deploy state
@@ -1384,8 +1351,7 @@ async function deploy(): Promise<void> {
     logDeploy(
       `=== Deploy successful === (${activeSlot} -> ${inactiveSlot}, commit: ${getGitCommit(DEPLOY_SRC)})`
     );
-  } finally {
-    releaseLock();
+    return 0;
   }
 }
 
@@ -1426,41 +1392,34 @@ async function rollbackTo(slot: Slot): Promise<void> {
   }
 }
 
-async function rollback(): Promise<void> {
-  ensureDirs();
-
+// The rollback BODY. Runs UNDER an already-held deploy flock (acquired by the
+// top-level runWithDeployFlock orchestrator). Returns an exit code.
+async function rollback(): Promise<number> {
   const state = readDeployState();
   if (!state) {
     logError("No deploy state found, cannot rollback");
-    process.exit(1);
+    return 1;
   }
 
-  if (!acquireLock()) {
-    process.exit(1);
-  }
+  logDeploy(`=== Rollback started ===`);
+  logDeploy(
+    `Rolling back from ${state.activeSlot} to ${state.previousSlot} (commit: ${state.previousCommit.slice(0, 7)})`
+  );
 
-  try {
-    logDeploy(`=== Rollback started ===`);
-    logDeploy(
-      `Rolling back from ${state.activeSlot} to ${state.previousSlot} (commit: ${state.previousCommit.slice(0, 7)})`
-    );
+  stopCurrentServers();
+  await rollbackTo(state.previousSlot);
 
-    stopCurrentServers();
-    await rollbackTo(state.previousSlot);
+  // Swap state
+  writeDeployState({
+    activeSlot: state.previousSlot,
+    activeCommit: state.previousCommit,
+    deployedAt: new Date().toISOString(),
+    previousSlot: state.activeSlot,
+    previousCommit: state.activeCommit,
+  });
 
-    // Swap state
-    writeDeployState({
-      activeSlot: state.previousSlot,
-      activeCommit: state.previousCommit,
-      deployedAt: new Date().toISOString(),
-      previousSlot: state.activeSlot,
-      previousCommit: state.activeCommit,
-    });
-
-    logDeploy(`=== Rollback complete ===`);
-  } finally {
-    releaseLock();
-  }
+  logDeploy(`=== Rollback complete ===`);
+  return 0;
 }
 
 function showStatus(): void {
@@ -1484,9 +1443,16 @@ function showStatus(): void {
     `  Green Build:     ${existsSync(join(BUILDS_DIR, "green", "standalone")) ? "exists" : "empty"}`
   );
 
-  const lockExists = existsSync(LOCK_FILE);
-  if (lockExists) {
-    const lockPid = readFileSync(LOCK_FILE, "utf-8").trim();
+  // deploy.lock is a PERMANENT file (never unlinked), so existence alone no longer
+  // means "held" — a leftover dead-PID file persists after every deploy. Report
+  // "held" ONLY when the named PID is actually ALIVE (EPERM-is-alive), mirroring
+  // every other reader (status route, watchdog, the 409 route). The lock content
+  // is the bare PID the flock holder writes (steady state); the legacy JSON
+  // {pid,token} form is transition-only — parse both via the shared codec.
+  const lockPid = existsSync(LOCK_FILE)
+    ? parseLockContent(readFileSync(LOCK_FILE, "utf-8")).pid
+    : null;
+  if (lockPid !== null && isLockHolderAlive(lockPid)) {
     console.log(`  Lock:            held by PID ${lockPid}`);
   } else {
     console.log(`  Lock:            free`);
@@ -1546,19 +1512,253 @@ async function init(): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Flock orchestration (remote-dev-v7gi flock redesign)
+//
+// Locking ownership lives at the TOP LEVEL (these runners), NOT inside the deploy
+// / rollback bodies. A runner acquires (or, for the `--skip-lock` child, adopts)
+// the flock, runs the body, and releases in a SINGLE `finally` — so a body just
+// returns an exit code and never touches the lock.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const EXIT_LOCK_HELD = 0; // contention is a clean no-op, NOT a failure to report.
+const EXIT_FAIL = 1;
+
+/**
+ * Acquire the deploy flock and run `body` under it, releasing in a finally.
+ *
+ *   - FFI unavailable (FlockUnavailableError) → FAIL CLOSED: log, write a failed
+ *     result, exit non-zero. NO userland fallback, NO deploy.
+ *   - Lock HELD (another live deploy) → clean exit 0 with NO failed result (so we
+ *     never clobber the winner's in_progress/success record).
+ *   - Acquired → write our PID, run body, release.
+ *
+ * On the LEGACY transition (exactly one deploy): if DEPLOY_LOCK_HANDOFF is set and
+ * the existing JSON lock token matches, the flock acquire OVERWRITES the JSON with
+ * our plain PID. New code never creates JSON locks.
+ */
+async function runWithDeployFlock(
+  body: (lock: FlockHandle) => Promise<number>,
+): Promise<number> {
+  let acquired: FlockHandle | { outcome: "held" };
+  try {
+    acquired = acquireDeployFlock({
+      lockFile: LOCK_FILE,
+      pid: process.pid,
+      log: FLOCK_LOG,
+      legacyHandoffToken: process.env.DEPLOY_LOCK_HANDOFF || undefined,
+    });
+  } catch (err) {
+    if (err instanceof FlockUnavailableError) {
+      // FAIL CLOSED — the OS mutex is unavailable, so we must NOT deploy.
+      logError(
+        `Deploy flock unavailable (${String(err)}); refusing to deploy without the OS mutex.`,
+      );
+      writeDeployResult({
+        status: "failed",
+        requestedCommit: process.env.DEPLOY_REQUESTED_COMMIT || getGitCommitFull(),
+        activeCommit: readDeployState()?.activeCommit ?? null,
+        stage: "lock",
+        error: "deploy flock (OS mutex) unavailable",
+        startedAt: new Date().toISOString(),
+        finishedAt: new Date().toISOString(),
+      });
+      return EXIT_FAIL;
+    }
+    throw err;
+  }
+
+  if (acquired.outcome === "held") {
+    // Another live deploy holds the flock. Deliberately write NO result record:
+    // the winner may be deploying this same commit, and a "failed" record would
+    // clobber its in_progress/success record. CI degrades to a poll timeout — the
+    // safe direction.
+    logDeploy("Another deploy holds the lock; exiting without action.");
+    return EXIT_LOCK_HELD;
+  }
+
+  const lock = acquired;
+  try {
+    return await body(lock);
+  } finally {
+    lock.release();
+  }
+}
+
+/**
+ * Adopt the deploy flock the PARENT handed us via the inherited fd named by
+ * DEPLOY_LOCK_FD (the `--skip-lock` child path), run `body`, release in a finally.
+ * REQUIRES DEPLOY_LOCK_FD to be set — refuse otherwise (a `--skip-lock` child with
+ * no inherited lock must NEVER run unlocked).
+ */
+async function runWithAdoptedFlock(
+  body: (lock: FlockHandle) => Promise<number>,
+): Promise<number> {
+  const fdStr = process.env.DEPLOY_LOCK_FD;
+  const fd = fdStr ? parseInt(fdStr, 10) : NaN;
+  if (!Number.isInteger(fd)) {
+    logError(
+      "Deploy invoked with --skip-lock but DEPLOY_LOCK_FD is unset/invalid; " +
+        "refusing to run unlocked.",
+    );
+    return EXIT_FAIL;
+  }
+  let lock: FlockHandle;
+  try {
+    lock = adoptInheritedFlock({ fd, lockFile: LOCK_FILE, pid: process.pid, log: FLOCK_LOG });
+  } catch (err) {
+    if (err instanceof FlockUnavailableError) {
+      logError(`Deploy flock FFI unavailable in --skip-lock child (${String(err)}); refusing to run.`);
+    } else if (err instanceof FlockForgedFdError) {
+      // The inherited fd is NOT the real deploy.lock inode (a forged/misrouted
+      // DEPLOY_LOCK_FD). Refuse — running here would deploy WITHOUT the mutex.
+      logError(`Deploy flock adoption rejected (${String(err)}); refusing to run unlocked.`);
+    } else {
+      logError(`Deploy flock adoption failed (${String(err)}); refusing to run unlocked.`);
+    }
+    return EXIT_FAIL;
+  }
+  try {
+    return await body(lock);
+  } finally {
+    lock.release();
+  }
+}
+
+/**
+ * The DEFAULT deploy orchestration, run UNDER the flock in the PROJECT_ROOT entry.
+ * Bootstrap deploy-src to origin/master, then SPAWN the FRESH origin/master
+ * deploy-src deploy.ts with `--skip-lock`, handing it the locked fd as fd 3. The
+ * parent re-pins the PID file to the child's PID, closes its own fd WITHOUT
+ * unlinking (the child owns the lock now), awaits the child, and returns its code.
+ *
+ * Do NOT fall back to the (possibly stale) PROJECT_ROOT orchestrator for forward
+ * deploys: if deploy-src cannot be pinned or its deploy.ts/deploy-lib.ts is
+ * missing, write a failed result and exit.
+ */
+async function runForwardDeployUnderLock(lock: FlockHandle): Promise<number> {
+  const requestedCommit = process.env.DEPLOY_REQUESTED_COMMIT || getGitCommitFull();
+  const startedAt = new Date().toISOString();
+  const failClosed = (stage: string, error: string): number => {
+    logError(error);
+    writeDeployResult({
+      status: "failed",
+      requestedCommit,
+      activeCommit: readDeployState()?.activeCommit ?? null,
+      stage,
+      error,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+    });
+    return EXIT_FAIL;
+  };
+
+  // Pin deploy-src to origin/master (idempotent fetch + reset --hard, or first
+  // create). This runs UNDER the flock, so no concurrent deploy mutates deploy-src.
+  if (!ensureDeploySrcAtOrigin()) {
+    return failClosed(
+      "bootstrap",
+      "Could not pin deploy-src to origin/master; refusing to run a stale forward deploy.",
+    );
+  }
+
+  const deploySrcScript = join(DEPLOY_SRC, "scripts", "deploy.ts");
+  const deploySrcLib = join(DEPLOY_SRC, "scripts", "deploy-lib.ts");
+  if (!existsSync(deploySrcScript) || !existsSync(deploySrcLib)) {
+    return failClosed(
+      "bootstrap",
+      `deploy-src is missing scripts/deploy.ts or scripts/deploy-lib.ts (${DEPLOY_SRC}); ` +
+        "refusing to run a half-synced forward deploy.",
+    );
+  }
+
+  // Hand the flock to the fresh deploy-src copy via fd 3. The child inherits the
+  // SAME open file description, so the kernel keeps the flock held across the
+  // handoff. We re-pin the PID file to the child's PID FIRST (so a reader / a
+  // future acquirer sees the live deploy process), then close OUR fd WITHOUT
+  // unlinking (the child owns the file now) and await the child.
+  const cleanEnv: Record<string, string> = { ...process.env } as Record<string, string>;
+  cleanEnv.DEPLOY_PROJECT_ROOT = PROJECT_ROOT;
+  cleanEnv.DEPLOY_LOCK_FD = String(CHILD_LOCK_FD);
+  // The child re-pins the PID file to its OWN pid as soon as it adopts; never pass
+  // a JSON-handoff token to the fresh copy (it writes plain PIDs only).
+  delete cleanEnv.DEPLOY_LOCK_HANDOFF;
+
+  logDeploy(
+    `Spawning fresh origin/master deploy-src orchestrator (--skip-lock, fd ${CHILD_LOCK_FD}): ${deploySrcScript}`,
+  );
+
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn({
+      cmd: ["bun", "run", deploySrcScript, "--skip-lock"],
+      cwd: DEPLOY_SRC,
+      env: cleanEnv,
+      // stdio index 3 = the locked fd. ["ignore", "inherit", "inherit", fd].
+      stdio: ["ignore", "inherit", "inherit", lock.fd],
+    });
+  } catch (err) {
+    // Spawn failed before fd transfer → the parent still owns the lock; the
+    // owning finally (runWithDeployFlock) releases it (unlock + close — the
+    // permanent deploy.lock file is never unlinked).
+    return failClosed("spawn", `Failed to spawn deploy-src orchestrator: ${String(err)}`);
+  }
+
+  const childPid = child.pid;
+  if (typeof childPid === "number") {
+    // Re-pin the PID file to the child so PID readers / future acquirers see the
+    // live deploy process, then DETACH our ownership: close our fd WITHOUT
+    // unlocking (closeKeepLock). The child holds the same flock via fd 3 and will
+    // unlock + close in its own finally (deploy.lock is permanent — never
+    // unlinked). closeKeepLock() also marks the handle released so
+    // runWithDeployFlock's finally is a no-op (it must not LOCK_UN the flock the
+    // child now relies on).
+    try {
+      lock.writeOwnerPid(childPid);
+    } catch (err) {
+      logError(`Failed to re-pin PID file to child ${childPid} (continuing): ${String(err)}`);
+    }
+    lock.closeKeepLock();
+  }
+
+  const code = await child.exited;
+  logDeploy(`deploy-src orchestrator exited with code ${code}`);
+  return code ?? EXIT_FAIL;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main
 // ─────────────────────────────────────────────────────────────────────────────
 
 if (import.meta.main) {
   const args = process.argv.slice(2);
+  const skipLock = args.includes("--skip-lock");
 
-  if (args.includes("--rollback")) {
-    await rollback();
-  } else if (args.includes("--status")) {
+  let exitCode = 0;
+  if (args.includes("--status")) {
+    // Read-only; no lock.
     showStatus();
   } else if (args.includes("--init")) {
+    // State setup; no concurrent-deploy mutex needed.
     await init();
+  } else if (args.includes("--rollback")) {
+    // Rollback runs IN-PROCESS under the flock (no deploy-src spawn). A
+    // `--skip-lock` rollback (unusual) adopts an inherited fd.
+    ensureDirs();
+    exitCode = skipLock
+      ? await runWithAdoptedFlock(() => rollback())
+      : await runWithDeployFlock(() => rollback());
+  } else if (skipLock) {
+    // The FRESH deploy-src child: adopt the inherited flock (fd 3) and run the
+    // actual deploy body. The PARENT already bootstrapped deploy-src + holds the
+    // flock; we re-pin the PID file to ourselves on adoption.
+    ensureDirs();
+    exitCode = await runWithAdoptedFlock(() => deploy());
   } else {
-    await deploy();
+    // The DEFAULT PROJECT_ROOT entry (manual run OR webhook spawn): acquire the
+    // flock, bootstrap deploy-src, and spawn the fresh origin/master orchestrator
+    // with --skip-lock + fd 3.
+    ensureDirs();
+    exitCode = await runWithDeployFlock((lock) => runForwardDeployUnderLock(lock));
   }
+  process.exit(exitCode);
 }
