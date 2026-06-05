@@ -102,7 +102,7 @@ describe("supervisor auth/mobile-callback — CF authenticated", () => {
     setCookie("CF_Authorization", "ey.cf.jwt");
     cfState.user = { email: "host@example.com", sub: "cf-sub-1" };
 
-    await expect(MobileCallbackPage()).rejects.toThrow(); // redirect() unwinds
+    await expect(MobileCallbackPage({ searchParams: Promise.resolve({}) })).rejects.toThrow(); // redirect() unwinds
 
     const target = redirectState.target!;
     expect(target).not.toBeNull();
@@ -134,7 +134,7 @@ describe("supervisor auth/mobile-callback — CF authenticated", () => {
     setCookie("CF_Authorization", "a b/c+d=");
     cfState.user = { email: "host@example.com", sub: "cf-sub-1" };
 
-    await expect(MobileCallbackPage()).rejects.toThrow();
+    await expect(MobileCallbackPage({ searchParams: Promise.resolve({}) })).rejects.toThrow();
     // URL-decoded round-trip must equal the original token.
     expect(new URL(redirectState.target!).searchParams.get("cfToken")).toBe(
       "a b/c+d=",
@@ -152,7 +152,7 @@ describe("supervisor auth/mobile-callback — OIDC authenticated", () => {
     oidcState.email = "host@example.com";
     cfState.user = null;
 
-    await expect(MobileCallbackPage()).rejects.toThrow();
+    await expect(MobileCallbackPage({ searchParams: Promise.resolve({}) })).rejects.toThrow();
 
     const uri = new URL(redirectState.target!);
     expect(uri.searchParams.get("scope")).toBe("host");
@@ -177,7 +177,7 @@ describe("supervisor auth/mobile-callback — OIDC authenticated", () => {
     setCookie("__Secure-authjs.session-token.0", "c0");
     oidcState.email = "host@example.com";
 
-    await expect(MobileCallbackPage()).rejects.toThrow();
+    await expect(MobileCallbackPage({ searchParams: Promise.resolve({}) })).rejects.toThrow();
 
     const authCookies = JSON.parse(
       Buffer.from(
@@ -200,7 +200,7 @@ describe("supervisor auth/mobile-callback — OIDC user but cookie missing", () 
     oidcState.email = "host@example.com";
     setCookie("other-cookie", "irrelevant");
 
-    const result = (await MobileCallbackPage()) as ReactElement;
+    const result = (await MobileCallbackPage({ searchParams: Promise.resolve({}) })) as ReactElement;
     const markup = html(result);
     expect(markup).toContain("Authentication Error");
     expect(markup).toContain("missing its authentication cookie");
@@ -218,7 +218,7 @@ describe("supervisor auth/mobile-callback — unauthenticated", () => {
     cfState.user = null;
     oidcState.email = null;
 
-    await expect(MobileCallbackPage()).rejects.toThrow();
+    await expect(MobileCallbackPage({ searchParams: Promise.resolve({}) })).rejects.toThrow();
 
     expect(redirectState.target).toBe(
       "/login?callbackUrl=%2Fauth%2Fmobile-callback",
@@ -231,11 +231,66 @@ describe("supervisor auth/mobile-callback — unauthenticated", () => {
     cfState.user = null; // validateAccessJWT rejects it
     oidcState.email = null;
 
-    await expect(MobileCallbackPage()).rejects.toThrow();
+    await expect(MobileCallbackPage({ searchParams: Promise.resolve({}) })).rejects.toThrow();
 
     expect(redirectState.target).toBe(
       "/login?callbackUrl=%2Fauth%2Fmobile-callback",
     );
     expect(resolveSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Anti-hijack state (remote-dev-gkuo) — page-level threading
+// ---------------------------------------------------------------------------
+
+describe("supervisor auth/mobile-callback — state threading", () => {
+  it("echoes state on the deep link when authenticated (CF)", async () => {
+    setCookie("CF_Authorization", "ey.cf.jwt");
+    cfState.user = { email: "host@example.com", sub: "cf-sub-1" };
+
+    await expect(
+      MobileCallbackPage({
+        searchParams: Promise.resolve({ state: "nonce-123" }),
+      }),
+    ).rejects.toThrow();
+
+    expect(new URL(redirectState.target!).searchParams.get("state")).toBe(
+      "nonce-123",
+    );
+  });
+
+  it("preserves state inside callbackUrl across the login round-trip", async () => {
+    // Unauthenticated → redirect to /login, but the nonce must ride INSIDE
+    // callbackUrl so it survives the OIDC bounce back to this page.
+    cfState.user = null;
+    oidcState.email = null;
+
+    await expect(
+      MobileCallbackPage({
+        searchParams: Promise.resolve({ state: "nonce-roundtrip" }),
+      }),
+    ).rejects.toThrow();
+
+    const target = redirectState.target!;
+    expect(target.startsWith("/login?callbackUrl=")).toBe(true);
+    const callbackUrl = new URLSearchParams(
+      target.slice(target.indexOf("?") + 1),
+    ).get("callbackUrl")!;
+    // callbackUrl decodes to /auth/mobile-callback?state=nonce-roundtrip
+    expect(callbackUrl).toBe("/auth/mobile-callback?state=nonce-roundtrip");
+  });
+
+  it("uses the plain login callbackUrl when no state is supplied", async () => {
+    cfState.user = null;
+    oidcState.email = null;
+
+    await expect(
+      MobileCallbackPage({ searchParams: Promise.resolve({}) }),
+    ).rejects.toThrow();
+
+    expect(redirectState.target).toBe(
+      "/login?callbackUrl=%2Fauth%2Fmobile-callback",
+    );
   });
 });

@@ -4,6 +4,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_dev/infrastructure/auth/mobile_callback_login_launcher.dart';
 import 'package:remote_dev/infrastructure/auth/mobile_credentials.dart';
 
+/// Echo the anti-hijack `state` the launcher appended to [launchedUrl] back onto
+/// a `remotedev://auth/callback` deep link — exactly as the real server does.
+/// This keeps the realistic "server echoes whatever it received" behavior so
+/// the strict state gate (remote-dev-gkuo) accepts the callback.
+Uri callbackEchoingState(Uri launchedUrl, String baseCallback) {
+  final state = launchedUrl.queryParameters['state'];
+  final sep = baseCallback.contains('?') ? '&' : '?';
+  return Uri.parse('$baseCallback${sep}state=${Uri.encodeComponent(state ?? '')}');
+}
+
 void main() {
   group('MobileCallbackLoginLauncher.login', () {
     test(
@@ -15,12 +25,14 @@ void main() {
         deepLinkStream: stream.stream,
         urlLauncher: (uri) async {
           launchedAt = uri;
-          // Simulate the system browser firing the callback after a tick.
+          // Simulate the system browser firing the callback after a tick,
+          // echoing the state the launcher appended (as the server does).
           scheduleMicrotask(() {
             stream.add(
-              Uri.parse(
+              callbackEchoingState(
+                uri,
                 'remotedev://auth/callback?apiKey=sk-abc'
-                '&userId=u1&email=a%40b.com&cfToken=jwt-token',
+                    '&userId=u1&email=a%40b.com&cfToken=jwt-token',
               ),
             );
           });
@@ -32,7 +44,10 @@ void main() {
         serverUrl: Uri.parse('https://dev.example.com'),
       );
 
-      expect(launchedAt, Uri.parse('https://dev.example.com/auth/mobile-callback'));
+      // The launched URL carries the anti-hijack state nonce on the path.
+      expect(launchedAt, isNotNull);
+      expect(launchedAt!.path, '/auth/mobile-callback');
+      expect(launchedAt!.queryParameters['state'], isNotEmpty);
       expect(creds, isNotNull);
       expect(creds!.apiKey, 'sk-abc');
       expect(creds.cfToken, 'jwt-token');
@@ -76,7 +91,7 @@ void main() {
       final stream = StreamController<Uri>.broadcast();
       final launcher = MobileCallbackLoginLauncher(
         deepLinkStream: stream.stream,
-        urlLauncher: (_) async {
+        urlLauncher: (uri) async {
           scheduleMicrotask(() {
             // Wrong scheme — must be ignored.
             stream.add(Uri.parse('https://dev.example.com/auth/callback'));
@@ -84,9 +99,12 @@ void main() {
             stream.add(Uri.parse('remotedev://session/abc'));
             // Wrong path — must be ignored.
             stream.add(Uri.parse('remotedev://auth/other'));
-            // Matching URI.
+            // Matching URI (echoing the state nonce the launcher sent).
             stream.add(
-              Uri.parse('remotedev://auth/callback?apiKey=sk-final'),
+              callbackEchoingState(
+                uri,
+                'remotedev://auth/callback?apiKey=sk-final',
+              ),
             );
           });
           return true;
@@ -107,9 +125,14 @@ void main() {
       final stream = StreamController<Uri>.broadcast();
       final launcher = MobileCallbackLoginLauncher(
         deepLinkStream: stream.stream,
-        urlLauncher: (_) async {
+        urlLauncher: (uri) async {
           scheduleMicrotask(() {
-            stream.add(Uri.parse('remotedev://auth/callback?cfToken=jwt'));
+            stream.add(
+              callbackEchoingState(
+                uri,
+                'remotedev://auth/callback?cfToken=jwt',
+              ),
+            );
           });
           return true;
         },
@@ -135,9 +158,10 @@ void main() {
           launchedAt = uri;
           scheduleMicrotask(() {
             stream.add(
-              Uri.parse(
+              callbackEchoingState(
+                uri,
                 'remotedev://auth/callback?scope=host&cfToken=host-jwt'
-                '&userId=u9&email=h%40b.com',
+                    '&userId=u9&email=h%40b.com',
               ),
             );
           });
@@ -149,10 +173,9 @@ void main() {
         origin: Uri.parse('https://sup.example.com'),
       );
 
-      expect(
-        launchedAt,
-        Uri.parse('https://sup.example.com/auth/mobile-callback'),
-      );
+      expect(launchedAt, isNotNull);
+      expect(launchedAt!.path, '/auth/mobile-callback');
+      expect(launchedAt!.queryParameters['state'], isNotEmpty);
       expect(host.cfToken, 'host-jwt');
       expect(host.userId, 'u9');
       expect(host.email, 'h@b.com');
@@ -196,10 +219,13 @@ void main() {
       final stream = StreamController<Uri>.broadcast();
       final launcher = MobileCallbackLoginLauncher(
         deepLinkStream: stream.stream,
-        urlLauncher: (_) async {
+        urlLauncher: (uri) async {
           scheduleMicrotask(() {
             stream.add(
-              Uri.parse('remotedev://auth/callback?apiKey=k&cfToken=jwt'),
+              callbackEchoingState(
+                uri,
+                'remotedev://auth/callback?apiKey=k&cfToken=jwt',
+              ),
             );
           });
           return true;

@@ -212,9 +212,19 @@ void main() {
   // Launcher: _awaitCallback opens buildCallbackUrl (base-path fix)
   // ---------------------------------------------------------------------------
   group('MobileCallbackLoginLauncher._awaitCallback (base-path fix)', () {
+    // Echo the anti-forgery `state` the launcher appended (as the server does)
+    // so the strict state gate (remote-dev-gkuo) accepts the callback.
+    Uri echoState(Uri launchedUrl, String baseCallback) {
+      final state = launchedUrl.queryParameters['state'];
+      final sep = baseCallback.contains('?') ? '&' : '?';
+      return Uri.parse(
+        '$baseCallback${sep}state=${Uri.encodeComponent(state ?? '')}',
+      );
+    }
+
     test('login() opens workspace base URL correctly', () async {
       // Verify that a workspace base URL (with path) is not stripped.
-      // https://h/demo -> https://h/demo/auth/mobile-callback
+      // https://h/demo -> https://h/demo/auth/mobile-callback (+ ?state=…)
       final stream = StreamController<Uri>.broadcast();
       Uri? launchedAt;
       final launcher = MobileCallbackLoginLauncher(
@@ -223,7 +233,7 @@ void main() {
           launchedAt = uri;
           scheduleMicrotask(() {
             stream.add(
-              Uri.parse('remotedev://auth/callback?apiKey=k&cfToken=t'),
+              echoState(uri, 'remotedev://auth/callback?apiKey=k&cfToken=t'),
             );
           });
           return true;
@@ -232,7 +242,15 @@ void main() {
 
       await launcher.login(serverUrl: Uri.parse('https://h/demo'));
 
-      expect(launchedAt, Uri.parse('https://h/demo/auth/mobile-callback'));
+      // Path (base-path prefix) is preserved; the launcher additionally appends
+      // the anti-forgery state nonce as a query param.
+      expect(launchedAt, isNotNull);
+      // Base-path prefix is preserved on the path; the launcher additionally
+      // appends the anti-forgery state nonce as a query param.
+      expect(launchedAt!.scheme, 'https');
+      expect(launchedAt!.host, 'h');
+      expect(launchedAt!.path, '/demo/auth/mobile-callback');
+      expect(launchedAt!.queryParameters['state'], isNotEmpty);
       await stream.close();
     });
 
@@ -245,7 +263,8 @@ void main() {
           launchedAt = uri;
           scheduleMicrotask(() {
             stream.add(
-              Uri.parse(
+              echoState(
+                uri,
                 'remotedev://auth/callback?scope=host&cfToken=host-jwt',
               ),
             );
@@ -256,7 +275,13 @@ void main() {
 
       await launcher.loginHost(origin: Uri.parse('https://h/demo'));
 
-      expect(launchedAt, Uri.parse('https://h/demo/auth/mobile-callback'));
+      expect(launchedAt, isNotNull);
+      // Base-path prefix is preserved on the path; the launcher additionally
+      // appends the anti-forgery state nonce as a query param.
+      expect(launchedAt!.scheme, 'https');
+      expect(launchedAt!.host, 'h');
+      expect(launchedAt!.path, '/demo/auth/mobile-callback');
+      expect(launchedAt!.queryParameters['state'], isNotEmpty);
       await stream.close();
     });
   });

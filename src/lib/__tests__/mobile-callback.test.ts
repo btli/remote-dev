@@ -246,4 +246,73 @@ describe("resolveInstanceMobileCallback", () => {
 
     expect(result.kind).toBe("login");
   });
+
+  // ─── Anti-hijack state echo (remote-dev-gkuo) ──────────────────────────────
+
+  it("echoes the app-supplied state on the CF deep link", async () => {
+    const CF_TOKEN = "cf-jwt-token";
+    vi.mocked(cookies).mockResolvedValue(
+      makeCookieStore([["CF_Authorization", CF_TOKEN]]) as ReturnType<typeof makeCookieStore>,
+    );
+    vi.mocked(validateAccessJWT).mockResolvedValue({ email: "u@e.com", sub: "s" });
+    vi.mocked(getOrCreateUserByEmail).mockResolvedValue({
+      id: "user-1",
+      email: "u@e.com",
+      name: null,
+    });
+    vi.mocked(createApiKey).mockResolvedValue({
+      id: "k",
+      name: "Mobile App",
+      key: "rdv_k",
+      keyPrefix: "rdv_",
+      createdAt: new Date(),
+    });
+
+    const result = await resolveInstanceMobileCallback({ state: "nonce-xyz" });
+    expect(result.kind).toBe("redirect");
+    const params = parseDeepLink((result as { kind: "redirect"; url: string }).url);
+    expect(params.get("state")).toBe("nonce-xyz");
+  });
+
+  it("echoes the app-supplied state on the OIDC deep link", async () => {
+    const SESSION_COOKIE_NAME = "__Secure-rdv-demo-session-token";
+    vi.mocked(cookies).mockResolvedValue(
+      makeCookieStore([[SESSION_COOKIE_NAME, "v"]]) as ReturnType<typeof makeCookieStore>,
+    );
+    vi.mocked(getAuthSession).mockResolvedValue({
+      user: { id: "user-2", email: "o@e.com", name: null },
+    });
+    vi.mocked(getSessionCookieName).mockReturnValue(SESSION_COOKIE_NAME);
+
+    const result = await resolveInstanceMobileCallback({ state: "nonce-oidc" });
+    expect(result.kind).toBe("redirect");
+    const params = parseDeepLink((result as { kind: "redirect"; url: string }).url);
+    expect(params.get("state")).toBe("nonce-oidc");
+  });
+
+  it("omits state when the app supplied none (older app)", async () => {
+    const CF_TOKEN = "cf-jwt-token";
+    vi.mocked(cookies).mockResolvedValue(
+      makeCookieStore([["CF_Authorization", CF_TOKEN]]) as ReturnType<typeof makeCookieStore>,
+    );
+    vi.mocked(validateAccessJWT).mockResolvedValue({ email: "u@e.com", sub: "s" });
+    vi.mocked(getOrCreateUserByEmail).mockResolvedValue({
+      id: "user-1",
+      email: "u@e.com",
+      name: null,
+    });
+    vi.mocked(createApiKey).mockResolvedValue({
+      id: "k",
+      name: "Mobile App",
+      key: "rdv_k",
+      keyPrefix: "rdv_",
+      createdAt: new Date(),
+    });
+
+    const result = await resolveInstanceMobileCallback();
+    expect(result.kind).toBe("redirect");
+    const url = (result as { kind: "redirect"; url: string }).url;
+    expect(parseDeepLink(url).has("state")).toBe(false);
+    expect(url).not.toContain("state=");
+  });
 });

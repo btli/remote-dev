@@ -406,3 +406,58 @@ describe("resolveSupervisorMobileCallback — no identity", () => {
     expect(result.kind).toBe("login");
   });
 });
+
+// ---------------------------------------------------------------------------
+// resolveSupervisorMobileCallback — anti-hijack state echo (remote-dev-gkuo)
+// ---------------------------------------------------------------------------
+
+describe("resolveSupervisorMobileCallback — state echo", () => {
+  it("echoes the app-supplied state on the CF deep link", async () => {
+    setCookie("CF_Authorization", "ey.cf.jwt");
+    cfState.user = { email: "host@example.com", sub: "cf-sub-1" };
+
+    const result = await resolveSupervisorMobileCallback({
+      state: "nonce-abc123",
+    });
+    expect(result.kind).toBe("redirect");
+    if (result.kind !== "redirect") return;
+    expect(new URL(result.url).searchParams.get("state")).toBe("nonce-abc123");
+  });
+
+  it("echoes the app-supplied state on the OIDC deep link", async () => {
+    setCookie("__Secure-authjs.session-token", "jwe-value");
+    oidcState.email = "host@example.com";
+
+    const result = await resolveSupervisorMobileCallback({
+      state: "nonce-oidc-789",
+    });
+    expect(result.kind).toBe("redirect");
+    if (result.kind !== "redirect") return;
+    expect(new URL(result.url).searchParams.get("state")).toBe("nonce-oidc-789");
+  });
+
+  it("omits state when the app supplied none (older app — no bare &state=)", async () => {
+    setCookie("CF_Authorization", "ey.cf.jwt");
+    cfState.user = { email: "host@example.com", sub: "cf-sub-1" };
+
+    const result = await resolveSupervisorMobileCallback();
+    expect(result.kind).toBe("redirect");
+    if (result.kind !== "redirect") return;
+    const url = result.url;
+    expect(new URL(url).searchParams.get("state")).toBeNull();
+    // Must not leave a dangling empty param.
+    expect(url).not.toContain("&state=");
+  });
+
+  it("percent-encodes a state containing URL-reserved chars", async () => {
+    setCookie("CF_Authorization", "ey.cf.jwt");
+    cfState.user = { email: "host@example.com", sub: "cf-sub-1" };
+
+    // Defensive: even though generated nonces are URL-safe base64url, the
+    // server must not break if a state carries reserved chars.
+    const result = await resolveSupervisorMobileCallback({ state: "a b&c=d" });
+    expect(result.kind).toBe("redirect");
+    if (result.kind !== "redirect") return;
+    expect(new URL(result.url).searchParams.get("state")).toBe("a b&c=d");
+  });
+});
