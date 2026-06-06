@@ -20,5 +20,15 @@ class ConnectivityPlusAdapter implements ConnectivityPort {
 
   @override
   Stream<bool> get onConnectivityChanged =>
-      _connectivity.onConnectivityChanged.map(_anyOnline);
+      // `.distinct()` so the coarse online/offline bool only emits on a
+      // genuine transition. The raw `connectivity_plus` stream relays every
+      // platform connectivity callback — on cellular, Android's
+      // `onCapabilitiesChanged` fires a flood of events that all map to the
+      // SAME `online == true`. Without de-duping, each redundant `true`
+      // reaches PushTokenRegistrar's connectivity listener, which kept
+      // `_retryQueued` set so `_afterPass` did immediate re-runs and the
+      // 15s→5min backoff never engaged → a ~2-3s retry storm when a request
+      // persistently failed (e.g. an off-LAN CF `302`). One bool per real
+      // transition lets the existing backoff own the retry cadence.
+      _connectivity.onConnectivityChanged.map(_anyOnline).distinct();
 }

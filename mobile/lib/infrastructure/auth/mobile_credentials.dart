@@ -198,6 +198,27 @@ class MobileCredentialsStore {
         jsonEncode(cookies.map((c) => c.toJson()).toList()),
       );
 
+  /// Insert-or-replace a single host auth cookie by name, preserving every
+  /// other host cookie.
+  ///
+  /// Used by the WebView CF_Authorization harvest (remote-dev off-LAN CF
+  /// Access): when the session WebView completes the interactive CF Access
+  /// login, the harvested `CF_Authorization` is upserted here so the existing
+  /// [CfAuthInterceptor] sends it on every Dio call. Merging (rather than
+  /// overwriting the whole list) is deliberate — a CF instance callback may
+  /// already have stored other host cookies, and a fresh CF JWT must not
+  /// clobber them. Reads the current list via [getHostAuthCookies] (which
+  /// includes the legacy `cfToken` fallback), drops any existing entry with
+  /// the same [AuthCookie.name], appends [cookie], and writes the result back.
+  Future<void> upsertHostAuthCookie(String hostId, AuthCookie cookie) async {
+    final existing = await getHostAuthCookies(hostId);
+    final merged = [
+      ...existing.where((c) => c.name != cookie.name),
+      cookie,
+    ];
+    await setHostAuthCookies(hostId, merged);
+  }
+
   /// Read the host's auth cookies.
   ///
   /// Priority:

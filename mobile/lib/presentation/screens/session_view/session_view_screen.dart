@@ -23,6 +23,7 @@ import '../webview_host/session_route_host.dart'
         activeWorkspaceProvider,
         hostWorkspaceStoreProvider,
         mobileCredentialsStoreProvider,
+        webViewCookieHarvesterProvider,
         webViewCookieSeederProvider;
 import 'activity_pip.dart';
 import 'mobile_input_bar.dart';
@@ -531,7 +532,16 @@ class _WebviewState extends ConsumerState<_Webview> {
           // device repro of the blank-screen / submit-does-nothing bug we
           // surface page-load + console output to `flutter logs` so the
           // next iteration can see where the embedded PWA stops.
-          onLoadStop: (_, uri) => debugPrint('[SessionView] loadStop $uri'),
+          //
+          // Opportunistic CF_Authorization harvest (remote-dev off-LAN CF
+          // Access): once the host page has loaded (and any CF Access edge
+          // challenge has resolved), pull the edge cookie out of the WebView
+          // jar into the credential store so subsequent Dio API calls pass
+          // the Cloudflare perimeter. Best-effort — see [_harvestEdgeCookie].
+          onLoadStop: (_, uri) {
+            debugPrint('[SessionView] loadStop $uri');
+            unawaited(_harvestEdgeCookie(target));
+          },
           onProgressChanged: (progress) =>
               debugPrint('[SessionView] progress $progress'),
           onConsoleMessage: (msg) => debugPrint(
@@ -570,16 +580,53 @@ class _WebviewState extends ConsumerState<_Webview> {
     } catch (_) {
       // intentional: see seeder rationale in ChannelScreen._seedCookie.
     }
-    return _WebviewTarget(origin: origin, basePath: conn.workspace.basePath);
+    return _WebviewTarget(
+      hostId: conn.host.id,
+      origin: origin,
+      basePath: conn.workspace.basePath,
+    );
+  }
+
+  /// Harvests the host-wide `CF_Authorization` edge cookie out of the WebView
+  /// jar after the page loads, persisting it as a host auth cookie so the Dio
+  /// `CfAuthInterceptor` sends it on every API call (remote-dev off-LAN CF
+  /// Access). Best-effort and opportunistic: on-LAN there is no CF edge so the
+  /// jar holds no `CF_Authorization` and this is a no-op; off-LAN, once the
+  /// user completes the interactive CF Access login in the WebView, the cookie
+  /// is present and gets persisted. Swallows + logs all failures (mirroring
+  /// the cookie-seed try/catch) so it can never block or break the WebView.
+  Future<void> _harvestEdgeCookie(_WebviewTarget target) async {
+    try {
+      final harvested = await ref
+          .read(webViewCookieHarvesterProvider)
+          .harvestCfAuthorization(serverOrigin: target.origin);
+      if (harvested == null) return; // on-LAN / challenge not yet completed
+      await ref
+          .read(mobileCredentialsStoreProvider)
+          .upsertHostAuthCookie(target.hostId, harvested);
+      debugPrint(
+        '[SessionView] harvested CF_Authorization for ${target.origin.host}',
+      );
+    } catch (err) {
+      // Best-effort: a failed harvest must not break the terminal. The Dio
+      // client simply keeps hitting the CF 302 until the next load harvests.
+      debugPrint('[SessionView] CF_Authorization harvest failed: $err');
+    }
   }
 }
 
-/// The resolved WebView target: the bare host [origin] (used for cookie
-/// scoping and the [NavigationPolicy] origin gate) plus the workspace
-/// [basePath] (`''` or `/<slug>`) that prefixes the navigated `/m/*` URL and
-/// the in-surface allow list.
+/// The resolved WebView target: the [hostId] (used to persist the harvested
+/// host-wide CF cookie), the bare host [origin] (used for cookie scoping, the
+/// CF_Authorization harvest, and the [NavigationPolicy] origin gate) plus the
+/// workspace [basePath] (`''` or `/<slug>`) that prefixes the navigated `/m/*`
+/// URL and the in-surface allow list.
 class _WebviewTarget {
-  const _WebviewTarget({required this.origin, required this.basePath});
+  const _WebviewTarget({
+    required this.hostId,
+    required this.origin,
+    required this.basePath,
+  });
+  final String hostId;
   final Uri origin;
   final String basePath;
 }
