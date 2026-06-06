@@ -539,7 +539,12 @@ class _WebviewState extends ConsumerState<_Webview> {
           // jar into the credential store so subsequent Dio API calls pass
           // the Cloudflare perimeter. Best-effort — see [_harvestEdgeCookie].
           onLoadStop: (_, uri) {
-            debugPrint('[SessionView] loadStop $uri');
+            // Redact query/fragment: during CF Access / IdP flows the URL can
+            // carry `code`/`state`/callback material. Log only origin + path.
+            debugPrint(
+              '[SessionView] loadStop '
+              '${uri == null ? '(null)' : '${uri.scheme}://${uri.host}${uri.path}'}',
+            );
             unawaited(_harvestEdgeCookie(target));
           },
           onProgressChanged: (progress) =>
