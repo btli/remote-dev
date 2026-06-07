@@ -101,6 +101,9 @@ SessionActivity sessionActivityFromString(String? state) {
     'subagent' => SessionActivity.subagent,
     'compacting' => SessionActivity.compacting,
     'ended' => SessionActivity.ended,
+    // 'idle' is a real server-emitted status (clean agent exit / turn end),
+    // so match it explicitly rather than leaning on the catch-all.
+    'idle' => SessionActivity.idle,
     _ => SessionActivity.idle,
   };
 }
@@ -114,8 +117,9 @@ SessionActivity sessionActivityFromString(String? state) {
 /// NOT a bare string. A naive `args.first.toString()` would yield the literal
 /// `"{state: running}"` and never match — coercing every live transition to
 /// Idle (remote-dev-sguu). We therefore read the `state` field when the arg is
-/// a Map, and still accept a legacy bare-string arg for forward/back-compat.
-/// Empty / null args fall back to idle.
+/// a Map, and also tolerate a bare-string arg defensively (the bridge only
+/// ever sends the object form, but this keeps a stray string from coercing to
+/// Idle). Empty / null args fall back to idle.
 SessionActivity parseActivityArgs(List<dynamic> args) {
   final raw = args.isNotEmpty ? args.first : null;
   final state = raw is Map ? raw['state']?.toString() : raw?.toString();

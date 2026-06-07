@@ -176,6 +176,28 @@ void main() {
     expect(pipFinder, findsOneWidget);
   });
 
+  testWidgets('renders ended activity pip in idle grey', (tester) async {
+    when(() => api.list()).thenAnswer(
+      (_) async => [
+        _session(activity: AgentActivityStatus.ended),
+      ],
+    );
+
+    await tester.pumpWidget(_wrap(api: api));
+    await tester.pumpAndSettle();
+
+    // Ended pip renders a circular Container with the idle grey (web treats
+    // ended like idle/muted).
+    final pipFinder = find.byWidgetPredicate((w) {
+      if (w is! Container) return false;
+      final dec = w.decoration;
+      if (dec is! BoxDecoration) return false;
+      return dec.shape == BoxShape.circle &&
+          dec.color == const Color(0xFF565F89);
+    });
+    expect(pipFinder, findsOneWidget);
+  });
+
   testWidgets('shows error view + retry on failure', (tester) async {
     when(() => api.list()).thenThrow(Exception('boom'));
 

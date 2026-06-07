@@ -16,6 +16,9 @@
  * Outbound events:
  *   - onTerminalReady fires after the terminal mounts (microtask) so
  *     the native shell can clear its splash screen.
+ *   - onActivity forwards live agent activity-status transitions (from
+ *     the session WebSocket) to the native shell so it can drive the
+ *     in-session status-bar pip (remote-dev-sguu).
  *
  * @see docs/superpowers/specs/2026-05-08-flutter-app-redesign-design.md §4
  */
@@ -55,20 +58,24 @@ function clampFontSize(size: number): number {
 // The full AgentActivityStatus union (src/types/terminal-type.ts). The WS
 // broadcast hands us a raw string, so we validate against this set before
 // forwarding to native — an unknown status is dropped rather than rendered
-// as a bogus pip. `satisfies` ties the set to the union so adding a status
-// to the type fails the build until it's listed here too.
-const KNOWN_ACTIVITY_STATUSES = new Set<AgentActivityStatus>([
-  "running",
-  "waiting",
-  "idle",
-  "error",
-  "compacting",
-  "ended",
-  "subagent",
-] satisfies AgentActivityStatus[]);
+// as a bogus pip. The `Record<AgentActivityStatus, true>` map is what ties
+// this to the type: it FAILS compilation if a union member is missing here,
+// so adding a status to `AgentActivityStatus` forces it to be listed too.
+const KNOWN_ACTIVITY_STATUS_MAP: Record<AgentActivityStatus, true> = {
+  running: true,
+  waiting: true,
+  idle: true,
+  error: true,
+  compacting: true,
+  ended: true,
+  subagent: true,
+};
+const KNOWN_ACTIVITY_STATUSES = new Set<string>(
+  Object.keys(KNOWN_ACTIVITY_STATUS_MAP),
+);
 
 function isKnownActivityStatus(status: string): status is AgentActivityStatus {
-  return KNOWN_ACTIVITY_STATUSES.has(status as AgentActivityStatus);
+  return KNOWN_ACTIVITY_STATUSES.has(status);
 }
 
 /** Decode a base64 string into a Uint8Array (no atob streaming surprises). */

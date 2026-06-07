@@ -152,6 +152,50 @@ void main() {
     expect(pipFinder, findsOneWidget);
   });
 
+  testWidgets('renders compacting activity pip in blue', (tester) async {
+    when(apiA.list).thenAnswer(
+      (_) async => [
+        sess('s1', 'feature', activity: AgentActivityStatus.compacting),
+      ],
+    );
+
+    await tester.pumpWidget(harness());
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    // Current workspace (A) is expanded → its compacting session pip is shown.
+    final pipFinder = find.byWidgetPredicate((w) {
+      if (w is! Container) return false;
+      final dec = w.decoration;
+      if (dec is! BoxDecoration) return false;
+      return dec.shape == BoxShape.circle &&
+          dec.color == const Color(0xFF7AA2F7);
+    });
+    expect(pipFinder, findsOneWidget);
+  });
+
+  testWidgets('renders ended activity pip in idle grey', (tester) async {
+    when(apiA.list).thenAnswer(
+      (_) async => [
+        sess('s1', 'feature', activity: AgentActivityStatus.ended),
+      ],
+    );
+
+    await tester.pumpWidget(harness());
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    // Current workspace (A) is expanded → its ended session pip is shown.
+    final pipFinder = find.byWidgetPredicate((w) {
+      if (w is! Container) return false;
+      final dec = w.decoration;
+      if (dec is! BoxDecoration) return false;
+      return dec.shape == BoxShape.circle &&
+          dec.color == const Color(0xFF565F89);
+    });
+    expect(pipFinder, findsOneWidget);
+  });
+
   testWidgets('tapping a session returns its switch target', (tester) async {
     SessionSwitchTarget? result;
     await tester.pumpWidget(harness(onResult: (t) => result = t));

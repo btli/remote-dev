@@ -200,8 +200,9 @@ describe("EmbeddedSessionView", () => {
     render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
 
     expect(window.rdvBridge).toBeDefined();
-    // v2 added uploadImage + openSearch / closeSearch.
-    expect(window.rdvBridge?.version).toBe(2);
+    // v2 added uploadImage + openSearch / closeSearch; v3 extended the
+    // onActivity payload union + made the embed emit onActivity.
+    expect(window.rdvBridge?.version).toBe(3);
   });
 
   it("bridge.openSearch / closeSearch forward to the terminal ref", () => {

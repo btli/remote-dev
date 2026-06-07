@@ -166,7 +166,7 @@ void main() {
       );
     });
 
-    test('accepts a legacy bare-string arg for back-compat', () {
+    test('tolerates a bare-string arg defensively', () {
       expect(parseActivityArgs(['running']), SessionActivity.running);
       expect(parseActivityArgs(['waiting']), SessionActivity.waiting);
     });

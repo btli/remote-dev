@@ -29,8 +29,14 @@
  *       Mobile has no Cmd+F, so the native shell's menu drives search
  *       through this bridge. Both methods are present on non-session
  *       embeds as no-op stubs.
+ *   3 — extend the `onActivity` notify payload `state` union from the
+ *       original 4 statuses (running/waiting/idle/error) to the full
+ *       7-status `AgentActivityStatus` set, adding `compacting`, `ended`,
+ *       and `subagent`; the session embed now actually emits `onActivity`
+ *       (live agent activity → native status-bar pip) instead of leaving
+ *       it permanently Idle (remote-dev-sguu).
  */
-export const RDV_BRIDGE_VERSION = 2;
+export const RDV_BRIDGE_VERSION = 3;
 
 export interface RdvBridgeKeyMods {
   ctrl?: boolean;
