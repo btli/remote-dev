@@ -559,13 +559,28 @@ export async function createSessionWithDedupFlag(
   // hooks into `~/.claude/settings.json`) from leaking into SSH sessions.
   const emitsExitEvents =
     TerminalTypeServerRegistry.get(terminalType)?.emitsExitEvents ?? false;
+  // First clause uses `mergedAgentProvider` for consistency with
+  // `effectiveAgentProvider` below. This is semantically identical to reading
+  // `input.agentProvider` here: for agent/loop the `terminalType` clauses
+  // already force `true`, and for every other terminal type
+  // `mergedAgentProvider === input.agentProvider` (it's only reassigned inside
+  // the agent/loop merge branch).
   const isAgentRuntime =
-    (input.agentProvider && input.agentProvider !== "none" && input.autoLaunchAgent) ||
+    (mergedAgentProvider && mergedAgentProvider !== "none" && input.autoLaunchAgent) ||
     input.terminalType === "agent" ||
     input.terminalType === "loop";
   const isAgentSession = isAgentRuntime || emitsExitEvents;
-  const effectiveAgentProvider = input.agentProvider && input.agentProvider !== "none"
-    ? input.agentProvider
+  // Derive the effective provider from the MERGED resolution, not raw
+  // `input.agentProvider`. For agent/loop sessions where the client omitted a
+  // provider, `mergedAgentProvider` folded in the folder/user default (→ "claude"
+  // as last resort), which is the provider that actually launches (plugin
+  // command) and is written to the DB row. Keying the durable resume binding,
+  // model-proxy scope, and claude-defaults gate off this — rather than off the
+  // raw input — keeps "what we recorded" in sync with "what we launched". For
+  // non-agent/loop types `mergedAgentProvider === input.agentProvider`, so this
+  // is semantics-preserving there. (remote-dev-u02r)
+  const effectiveAgentProvider = mergedAgentProvider && mergedAgentProvider !== "none"
+    ? mergedAgentProvider
     : "claude"; // Default matches DB default on line ~350
 
   // RDV env vars for agent hook callbacks (session ID + terminal server address)
@@ -923,12 +938,31 @@ export async function createSessionWithDedupFlag(
           scopeKey: input.scopeKey,
         });
         // Clean up the tmux/worktree resources we allocated for the
-        // losing-side INSERT — the winner already owns its own.
-        await TmuxService.killSession(tmuxSessionName).catch(() => {
-          log.error("Failed to clean up orphaned tmux after race", {
-            tmuxSessionName,
-          });
-        });
+        // losing-side INSERT — the winner already owns its own. Mirrors the
+        // generic cleanup block below (same guard + .catch + log.error, run
+        // concurrently) so the race-recovery return path doesn't leak a
+        // worktree the loser may have created. Currently unreachable in
+        // practice (createWorktree sessions don't combine with scopeKey dedup),
+        // but hardened to stay correct if they ever do. (remote-dev-u02r)
+        const raceCleanup: Promise<void>[] = [
+          TmuxService.killSession(tmuxSessionName).catch(() => {
+            log.error("Failed to clean up orphaned tmux after race", {
+              tmuxSessionName,
+            });
+          }),
+        ];
+        if (createdWorktree && repoPath && workingPath) {
+          raceCleanup.push(
+            WorktreeService.removeWorktree(repoPath, workingPath, true)
+              .then(() => {}) // Discard result to match Promise<void> type
+              .catch(() => {
+                log.error("Failed to clean up orphaned worktree after race", {
+                  worktreePath: workingPath,
+                });
+              })
+          );
+        }
+        await Promise.all(raceCleanup);
         return {
           session: mapDbSessionToSession(existingAfterRace[0]),
           reused: true,
