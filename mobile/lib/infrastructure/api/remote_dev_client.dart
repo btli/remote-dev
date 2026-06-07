@@ -26,18 +26,16 @@ class RemoteDevClient implements ApiClientPort {
       authReader: (id) async {
         final apiKey = await _credentials.readApiKey(id);
         final cfToken = await _credentials.readCfToken(id);
-        // A CF Access service token is host-wide; the legacy per-server client
-        // predates the host/workspace split, so its [serverId] IS the host
-        // identity for service-token purposes — read it from the same
-        // host-namespaced store the workspace reader uses.
-        final service = await _credentials.getHostServiceToken(id);
+        // NOTE: deliberately NO service-token lookup here. The CF Access service
+        // token is a HOST-mapped credential (stored under `host.<hostId>`), but
+        // this legacy per-server client predates the host/workspace split and
+        // has only a [serverId] — which is NOT a host id (migrated hosts use
+        // `h_<legacy-server-id>`, new hosts use UUIDs), so getHostServiceToken
+        // would silently return null anyway. No production caller constructs
+        // this client (everything goes through forWorkspace); the host-scoped
+        // readers own service-token attachment.
         // Legacy per-server client uses the old cfCookie field for compat.
-        return AuthMaterial(
-          apiKey: apiKey,
-          cfCookie: cfToken,
-          serviceClientId: service?.clientId,
-          serviceClientSecret: service?.clientSecret,
-        );
+        return AuthMaterial(apiKey: apiKey, cfCookie: cfToken);
       },
       refreshAuth: refreshAuth ?? ((_) async => null),
       onReauthNeeded: onReauthNeeded,

@@ -55,10 +55,21 @@ class InstancesApi {
         serverId: hostId,
         // Host-auth-only: no API key at the host-root discovery layer.
         // The interceptor attaches all host auth cookies (OIDC session cookie,
-        // CF Authorization, etc.) from the resolved list.
+        // CF Authorization, etc.) from the resolved list, PLUS the host-wide
+        // CF Access service token when one is saved — without it, host-root
+        // discovery (workspace picker refresh, "Open another workspace") would
+        // still die behind CF Access once the harvested CF_Authorization cookie
+        // expires, even though the user saved a permanent token. When the token
+        // is attached the interceptor drops the redundant CF_Authorization
+        // cookie and keeps the OIDC session cookie.
         authReader: (id) async {
           final hostCookies = await credentials.getHostAuthCookies(id);
-          return AuthMaterial(cookies: hostCookies);
+          final service = await credentials.getHostServiceToken(id);
+          return AuthMaterial(
+            cookies: hostCookies,
+            serviceClientId: service?.clientId,
+            serviceClientSecret: service?.clientSecret,
+          );
         },
         // Discovery does not drive an interactive re-auth: the caller already
         // owns a host auth token, and a failed discovery just surfaces as an

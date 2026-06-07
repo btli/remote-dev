@@ -6,6 +6,13 @@
 //   - behaviour is unchanged when service creds are absent
 //   - a half-populated pair attaches nothing and does not exclude the cookie
 //   - isEmpty / hasServiceToken semantics
+//   - revoked-token recovery: a CF-302 on a service-token request trips the
+//     in-session breaker, the replay falls back to the CF cookie (no service
+//     headers), subsequent requests skip the token, and the breaker resets
+//     when the stored pair changes (finding 1)
+import 'dart:io' show HttpHeaders;
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
@@ -13,6 +20,49 @@ import 'package:remote_dev/domain/auth_cookie.dart';
 import 'package:remote_dev/infrastructure/api/cf_auth_interceptor.dart';
 
 class _MockRequestHandler extends Mock implements RequestInterceptorHandler {}
+
+/// Sequence-aware [HttpClientAdapter]: serves whatever [responder] returns and
+/// records each outbound [RequestOptions] so a test can assert the headers the
+/// interceptor produced on every call (original + replays).
+class _SeqAdapter implements HttpClientAdapter {
+  _SeqAdapter(this.responder);
+
+  final ResponseBody Function(RequestOptions options, int callIndex) responder;
+  final List<RequestOptions> captured = <RequestOptions>[];
+
+  @override
+  void close({bool force = false}) {}
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<dynamic>? cancelFuture,
+  ) async {
+    final idx = captured.length;
+    captured.add(options);
+    return responder(options, idx);
+  }
+}
+
+ResponseBody _redirect302(String location) => ResponseBody.fromString(
+      '',
+      302,
+      headers: {
+        HttpHeaders.locationHeader: [location],
+      },
+    );
+
+ResponseBody _json200() => ResponseBody.fromString(
+      '{"ok":true}',
+      200,
+      headers: {
+        HttpHeaders.contentTypeHeader: ['application/json'],
+      },
+    );
+
+const _cfLoginRedirect =
+    'https://joyfulhouse.cloudflareaccess.com/cdn-cgi/access/login/x';
 
 void main() {
   setUpAll(() {
@@ -204,5 +254,207 @@ void main() {
         expect(const AuthMaterial(serviceClientSecret: 's').isEmpty, isTrue);
       });
     });
+  });
+
+  group('CfAuthInterceptor — revoked service-token recovery (finding 1)', () {
+    test(
+      'bad service token → refresh returns CF cookie → replay sends CF cookie '
+      'and NO service headers',
+      () async {
+        final dio = Dio();
+        // 1st call (service headers, CF cookie excluded) → CF 302.
+        // 2nd call (the replay) → 200.
+        final adapter = _SeqAdapter((options, idx) {
+          if (idx == 0) return _redirect302(_cfLoginRedirect);
+          return _json200();
+        });
+        dio.httpClientAdapter = adapter;
+
+        var reauthCalls = 0;
+        dio.interceptors.add(
+          CfAuthInterceptor(
+            dio: dio,
+            serverId: 'host-1',
+            // Stored material: a complete service token + a CF_Authorization
+            // cookie (the harvested edge cookie) + an OIDC session cookie.
+            authReader: (_) async => const AuthMaterial(
+              serviceClientId: 'cid',
+              serviceClientSecret: 'csecret',
+              cookies: [
+                AuthCookie(
+                  name: 'CF_Authorization',
+                  value: 'harvested-jwt',
+                  path: '/',
+                ),
+                AuthCookie(
+                  name: '__Secure-next-auth.session-token',
+                  value: 'oidc',
+                  path: '/',
+                ),
+              ],
+            ),
+            // Silent refresh "succeeds" (browser SSO still valid) → returns the
+            // same material; the replay's recovery comes from suppressing the
+            // service token, not from new creds.
+            refreshAuth: (_) async => const AuthMaterial(
+              cookies: [
+                AuthCookie(
+                  name: 'CF_Authorization',
+                  value: 'harvested-jwt',
+                  path: '/',
+                ),
+              ],
+            ),
+            onReauthNeeded: () => reauthCalls += 1,
+          ),
+        );
+
+        final response = await dio.get<dynamic>('/api/sessions');
+        expect(response.statusCode, 200);
+        expect(reauthCalls, 0, reason: 'cookie-path replay recovers silently');
+        expect(adapter.captured.length, 2, reason: 'original + one replay');
+
+        // Original request: service headers attached, CF cookie excluded.
+        final first = adapter.captured[0];
+        expect(first.headers['CF-Access-Client-Id'], 'cid');
+        expect(first.headers['CF-Access-Client-Secret'], 'csecret');
+        expect(first.headers['cookie'], isNot(contains('CF_Authorization')));
+        expect(
+          first.headers['cookie'],
+          contains('__Secure-next-auth.session-token=oidc'),
+        );
+
+        // Replay: NO service headers; CF cookie now rides along for recovery.
+        final replay = adapter.captured[1];
+        expect(replay.headers.containsKey('CF-Access-Client-Id'), isFalse);
+        expect(replay.headers.containsKey('CF-Access-Client-Secret'), isFalse);
+        expect(
+          replay.headers['cookie'],
+          contains('CF_Authorization=harvested-jwt'),
+        );
+        expect(
+          replay.headers['cookie'],
+          contains('__Secure-next-auth.session-token=oidc'),
+        );
+      },
+    );
+
+    test(
+      'after the breaker trips, the NEXT (fresh) request attaches cookies, '
+      'not service headers',
+      () async {
+        final dio = Dio();
+        // Call 0: CF 302 (trips breaker). Call 1: replay 200. Call 2: the next
+        // fresh request — must already skip the service token.
+        final adapter = _SeqAdapter((options, idx) {
+          if (idx == 0) return _redirect302(_cfLoginRedirect);
+          return _json200();
+        });
+        dio.httpClientAdapter = adapter;
+
+        final interceptor = CfAuthInterceptor(
+          dio: dio,
+          serverId: 'host-1',
+          authReader: (_) async => const AuthMaterial(
+            serviceClientId: 'cid',
+            serviceClientSecret: 'csecret',
+            cookies: [
+              AuthCookie(
+                name: 'CF_Authorization',
+                value: 'harvested-jwt',
+                path: '/',
+              ),
+            ],
+          ),
+          refreshAuth: (_) async => const AuthMaterial(
+            cookies: [
+              AuthCookie(
+                name: 'CF_Authorization',
+                value: 'harvested-jwt',
+                path: '/',
+              ),
+            ],
+          ),
+          onReauthNeeded: () {},
+        );
+        dio.interceptors.add(interceptor);
+
+        // First request trips the breaker and recovers on the cookie path.
+        await dio.get<dynamic>('/api/a');
+        // A brand-new request (own RequestOptions, no skip flag).
+        await dio.get<dynamic>('/api/b');
+
+        final fresh = adapter.captured.last;
+        expect(fresh.path, '/api/b');
+        expect(fresh.headers.containsKey('CF-Access-Client-Id'), isFalse);
+        expect(fresh.headers.containsKey('CF-Access-Client-Secret'), isFalse);
+        // Cookie path resumed: CF_Authorization is sent (not excluded).
+        expect(
+          fresh.headers['cookie'],
+          contains('CF_Authorization=harvested-jwt'),
+        );
+      },
+    );
+
+    test(
+      'breaker resets when the stored pair changes (user re-saved the token)',
+      () async {
+        final dio = Dio();
+        // Call 0: CF 302 (trips breaker on pair A). Call 1: replay 200.
+        // Call 2: fresh request after the user saved pair B → headers attached.
+        final adapter = _SeqAdapter((options, idx) {
+          if (idx == 0) return _redirect302(_cfLoginRedirect);
+          return _json200();
+        });
+        dio.httpClientAdapter = adapter;
+
+        // Mutable material so the test can swap the stored pair mid-session.
+        var clientId = 'cid-A';
+        var clientSecret = 'secret-A';
+        dio.interceptors.add(
+          CfAuthInterceptor(
+            dio: dio,
+            serverId: 'host-1',
+            authReader: (_) async => AuthMaterial(
+              serviceClientId: clientId,
+              serviceClientSecret: clientSecret,
+              cookies: const [
+                AuthCookie(
+                  name: 'CF_Authorization',
+                  value: 'jwt',
+                  path: '/',
+                ),
+              ],
+            ),
+            refreshAuth: (_) async => const AuthMaterial(
+              cookies: [
+                AuthCookie(name: 'CF_Authorization', value: 'jwt', path: '/'),
+              ],
+            ),
+            onReauthNeeded: () {},
+          ),
+        );
+
+        // Trip the breaker on pair A.
+        await dio.get<dynamic>('/api/a');
+
+        // User re-saves a DIFFERENT token.
+        clientId = 'cid-B';
+        clientSecret = 'secret-B';
+
+        // Next fresh request: breaker resets, new pair attached again.
+        await dio.get<dynamic>('/api/b');
+
+        final fresh = adapter.captured.last;
+        expect(fresh.path, '/api/b');
+        expect(fresh.headers['CF-Access-Client-Id'], 'cid-B');
+        expect(fresh.headers['CF-Access-Client-Secret'], 'secret-B');
+        // Service token attached again → CF_Authorization excluded once more.
+        expect(
+          (fresh.headers['cookie'] as String?) ?? '',
+          isNot(contains('CF_Authorization')),
+        );
+      },
+    );
   });
 }

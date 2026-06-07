@@ -38,8 +38,20 @@ class EditHostArgs {
 /// persists it host-wide and [CfAuthInterceptor] attaches both headers on every
 /// request so Cloudflare admits it at the edge with no session and no expiry
 /// (complementing the harvested `CF_Authorization` cookie, which expires with
-/// the CF Access session). The fields are prefilled from secure storage when
-/// editing a host that already has one; saving both blank clears the token.
+/// the CF Access session).
+///
+/// The secret is **write-only**: only the (non-secret) Client ID is prefilled
+/// when a token is already stored; the secret field is left blank with a
+/// "secret saved" indicator. This avoids rendering a permanent credential back
+/// into a text field, and it makes the save semantics safe against the
+/// load-before-save race:
+///   - Secret entered → replace the pair (Client ID required too).
+///   - Secret left blank while a token exists → KEEP the stored pair (a blank
+///     secret never means "clear" — otherwise an early Save before the async
+///     prefill resolved could silently wipe a saved token).
+///   - Removing the token happens ONLY via the explicit "Clear service token"
+///     button, which is disabled until the async load has resolved (so it can
+///     never fire against unknown state).
 ///
 /// Unlike the add-host flow this runs no health-check probe — the user already
 /// proved the host worked when they added it; a transient network hiccup
@@ -63,15 +75,26 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
   late final TextEditingController _labelCtrl;
   TextEditingController? _workspaceNameCtrl;
 
-  /// CF Access service-token fields. Prefilled asynchronously from secure
-  /// storage in [initState] (the read is async, so the controllers start empty
-  /// and are populated once [_loadServiceToken] resolves).
+  /// CF Access service-token fields. The Client ID is prefilled from secure
+  /// storage once [_loadServiceToken] resolves; the secret is **never**
+  /// prefilled (write-only — see the class doc).
   final _serviceIdCtrl = TextEditingController();
   final _serviceSecretCtrl = TextEditingController();
 
-  /// Whether the secret field renders its value (false → obscured). The user's
-  /// own device/storage, so revealing is acceptable; default obscured.
+  /// Whether the secret field renders its (newly-typed) value. Default
+  /// obscured; the user's own device/storage, so revealing what they type is
+  /// acceptable.
   bool _secretVisible = false;
+
+  /// True once the async [_loadServiceToken] read has resolved. Until then the
+  /// "Clear service token" button is disabled so it can never fire against
+  /// unknown state (closes the load-before-act race).
+  bool _serviceTokenLoaded = false;
+
+  /// Whether a service token is currently persisted for this host. Drives the
+  /// "secret saved" indicator + the visibility of the Clear button, and gates
+  /// the "blank secret keeps the stored pair" save branch.
+  bool _hasStoredToken = false;
 
   bool _saving = false;
 
@@ -88,17 +111,40 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
     _loadServiceToken();
   }
 
-  /// Prefill the service-token fields from secure storage. Best-effort: if the
-  /// host has no token (or the read fails) the fields simply stay empty. Guards
-  /// on [mounted] because the read is async and the screen may have been popped.
+  /// Prefill the service-token Client ID from secure storage and record whether
+  /// a token exists. Best-effort: a missing token (or a read failure) just
+  /// leaves the fields empty. The SECRET is intentionally never written into
+  /// the field. Guards on [mounted] because the read is async and the screen
+  /// may have been popped. Always flips [_serviceTokenLoaded] so the Clear
+  /// button enables even when no token is present.
   Future<void> _loadServiceToken() async {
     final creds = ref.read(mobileCredentialsStoreProvider);
     final token = await creds.getHostServiceToken(widget.args.host.id);
-    if (!mounted || token == null) return;
+    if (!mounted) return;
     setState(() {
-      _serviceIdCtrl.text = token.clientId;
-      _serviceSecretCtrl.text = token.clientSecret;
+      _serviceTokenLoaded = true;
+      _hasStoredToken = token != null;
+      if (token != null) {
+        _serviceIdCtrl.text = token.clientId;
+      }
     });
+  }
+
+  /// Explicitly remove the stored service token. Only reachable once
+  /// [_serviceTokenLoaded] is true. Clears storage + both fields and updates
+  /// the indicator.
+  Future<void> _clearServiceToken() async {
+    final creds = ref.read(mobileCredentialsStoreProvider);
+    await creds.clearHostServiceToken(widget.args.host.id);
+    if (!mounted) return;
+    setState(() {
+      _hasStoredToken = false;
+      _serviceIdCtrl.clear();
+      _serviceSecretCtrl.clear();
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Cloudflare service token removed')),
+    );
   }
 
   Future<void> _save() async {
@@ -141,20 +187,22 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
         }
       }
 
-      // Persist the CF Access service token. Both fields filled → save the
-      // pair; both blank → clear any existing token. A half-filled pair is
-      // rejected by the form validator below, so it never reaches here.
-      final creds = ref.read(mobileCredentialsStoreProvider);
-      final clientId = _serviceIdCtrl.text.trim();
+      // Persist the CF Access service token (write-only secret model):
+      //   - A secret was entered → replace the pair (the validators guarantee
+      //     the Client ID is present too).
+      //   - The secret field is blank → DO NOT write: keep whatever is stored.
+      //     A blank secret never clears — removal is the Clear button's job —
+      //     so an early Save before the async prefill resolved can't wipe a
+      //     saved token (finding 2). When nothing is stored and both fields are
+      //     blank this is simply a no-op.
       final clientSecret = _serviceSecretCtrl.text.trim();
-      if (clientId.isNotEmpty && clientSecret.isNotEmpty) {
+      if (clientSecret.isNotEmpty) {
+        final creds = ref.read(mobileCredentialsStoreProvider);
         await creds.setHostServiceToken(
           host.id,
-          clientId: clientId,
+          clientId: _serviceIdCtrl.text.trim(),
           clientSecret: clientSecret,
         );
-      } else {
-        await creds.clearHostServiceToken(host.id);
       }
 
       // Refresh both the picker list and the active-connection shim (the active
@@ -230,10 +278,13 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
                 ),
               ),
               const SizedBox(height: 4),
-              const Text(
-                'For hosts behind Cloudflare Access. Create under '
-                'Zero Trust → Access → Service Tokens.',
-                style: TextStyle(color: Colors.white54, fontSize: 12),
+              Text(
+                _hasStoredToken
+                    ? 'A service token is saved. Leave the secret blank to keep '
+                        'it, or enter a new Client ID + Secret to replace it.'
+                    : 'For hosts behind Cloudflare Access. Create under '
+                        'Zero Trust → Access → Service Tokens.',
+                style: const TextStyle(color: Colors.white54, fontSize: 12),
               ),
               const SizedBox(height: 12),
               TextFormField(
@@ -244,12 +295,14 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
                 decoration: const InputDecoration(
                   labelText: 'Client ID',
                 ),
-                // Both-or-neither: a service token is only usable as a complete
-                // pair, so require the secret too when an id is given.
+                // A NEW token needs both halves. When a token is already stored
+                // the Client ID is prefilled and the secret may be left blank
+                // (= keep), so the both-or-neither rule only applies when no
+                // token is stored yet.
                 validator: (v) {
                   final id = (v ?? '').trim();
                   final secret = _serviceSecretCtrl.text.trim();
-                  if (id.isNotEmpty && secret.isEmpty) {
+                  if (!_hasStoredToken && id.isNotEmpty && secret.isEmpty) {
                     return 'Enter the client secret too';
                   }
                   return null;
@@ -264,6 +317,10 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
                 obscureText: !_secretVisible,
                 decoration: InputDecoration(
                   labelText: 'Client Secret',
+                  // Write-only: never prefilled. Tell the user a secret is
+                  // saved without revealing it.
+                  helperText: _hasStoredToken ? 'Secret saved' : null,
+                  helperStyle: const TextStyle(color: Colors.white38),
                   suffixIcon: IconButton(
                     icon: Icon(
                       _secretVisible
@@ -276,7 +333,10 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
                     tooltip: _secretVisible ? 'Hide secret' : 'Show secret',
                   ),
                 ),
-                // Both-or-neither mirror of the Client ID validator.
+                // Entering a secret requires a Client ID too (a usable token is
+                // a complete pair). A blank secret is always valid — it means
+                // "keep the stored token" (or "no token") per the write-only
+                // model — so removal goes through the Clear button instead.
                 validator: (v) {
                   final secret = (v ?? '').trim();
                   final id = _serviceIdCtrl.text.trim();
@@ -286,6 +346,24 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
                   return null;
                 },
               ),
+              // Explicit removal. Disabled until the async load resolves (so it
+              // can't act on unknown state) and only shown when a token exists.
+              if (_hasStoredToken) ...[
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: (_serviceTokenLoaded && !_saving)
+                        ? _clearServiceToken
+                        : null,
+                    icon: const Icon(Icons.delete_outline, size: 18),
+                    label: const Text('Clear service token'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.redAccent,
+                    ),
+                  ),
+                ),
+              ],
 
               const SizedBox(height: 32),
               ElevatedButton(
