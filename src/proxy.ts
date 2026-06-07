@@ -95,16 +95,22 @@ export async function proxy(request: NextRequest) {
       response.headers.set("x-cf-user-id", cfUser.sub);
       return tagInstance(response);
     }
-    // Invalid CF token - reject
-    return tagInstance(
-      NextResponse.json(
-        { error: "Invalid Cloudflare Access token" },
-        { status: 401 }
-      )
-    );
+    // CF token present but no CF *identity*. This is the expected shape for a
+    // Cloudflare Access SERVICE token (CF-Access-Client-Id/Secret): the edge JWT
+    // verifies but carries `common_name` and no `email`, so `validateAccessJWT`
+    // returns null (see remote-dev-2w1o). An invalid/expired edge JWT lands here
+    // too. We must NOT terminate with a 401 — that would shadow the API-route
+    // Bearer/session logic below, so a mobile API call carrying service headers
+    // PLUS a valid `Authorization: Bearer` (or an OIDC session cookie) would be
+    // rejected before route-level auth ever ran. The edge gate's job is done by
+    // Cloudflare itself off-LAN, and every route handler re-authenticates
+    // (withApiAuth Bearer / getAuthSession), so falling through anonymously is
+    // strictly safer and more correct than a terminal 401: API routes still
+    // require Bearer/session, and pages get a proper /login redirect instead of
+    // naked 401 JSON when an on-LAN WebView sends a stale harvested CF cookie.
   }
 
-  // No CF Access token - fall back to NextAuth.
+  // No CF Access *identity* — fall back to NextAuth.
   //
   // We branch on whether we're running SCOPED (a standalone instance pod under
   // `RDV_BASE_PATH`) or UNSCOPED (single-server / local dev / single-host prod).
