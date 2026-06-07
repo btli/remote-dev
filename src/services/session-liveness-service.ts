@@ -71,18 +71,22 @@ const CANDIDATE_COLUMNS = {
 } as const;
 
 /**
- * First pass: ACTIVE sessions stuck in an alive-ish state whose agent process is
- * dead → mark exited + emit exactly one agent_stuck (error) notification per
- * transition (the user is presumably looking at / cares about active sessions).
+ * Shared probe-and-clear pass. Finds sessions in `sessionStatus` that are stuck
+ * in an alive-ish activity state but whose agent process is dead, clears each to
+ * idle/exited, runs `onCleared` for the per-session side effect (notify vs
+ * silent), and returns the count cleared. Sessions mid-restart are skipped:
+ *
+ *   [y5ch.9 risk #5] restart_agent kills + recreates the tmux session, so a sweep
+ *   landing mid-restart would see a missing session and emit a false agent_stuck.
  */
-async function reconcileActiveSessions(): Promise<number> {
+async function reconcileSessionsInState(
+  sessionStatus: "active" | "suspended",
+  onCleared: (session: LivenessCandidate) => Promise<void> | void,
+): Promise<number> {
   const candidates: LivenessCandidate[] = await db.query.terminalSessions.findMany({
     where: and(
-      eq(terminalSessions.status, "active"),
+      eq(terminalSessions.status, sessionStatus),
       inArray(terminalSessions.agentActivityStatus, [...ALIVE_STATES]),
-      // [y5ch.9 risk #5] skip sessions mid-restart — restart_agent kills +
-      // recreates the tmux session, so a sweep landing mid-restart would see a
-      // missing session and emit a false agent_stuck.
       ne(terminalSessions.agentExitState, "restarting"),
     ),
     columns: CANDIDATE_COLUMNS,
@@ -94,12 +98,24 @@ async function reconcileActiveSessions(): Promise<number> {
     const alive = pid != null && pidAlive(pid);
     if (alive) continue;
 
-    // Transition out of an alive state → mark exited + notify once.
+    // Dead agent → transition out of the alive state.
     await db
       .update(terminalSessions)
       .set({ agentActivityStatus: "idle", agentExitState: "exited" })
       .where(eq(terminalSessions.id, s.id));
+    await onCleared(s);
+    cleared++;
+  }
+  return cleared;
+}
 
+/**
+ * First pass: ACTIVE sessions whose agent process is dead → emit exactly one
+ * agent_stuck (error) notification per transition (the user is presumably
+ * looking at / cares about active sessions).
+ */
+async function reconcileActiveSessions(): Promise<number> {
+  return reconcileSessionsInState("active", async (s) => {
     await NotificationService.createNotification({
       userId: s.userId,
       sessionId: s.id,
@@ -113,55 +129,32 @@ async function reconcileActiveSessions(): Promise<number> {
         cta: { label: "Open session", action: "open_session" },
       },
     });
-    cleared++;
     log.warn("Cleared stale agent session", {
       sessionId: s.id,
       prevStatus: s.agentActivityStatus,
     });
-  }
-  return cleared;
+  });
 }
 
 /**
- * [remote-dev-5xpc] Second pass: SUSPENDED sessions stuck in an alive-ish state
- * whose agent process is dead → clear the status SILENTLY (no agent_stuck
- * notification). Suspended sessions are backgrounded; the DB snapshot on
- * 2026-06-07 showed them keeping a stale running/subagent forever because the
- * sweep only looked at active rows. Suppressing the notification avoids the y5ch
- * notification-spam anti-goal for sessions the user isn't watching.
+ * [remote-dev-5xpc] Second pass: SUSPENDED sessions whose agent process is dead →
+ * clear the status SILENTLY (no agent_stuck notification). Suspended sessions are
+ * backgrounded; the DB snapshot on 2026-06-07 showed them keeping a stale
+ * running/subagent forever because the sweep only looked at active rows.
+ * Suppressing the notification avoids the y5ch notification-spam anti-goal for
+ * sessions the user isn't watching.
  *
  * NOTE: a suspended session whose process is ALIVE is legitimately a live agent
  * running in the background (resume() no longer wipes its status, remote-dev-3m5s)
  * — left untouched so the sidebar shows it as active.
  */
 async function reconcileSuspendedSessions(): Promise<number> {
-  const candidates: LivenessCandidate[] = await db.query.terminalSessions.findMany({
-    where: and(
-      eq(terminalSessions.status, "suspended"),
-      inArray(terminalSessions.agentActivityStatus, [...ALIVE_STATES]),
-      ne(terminalSessions.agentExitState, "restarting"),
-    ),
-    columns: CANDIDATE_COLUMNS,
-  });
-
-  let cleared = 0;
-  for (const s of candidates) {
-    const pid = await tmuxPanePid(s.tmuxSessionName);
-    const alive = pid != null && pidAlive(pid);
-    if (alive) continue;
-
-    // Dead background agent → clear to idle silently (no notification).
-    await db
-      .update(terminalSessions)
-      .set({ agentActivityStatus: "idle", agentExitState: "exited" })
-      .where(eq(terminalSessions.id, s.id));
-    cleared++;
+  return reconcileSessionsInState("suspended", (s) => {
     log.debug("Cleared stale suspended agent session (silent)", {
       sessionId: s.id,
       prevStatus: s.agentActivityStatus,
     });
-  }
-  return cleared;
+  });
 }
 
 /**
