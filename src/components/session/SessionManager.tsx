@@ -672,9 +672,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     // shell. The legacy `startupCommand: ""` opt-out is no longer needed
     // since folder-level startup commands have been removed entirely.
     try {
+      // No projectPath: the server resolves the working dir from projectId's
+      // preferences (freshly from the DB). Sending a client-resolved path
+      // would override a project working-dir set after page load. (remote-dev-u84s)
       await createSession({
         name,
-        projectPath: currentPreferences.defaultWorkingDirectory || undefined,
         projectId: folderId,
       });
       maybeAutoFollowFolder(folderId ?? null);
@@ -684,7 +686,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   }, [
     createSession,
     generateSessionName,
-    currentPreferences.defaultWorkingDirectory,
     activeProject.folderId,
     logSessionError,
     maybeAutoFollowFolder,
@@ -1148,14 +1149,15 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   const handleFolderNewSession = useCallback(
     async (folderId: string) => {
-      const prefs = resolvePreferencesForFolder(folderId);
       const name = generateSessionName(folderId);
       // Shell plugin returns shellCommand: null → tmux launches its default
       // shell. No startupCommand override path exists anymore.
+      // No projectPath: the server resolves the working dir from the project's
+      // preferences (read fresh from the DB), so a working dir set after page
+      // load is honored. (remote-dev-u84s)
       try {
         await createSession({
           name,
-          projectPath: prefs.defaultWorkingDirectory || undefined,
           projectId: folderId,
         });
         setActiveFolder(folderId);
@@ -1166,7 +1168,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [
       createSession,
       generateSessionName,
-      resolvePreferencesForFolder,
       setActiveFolder,
       logSessionError,
     ]
@@ -1196,13 +1197,14 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       if (!worktreePrompt) return;
       const { folderId } = worktreePrompt;
       const branchName = worktreeNameInput.trim() || undefined;
-      const prefs = resolvePreferencesForFolder(folderId);
       const name = branchName || generateSessionName(folderId);
       setWorktreePrompt(null);
       try {
+        // No projectPath: the server resolves the worktree's repo + working
+        // dir from the project's preferences (read fresh from the DB).
+        // (remote-dev-u84s)
         const newSession = await createSession({
           name,
-          projectPath: prefs.defaultWorkingDirectory || undefined,
           projectId: folderId,
           createWorktree: true,
           terminalType: "agent",
@@ -1216,7 +1218,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         console.error("Failed to create worktree session:", error);
       }
     },
-    [worktreePrompt, worktreeNameInput, worktreeTypeInput, createSession, resolvePreferencesForFolder, generateSessionName, setActiveFolder]
+    [worktreePrompt, worktreeNameInput, worktreeTypeInput, createSession, generateSessionName, setActiveFolder]
   );
 
   // Handler for opening the wizard from Plus button or command palette
@@ -1237,9 +1239,10 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       userSettings?.defaultAgentProvider ??
       "claude";
     try {
+      // No projectPath: server resolves the working dir from projectId's
+      // preferences (fresh from the DB). (remote-dev-u84s)
       await createSession({
         name,
-        projectPath: currentPreferences.defaultWorkingDirectory || undefined,
         projectId: folderId,
         terminalType: "agent",
         agentProvider: provider,
@@ -1251,7 +1254,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   }, [
     createSession,
     generateSessionName,
-    currentPreferences.defaultWorkingDirectory,
     currentPreferences.defaultAgentProvider,
     userSettings?.defaultAgentProvider,
     activeProject.folderId,
@@ -1270,9 +1272,10 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       const folderId = activeProject.folderId || undefined;
       const name = generateSessionName(folderId);
       try {
+        // No projectPath: server resolves the working dir from projectId's
+        // preferences (fresh from the DB). (remote-dev-u84s)
         await createSession({
           name,
-          projectPath: currentPreferences.defaultWorkingDirectory || undefined,
           projectId: folderId,
           terminalType: "agent",
           agentProvider: provider,
@@ -1285,7 +1288,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [
       createSession,
       generateSessionName,
-      currentPreferences.defaultWorkingDirectory,
       activeProject.folderId,
       logSessionError,
       maybeAutoFollowFolder,
@@ -1301,9 +1303,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         userSettings?.defaultAgentProvider ??
         "claude";
       try {
+        // No projectPath: server resolves the working dir from projectId's
+        // preferences (fresh from the DB). The provider is still resolved
+        // client-side here (cross-tab provider staleness is a tracked
+        // follow-up). (remote-dev-u84s)
         const newSession = await createSession({
           name,
-          projectPath: prefs.defaultWorkingDirectory || undefined,
           projectId: folderId,
           terminalType: "agent",
           agentProvider: provider,
@@ -1328,12 +1333,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // Explicit-provider variant for the project context-menu "Pick Agent" submenu.
   const handleFolderNewAgentWithProvider = useCallback(
     async (folderId: string, provider: AgentProviderType) => {
-      const prefs = resolvePreferencesForFolder(folderId);
       const name = generateSessionName(folderId);
       try {
+        // No projectPath: server resolves the working dir from projectId's
+        // preferences (fresh from the DB). (remote-dev-u84s)
         const newSession = await createSession({
           name,
-          projectPath: prefs.defaultWorkingDirectory || undefined,
           projectId: folderId,
           terminalType: "agent",
           agentProvider: provider,
@@ -1348,7 +1353,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [
       createSession,
       generateSessionName,
-      resolvePreferencesForFolder,
       setActiveFolder,
       logSessionError,
     ]

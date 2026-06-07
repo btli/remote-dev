@@ -356,6 +356,15 @@ export async function createSessionWithDedupFlag(
   let workingPath = input.projectPath ?? preferences.defaultWorkingDirectory ?? process.env.HOME;
   let branchName = input.worktreeBranch;
 
+  // Track the *actually used* worktree repo path + whether a worktree block
+  // ran, so the DB-insert failure cleanup below doesn't depend on the client
+  // sending `input.projectPath`. The folder-context block resolves the repo
+  // path server-side (from folder preferences), so the old
+  // `repoPath = input.projectPath` was null whenever the client omitted the
+  // path — leaking the just-created worktree on insert failure.
+  let resolvedWorktreeRepoPath: string | null = null;
+  let didCreateWorktree = false;
+
   // Handle worktree creation from folder context (resolves repo from folder preferences)
   if (input.createWorktree && input.projectId) {
     // Get folder preferences to find linked repository
@@ -436,6 +445,10 @@ export async function createSessionWithDedupFlag(
       sessionId
     );
     workingPath = result.worktreePath;
+    // Record the repo we created the worktree from (server-resolved, not
+    // necessarily input.projectPath) so failure cleanup can remove it.
+    resolvedWorktreeRepoPath = repoPath;
+    didCreateWorktree = true;
 
     // Update input for database record
     if (repoId) {
@@ -465,6 +478,8 @@ export async function createSessionWithDedupFlag(
       sessionId
     );
     workingPath = result.worktreePath;
+    resolvedWorktreeRepoPath = input.projectPath;
+    didCreateWorktree = true;
   }
 
   // The startup command (when shell-typed plugins still want one) defaults
@@ -476,18 +491,31 @@ export async function createSessionWithDedupFlag(
   // derived entirely from the provider + merged flags; per-provider
   // `allowDangerous` setting controls dangerous-flag filtering.
   //
+  // Uses `mergedAgentProvider` (input → folder default → user default →
+  // "claude" for agent/loop types) rather than the raw `input.agentProvider`
+  // for consistency/robustness, NOT to fix production behavior: this
+  // `startupCommand` only reaches tmux when a plugin returns
+  // `shellCommand: null` (effective command is
+  // `sessionConfig.shellCommand ?? startupCommand`), and the built-in
+  // agent/loop plugins always return a non-null `shellCommand` built from the
+  // already-merged `pluginInput.agentProvider`. So for current callers this
+  // block is inert; the merged provider just keeps a `shellCommand: null`
+  // plugin (e.g. a future or test plugin) consistent with the merge. For
+  // shell-type sessions the merge is a no-op
+  // (`mergedAgentProvider === input.agentProvider`).
+  //
   // SECURITY: reads from `pluginInput.agentFlags` (the merged flags) — NOT
   // `input.agentFlags` — so the per-provider preference flags are honored
   // and the dangerous-flag filter (inside the local `buildAgentCommand`)
   // sees the same flags the agent plugin would.
-  if (input.agentProvider && input.agentProvider !== "none" && input.autoLaunchAgent) {
+  if (mergedAgentProvider && mergedAgentProvider !== "none" && input.autoLaunchAgent) {
     // For loop sessions with Claude, add --output-format stream-json for structured output parsing
     const agentFlags = [...(pluginInput.agentFlags ?? [])];
-    if (input.terminalType === "loop" && input.agentProvider === "claude" && !agentFlags.includes("--output-format")) {
+    if (input.terminalType === "loop" && mergedAgentProvider === "claude" && !agentFlags.includes("--output-format")) {
       agentFlags.push("--output-format", "stream-json");
     }
     const agentCommand = buildAgentCommand(
-      input.agentProvider,
+      mergedAgentProvider,
       agentFlags,
       mergedAllowDangerous,
     );
@@ -775,9 +803,13 @@ export async function createSessionWithDedupFlag(
     }
   }
 
-  // Track if we created a worktree so we can clean it up on failure
-  const createdWorktree = input.createWorktree && branchName && workingPath !== input.projectPath;
-  const repoPath = input.projectPath;
+  // Track if we created a worktree so we can clean it up on failure. Both
+  // values are set inside the worktree blocks above (folder-context:
+  // server-resolved from folder preferences; explicit-path: the validated
+  // input.projectPath), so cleanup no longer silently skips when the client
+  // omits projectPath.
+  const createdWorktree = didCreateWorktree && branchName;
+  const repoPath = resolvedWorktreeRepoPath;
 
   // `terminalType`, `plugin` were resolved up-front; see the dedup +
   // plugin-delegation block near the top of createSession. [hgwo] The

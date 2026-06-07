@@ -778,3 +778,117 @@ describe("SessionService — port lifecycle (A3)", () => {
     expect(hoisted.releasePortsForSession).toHaveBeenCalledTimes(1);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Server-authoritative working dir + provider resolution (remote-dev-u84s).
+//
+// The client no longer sends a pref-derived `projectPath` for project-scoped
+// sessions; it relies on the server resolving the working dir from `projectId`
+// against the DB. These tests pin that behavior so a regression (server
+// silently honoring/ignoring the resolved path) is caught.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("SessionService.createSession — server-resolved working dir (remote-dev-u84s)", () => {
+  beforeEach(() => {
+    TerminalTypeServerRegistry.clear();
+    TerminalTypeServerRegistry.register(makeFakePlugin("fake", { useTmux: true }));
+    TerminalTypeServerRegistry.setDefaultType("fake");
+
+    dbState.inserted = [];
+    hoisted.state.queryFindManyCalls = 0;
+    tmuxCreate.mockClear();
+    tmuxKill.mockClear();
+
+    dbMocks.findManyDedup.mockResolvedValue([]);
+    dbMocks.findManyTabOrder.mockResolvedValue([]);
+    dbMocks.insertReturning.mockImplementation(async (values) => [
+      makeDbRow(values as Row),
+    ]);
+    hoisted.getPortsForFolder.mockReset();
+    hoisted.getPortsForFolder.mockResolvedValue([]);
+    hoisted.claimPortsForSession.mockReset();
+    hoisted.claimPortsForSession.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("uses the resolved project preference working dir when no projectPath is sent", async () => {
+    hoisted.getResolvedPreferences.mockResolvedValueOnce({
+      defaultWorkingDirectory: "/projects/my-app",
+    });
+
+    // baseInput() carries projectId but NO projectPath — the new client
+    // contract. The server must fall back to the resolved preference.
+    const result = await createSession("user-1", baseInput());
+
+    expect(dbState.inserted).toHaveLength(1);
+    const inserted = dbState.inserted[0] as { projectPath: string | null };
+    expect(inserted.projectPath).toBe("/projects/my-app");
+    expect(result.projectPath).toBe("/projects/my-app");
+
+    // tmux is launched in that same resolved directory.
+    const [, cwd] = tmuxCreate.mock.calls[0] as unknown as [
+      string,
+      string | undefined,
+      string | undefined,
+      Record<string, string> | undefined,
+    ];
+    expect(cwd).toBe("/projects/my-app");
+  });
+
+  it("still honors an explicit projectPath when the caller sends one (user intent)", async () => {
+    hoisted.getResolvedPreferences.mockResolvedValueOnce({
+      defaultWorkingDirectory: "/projects/my-app",
+    });
+
+    await createSession("user-1", {
+      ...baseInput(),
+      projectPath: "/explicit/user/path",
+    });
+
+    const inserted = dbState.inserted[0] as { projectPath: string | null };
+    // Explicit path wins over the resolved preference.
+    expect(inserted.projectPath).toBe("/explicit/user/path");
+  });
+
+  it("auto-launches the resolved provider's CLI when the client omits agentProvider", async () => {
+    // Agent plugin with no shellCommand, so the server-built startupCommand
+    // (from the merged provider) is what reaches tmux.
+    TerminalTypeServerRegistry.clear();
+    TerminalTypeServerRegistry.register(
+      makeFakePlugin("agent", { useTmux: true, shellCommand: null })
+    );
+    TerminalTypeServerRegistry.setDefaultType("agent");
+
+    // Resolved prefs supply the default provider; input omits agentProvider.
+    // Cast through unknown: the hoisted mock's inferred return type only knows
+    // `defaultWorkingDirectory` (matching the other tests in this file).
+    hoisted.getResolvedPreferences.mockResolvedValueOnce({
+      defaultWorkingDirectory: "/tmp",
+      defaultAgentProvider: "claude",
+    } as unknown as { defaultWorkingDirectory: string });
+
+    await createSession("user-1", {
+      name: "Agent",
+      projectId: "project-1",
+      terminalType: "agent",
+      autoLaunchAgent: true,
+      // NOTE: no agentProvider — server merges it from resolved prefs.
+    });
+
+    expect(tmuxCreate).toHaveBeenCalledTimes(1);
+    const [, , shellCmd] = tmuxCreate.mock.calls[0] as unknown as [
+      string,
+      string | undefined,
+      string | undefined,
+      Record<string, string> | undefined,
+    ];
+    // claude provider → command "claude" with no default flags.
+    expect(shellCmd).toBe("claude");
+
+    // The merged provider is also persisted on the row.
+    const inserted = dbState.inserted[0] as { agentProvider: string | null };
+    expect(inserted.agentProvider).toBe("claude");
+  });
+});

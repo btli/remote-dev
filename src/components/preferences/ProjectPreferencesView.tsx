@@ -38,6 +38,7 @@ import {
 import type { PinnedFile } from "@/types/pinned-files";
 
 import { apiFetch } from "@/lib/api-fetch";
+import { usePreferencesContext } from "@/contexts/PreferencesContext";
 const INHERIT_VALUE = "__inherit__";
 type ConfigurableProvider = Exclude<AgentProviderType, "none">;
 
@@ -80,7 +81,9 @@ interface ProjectPrefs {
   // Project-only
   githubRepoId?: string | null;
   localRepoPath?: string | null;
-  defaultAgentProvider?: string | null;
+  // Matches UpdateFolderPreferencesInput so save() needs no cast; the form's
+  // <select> only ever writes valid provider ids (or null for inherit).
+  defaultAgentProvider?: AgentProviderType | null;
   agentProviderSettings?: AgentProviderSettingsMap | null;
   pinnedFiles?: PinnedFile[] | null;
 }
@@ -98,6 +101,15 @@ export function ProjectPreferencesView({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [agentOverridesOpen, setAgentOverridesOpen] = useState(false);
+
+  // Route persistence through the preferences context so the shared
+  // nodePreferences cache (used to resolve a session's working dir / agent
+  // provider) is optimistically updated. Both handlers PUT/DELETE the same
+  // /api/node-preferences/project/:id endpoint this view used directly, so the
+  // network behavior is unchanged — but a project's prefs set here are now
+  // immediately visible to new sessions without a page reload. (remote-dev-u84s)
+  const { updateFolderPreferences, deleteFolderPreferences } =
+    usePreferencesContext();
 
   useEffect(() => {
     let cancelled = false;
@@ -124,15 +136,9 @@ export function ProjectPreferencesView({
     setSaving(true);
     setError(null);
     try {
-      const res = await apiFetch(`/api/node-preferences/project/${projectId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(prefs),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || `Save failed (${res.status})`);
-      }
+      // `prefs` now matches UpdateFolderPreferencesInput field-for-field, so no
+      // cast is needed; it's the same payload the view PUT directly before.
+      await updateFolderPreferences(projectId, prefs);
       onDone?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -145,13 +151,7 @@ export function ProjectPreferencesView({
     setSaving(true);
     setError(null);
     try {
-      const res = await apiFetch(`/api/node-preferences/project/${projectId}`, {
-        method: "DELETE",
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || `Reset failed (${res.status})`);
-      }
+      await deleteFolderPreferences(projectId);
       setPrefs(EMPTY);
       onDone?.();
     } catch (err) {
@@ -217,8 +217,13 @@ export function ProjectPreferencesView({
                 onValueChange={(value) =>
                   setPrefs({
                     ...prefs,
+                    // The options below are restricted to AGENT_PROVIDERS ids
+                    // (minus "none"), so a non-inherit value is a valid
+                    // AgentProviderType.
                     defaultAgentProvider:
-                      value === INHERIT_VALUE ? null : value,
+                      value === INHERIT_VALUE
+                        ? null
+                        : (value as AgentProviderType),
                   })
                 }
               >
