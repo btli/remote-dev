@@ -70,7 +70,7 @@ by session/key auth:
 | `GET /api/healthz`, `GET /api/readyz` | None (Kubernetes probes) |
 | `POST /api/deploy` | HMAC-SHA256 signature (`X-Hub-Signature-256`) |
 | `/api/auth/**` (NextAuth, OAuth callback, mobile exchange, signout) | NextAuth / OAuth / CF Access JWT |
-| `GET /api/setup/platform`, `GET /api/setup/dependencies`, `GET|POST /api/setup/complete` | None (first-run setup wizard) |
+| `GET /api/setup/platform`, `GET /api/setup/dependencies`, `GET|POST /api/setup/complete` | Setup-state-or-session: open without auth only during incomplete first-run setup (unscoped mode); session required once complete and always in scoped mode (remote-dev-2rob) |
 | `POST /api/litellm/webhook` | `x-webhook-secret` header (`LITELLM_WEBHOOK_SECRET`) |
 | `POST|GET /api/cron/trash-cleanup`, `POST|GET /api/cron/litellm-cleanup` | `CRON_SECRET` (bearer or `?secret=`) |
 | `GET|POST /api/github/stats/:repoId`, `POST /api/github/stats/mark-seen` | Unwrapped (no auth helper) |
@@ -1355,18 +1355,30 @@ tests. Requires auth (the `instanceSlug` is treated as semi-sensitive).
 
 ## Setup
 
-First-run setup wizard. These are **public** (no auth) except `install`.
+First-run setup wizard. These are gated by a **setup-state-or-session** check
+(remote-dev-2rob): open without auth only while first-run setup is still
+incomplete in **unscoped** (single-server / local / Electron) mode; once setup
+is complete — and **always** in scoped instance mode (`RDV_BASE_PATH` set, which
+has no first-run wizard) — they require an authenticated session and return 401
+otherwise. `install` always requires a session.
 
 ```http
-GET  /api/setup/platform        # detect OS/arch/package-manager/WSL (public)
-GET  /api/setup/dependencies    # check required dependencies (public)
-GET  /api/setup/complete        # read setup state (public)
-POST /api/setup/complete        # persist setup configuration (public)
+GET  /api/setup/platform        # detect OS/arch/package-manager/WSL (setup-state-or-session)
+GET  /api/setup/dependencies    # check required dependencies (setup-state-or-session)
+GET  /api/setup/complete        # read setup state (see below)
+POST /api/setup/complete        # persist setup configuration (setup-state-or-session)
 POST /api/setup/install         # [session] return/run an install command for a dependency
 ```
 
+`GET /api/setup/complete` always returns `{ isComplete }`; the `config` payload
+(working-directory path, ports, WSL distro) is included **only** for an allowed
+caller (setup still incomplete, or authenticated). Unauthenticated callers after
+completion get just `{ isComplete: true }`.
+
 `POST /api/setup/complete` body is a `SetupConfiguration`
 (`{ workingDirectory, nextPort, terminalPort, wslDistribution?, autoStart, checkForUpdates, … }`).
+The read-decide-write runs in a single transaction that re-checks completion, so
+a completed config cannot be overwritten by an unauthenticated caller.
 
 ---
 

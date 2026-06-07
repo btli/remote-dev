@@ -1708,18 +1708,24 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   # ===================== Setup =====================
+  # Setup-state-or-session gate (remote-dev-2rob): open without auth only while
+  # first-run setup is incomplete in unscoped mode; session required once setup is
+  # complete, and always in scoped instance mode (RDV_BASE_PATH). `security: []`
+  # reflects that the first-run case is reachable unauthenticated; the documented
+  # '401' covers the post-completion / scoped case.
   /api/setup/platform:
-    get: { tags: [Setup], summary: Detect platform (public), security: [], responses: { '200': { description: Platform info, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+    get: { tags: [Setup], summary: Detect platform (setup-state-or-session), security: [], responses: { '200': { description: Platform info, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, '401': { $ref: '#/components/responses/Unauthorized' } } }
   /api/setup/dependencies:
-    get: { tags: [Setup], summary: Check dependencies (public), security: [], responses: { '200': { description: Dependency checks, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+    get: { tags: [Setup], summary: Check dependencies (setup-state-or-session), security: [], responses: { '200': { description: Dependency checks, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, '401': { $ref: '#/components/responses/Unauthorized' } } }
   /api/setup/complete:
-    get: { tags: [Setup], summary: Read setup state (public), security: [], responses: { '200': { description: Setup state, content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
+    get: { tags: [Setup], summary: Read setup state; config payload only for an allowed caller, security: [], responses: { '200': { description: 'Always { isComplete }; includes config only when setup is incomplete or the caller is authenticated', content: { application/json: { schema: { type: object, additionalProperties: true } } } } } }
     post:
       tags: [Setup]
-      summary: Persist setup configuration (public)
+      summary: Persist setup configuration (setup-state-or-session)
+      description: Transactional read-decide-write; a completed config cannot be overwritten by an unauthenticated caller.
       security: []
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
-      responses: { '200': { $ref: '#/components/responses/Success' } }
+      responses: { '200': { $ref: '#/components/responses/Success' }, '401': { $ref: '#/components/responses/Unauthorized' } }
   /api/setup/install:
     post:
       tags: [Setup]

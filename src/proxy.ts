@@ -136,6 +136,15 @@ export async function proxy(request: NextRequest) {
   //    Real authorization is still enforced server-side (route handlers / server
   //    components via `getCurrentUser()`), which DO have the secret — the edge
   //    only needs a presence gate here.
+  //
+  //    CONSEQUENCE for /api: in scoped mode the `/api` arm below is therefore a
+  //    DELIBERATELY WEAK presence check — any non-empty scoped cookie satisfies
+  //    it, so route-level auth (not this proxy) is the authoritative boundary for
+  //    sensitive endpoints. The canonical example is `/api/setup/*`, which rides
+  //    the generic `/api` arm (no bypass) yet must not be open: it is gated at
+  //    the route by a setup-state-or-session check (`isSetupRequestAllowed`,
+  //    `src/lib/setup-gate.ts`, remote-dev-2rob) so a garbage cookie that passes
+  //    here still cannot rewrite the setup config or read system info.
   const scoped = INSTANCE_SLUG.length > 0;
   let isLoggedIn: boolean;
   if (scoped) {

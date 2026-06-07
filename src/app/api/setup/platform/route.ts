@@ -3,6 +3,7 @@ import { platform, arch, homedir } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createLogger } from "@/lib/logger";
+import { isSetupRequestAllowed } from "@/lib/setup-gate";
 
 const log = createLogger("api/setup");
 
@@ -10,11 +11,18 @@ const execFileAsync = promisify(execFile);
 
 /**
  * GET /api/setup/platform
- * Detects platform information (OS, architecture, package manager, WSL)
+ * Detects platform information (OS, architecture, package manager, WSL) —
+ * system-info disclosure.
  *
- * This route is public (no auth) for first-run setup.
+ * Gated by `isSetupRequestAllowed()` (remote-dev-2rob): permitted only while
+ * first-run setup is open (unscoped + not yet complete) OR for an authenticated
+ * session; otherwise 401. A scoped instance pod always requires a session.
  */
 export async function GET() {
+  if (!(await isSetupRequestAllowed())) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const os = platform();
     const archName = arch();
