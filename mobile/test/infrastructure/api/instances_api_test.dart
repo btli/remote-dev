@@ -201,6 +201,39 @@ void main() {
       expect(sent.uri.toString(), 'https://host.example.com/api/instances');
     });
 
+    test(
+      'attaches the host CF Access service token to host-root discovery '
+      '(headers set, redundant CF_Authorization cookie dropped) — finding 3',
+      () async {
+        final storage = _FakeStorage();
+        final creds = MobileCredentialsStore(storage);
+        // Host has BOTH a harvested CF cookie AND a saved service token.
+        await creds.setHostCfToken('h_1', 'host-jwt');
+        await creds.setHostServiceToken(
+          'h_1',
+          clientId: 'cid.public',
+          clientSecret: 'csecret.value',
+        );
+
+        final adapter = _CannedAdapter(
+          body: jsonEncode(<String, dynamic>{'instances': <dynamic>[]}),
+        );
+        final dio = Dio()..httpClientAdapter = adapter;
+
+        await _api(dio, storage: storage).list();
+
+        final sent = adapter.captured!;
+        // Service-token headers attached so discovery passes CF Access even
+        // after the harvested cookie expires.
+        expect(sent.headers['CF-Access-Client-Id'], 'cid.public');
+        expect(sent.headers['CF-Access-Client-Secret'], 'csecret.value');
+        // The now-redundant CF_Authorization cookie is excluded (the headers
+        // are the edge credential); there is no other host cookie here, so no
+        // Cookie header is sent at all.
+        expect(sent.headers.containsKey(HttpHeaders.cookieHeader), isFalse);
+      },
+    );
+
     test('an empty instances array parses to an empty list', () async {
       final storage = _FakeStorage();
       await MobileCredentialsStore(storage).setHostCfToken('h_1', 'host-jwt');

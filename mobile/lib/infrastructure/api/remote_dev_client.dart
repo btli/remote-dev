@@ -26,6 +26,14 @@ class RemoteDevClient implements ApiClientPort {
       authReader: (id) async {
         final apiKey = await _credentials.readApiKey(id);
         final cfToken = await _credentials.readCfToken(id);
+        // NOTE: deliberately NO service-token lookup here. The CF Access service
+        // token is a HOST-mapped credential (stored under `host.<hostId>`), but
+        // this legacy per-server client predates the host/workspace split and
+        // has only a [serverId] — which is NOT a host id (migrated hosts use
+        // `h_<legacy-server-id>`, new hosts use UUIDs), so getHostServiceToken
+        // would silently return null anyway. No production caller constructs
+        // this client (everything goes through forWorkspace); the host-scoped
+        // readers own service-token attachment.
         // Legacy per-server client uses the old cfCookie field for compat.
         return AuthMaterial(apiKey: apiKey, cfCookie: cfToken);
       },
@@ -72,7 +80,19 @@ class RemoteDevClient implements ApiClientPort {
         // MobileCredentialsStore.getInstanceCookies / design §7.2.
         final cookies =
             await _credentials.getInstanceCookies(hostId, workspaceId);
-        return AuthMaterial(apiKey: apiKey, cookies: cookies);
+        // The host-wide CF Access service token (permanent edge credential).
+        // When present, [AuthMaterial] attaches the CF-Access-Client-* headers
+        // and drops the redundant CF_Authorization cookie that
+        // getInstanceCookies may have included from the host — the OIDC session
+        // cookies it also returns stay, authenticating the instance behind the
+        // edge.
+        final service = await _credentials.getHostServiceToken(hostId);
+        return AuthMaterial(
+          apiKey: apiKey,
+          cookies: cookies,
+          serviceClientId: service?.clientId,
+          serviceClientSecret: service?.clientSecret,
+        );
       },
       // The interceptor passes its captured scope id; the workspace refresh
       // closure ignores it (it already closes over the right host/workspace),
