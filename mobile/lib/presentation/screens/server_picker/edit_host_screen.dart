@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../domain/host_config.dart';
+import '../../../domain/qr_payload.dart';
 import '../../../domain/workspace_config.dart';
+import '../scan/qr_scan_screen.dart';
 import '../webview_host/session_route_host.dart'
     show
         activeWorkspaceProvider,
@@ -147,6 +149,84 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
     );
   }
 
+  /// Scan a QR code and, if it carries a Cloudflare service token, PREFILL the
+  /// Client ID + Secret fields for the user to review and Save. Deliberately
+  /// does NOT persist directly — it only fills the form, so the existing
+  /// write-only Save path (`setHostServiceToken`) stays the single persistence
+  /// route and the secret field stays obscured.
+  ///
+  /// If the scanned token's `host` doesn't match this host's origin, a warning
+  /// dialog asks the user to confirm before the fields are filled (a token is
+  /// host-scoped at the Cloudflare edge, so applying one host's token to another
+  /// host would silently fail to authenticate).
+  ///
+  /// SECURITY: the confirmation SnackBar names the host + Client ID only — never
+  /// the secret — matching the `[CfAuth]` value-free breadcrumb discipline.
+  Future<void> _scanServiceToken() async {
+    final payload = await QrScanScreen.push(context);
+    if (!mounted || payload == null) return;
+
+    if (payload is! CfServiceTokenPayload) {
+      // A legacy server QR (or any non-service-token payload) can't be applied
+      // here — Edit Host only provisions the CF service token.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "That QR code isn't a Cloudflare service token. Scan the service-"
+            'token QR from Settings → Mobile.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    // Warn (don't block) when the token targets a different host.
+    if (!originsMatch(payload.host, widget.args.host.origin)) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          backgroundColor: const Color(0xFF24283B),
+          title: const Text(
+            'Different host',
+            style: TextStyle(color: Colors.white),
+          ),
+          content: Text(
+            'This QR code is for ${payload.host}, but this host is '
+            '${widget.args.host.origin}. Use it anyway?',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogCtx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogCtx).pop(true),
+              child: const Text('Use anyway'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || proceed != true) return;
+    }
+
+    // Prefill only — the user reviews and taps the existing Save.
+    setState(() {
+      _serviceIdCtrl.text = payload.clientId;
+      _serviceSecretCtrl.text = payload.clientSecret;
+      // Reveal nothing automatically; the secret stays obscured.
+      _secretVisible = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Scanned service token for ${payload.host} '
+          '(Client ID ${payload.clientId}). Review and Save.',
+        ),
+      ),
+    );
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
@@ -285,6 +365,22 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
                     : 'For hosts behind Cloudflare Access. Create under '
                         'Zero Trust → Access → Service Tokens.',
                 style: const TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+              const SizedBox(height: 8),
+              // Scan the service-token QR rendered by Settings → Mobile on the
+              // web to fill the fields below (review-and-Save; never persists
+              // directly).
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: _saving ? null : _scanServiceToken,
+                  icon: const Icon(Icons.qr_code_scanner, size: 18),
+                  label: const Text('Scan QR'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Colors.white24),
+                  ),
+                ),
               ),
               const SizedBox(height: 12),
               TextFormField(

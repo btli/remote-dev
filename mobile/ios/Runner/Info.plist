@@ -42,7 +42,7 @@
 		<key>NSPhotoLibraryUsageDescription</key>
 		<string>Remote Dev needs access to your photo library so you can paste screenshots into a terminal session.</string>
 		<key>NSCameraUsageDescription</key>
-		<string>Remote Dev uses the camera to capture images you paste into terminal sessions.</string>
+		<string>Scan QR codes to provision server credentials, and capture images you paste into terminal sessions.</string>
 		<key>UIBackgroundModes</key>
 		<array>
 			<string>remote-notification</string>

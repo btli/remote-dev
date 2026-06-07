@@ -6,10 +6,12 @@ import 'package:uuid/uuid.dart';
 
 import '../../../domain/host_config.dart';
 import '../../../domain/instance_summary.dart';
+import '../../../domain/qr_payload.dart';
 import '../../../domain/workspace_config.dart';
 import '../../../infrastructure/api/instances_api.dart';
 import '../../../infrastructure/auth/mobile_callback_login_launcher.dart';
 import '../../../infrastructure/deep_link/deep_link_stream_provider.dart';
+import '../scan/qr_scan_screen.dart';
 import '../webview_host/session_route_host.dart'
     show
         activeWorkspaceProvider,
@@ -116,6 +118,51 @@ class _AddHostScreenState extends ConsumerState<AddHostScreen> {
       hostId: host.id,
       storage: ref.read(secureStorageProvider),
     );
+  }
+
+  /// Scan a provisioning QR code to speed up adding a host.
+  ///
+  /// The add flow signs in through the system browser (OIDC / CF Access) and
+  /// mints its own key, so a LEGACY `{url, port, apiKey}` QR can't inject its
+  /// key here — but we can prefill the Host URL so the user just taps Add to
+  /// continue through the normal login (this is what makes the web panel's
+  /// "Add Server → Scan QR Code" instruction real). A CF service-token QR
+  /// belongs to an EXISTING host, so we point the user to add the host first
+  /// and apply the token from Edit Host.
+  Future<void> _scanQr() async {
+    final payload = await QrScanScreen.push(context);
+    if (!mounted || payload == null) return;
+
+    switch (payload) {
+      case LegacyServerPayload(:final url):
+        setState(() {
+          _originCtrl.text = url;
+          if (_labelCtrl.text.trim().isEmpty) {
+            // Seed a friendly default label from the host so the form is ready
+            // to submit; the user can edit it.
+            _labelCtrl.text = Uri.tryParse(url)?.host ?? '';
+          }
+          _error = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Scanned server URL. Tap Add to sign in and finish.',
+            ),
+          ),
+        );
+      case CfServiceTokenPayload(:final host):
+        // A service token applies to an existing host's edge, not a brand-new
+        // add. Keep it simple: tell the user the right place to use it.
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'That QR is a Cloudflare service token for $host. Add the host '
+              'first, then apply it from Edit host → Scan QR.',
+            ),
+          ),
+        );
+    }
   }
 
   Future<void> _submit() async {
@@ -314,6 +361,13 @@ class _AddHostScreenState extends ConsumerState<AddHostScreen> {
         backgroundColor: const Color(0xFF1A1B26),
         title: const Text('Add host', style: TextStyle(color: Colors.white)),
         iconTheme: const IconThemeData(color: Colors.white),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.qr_code_scanner, color: Colors.white),
+            tooltip: 'Scan QR code',
+            onPressed: _busy ? null : _scanQr,
+          ),
+        ],
       ),
       body: Form(
         key: _formKey,

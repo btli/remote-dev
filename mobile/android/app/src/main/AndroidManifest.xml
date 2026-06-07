@@ -11,7 +11,8 @@
         android:maxSdkVersion="32"/>
     <!-- Camera capture via image_picker (long-press shortcut on the
          smart-key strip's image button) + WebView getUserMedia for
-         in-terminal image capture (bd remote-dev-cp47). -->
+         in-terminal image capture (bd remote-dev-cp47) + mobile_scanner
+         QR-code credential provisioning (bd remote-dev-8xfo). -->
     <uses-permission android:name="android.permission.CAMERA"/>
     <!-- Declare CAMERA feature usage as optional so Play store filtering
          doesn't hide the app from camera-less devices. -->
