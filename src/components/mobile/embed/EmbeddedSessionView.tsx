@@ -39,7 +39,7 @@ import {
   type RdvBridgeKeyMods,
 } from "@/lib/rdv-bridge";
 import type { TerminalSession } from "@/types/session";
-import type { TerminalType } from "@/types/terminal-type";
+import type { AgentActivityStatus, TerminalType } from "@/types/terminal-type";
 
 // Mirror the constants used by MobileSessionView so the JS-side pinch
 // handler clamps to the same range as the existing PWA pinch.
@@ -50,6 +50,25 @@ const DEFAULT_FONT_FAMILY = "'JetBrainsMono Nerd Font Mono', monospace";
 
 function clampFontSize(size: number): number {
   return Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, Math.round(size)));
+}
+
+// The full AgentActivityStatus union (src/types/terminal-type.ts). The WS
+// broadcast hands us a raw string, so we validate against this set before
+// forwarding to native — an unknown status is dropped rather than rendered
+// as a bogus pip. `satisfies` ties the set to the union so adding a status
+// to the type fails the build until it's listed here too.
+const KNOWN_ACTIVITY_STATUSES = new Set<AgentActivityStatus>([
+  "running",
+  "waiting",
+  "idle",
+  "error",
+  "compacting",
+  "ended",
+  "subagent",
+] satisfies AgentActivityStatus[]);
+
+function isKnownActivityStatus(status: string): status is AgentActivityStatus {
+  return KNOWN_ACTIVITY_STATUSES.has(status as AgentActivityStatus);
 }
 
 /** Decode a base64 string into a Uint8Array (no atob streaming surprises). */
@@ -224,6 +243,27 @@ export function EmbeddedSessionView({
       addNotification(hydrateNotification(notification));
     },
     [addNotification],
+  );
+
+  // ── Agent activity → native status bar ─────────────────────────────────
+  // Terminal.tsx forwards `agent_activity_status` WS broadcasts through
+  // `onAgentActivityStatus(sessionId, status)`. The native Flutter shell
+  // owns the in-session status bar (mobileChrome="external"), so without
+  // this bridge the pip is permanently "Idle". The WS broadcast can be for
+  // ANY session on the connection, so we filter to ours, validate the raw
+  // status against the known union (dropping anything unexpected), then emit
+  // `onActivity` to native.
+  const handleAgentActivityStatus = useCallback(
+    (statusSessionId: string, status: string) => {
+      if (statusSessionId !== session.id) return;
+      if (!isKnownActivityStatus(status)) return;
+      notifyToNative("onActivity", { state: status }).catch((err) => {
+        // Native-side errors shouldn't crash the WebView; surface in console
+        // for observability while keeping the UI alive.
+        console.error("onActivity notify failed", err);
+      });
+    },
+    [session.id],
   );
 
   // ── Agent session lifecycle (Restart / Delete from SessionEndedOverlay) ─
@@ -474,6 +514,7 @@ export function EmbeddedSessionView({
         fontFamily={fontFamily}
         mobileChrome="external"
         onNotification={handleNotification}
+        onAgentActivityStatus={handleAgentActivityStatus}
         onSessionRestart={handleSessionRestart}
         onSessionDelete={handleSessionDelete}
       />

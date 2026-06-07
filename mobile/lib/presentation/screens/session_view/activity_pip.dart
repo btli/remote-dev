@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
 
+import '../../../domain/session_summary.dart';
+
 enum SessionActivity {
   running,
   waiting,
   idle,
   error,
+  subagent,
+  compacting,
+  ended,
   disconnected,
   reconnecting,
   none,
@@ -26,6 +31,12 @@ class ActivityPip extends StatelessWidget {
         return const Color(0xFF565F89); // grey
       case SessionActivity.error:
         return const Color(0xFFF7768E); // red
+      case SessionActivity.subagent:
+        return const Color(0xFFBB9AF7); // purple
+      case SessionActivity.compacting:
+        return const Color(0xFF7AA2F7); // blue
+      case SessionActivity.ended:
+        return const Color(0xFF565F89); // grey (same as idle)
       case SessionActivity.disconnected:
         return const Color(0xFF414868); // dim grey
       case SessionActivity.reconnecting:
@@ -45,6 +56,12 @@ class ActivityPip extends StatelessWidget {
         return 'Idle';
       case SessionActivity.error:
         return 'Error';
+      case SessionActivity.subagent:
+        return 'Subagent';
+      case SessionActivity.compacting:
+        return 'Compacting';
+      case SessionActivity.ended:
+        return 'Ended';
       case SessionActivity.disconnected:
         return 'Disconnected';
       case SessionActivity.reconnecting:
@@ -70,5 +87,32 @@ class ActivityPip extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Bridges the server-reported [AgentActivityStatus] (carried on a
+/// [SessionSummary]) onto the status-bar [SessionActivity]. Used to SEED the
+/// in-session pip from the session's last-known activity when the view opens,
+/// so a session opened mid-run shows its real state (e.g. a long subagent run)
+/// instead of "Idle" until the next live hook transition arrives.
+extension AgentActivityStatusPip on AgentActivityStatus {
+  SessionActivity toSessionActivity() {
+    switch (this) {
+      case AgentActivityStatus.running:
+        return SessionActivity.running;
+      case AgentActivityStatus.waiting:
+        return SessionActivity.waiting;
+      case AgentActivityStatus.error:
+        return SessionActivity.error;
+      case AgentActivityStatus.subagent:
+        return SessionActivity.subagent;
+      case AgentActivityStatus.compacting:
+        return SessionActivity.compacting;
+      case AgentActivityStatus.ended:
+        return SessionActivity.ended;
+      case AgentActivityStatus.idle:
+      case AgentActivityStatus.none:
+        return SessionActivity.idle;
+    }
   }
 }

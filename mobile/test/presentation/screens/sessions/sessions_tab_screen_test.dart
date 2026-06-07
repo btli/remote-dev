@@ -155,6 +155,27 @@ void main() {
     expect(pipFinder, findsOneWidget);
   });
 
+  testWidgets('renders compacting activity pip in blue', (tester) async {
+    when(() => api.list()).thenAnswer(
+      (_) async => [
+        _session(activity: AgentActivityStatus.compacting),
+      ],
+    );
+
+    await tester.pumpWidget(_wrap(api: api));
+    await tester.pumpAndSettle();
+
+    // Compacting pip renders a circular Container with the Tokyo Night blue.
+    final pipFinder = find.byWidgetPredicate((w) {
+      if (w is! Container) return false;
+      final dec = w.decoration;
+      if (dec is! BoxDecoration) return false;
+      return dec.shape == BoxShape.circle &&
+          dec.color == const Color(0xFF7AA2F7);
+    });
+    expect(pipFinder, findsOneWidget);
+  });
+
   testWidgets('shows error view + retry on failure', (tester) async {
     when(() => api.list()).thenThrow(Exception('boom'));
 

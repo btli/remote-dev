@@ -167,7 +167,16 @@ export type NotifyPayload =
   | { name: "onWantsPaste"; data: Record<string, never> }
   | {
       name: "onActivity";
-      data: { state: "running" | "waiting" | "idle" | "error" };
+      data: {
+        state:
+          | "running"
+          | "waiting"
+          | "idle"
+          | "error"
+          | "compacting"
+          | "ended"
+          | "subagent";
+      };
     }
   | { name: "onLinkOpen"; data: { url: string } };
 
