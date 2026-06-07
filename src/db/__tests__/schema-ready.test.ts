@@ -69,10 +69,14 @@ describe("waitForSchemaReady", () => {
     vi.resetModules();
 
     // First poll: table missing (relation does not exist). Second poll: all
-    // 8 committed migrations applied → ready.
+    // committed migrations applied → ready. The count is read dynamically from
+    // drizzle/pg/ (countCommittedPgMigrations), so use the live count rather than
+    // a hard-coded number (remote-dev-1aa5 added 0008_*).
+    const { countCommittedPgMigrations } = await import("../schema-ready");
+    const committed = countCommittedPgMigrations();
     const { Pool, end } = mockPg([
       { throws: true },
-      { rows: [{ c: 8 }] },
+      { rows: [{ c: committed }] },
     ]);
     const { waitForSchemaReady } = await import("../schema-ready");
 

@@ -15,6 +15,7 @@ import {
   validateWsToken,
   generateProxyWsToken,
   validateProxyWsToken,
+  CONTROL_SESSION_SENTINEL,
 } from "../ws-token";
 
 const ORIGINAL_SECRET = process.env.AUTH_SECRET;
@@ -66,6 +67,25 @@ describe("session tokens (backward compat)", () => {
     expect(
       validateWsToken(Buffer.from("only:three:parts").toString("base64")),
     ).toBeNull();
+  });
+});
+
+describe("control-mode tokens (remote-dev-d5ci)", () => {
+  it("round-trips a control token carrying the sentinel sessionId", () => {
+    // The /api/control-token route mints generateWsToken(CONTROL_SESSION_SENTINEL, userId);
+    // the terminal server accepts ?control=1 only when the token's sessionId
+    // equals the sentinel.
+    const token = generateWsToken(CONTROL_SESSION_SENTINEL, "user-abc");
+    expect(validateWsToken(token)).toEqual({
+      sessionId: CONTROL_SESSION_SENTINEL,
+      userId: "user-abc",
+    });
+  });
+
+  it("a forged control token (wrong secret) is rejected", () => {
+    const token = generateWsToken(CONTROL_SESSION_SENTINEL, "user-abc");
+    process.env.AUTH_SECRET = "a-totally-different-secret";
+    expect(validateWsToken(token)).toBeNull();
   });
 });
 

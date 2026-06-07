@@ -34,6 +34,15 @@ const log = createLogger("WsToken");
 const TOKEN_TTL_MS = 5 * 60 * 1000;
 
 /**
+ * [remote-dev-d5ci] Reserved `sessionId` for control-mode WebSocket tokens. A
+ * control connection (`?control=1`) authenticates with a normal SESSION token
+ * whose sessionId is this sentinel — so it rides the exact same HMAC machinery
+ * (no new token kind) while binding to no real session. The terminal server
+ * accepts a control upgrade only when the token's sessionId equals this value.
+ */
+export const CONTROL_SESSION_SENTINEL = "__control__";
+
+/**
  * Leading marker that identifies a {@link generateProxyWsToken} token. Session
  * tokens never begin with this literal because their first field is a UUID
  * `sessionId`, so the marker (plus the differing field count) keeps the two

@@ -99,6 +99,15 @@ describe("SessionContext updateSession — single-flight queue", () => {
     vi.restoreAllMocks();
   });
 
+  // [remote-dev-d5ci] SessionProvider now opens a control-mode status socket on
+  // mount, which fetches /api/control-token. These tests assert the count of the
+  // session PATCH round-trips specifically, so count only those calls.
+  function patchCallCount(): number {
+    return fetchMock.mock.calls.filter(
+      (c) => (c[1] as RequestInit | undefined)?.method === "PATCH"
+    ).length;
+  }
+
   it("serializes rapid typeMetadataPatch writes in call order", async () => {
     const session = makeSession({
       typeMetadata: { a: 0 } as Record<string, unknown>,
@@ -112,6 +121,10 @@ describe("SessionContext updateSession — single-flight queue", () => {
     const resolvers: Array<() => void> = [];
 
     fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+      // Control-mode status socket token fetch (GET, no body) — answer benignly.
+      if (typeof url === "string" && url.includes("/api/control-token")) {
+        return { ok: true, status: 200, json: async () => ({ token: "t" }), headers: new Headers() } as unknown as Response;
+      }
       const body = JSON.parse(init.body as string) as Record<string, unknown>;
       receivedBodies.push(body);
       const callIndex = receivedBodies.length - 1;
@@ -154,7 +167,7 @@ describe("SessionContext updateSession — single-flight queue", () => {
 
     // Only the first request should have left the client — the second is
     // queued behind it.
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(patchCallCount()).toBe(1));
     expect(receivedBodies[0]).toMatchObject({ typeMetadataPatch: { a: 1 } });
 
     // Optimistic state already reflects the SECOND patch because the local
@@ -173,7 +186,7 @@ describe("SessionContext updateSession — single-flight queue", () => {
     });
 
     // Now request 2 should have been dispatched — in order.
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(patchCallCount()).toBe(2));
     expect(receivedBodies[1]).toMatchObject({ typeMetadataPatch: { a: 2 } });
 
     // Release request 2 and let everything settle.
@@ -201,6 +214,10 @@ describe("SessionContext updateSession — single-flight queue", () => {
 
     const resolvers: Array<(body: Record<string, unknown>) => void> = [];
     fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+      // Control-mode status socket token fetch (GET, no body) — answer benignly.
+      if (typeof url === "string" && url.includes("/api/control-token")) {
+        return { ok: true, status: 200, json: async () => ({ token: "t" }), headers: new Headers() } as unknown as Response;
+      }
       const body = JSON.parse(init.body as string) as Record<string, unknown>;
       const callIndex = resolvers.length;
       return new Promise<Response>((resolve) => {
@@ -237,7 +254,7 @@ describe("SessionContext updateSession — single-flight queue", () => {
     });
 
     // Wait for first fetch to be in-flight.
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(patchCallCount()).toBe(1));
 
     // Finish request 1 by returning a server snapshot of { a: 1 }. Because
     // patch 2 is still queued, the reconciliation must NOT overwrite the
@@ -255,7 +272,7 @@ describe("SessionContext updateSession — single-flight queue", () => {
     ).toBe(2);
 
     // Request 2 should now be in flight — complete it with { a: 2 }.
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(patchCallCount()).toBe(2));
     await act(async () => {
       resolvers[1]({ a: 2 });
       await p2;

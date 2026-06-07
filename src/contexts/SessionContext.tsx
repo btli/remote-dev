@@ -31,6 +31,7 @@ import {
   mergeActivityStatus,
   reseedActivityStatuses,
 } from "./agent-activity-cache";
+import { useStatusControlSocket } from "@/hooks/useStatusControlSocket";
 
 const ACTIVE_SESSION_STORAGE_KEY = "remote-dev:activeSessionId";
 const VALID_ACTIVITY_STATUSES = new Set<AgentActivityStatus>(["running", "waiting", "idle", "error", "compacting", "ended", "subagent"]);
@@ -404,6 +405,14 @@ export function SessionProvider({
   // Debounced refresh — coalesces rapid WebSocket events and auto-refreshes
   // on page visibility change (tab switch, wake from sleep).
   const debouncedRefreshSessions = useDebouncedRefresh(refreshSessions);
+
+  // [remote-dev-d5ci] One control-mode status socket per tab so the sidebar's
+  // live activity indicators update even with no terminal attached. Feeds the
+  // activity-status cache directly; re-seeds via refreshSessions on reconnect.
+  useStatusControlSocket({
+    setAgentActivityStatus,
+    refreshSessions: debouncedRefreshSessions,
+  });
 
   // Fetch sessions on mount if none provided (once on mount)
   useEffect(() => {

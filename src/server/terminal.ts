@@ -12,7 +12,7 @@ import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
 // [oyej] Agent-run scheduler (REAL agent launches; epic remote-dev-oyej).
 import { agentSchedulerOrchestrator } from "../services/agent-scheduler-orchestrator.js";
 import { getSchedulerHealth } from "./scheduler-health.js";
-import { validateWsToken, getAuthSecret } from "../lib/ws-token.js";
+import { validateWsToken, getAuthSecret, CONTROL_SESSION_SENTINEL } from "../lib/ws-token.js";
 import { createLogger } from "../lib/logger.js";
 import { WS_PATH_PREFIX } from "../lib/base-path.js";
 import {
@@ -125,7 +125,8 @@ function validatePath(path: string | undefined): string | undefined {
 
 interface TerminalConnection {
   connectionId: string;
-  pty: IPty;
+  // [remote-dev-d5ci] null for control-mode connections (no PTY/tmux attach).
+  pty: IPty | null;
   ws: WebSocket;
   sessionId: string;
   tmuxSessionName: string;
@@ -141,7 +142,15 @@ interface TerminalConnection {
   // Last-focus bookkeeping for primary-connection election (focus-based promotion).
   lastFocusAt: number;
   isVisible: boolean;
+  // [remote-dev-d5ci] Lightweight control connection: registered in the
+  // `connections` map only so broadcasts reach it (sidebar live updates without
+  // an attached terminal). It has NO PTY, is NOT in sessionConnections /
+  // sessionPrimaryConnection, and triggers no attach/detach/suspend side effects.
+  isControl?: boolean;
 }
+
+// CONTROL_SESSION_SENTINEL (the reserved control-mode sessionId) is imported
+// from ws-token so the token minter (API route) and this acceptor agree.
 
 // All active connections, keyed by connectionId (UUID)
 const connections = new Map<string, TerminalConnection>();
@@ -453,8 +462,10 @@ function destroyPty(ptyProcess: IPty): void {
 
 /**
  * Destroy a PTY, ignoring errors if it's already dead.
+ * No-op for null (control-mode connections have no PTY — remote-dev-d5ci).
  */
-function safeDestroyPty(ptyProcess: IPty): void {
+function safeDestroyPty(ptyProcess: IPty | null): void {
+  if (!ptyProcess) return;
   try { destroyPty(ptyProcess); } catch { /* PTY may already be dead */ }
 }
 
@@ -468,6 +479,14 @@ function cleanupConnection(connectionId: string): void {
 
   // Remove from connections map first to prevent concurrent cleanup
   connections.delete(connectionId);
+
+  // [remote-dev-d5ci] Control connections only live in the `connections` map (for
+  // broadcasts). They have no PTY and no session-level state, so skip ALL
+  // per-session teardown — a control disconnect must NOT mark anything suspended
+  // or hand off primary.
+  if (conn.isControl) {
+    return;
+  }
 
   // Remove from session connections and update session-level state
   const connSet = sessionConnections.get(conn.sessionId);
@@ -1051,7 +1070,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
         return true;
       }
       const conn = getAnyConnectionForSession(sessionId);
-      if (!conn) {
+      if (!conn?.pty) {
         sendJson(res, 404, { error: "No active PTY session found" });
         return true;
       }
@@ -2404,6 +2423,54 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       return;
     }
 
+    // [remote-dev-d5ci] Control-mode connection: `?control=1` with a token minted
+    // for the CONTROL_SESSION_SENTINEL. It joins the `connections` map ONLY so
+    // broadcasts (agent_activity_status / session_metadata) reach it, enabling
+    // live sidebar updates without an attached terminal. It never attaches a PTY,
+    // never joins sessionConnections / sessionPrimaryConnection, and on disconnect
+    // triggers no per-session side effects (see cleanupConnection's isControl
+    // early-return). Reuses the exact same HMAC token auth as terminal sockets.
+    if (query.control === "1") {
+      if (authResult.sessionId !== CONTROL_SESSION_SENTINEL) {
+        ws.send(JSON.stringify({ type: "error", message: "Invalid control token" }));
+        ws.close(4002, "Invalid control token");
+        return;
+      }
+      const controlConnectionId = randomUUID();
+      const controlConnection: TerminalConnection = {
+        connectionId: controlConnectionId,
+        pty: null,
+        ws,
+        sessionId: `${CONTROL_SESSION_SENTINEL}-${controlConnectionId}`,
+        tmuxSessionName: "",
+        isAttached: false,
+        lastCols: 0,
+        lastRows: 0,
+        pendingResize: null,
+        resizeTimeout: null,
+        terminalType: "control",
+        userId: authResult.userId,
+        lastFocusAt: Date.now(),
+        isVisible: false,
+        isControl: true,
+      };
+      connections.set(controlConnectionId, controlConnection);
+      log.debug("Control connection started", { connectionId: controlConnectionId, userId: authResult.userId });
+
+      ws.on("close", () => {
+        if (!connections.has(controlConnectionId)) return;
+        cleanupConnection(controlConnectionId);
+      });
+      ws.on("error", (error) => {
+        log.warn("Control connection error", { connectionId: controlConnectionId, error: String(error) });
+        if (!connections.has(controlConnectionId)) return;
+        cleanupConnection(controlConnectionId);
+      });
+
+      ws.send(JSON.stringify({ type: "control_ready" }));
+      return;
+    }
+
     // Parse connection parameters
     const sessionId = authResult.sessionId;
     const userId = authResult.userId;
@@ -2560,7 +2627,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
         switch (msg.type) {
           case "input":
-            connection.pty.write(msg.data);
+            connection.pty?.write(msg.data);
             break;
           case "resize": {
             // Ignore resize events with invalid dimensions
@@ -2596,7 +2663,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
               // Always resize this connection's PTY
               try {
-                connection.pty.resize(pending.cols, pending.rows);
+                connection.pty?.resize(pending.cols, pending.rows);
               } catch {
                 // Ignore resize errors from pty
               }
@@ -2772,7 +2839,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       } catch {
         // JSON parse error — forward raw text to PTY
         if (connections.has(connectionId)) {
-          connection.pty.write(message.toString());
+          connection.pty?.write(message.toString());
         }
       }
     });
