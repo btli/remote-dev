@@ -67,7 +67,17 @@ export async function validateAccessJWT(
       audience: CF_ACCESS_AUD,
       issuer: `https://${CF_ACCESS_TEAM}.cloudflareaccess.com`,
     });
-    if (typeof payload.email !== "string" || typeof payload.sub !== "string") {
+    // A verified token can still be a non-identity service token
+    // (CF-Access-Client-Id/Secret): it carries `common_name` and NO `email`. It
+    // clears the edge but must never mint a user session — return null so callers
+    // fall through to OIDC / the local-dev admin path instead of resolving a user
+    // with an empty email. (This module runs in the Edge proxy boundary, so it
+    // mirrors the root app's console-free, silent-null convention here.)
+    if (
+      typeof payload.email !== "string" ||
+      payload.email.length === 0 ||
+      typeof payload.sub !== "string"
+    ) {
       return null;
     }
     return {

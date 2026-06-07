@@ -55,6 +55,13 @@ export async function validateAccessJWT(
       // Decode without verification for local development (Edge-compatible)
       const [, payloadBase64] = token.split(".");
       const payload = JSON.parse(atob(payloadBase64.replace(/-/g, "+").replace(/_/g, "/")));
+      // Service-token (non-identity) JWTs carry `common_name` and no `email`.
+      // They get you PAST the edge but must never mint a user session — let the
+      // caller fall through to API key / NextAuth instead.
+      if (typeof payload.email !== "string" || payload.email.length === 0) {
+        console.warn("[CloudflareAccess] Non-identity (service) token ignored for user auth");
+        return null;
+      }
       return {
         email: payload.email,
         sub: payload.sub,
@@ -78,8 +85,18 @@ export async function validateAccessJWT(
       issuer: `https://${CF_ACCESS_TEAM}.cloudflareaccess.com`,
     });
 
+    // A verified JWT can still be a service token (CF-Access-Client-Id/Secret):
+    // it carries `common_name` (the token's client id) and NO `email` claim. Such
+    // a token gets you PAST the edge but must never mint a user session — let the
+    // caller fall through to API key / NextAuth instead of returning a user with
+    // an undefined email (which would crash downstream DB lookups).
+    if (typeof payload.email !== "string" || payload.email.length === 0) {
+      console.warn("[CloudflareAccess] Non-identity (service) token ignored for user auth");
+      return null;
+    }
+
     return {
-      email: payload.email as string,
+      email: payload.email,
       sub: payload.sub as string,
       country: payload.country as string | undefined,
     };
