@@ -243,17 +243,7 @@ export async function createSessionWithDedupFlag(
     }
   }
 
-  // Build a partial session stub for the plugin to introspect if needed.
   const isAgentTerminal = terminalType === "agent" || terminalType === "loop";
-  const pluginSessionStub: Partial<TerminalSession> = {
-    id: sessionId,
-    userId,
-    name: input.name,
-    projectId: input.projectId,
-    profileId: input.profileId ?? null,
-    terminalType,
-    agentProvider: isAgentTerminal ? (input.agentProvider ?? "claude") : null,
-  };
 
   // Pre-resolve folder/user preferences so we can layer in per-provider
   // agentProviderSettings below. The legacy folder-level `startupCommand`
@@ -302,6 +292,22 @@ export async function createSessionWithDedupFlag(
         input.allowDangerousFlags ?? effectiveSettings.allowDangerous ?? false;
     }
   }
+
+  // Build a partial session stub for the plugin to introspect if needed.
+  // Constructed AFTER the merge so the provider exposed to server plugins
+  // matches what actually launches — `mergedAgentProvider` (input → folder/user
+  // default → "claude"), not the raw (possibly absent) `input.agentProvider`.
+  // The stub's only consumer is `plugin.createSession(pluginInput, …)` below,
+  // which runs after this point. (remote-dev-u02r, codex finding 2)
+  const pluginSessionStub: Partial<TerminalSession> = {
+    id: sessionId,
+    userId,
+    name: input.name,
+    projectId: input.projectId,
+    profileId: input.profileId ?? null,
+    terminalType,
+    agentProvider: isAgentTerminal ? (mergedAgentProvider ?? "claude") : null,
+  };
 
   // Pass to the plugin via a mutated input copy so agent-style plugins see
   // the merged provider/flags/allowDangerous. Non-agent plugins ignore the
@@ -944,6 +950,16 @@ export async function createSessionWithDedupFlag(
         // worktree the loser may have created. Currently unreachable in
         // practice (createWorktree sessions don't combine with scopeKey dedup),
         // but hardened to stay correct if they ever do. (remote-dev-u02r)
+        //
+        // SAFETY (codex finding 1): in a `scopeKey + createWorktree` race, the
+        // loser can be handed the WINNER's worktree path — `createBranchWithWorktree`
+        // in worktree-service reuses an existing valid worktree when `git worktree
+        // add` fails and the target path is already a git repo (see "If the target
+        // path already exists as a valid git worktree, reuse it", ~line 466-471).
+        // Force-removing that path would destroy the winner's ACTIVE worktree, so
+        // skip removal when the winner row already points at the same path. The
+        // session row stores the working path in `projectPath` (DB insert:
+        // `projectPath: workingPath ?? null`).
         const raceCleanup: Promise<void>[] = [
           TmuxService.killSession(tmuxSessionName).catch(() => {
             log.error("Failed to clean up orphaned tmux after race", {
@@ -951,7 +967,12 @@ export async function createSessionWithDedupFlag(
             });
           }),
         ];
-        if (createdWorktree && repoPath && workingPath) {
+        if (
+          createdWorktree &&
+          repoPath &&
+          workingPath &&
+          existingAfterRace[0].projectPath !== workingPath
+        ) {
           raceCleanup.push(
             WorktreeService.removeWorktree(repoPath, workingPath, true)
               .then(() => {}) // Discard result to match Promise<void> type
