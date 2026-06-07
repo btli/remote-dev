@@ -53,13 +53,30 @@ async function tmuxPanePid(tmuxSessionName: string): Promise<number | null> {
   }
 }
 
+/** Minimal candidate row shape used by both reconciliation passes. */
+interface LivenessCandidate {
+  id: string;
+  name: string;
+  userId: string;
+  tmuxSessionName: string;
+  agentActivityStatus: string | null;
+}
+
+const CANDIDATE_COLUMNS = {
+  id: true,
+  name: true,
+  userId: true,
+  tmuxSessionName: true,
+  agentActivityStatus: true,
+} as const;
+
 /**
- * One reconciliation pass. Clears stale alive-state sessions whose agent process
- * is dead, emitting exactly one agent_stuck (error) notification per transition.
- * Returns the number of sessions cleared.
+ * First pass: ACTIVE sessions stuck in an alive-ish state whose agent process is
+ * dead → mark exited + emit exactly one agent_stuck (error) notification per
+ * transition (the user is presumably looking at / cares about active sessions).
  */
-export async function reconcileLiveness(): Promise<number> {
-  const candidates = await db.query.terminalSessions.findMany({
+async function reconcileActiveSessions(): Promise<number> {
+  const candidates: LivenessCandidate[] = await db.query.terminalSessions.findMany({
     where: and(
       eq(terminalSessions.status, "active"),
       inArray(terminalSessions.agentActivityStatus, [...ALIVE_STATES]),
@@ -68,13 +85,7 @@ export async function reconcileLiveness(): Promise<number> {
       // missing session and emit a false agent_stuck.
       ne(terminalSessions.agentExitState, "restarting"),
     ),
-    columns: {
-      id: true,
-      name: true,
-      userId: true,
-      tmuxSessionName: true,
-      agentActivityStatus: true,
-    },
+    columns: CANDIDATE_COLUMNS,
   });
 
   let cleared = 0;
@@ -108,6 +119,66 @@ export async function reconcileLiveness(): Promise<number> {
       prevStatus: s.agentActivityStatus,
     });
   }
-  if (cleared > 0) log.info("Liveness sweep cleared sessions", { cleared });
+  return cleared;
+}
+
+/**
+ * [remote-dev-5xpc] Second pass: SUSPENDED sessions stuck in an alive-ish state
+ * whose agent process is dead → clear the status SILENTLY (no agent_stuck
+ * notification). Suspended sessions are backgrounded; the DB snapshot on
+ * 2026-06-07 showed them keeping a stale running/subagent forever because the
+ * sweep only looked at active rows. Suppressing the notification avoids the y5ch
+ * notification-spam anti-goal for sessions the user isn't watching.
+ *
+ * NOTE: a suspended session whose process is ALIVE is legitimately a live agent
+ * running in the background (resume() no longer wipes its status, remote-dev-3m5s)
+ * — left untouched so the sidebar shows it as active.
+ */
+async function reconcileSuspendedSessions(): Promise<number> {
+  const candidates: LivenessCandidate[] = await db.query.terminalSessions.findMany({
+    where: and(
+      eq(terminalSessions.status, "suspended"),
+      inArray(terminalSessions.agentActivityStatus, [...ALIVE_STATES]),
+      ne(terminalSessions.agentExitState, "restarting"),
+    ),
+    columns: CANDIDATE_COLUMNS,
+  });
+
+  let cleared = 0;
+  for (const s of candidates) {
+    const pid = await tmuxPanePid(s.tmuxSessionName);
+    const alive = pid != null && pidAlive(pid);
+    if (alive) continue;
+
+    // Dead background agent → clear to idle silently (no notification).
+    await db
+      .update(terminalSessions)
+      .set({ agentActivityStatus: "idle", agentExitState: "exited" })
+      .where(eq(terminalSessions.id, s.id));
+    cleared++;
+    log.debug("Cleared stale suspended agent session (silent)", {
+      sessionId: s.id,
+      prevStatus: s.agentActivityStatus,
+    });
+  }
+  return cleared;
+}
+
+/**
+ * One reconciliation pass over BOTH active and suspended sessions. Active
+ * sessions notify on a dead agent (agent_stuck); suspended sessions are cleared
+ * silently. Returns the total number of sessions cleared across both passes.
+ */
+export async function reconcileLiveness(): Promise<number> {
+  const activeCleared = await reconcileActiveSessions();
+  const suspendedCleared = await reconcileSuspendedSessions();
+  const cleared = activeCleared + suspendedCleared;
+  if (cleared > 0) {
+    log.info("Liveness sweep cleared sessions", {
+      cleared,
+      active: activeCleared,
+      suspended: suspendedCleared,
+    });
+  }
   return cleared;
 }
