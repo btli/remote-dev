@@ -29,6 +29,12 @@ enum AgentActivityStatus {
   idle,
   @JsonValue('error')
   error,
+  @JsonValue('subagent')
+  subagent,
+  @JsonValue('compacting')
+  compacting,
+  @JsonValue('ended')
+  ended,
   none,
 }
 

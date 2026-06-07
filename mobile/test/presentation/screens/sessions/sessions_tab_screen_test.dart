@@ -134,6 +134,27 @@ void main() {
     expect(pipFinder, findsOneWidget);
   });
 
+  testWidgets('renders subagent activity pip in violet', (tester) async {
+    when(() => api.list()).thenAnswer(
+      (_) async => [
+        _session(activity: AgentActivityStatus.subagent),
+      ],
+    );
+
+    await tester.pumpWidget(_wrap(api: api));
+    await tester.pumpAndSettle();
+
+    // Subagent pip renders a circular Container with the Tokyo Night purple.
+    final pipFinder = find.byWidgetPredicate((w) {
+      if (w is! Container) return false;
+      final dec = w.decoration;
+      if (dec is! BoxDecoration) return false;
+      return dec.shape == BoxShape.circle &&
+          dec.color == const Color(0xFFBB9AF7);
+    });
+    expect(pipFinder, findsOneWidget);
+  });
+
   testWidgets('shows error view + retry on failure', (tester) async {
     when(() => api.list()).thenThrow(Exception('boom'));
 

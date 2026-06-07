@@ -130,6 +130,28 @@ void main() {
     expect(find.text('remote-fix'), findsOneWidget);
   });
 
+  testWidgets('renders subagent activity pip in violet', (tester) async {
+    when(apiA.list).thenAnswer(
+      (_) async => [
+        sess('s1', 'feature', activity: AgentActivityStatus.subagent),
+      ],
+    );
+
+    await tester.pumpWidget(harness());
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    // Current workspace (A) is expanded → its subagent session pip is shown.
+    final pipFinder = find.byWidgetPredicate((w) {
+      if (w is! Container) return false;
+      final dec = w.decoration;
+      if (dec is! BoxDecoration) return false;
+      return dec.shape == BoxShape.circle &&
+          dec.color == const Color(0xFFBB9AF7);
+    });
+    expect(pipFinder, findsOneWidget);
+  });
+
   testWidgets('tapping a session returns its switch target', (tester) async {
     SessionSwitchTarget? result;
     await tester.pumpWidget(harness(onResult: (t) => result = t));
