@@ -25,6 +25,9 @@ import type { SessionRepository } from "@/application/ports/SessionRepository";
 import type { TmuxGateway } from "@/application/ports/TmuxGateway";
 import { EntityNotFoundError } from "@/domain/errors/DomainError";
 import type { TerminalType } from "@/types/terminal-type";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("SessionService");
 
 export interface ResumeSessionInput {
   sessionId: string;
@@ -75,7 +78,13 @@ export class ResumeSessionUseCase {
     // sessions that never had a tmux session to begin with.
     if (!isTmuxBacked) {
       const resumedSession = session.resume();
-      return this.sessionRepository.save(resumedSession);
+      const saved = await this.sessionRepository.save(resumedSession);
+      log.info("Session resumed", {
+        sessionId: input.sessionId,
+        name: saved.name,
+        trigger: "ResumeSessionUseCase",
+      });
+      return saved;
     }
 
     // Tmux-backed: verify the tmux session still exists before we claim
@@ -96,7 +105,16 @@ export class ResumeSessionUseCase {
     const resumedSession = session.resume();
 
     // Persist state change
-    return this.sessionRepository.save(resumedSession);
+    const saved = await this.sessionRepository.save(resumedSession);
+
+    // Audit trail for lifecycle transitions (smwq): one INFO line per resume.
+    log.info("Session resumed", {
+      sessionId: input.sessionId,
+      name: saved.name,
+      trigger: "ResumeSessionUseCase",
+    });
+
+    return saved;
   }
 }
 

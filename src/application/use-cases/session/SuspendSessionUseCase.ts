@@ -8,6 +8,9 @@ import type { Session } from "@/domain/entities/Session";
 import type { SessionRepository } from "@/application/ports/SessionRepository";
 import type { TmuxGateway } from "@/application/ports/TmuxGateway";
 import { EntityNotFoundError } from "@/domain/errors/DomainError";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("SessionService");
 
 export interface SuspendSessionInput {
   sessionId: string;
@@ -38,6 +41,16 @@ export class SuspendSessionUseCase {
     await this.tmuxGateway.detachSession(session.tmuxSessionName.toString());
 
     // Persist state change
-    return this.sessionRepository.save(suspendedSession);
+    const saved = await this.sessionRepository.save(suspendedSession);
+
+    // Audit trail for lifecycle transitions (smwq): one INFO line per suspend
+    // so status debugging has a record. State changes are info-level.
+    log.info("Session suspended", {
+      sessionId: input.sessionId,
+      name: saved.name,
+      trigger: "SuspendSessionUseCase",
+    });
+
+    return saved;
   }
 }
