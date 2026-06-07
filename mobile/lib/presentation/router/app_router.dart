@@ -27,6 +27,22 @@ import '../screens/webview_host/reauth_screen.dart';
 import '../screens/webview_host/session_route_host.dart';
 import 'app_route.dart';
 
+/// App-wide [RouteObserver] for `RouteAware` subscribers.
+///
+/// Registered in the [GoRouter]'s `observers:` list so screens can learn when
+/// a route stacked ON TOP of them is popped (`didPopNext`). The session view
+/// uses this to `refit()` the embedded terminal when the user returns from a
+/// pushed route (Recordings / Settings) — inside a platform WebView that
+/// pop-back emits no page-level resize signal, so the grid would otherwise
+/// stay stale until the next pinch (remote-dev-u5q5.2).
+///
+/// Typed `ModalRoute<void>` so it matches the `MaterialPage`-backed routes
+/// GoRouter builds (their result type is `void`), which is what lets a
+/// `RouteAware` widget subscribe via `routeObserver.subscribe(this,
+/// ModalRoute.of(context)!)`.
+final RouteObserver<ModalRoute<void>> routeObserver =
+    RouteObserver<ModalRoute<void>>();
+
 /// FCM token registrar wired against the app's PushPort + HostWorkspaceStore +
 /// MobileCredentialsStore + workspace API-client factory. Default impl throws —
 /// `main.dart` overrides this in the `ProviderScope` after Firebase is
@@ -130,6 +146,10 @@ class AppRouter {
   GoRouter _buildRouter() {
     return GoRouter(
       initialLocation: const ServerPickerRoute().toPath(),
+      // Drives `RouteAware.didPopNext` for the session view's terminal refit
+      // on route pop-back (remote-dev-u5q5.2). GoRouter forwards this list to
+      // the underlying root Navigator.
+      observers: [routeObserver],
       // The system-browser CF Access login (see MobileCallbackLoginLauncher)
       // returns to the app via `remotedev://auth/callback?...`. The OS
       // Flutter engine forwards that URI to MaterialApp.router's route

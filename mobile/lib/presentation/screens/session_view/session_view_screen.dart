@@ -16,6 +16,7 @@ import '../../../infrastructure/url/workspace_urls.dart';
 import '../../../infrastructure/webview/bridge_controller.dart';
 import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
+import '../../router/app_router.dart' show routeObserver;
 import '../sessions/sessions_tab_screen.dart' show sessionsApiProvider;
 import '../server_picker/server_picker_screen.dart'
     show serverPickerDataProvider;
@@ -51,6 +52,13 @@ import 'smart_key_strip.dart';
 /// (Spec §2.2 rule 2). The WebView shrinks to track the keyboard inset so
 /// xterm.js sees a viewport resize and tmux reflows its grid; the chrome
 /// floats above the keyboard via `Stack + Positioned`.
+///
+/// The state is also a `WidgetsBindingObserver` + `RouteAware`: it refits the
+/// embedded terminal on app resume (gated on the session route being current,
+/// so a covered/off-screen session never steals primary) and on route pop-back
+/// (returning from a route stacked on top). A platform WebView emits no
+/// page-level resize signal on those edges, so without this the xterm.js grid
+/// would stay stale until the next pinch (remote-dev-u5q5.2).
 class SessionViewScreen extends ConsumerStatefulWidget {
   const SessionViewScreen({
     required this.sessionId,
@@ -72,7 +80,8 @@ class SessionViewScreen extends ConsumerStatefulWidget {
   ConsumerState<SessionViewScreen> createState() => _SessionViewScreenState();
 }
 
-class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
+class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
+    with WidgetsBindingObserver, RouteAware {
   BridgeController? _bridge;
 
   /// The live in-session activity status driving the status-bar pip. Seeded in
@@ -98,7 +107,61 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
     if (seeded != null) {
       _activity = seeded.toSessionActivity();
     }
+    // Observe app lifecycle so we can refit the terminal on resume — a
+    // backgrounded platform WebView emits no page-level resize signal, so
+    // xterm.js wouldn't otherwise re-measure when the app returns to the
+    // foreground (remote-dev-u5q5.2).
+    WidgetsBinding.instance.addObserver(this);
     _resolveSessionName();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Subscribe to the app-wide RouteObserver so `didPopNext` fires when a
+    // route pushed on top of the session (Recordings / Settings) is popped,
+    // letting us refit the terminal that was covered while unfocused.
+    final route = ModalRoute.of(context);
+    if (route is ModalRoute<void>) {
+      routeObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void dispose() {
+    routeObserver.unsubscribe(this);
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // On return to the foreground, force the embedded terminal to re-measure
+    // + re-fit. The bridge call is guarded + queued (no-op pre-ready / on
+    // older bridge builds).
+    //
+    // Gate on route currency: a covered session route (one with Recordings /
+    // Appearance pushed ON TOP) stays MOUNTED, so this observer still fires on
+    // resume. Refitting + focus-signaling an OFF-SCREEN WebView would re-elect
+    // it as the primary tmux client and steal primary from whatever surface
+    // the user is actually looking at. Only the current (top-of-stack) route
+    // should refit on resume; the covered→uncovered transition is handled
+    // separately by [didPopNext] when the covering route is popped
+    // (remote-dev-u5q5.2).
+    if (state == AppLifecycleState.resumed &&
+        mounted &&
+        (ModalRoute.of(context)?.isCurrent ?? false)) {
+      _bridge?.refit();
+    }
+  }
+
+  @override
+  void didPopNext() {
+    // A route that was stacked on top of this session has just been popped,
+    // so the session view is visible again. Refit the terminal in case the
+    // grid went stale (or another tmux client resized it) while it was
+    // covered (remote-dev-u5q5.2).
+    _bridge?.refit();
   }
 
   /// Resolves the session's display name for the header.

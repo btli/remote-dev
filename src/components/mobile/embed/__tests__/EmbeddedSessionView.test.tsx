@@ -18,6 +18,7 @@ import { EmbeddedSessionView } from "../EmbeddedSessionView";
 // against the actual instance the component held in its ref.
 let sendInputSpy: ReturnType<typeof vi.fn>;
 let scrollToBottomSpy: ReturnType<typeof vi.fn>;
+let refitSpy: ReturnType<typeof vi.fn>;
 let restartAgentSpy: ReturnType<typeof vi.fn>;
 
 // Captured props handed to the mocked TerminalWithKeyboard. Refs to the
@@ -59,6 +60,7 @@ vi.mock("@/components/terminal/TerminalWithKeyboard", async () => {
     {
       sendInput: (s: string) => void;
       scrollToBottom: () => void;
+      refit: () => void;
       focus: () => void;
       restartAgent: () => void;
       openSearch: () => void;
@@ -70,6 +72,7 @@ vi.mock("@/components/terminal/TerminalWithKeyboard", async () => {
     React.useImperativeHandle(ref, () => ({
       sendInput: sendInputSpy as unknown as (s: string) => void,
       scrollToBottom: scrollToBottomSpy as unknown as () => void,
+      refit: refitSpy as unknown as () => void,
       focus: vi.fn() as unknown as () => void,
       restartAgent: restartAgentSpy as unknown as () => void,
       openSearch: openSearchSpy as unknown as () => void,
@@ -164,6 +167,7 @@ const session = {
 beforeEach(() => {
   sendInputSpy = vi.fn();
   scrollToBottomSpy = vi.fn();
+  refitSpy = vi.fn();
   restartAgentSpy = vi.fn();
   openSearchSpy = vi.fn();
   closeSearchSpy = vi.fn();
@@ -200,9 +204,20 @@ describe("EmbeddedSessionView", () => {
     render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
 
     expect(window.rdvBridge).toBeDefined();
-    // v2 added uploadImage + openSearch / closeSearch; v3 extended the
-    // onActivity payload union + made the embed emit onActivity.
-    expect(window.rdvBridge?.version).toBe(3);
+    // v2 added uploadImage + openSearch/closeSearch; v3 extended the
+    // onActivity payload union + made the embed emit onActivity; v4 added
+    // refit().
+    expect(window.rdvBridge?.version).toBe(4);
+  });
+
+  it("bridge.refit forwards to the terminal ref (v4)", () => {
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    expect(typeof window.rdvBridge?.refit).toBe("function");
+
+    window.rdvBridge?.refit();
+
+    expect(refitSpy).toHaveBeenCalledTimes(1);
   });
 
   it("bridge.openSearch / closeSearch forward to the terminal ref", () => {

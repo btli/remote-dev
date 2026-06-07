@@ -55,6 +55,8 @@ export function EmbeddedChannelView() {
       // No terminal hosted here — accept the call as a no-op.
       setCursorBlink: noop,
       scrollToBottom: noop,
+      // No xterm.js grid to re-fit — accept the v4 refit call as a no-op.
+      refit: noop,
       // Channel view has no in-WebView search overlay; native may still
       // fire the search action by mistake — absorb it as a no-op.
       openSearch: noop,

@@ -52,6 +52,8 @@ export function EmbeddedRecordingView({
       // Recording embed has no terminal to toggle — no-op.
       setCursorBlink: noop,
       scrollToBottom: noop,
+      // No xterm.js grid to re-fit — accept the v4 refit call as a no-op.
+      refit: noop,
       // Recording playback has no live SearchAddon — absorb as no-op.
       openSearch: noop,
       closeSearch: noop,

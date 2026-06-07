@@ -22,6 +22,7 @@ function makeAdapter(overrides: Partial<RdvBridgeAdapter> = {}): RdvBridgeAdapte
     setFontScale: vi.fn(),
     setCursorBlink: vi.fn(),
     scrollToBottom: vi.fn(),
+    refit: vi.fn(),
     openSearch: vi.fn(),
     closeSearch: vi.fn(),
     // back must return boolean per the bridge contract — default
@@ -146,6 +147,25 @@ describe("rdv-bridge", () => {
 
       expect(adapter.uploadImage).toHaveBeenNthCalledWith(1, bytes, "image/png");
       expect(adapter.uploadImage).toHaveBeenNthCalledWith(2, "AAAA", "image/jpeg");
+    });
+
+    it("reports bridge version 4 (refit surface)", () => {
+      installRdvBridge(makeAdapter());
+      // The native shell guards the refit() call on older builds, but the
+      // canonical current surface is v4.
+      expect(window.rdvBridge?.version).toBe(4);
+    });
+
+    it("exposes refit (bridge v4) and forwards it to the adapter", () => {
+      const adapter = makeAdapter();
+      installRdvBridge(adapter);
+
+      expect(typeof window.rdvBridge?.refit).toBe("function");
+
+      window.rdvBridge?.refit();
+      window.rdvBridge?.refit();
+
+      expect(adapter.refit).toHaveBeenCalledTimes(2);
     });
 
     it("re-installing replaces the previous adapter", () => {

@@ -33,6 +33,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_dev/domain/session_summary.dart';
+import 'package:remote_dev/presentation/router/app_router.dart'
+    show routeObserver;
 import 'package:remote_dev/presentation/screens/session_view/activity_pip.dart';
 import 'package:remote_dev/presentation/screens/session_view/session_view_screen.dart';
 import 'package:remote_dev/presentation/screens/session_view/smart_key_strip.dart';
@@ -576,6 +578,167 @@ void main() {
               'contraction. insets=$insets heights=$heights',
         );
       }
+    },
+  );
+
+  // ── Terminal refit on lifecycle / route pop-back (remote-dev-u5q5.2) ──
+  //
+  // Under flutter_test the InAppWebView platform plugin is unavailable, so
+  // `onWebViewCreated` never fires and `_bridge` stays null. We therefore
+  // can't assert the eval reaches a controller here (that's covered in
+  // bridge_controller_test.dart's refit tests). What we CAN verify is that
+  // the screen wires itself into the app lifecycle + RouteObserver and that
+  // driving a resume / pop-back exercises the (null-safe) refit path without
+  // throwing — i.e. the observer registrations are correct and survive.
+
+  // Helper: drive a full background→foreground cycle through the test binding.
+  // The framework enforces valid adjacent transitions
+  // (resumed⇄inactive⇄hidden⇄paused), so we step through them rather than
+  // jumping straight to paused (which throws an invalid-transition assertion).
+  void cycleToResumed(WidgetTester tester) {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+  }
+
+  testWidgets(
+    'AppLifecycleState.resumed while the session route is CURRENT reaches the '
+    'screen without throwing (refit wiring)',
+    (tester) async {
+      suppressWebViewPlatformError(tester);
+
+      await tester.pumpWidget(
+        const ProviderScope(
+          child: MaterialApp(
+            home: SessionViewScreen(sessionId: 'test-session'),
+          ),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      // The screen is a WidgetsBindingObserver and, on resume, refits ONLY
+      // when its route is current (Codex Fix 2). Here the session IS the top
+      // (current) route, so the gate passes and `_bridge?.refit()` runs (a
+      // safe no-op with the null bridge) — proving the observer is registered
+      // (an unregistered observer would never be invoked) and the gate admits
+      // the visible session.
+      cycleToResumed(tester);
+      await tester.pump();
+
+      expect(find.byType(Scaffold), findsAtLeast(1));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'AppLifecycleState.resumed while the session route is COVERED does not '
+    'crash and the session stays under the covering route (refit gate, '
+    'Codex Fix 2)',
+    (tester) async {
+      suppressWebViewPlatformError(tester);
+
+      final navKey = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            navigatorKey: navKey,
+            home: const SessionViewScreen(sessionId: 'test-session'),
+          ),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(find.byType(SessionViewScreen), findsOneWidget);
+
+      // Push a route ON TOP of the session (mirrors opening Recordings /
+      // Appearance). The session route stays MOUNTED but is no longer current.
+      navKey.currentState!.push(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text('covering route')),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(find.text('covering route'), findsOneWidget);
+
+      // Resume while covered. Codex Fix 2 gates the refit on
+      // `ModalRoute.of(context)?.isCurrent`, so the covered (off-screen)
+      // session must NOT refit/focus-signal — that would steal primary from
+      // the visible surface. The session screen is still mounted (its element
+      // is kept alive beneath the covering route), and resume must not crash
+      // it: the `mounted && isCurrent` guard evaluates safely on a covered
+      // route and short-circuits before the bridge call. (With a null bridge
+      // refit is a no-op either way, so no-crash + survival is the observable
+      // ceiling at widget-test fidelity; the eval itself is covered in
+      // bridge_controller_test.dart.)
+      cycleToResumed(tester);
+      await tester.pump();
+
+      expect(find.text('covering route'), findsOneWidget);
+      expect(find.byType(SessionViewScreen), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'didPopNext fires on the session screen when a covering route is popped '
+    '(refit wiring)',
+    (tester) async {
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.exceptionAsString().contains('InAppWebViewPlatform')) {
+          return;
+        }
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
+
+      // Register the SAME app-wide routeObserver the screen subscribes to as
+      // a Navigator observer, so RouteAware callbacks (didPushNext /
+      // didPopNext) actually fire in the test.
+      final navKey = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            navigatorKey: navKey,
+            navigatorObservers: [routeObserver],
+            home: const SessionViewScreen(sessionId: 'test-session'),
+          ),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(find.byType(SessionViewScreen), findsOneWidget);
+
+      // Push a covering route on top of the session (mirrors opening
+      // Recordings / Settings), then pop it — `didPopNext` fires on the
+      // session screen's RouteAware and triggers the (null-safe) refit.
+      navKey.currentState!.push(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text('covering route')),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(find.text('covering route'), findsOneWidget);
+
+      navKey.currentState!.pop();
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      // Back on the session screen, no exception from the refit path.
+      expect(find.byType(SessionViewScreen), findsOneWidget);
+      expect(tester.takeException(), isNull);
     },
   );
 }

@@ -39,6 +39,25 @@ class BridgeController {
   /// Equivalent to `window.rdvBridge.scrollToBottom()`.
   void scrollToBottom() => _exec('window.rdvBridge.scrollToBottom()');
 
+  /// Equivalent to `window.rdvBridge.refit()` (bridge v4+).
+  ///
+  /// Forces the embedded terminal to re-measure its container and re-fit
+  /// the xterm.js grid, then push the fresh cols/rows to the terminal
+  /// server. Called on app resume and route pop-back, where a platform
+  /// WebView emits no page-level resize signal so the in-page resize
+  /// pipeline never runs and the grid would stay stale until the next
+  /// pinch (remote-dev-u5q5.2).
+  ///
+  /// Guarded like [uploadImage]: on any pre-v4 PWA build (v2/v3) the
+  /// `refit` method is absent, so the eval resolves to `undefined` and
+  /// silently no-ops instead of throwing.
+  void refit() {
+    _exec(
+      'window.rdvBridge && window.rdvBridge.refit'
+      ' && window.rdvBridge.refit()',
+    );
+  }
+
   /// Equivalent to `window.rdvBridge.paste(text)`.
   void paste(String text) => _exec('window.rdvBridge.paste(${_q(text)})');
 
