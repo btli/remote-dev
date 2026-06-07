@@ -10,6 +10,9 @@
 //     in-session breaker, the replay falls back to the CF cookie (no service
 //     headers), subsequent requests skip the token, and the breaker resets
 //     when the stored pair changes (finding 1)
+//   - idempotent cookie composition across replays: each cookie name appears
+//     exactly once on the replay, the refreshed CF value (not a stale
+//     duplicate) rides, and an upstream-set Cookie survives both passes
 import 'dart:io' show HttpHeaders;
 import 'dart:typed_data';
 
@@ -74,6 +77,18 @@ ResponseBody _json200() => ResponseBody.fromString(
 
 const _cfLoginRedirect =
     'https://joyfulhouse.cloudflareaccess.com/cdn-cgi/access/login/x';
+
+/// Count how many times a cookie [name] appears in a `Cookie` header value
+/// (`a=1; b=2; a=3` → name `a` → 2). Used to prove composition is idempotent
+/// across replays (no duplicate `name=` segments).
+int _cookieNameCount(String? cookieHeader, String name) {
+  if (cookieHeader == null || cookieHeader.isEmpty) return 0;
+  return cookieHeader
+      .split(';')
+      .map((p) => p.trim())
+      .where((p) => p == name || p.startsWith('$name='))
+      .length;
+}
 
 void main() {
   setUpAll(() {
@@ -353,6 +368,130 @@ void main() {
           replay['cookie'],
           contains('__Secure-next-auth.session-token=oidc'),
         );
+        // Idempotent composition (last code fix): each cookie name appears
+        // EXACTLY once on the replay — no `sess=x; sess=x` duplication from the
+        // reused RequestOptions whose Cookie header already held pass 1's value.
+        final replayCookie = replay['cookie'] as String;
+        expect(_cookieNameCount(replayCookie, 'CF_Authorization'), 1);
+        expect(
+          _cookieNameCount(replayCookie, '__Secure-next-auth.session-token'),
+          1,
+        );
+      },
+    );
+
+    test(
+      'when refresh UPDATES the CF cookie value, the replay sends the FRESH '
+      'value exactly once (no stale duplicate shadowing it)',
+      () async {
+        final dio = Dio();
+        final adapter = _SeqAdapter((options, idx) {
+          if (idx == 0) return _redirect302(_cfLoginRedirect);
+          return _json200();
+        });
+        dio.httpClientAdapter = adapter;
+
+        // The harvested CF cookie is refreshed mid-flight: the original pass
+        // sends the STALE value; after the 302, refresh persists a FRESH value
+        // and the replay's authReader returns it. With naive append the replay
+        // header would be `CF_Authorization=stale; CF_Authorization=fresh` and
+        // the server would honour the stale FIRST occurrence → fail. Idempotent
+        // composition rebuilds from the (empty) upstream base, so only the fresh
+        // value rides, exactly once.
+        var cfValue = 'stale-jwt';
+        dio.interceptors.add(
+          CfAuthInterceptor(
+            dio: dio,
+            serverId: 'host-1',
+            authReader: (_) async => AuthMaterial(
+              cookies: [
+                AuthCookie(
+                  name: 'CF_Authorization',
+                  value: cfValue,
+                  path: '/',
+                ),
+              ],
+            ),
+            refreshAuth: (_) async {
+              cfValue = 'fresh-jwt'; // refresh updated the stored cookie
+              return const AuthMaterial(
+                cookies: [
+                  AuthCookie(
+                    name: 'CF_Authorization',
+                    value: 'fresh-jwt',
+                    path: '/',
+                  ),
+                ],
+              );
+            },
+            onReauthNeeded: () => fail('refresh succeeds → no interactive path'),
+          ),
+        );
+
+        final response = await dio.get<dynamic>('/api/sessions');
+        expect(response.statusCode, 200);
+        expect(adapter.captured.length, 2);
+
+        // Original pass carried the stale value.
+        expect(adapter.capturedHeaders[0]['cookie'], 'CF_Authorization=stale-jwt');
+
+        // Replay: the FRESH value, exactly once, with NO stale duplicate.
+        final replayCookie = adapter.capturedHeaders[1]['cookie'] as String;
+        expect(replayCookie, contains('CF_Authorization=fresh-jwt'));
+        expect(replayCookie, isNot(contains('stale-jwt')));
+        expect(_cookieNameCount(replayCookie, 'CF_Authorization'), 1);
+      },
+    );
+
+    test(
+      'an upstream-set Cookie header (set before the interceptor) survives both '
+      'passes exactly once',
+      () async {
+        final dio = Dio();
+        final adapter = _SeqAdapter((options, idx) {
+          if (idx == 0) return _redirect302(_cfLoginRedirect);
+          return _json200();
+        });
+        dio.httpClientAdapter = adapter;
+
+        // An interceptor added BEFORE CfAuthInterceptor sets an upstream cookie.
+        dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              options.headers['Cookie'] = 'upstream=keep';
+              handler.next(options);
+            },
+          ),
+        );
+        dio.interceptors.add(
+          CfAuthInterceptor(
+            dio: dio,
+            serverId: 'host-1',
+            authReader: (_) async => const AuthMaterial(
+              cookies: [
+                AuthCookie(name: 'CF_Authorization', value: 'jwt', path: '/'),
+              ],
+            ),
+            refreshAuth: (_) async => const AuthMaterial(
+              cookies: [
+                AuthCookie(name: 'CF_Authorization', value: 'jwt', path: '/'),
+              ],
+            ),
+            onReauthNeeded: () {},
+          ),
+        );
+
+        final response = await dio.get<dynamic>('/api/sessions');
+        expect(response.statusCode, 200);
+
+        for (final headers in adapter.capturedHeaders) {
+          final cookie = headers['cookie'] as String;
+          // Upstream cookie preserved, exactly once, on BOTH passes…
+          expect(_cookieNameCount(cookie, 'upstream'), 1);
+          expect(cookie, contains('upstream=keep'));
+          // …and our cookie appears exactly once too.
+          expect(_cookieNameCount(cookie, 'CF_Authorization'), 1);
+        }
       },
     );
 

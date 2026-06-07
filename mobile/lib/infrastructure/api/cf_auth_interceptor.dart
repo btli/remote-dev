@@ -250,6 +250,20 @@ class CfAuthInterceptor extends Interceptor {
   static const _serviceClientIdHeader = 'CF-Access-Client-Id';
   static const _serviceClientSecretHeader = 'CF-Access-Client-Secret';
 
+  /// Per-request [RequestOptions.extra] key holding the PRE-EXISTING `Cookie`
+  /// header value captured the FIRST time [onRequest] composed cookies for this
+  /// request (the empty string when there was none, i.e. nothing upstream set
+  /// one). Composition is then always `base (+ '; ' + ourPart)`, so it is
+  /// idempotent across the original pass and any number of refresh replays:
+  /// `dio.fetch` reuses the same RequestOptions whose `Cookie` header already
+  /// carries the previous pass's contribution, and appending blindly would
+  /// duplicate cookie names (`sess=x; sess=x; …`) — benign when values match,
+  /// but a stale FIRST occurrence shadows a refreshed value at the server and
+  /// fails the replay into the interactive path. Stamping the genuinely-upstream
+  /// base once and rebuilding from it preserves upstream cookies exactly while
+  /// keeping our contribution fresh and single.
+  static const _cookieBaseKey = 'rdv.cfAuth.cookieBase';
+
   /// Mutex so a burst of concurrent failures dedupes to a single
   /// browser launch — every caller awaits the same Completer.
   Completer<AuthMaterial?>? _refreshInFlight;
@@ -356,9 +370,23 @@ class CfAuthInterceptor extends Interceptor {
         (k) => k.toLowerCase() == HttpHeaders.cookieHeader,
         orElse: () => HttpHeaders.cookieHeader,
       );
-      final existing = options.headers[existingKey] as String?;
-      options.headers[existingKey] =
-          existing == null || existing.isEmpty ? newPart : '$existing; $newPart';
+
+      // Idempotent composition: compose from the PRE-EXISTING (genuinely
+      // upstream) Cookie value, not from whatever a prior pass wrote. On the
+      // first pass we stamp the current header (or '' if none) as the base; on
+      // a replay we reuse that stamp instead of the header `dio.fetch` carried
+      // forward — so our cookies appear exactly once with the freshest values,
+      // while any upstream cookie survives untouched. See [_cookieBaseKey].
+      final String base;
+      final stamped = options.extra[_cookieBaseKey];
+      if (stamped is String) {
+        base = stamped;
+      } else {
+        base = (options.headers[existingKey] as String?) ?? '';
+        options.extra[_cookieBaseKey] = base;
+      }
+
+      options.headers[existingKey] = base.isEmpty ? newPart : '$base; $newPart';
     }
     handler.next(options);
   }
