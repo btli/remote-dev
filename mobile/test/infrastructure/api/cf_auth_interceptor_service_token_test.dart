@@ -22,13 +22,22 @@ import 'package:remote_dev/infrastructure/api/cf_auth_interceptor.dart';
 class _MockRequestHandler extends Mock implements RequestInterceptorHandler {}
 
 /// Sequence-aware [HttpClientAdapter]: serves whatever [responder] returns and
-/// records each outbound [RequestOptions] so a test can assert the headers the
-/// interceptor produced on every call (original + replays).
+/// records each outbound request so a test can assert what the interceptor
+/// transmitted on every call (original + replays).
+///
+/// IMPORTANT: Dio reuses the SAME [RequestOptions] instance across the original
+/// request and an interceptor-driven `dio.fetch` replay, so the live [captured]
+/// objects all alias one mutable headers map — reading `captured[0].headers`
+/// after the flow shows the FINAL state, not what call 0 sent. To assert the
+/// per-call wire state we therefore snapshot a COPY of the headers map at each
+/// fetch into [capturedHeaders]; index it (not `captured[i].headers`) when a
+/// test cares what a specific call carried.
 class _SeqAdapter implements HttpClientAdapter {
   _SeqAdapter(this.responder);
 
   final ResponseBody Function(RequestOptions options, int callIndex) responder;
   final List<RequestOptions> captured = <RequestOptions>[];
+  final List<Map<String, dynamic>> capturedHeaders = <Map<String, dynamic>>[];
 
   @override
   void close({bool force = false}) {}
@@ -41,6 +50,8 @@ class _SeqAdapter implements HttpClientAdapter {
   ) async {
     final idx = captured.length;
     captured.add(options);
+    // Snapshot the headers at the moment of transmission (see class doc).
+    capturedHeaders.add(Map<String, dynamic>.from(options.headers));
     return responder(options, idx);
   }
 }
@@ -314,26 +325,32 @@ void main() {
         expect(reauthCalls, 0, reason: 'cookie-path replay recovers silently');
         expect(adapter.captured.length, 2, reason: 'original + one replay');
 
+        // Use the per-call header SNAPSHOTS (not the aliased live RequestOptions
+        // — see _SeqAdapter doc) so each assertion reflects what that specific
+        // call transmitted.
         // Original request: service headers attached, CF cookie excluded.
-        final first = adapter.captured[0];
-        expect(first.headers['CF-Access-Client-Id'], 'cid');
-        expect(first.headers['CF-Access-Client-Secret'], 'csecret');
-        expect(first.headers['cookie'], isNot(contains('CF_Authorization')));
+        final first = adapter.capturedHeaders[0];
+        expect(first['CF-Access-Client-Id'], 'cid');
+        expect(first['CF-Access-Client-Secret'], 'csecret');
+        expect(first['cookie'], isNot(contains('CF_Authorization')));
         expect(
-          first.headers['cookie'],
+          first['cookie'],
           contains('__Secure-next-auth.session-token=oidc'),
         );
 
-        // Replay: NO service headers; CF cookie now rides along for recovery.
-        final replay = adapter.captured[1];
-        expect(replay.headers.containsKey('CF-Access-Client-Id'), isFalse);
-        expect(replay.headers.containsKey('CF-Access-Client-Secret'), isFalse);
+        // Replay: the dead service headers must be GONE from the wire (finding
+        // 1 — the stale CF-Access-Client-* from the failed attempt were being
+        // resent on the "clean" cookie-path replay), and the CF cookie now
+        // rides along for recovery.
+        final replay = adapter.capturedHeaders[1];
+        expect(replay.containsKey('CF-Access-Client-Id'), isFalse);
+        expect(replay.containsKey('CF-Access-Client-Secret'), isFalse);
         expect(
-          replay.headers['cookie'],
+          replay['cookie'],
           contains('CF_Authorization=harvested-jwt'),
         );
         expect(
-          replay.headers['cookie'],
+          replay['cookie'],
           contains('__Secure-next-auth.session-token=oidc'),
         );
       },
@@ -384,13 +401,13 @@ void main() {
         // A brand-new request (own RequestOptions, no skip flag).
         await dio.get<dynamic>('/api/b');
 
-        final fresh = adapter.captured.last;
-        expect(fresh.path, '/api/b');
-        expect(fresh.headers.containsKey('CF-Access-Client-Id'), isFalse);
-        expect(fresh.headers.containsKey('CF-Access-Client-Secret'), isFalse);
+        expect(adapter.captured.last.path, '/api/b');
+        final fresh = adapter.capturedHeaders.last;
+        expect(fresh.containsKey('CF-Access-Client-Id'), isFalse);
+        expect(fresh.containsKey('CF-Access-Client-Secret'), isFalse);
         // Cookie path resumed: CF_Authorization is sent (not excluded).
         expect(
-          fresh.headers['cookie'],
+          fresh['cookie'],
           contains('CF_Authorization=harvested-jwt'),
         );
       },
@@ -445,15 +462,79 @@ void main() {
         // Next fresh request: breaker resets, new pair attached again.
         await dio.get<dynamic>('/api/b');
 
-        final fresh = adapter.captured.last;
-        expect(fresh.path, '/api/b');
-        expect(fresh.headers['CF-Access-Client-Id'], 'cid-B');
-        expect(fresh.headers['CF-Access-Client-Secret'], 'secret-B');
+        expect(adapter.captured.last.path, '/api/b');
+        final fresh = adapter.capturedHeaders.last;
+        expect(fresh['CF-Access-Client-Id'], 'cid-B');
+        expect(fresh['CF-Access-Client-Secret'], 'secret-B');
         // Service token attached again → CF_Authorization excluded once more.
         expect(
-          (fresh.headers['cookie'] as String?) ?? '',
+          (fresh['cookie'] as String?) ?? '',
           isNot(contains('CF_Authorization')),
         );
+      },
+    );
+
+    test(
+      'breaker captures the pair the request ACTUALLY sent, even if the stored '
+      'pair changed before the 302 was handled (finding 2)',
+      () async {
+        final dio = Dio();
+        // Call 0 (request A, OLD pair) → CF 302. Call 1 (replay) → 200.
+        // Call 2 (request B, NEW pair) → 200.
+        final adapter = _SeqAdapter((options, idx) {
+          if (idx == 0) return _redirect302(_cfLoginRedirect);
+          return _json200();
+        });
+        dio.httpClientAdapter = adapter;
+
+        // The user saves a NEW pair AFTER request A's headers go out but BEFORE
+        // its 302 is handled. We model that with a call-counted authReader:
+        // call #1 (A's onRequest attach) returns OLD; every later read returns
+        // NEW. The breaker must capture OLD (the pair A actually sent, stamped
+        // at attach time) — NOT NEW (which a re-read of storage at trip time
+        // would wrongly capture), so the re-saved NEW token is not suppressed.
+        var reads = 0;
+        dio.interceptors.add(
+          CfAuthInterceptor(
+            dio: dio,
+            serverId: 'host-1',
+            authReader: (_) async {
+              reads += 1;
+              final useOld = reads == 1;
+              return AuthMaterial(
+                serviceClientId: useOld ? 'cid-OLD' : 'cid-NEW',
+                serviceClientSecret: useOld ? 'secret-OLD' : 'secret-NEW',
+                cookies: const [
+                  AuthCookie(name: 'CF_Authorization', value: 'jwt', path: '/'),
+                ],
+              );
+            },
+            refreshAuth: (_) async => const AuthMaterial(
+              cookies: [
+                AuthCookie(name: 'CF_Authorization', value: 'jwt', path: '/'),
+              ],
+            ),
+            onReauthNeeded: () {},
+          ),
+        );
+
+        // Request A: attaches OLD, 302, breaker trips (on OLD), cookie replay.
+        await dio.get<dynamic>('/api/a');
+        // Request A actually carried the OLD pair on the wire.
+        expect(adapter.capturedHeaders[0]['CF-Access-Client-Id'], 'cid-OLD');
+
+        // Request B: authReader now returns NEW. Because the breaker holds OLD,
+        // NEW differs → breaker resets → NEW is attached (not suppressed).
+        await dio.get<dynamic>('/api/b');
+
+        expect(adapter.captured.last.path, '/api/b');
+        final fresh = adapter.capturedHeaders.last;
+        expect(
+          fresh['CF-Access-Client-Id'],
+          'cid-NEW',
+          reason: 're-saved token must NOT be suppressed by the breaker',
+        );
+        expect(fresh['CF-Access-Client-Secret'], 'secret-NEW');
       },
     );
   });

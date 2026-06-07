@@ -233,6 +233,23 @@ class CfAuthInterceptor extends Interceptor {
   /// the request with the service token suppressed.
   static const _serviceHeadersAttachedKey = 'rdv.cfAuth.serviceHeadersAttached';
 
+  /// Per-request [RequestOptions.extra] key holding the exact `(clientId,
+  /// clientSecret)` pair [onRequest] attached to THIS request. On a CF auth
+  /// failure [onError] trips the breaker with this request-local pair rather
+  /// than re-reading storage — otherwise a token the user re-saved between the
+  /// request going out and its 302 being handled would be recorded as the
+  /// "failed" pair and wrongly suppressed.
+  ///
+  /// SECURITY: the values it holds are the SAME strings already present in this
+  /// in-memory request's `headers` map, so stamping them here adds no new
+  /// exposure. They are NEVER logged.
+  static const _attachedServicePairKey = 'rdv.cfAuth.attachedServicePair';
+
+  /// HTTP header names for the CF Access service-token pair. Centralised so the
+  /// attach path and the stale-header scrub agree on exact spelling.
+  static const _serviceClientIdHeader = 'CF-Access-Client-Id';
+  static const _serviceClientSecretHeader = 'CF-Access-Client-Secret';
+
   /// Mutex so a burst of concurrent failures dedupes to a single
   /// browser launch — every caller awaits the same Completer.
   Completer<AuthMaterial?>? _refreshInFlight;
@@ -303,15 +320,28 @@ class CfAuthInterceptor extends Interceptor {
     // cookie. SECURITY: only a boolean "present" fact is ever logged below —
     // never the values.
     if (useServiceToken) {
-      options.headers['CF-Access-Client-Id'] = material.serviceClientId;
-      options.headers['CF-Access-Client-Secret'] = material.serviceClientSecret;
+      options.headers[_serviceClientIdHeader] = material.serviceClientId;
+      options.headers[_serviceClientSecretHeader] = material.serviceClientSecret;
       // Record that service headers rode on this request so [onError] can,
-      // on a CF auth failure, trip the breaker and replay without them.
+      // on a CF auth failure, trip the breaker and replay without them — and
+      // stamp the exact pair so the breaker captures THIS request's creds, not
+      // whatever storage holds by the time the 302 is handled.
       options.extra[_serviceHeadersAttachedKey] = true;
+      options.extra[_attachedServicePairKey] =
+          <String>[material.serviceClientId!, material.serviceClientSecret!];
       // Host-only, boolean-only breadcrumb to aid on-device validation. Must
       // NOT include either credential value (the id is the public half, but we
       // keep the log minimal and value-free on principle).
       debugPrint('[CfAuth] service token attached for $serverId');
+    } else {
+      // The effective decision is "no service token" — either it was never
+      // present, or it is suppressed (refresh replay / tripped breaker). Scrub
+      // any stale service headers left on this request object. This matters on
+      // a replay: `dio.fetch` reuses the SAME RequestOptions, whose headers map
+      // still carries the `CF-Access-Client-*` pair from the failed attempt; if
+      // we didn't remove them the "clean" cookie-path replay would still send
+      // the dead headers and 302 again, killing recovery.
+      _removeServiceHeaders(options);
     }
 
     final effectiveCookies = material._cookiesFor(includeServiceToken: useServiceToken);
@@ -349,13 +379,25 @@ class CfAuthInterceptor extends Interceptor {
     // browser-refresh flash), and mark THIS request to be replayed without it
     // so the refresh below can recover via the freshly-harvested CF cookie.
     if (err.requestOptions.extra[_serviceHeadersAttachedKey] == true) {
-      await _tripServiceTokenBreaker();
+      // Trip with the pair THIS request actually sent (stamped at attach time),
+      // not whatever storage holds now — the user may have re-saved the token
+      // between the request going out and this 302 being handled.
+      _tripServiceTokenBreaker(
+        err.requestOptions.extra[_attachedServicePairKey],
+      );
       err.requestOptions.extra[_skipServiceTokenKey] = true;
+      // Physically strip the dead service headers from the reused
+      // RequestOptions so the replay's `dio.fetch` doesn't resend them. The
+      // skip flag makes onRequest avoid re-attaching them and also scrub
+      // defensively, but remove them here too so the request is clean even if
+      // a future change bypasses that path.
+      _removeServiceHeaders(err.requestOptions);
       // Allow this request one more retry on the cookie path even if it was
       // already retried once with the (bad) service token — the service-token
       // attempt and the cookie attempt are distinct credentials.
       err.requestOptions.extra.remove(_retrySentinelKey);
       err.requestOptions.extra.remove(_serviceHeadersAttachedKey);
+      err.requestOptions.extra.remove(_attachedServicePairKey);
     }
 
     // Sentinel guard: this request was already retried once with a
@@ -448,16 +490,28 @@ class CfAuthInterceptor extends Interceptor {
   }
 
   /// Trip the in-session service-token breaker, capturing the exact pair that
-  /// just failed at the edge so a later DIFFERENT pair (user re-saved the
-  /// token) resets it. Idempotent: re-reading the same pair leaves it tripped.
+  /// the failed request carried — passed in from [RequestOptions.extra] (the
+  /// [_attachedServicePairKey] stamp) so it is THIS request's creds, not a pair
+  /// the user may have re-saved in the meantime. A later DIFFERENT pair (the
+  /// re-saved token) then resets the breaker in [onRequest]. Idempotent:
+  /// tripping again with the same pair leaves it tripped.
+  ///
+  /// [attachedPair] is the `dynamic` value read straight from the extra map; it
+  /// is expected to be the `<String>[clientId, clientSecret]` list stamped at
+  /// attach time. Anything else (absent / wrong shape) just trips the breaker
+  /// without a captured pair — still safe (suppresses the token until the next
+  /// app restart or a successful different-pair attach).
   ///
   /// SECURITY: the captured pair is held in memory only and is NEVER logged.
-  Future<void> _tripServiceTokenBreaker() async {
-    final material = await authReader(serverId);
+  void _tripServiceTokenBreaker(Object? attachedPair) {
     _serviceTokenBreakerTripped = true;
-    if (material.hasServiceToken) {
-      _breakerClientId = material.serviceClientId;
-      _breakerClientSecret = material.serviceClientSecret;
+    if (attachedPair is List && attachedPair.length == 2) {
+      final id = attachedPair[0];
+      final secret = attachedPair[1];
+      if (id is String && secret is String) {
+        _breakerClientId = id;
+        _breakerClientSecret = secret;
+      }
     }
   }
 
@@ -466,6 +520,19 @@ class CfAuthInterceptor extends Interceptor {
     _serviceTokenBreakerTripped = false;
     _breakerClientId = null;
     _breakerClientSecret = null;
+  }
+
+  /// Remove both `CF-Access-Client-*` headers from [options], matching the key
+  /// case-insensitively (Dio's headers map is case-sensitive, but an upstream
+  /// caller could conceivably have set a differently-cased variant). Used to
+  /// scrub a revoked service token off a request before it is replayed on the
+  /// cookie path.
+  void _removeServiceHeaders(RequestOptions options) {
+    final targets = <String>{
+      _serviceClientIdHeader.toLowerCase(),
+      _serviceClientSecretHeader.toLowerCase(),
+    };
+    options.headers.removeWhere((k, _) => targets.contains(k.toLowerCase()));
   }
 
   /// Coalesces concurrent refresh calls onto a single browser launch.
