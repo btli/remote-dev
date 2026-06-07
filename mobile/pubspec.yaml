@@ -4,8 +4,11 @@ publish_to: "none"
 version: 0.3.18+1
 
 environment:
-  sdk: ">=3.4.0 <4.0.0"
-  flutter: ">=3.22.0"
+  # Lower bound raised from 3.4.0 / 3.22.0 to satisfy mobile_scanner 7.x, which
+  # requires Dart >=3.7.0 and Flutter >=3.29.0 (remote-dev-8xfo). The toolchain
+  # on CI/dev is well above this (Dart 3.11 / Flutter 3.41).
+  sdk: ">=3.7.0 <4.0.0"
+  flutter: ">=3.29.0"
 
 dependencies:
   flutter:
@@ -59,6 +62,12 @@ dependencies:
 
   # Image picker (smart-key-strip camera/gallery button -> bridge.uploadImage)
   image_picker: ^1.1.2
+
+  # QR-code scanner for credential provisioning from the web/desktop UI
+  # (remote-dev-8xfo). 7.2.0 is the latest stable on pub.dev. Its Android plugin
+  # needs minSdk >= 23; Flutter 3.41's default minSdk is 24, so no gradle change
+  # is required (we inherit flutter.minSdkVersion in android/app/build.gradle.kts).
+  mobile_scanner: ^7.2.0
 
 dev_dependencies:
   flutter_test:

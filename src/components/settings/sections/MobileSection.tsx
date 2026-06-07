@@ -1,11 +1,13 @@
 "use client";
 
-import { MobileSetupPanel } from "@/components/system";
+import { MobileSetupPanel, ServiceTokenQrPanel } from "@/components/system";
 
 export function MobileSection() {
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <MobileSetupPanel />
+      <div className="border-t border-border" />
+      <ServiceTokenQrPanel />
     </div>
   );
 }

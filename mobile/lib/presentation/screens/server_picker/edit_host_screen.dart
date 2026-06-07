@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../domain/host_config.dart';
+import '../../../domain/qr_payload.dart';
 import '../../../domain/workspace_config.dart';
+import '../scan/qr_scan_screen.dart';
 import '../webview_host/session_route_host.dart'
     show
         activeWorkspaceProvider,
@@ -25,6 +27,11 @@ class EditHostArgs {
   final HostConfig host;
   final WorkspaceConfig? workspace;
 }
+
+/// Test seam — replaces the camera scan (`QrScanScreen.push`) so the QR
+/// prefill path can be exercised in a widget test without real camera plumbing.
+/// Returns the scanned [QrPayload], or `null` if the user backed out.
+typedef QrScanLauncher = Future<QrPayload?> Function(BuildContext context);
 
 /// Edits a [HostConfig] label and, when supplied, a [WorkspaceConfig] display
 /// name. Persists via [HostWorkspaceStore.upsertHost] / `upsertWorkspace`
@@ -60,11 +67,15 @@ class EditHostScreen extends ConsumerStatefulWidget {
   const EditHostScreen({
     required this.args,
     required this.onSaved,
+    this.scanLauncher,
     super.key,
   });
 
   final EditHostArgs args;
   final VoidCallback onSaved;
+
+  /// Test seam — overrides the camera scan. Defaults to [QrScanScreen.push].
+  final QrScanLauncher? scanLauncher;
 
   @override
   ConsumerState<EditHostScreen> createState() => _EditHostScreenState();
@@ -96,6 +107,16 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
   /// the "blank secret keeps the stored pair" save branch.
   bool _hasStoredToken = false;
 
+  /// True once a scan (or any deliberate edit) has populated the service-token
+  /// fields. Belt-and-suspenders against the load/scan race: if [_loadServiceToken]
+  /// is still in flight when a scan fills the fields, the late load must NOT
+  /// overwrite the scanned Client ID with the OLD stored one (which would leave
+  /// the scanned secret paired with a stale id → a corrupted Save). Checked
+  /// before the load's `_serviceIdCtrl.text =` assignment. The Scan button is
+  /// also disabled until [_serviceTokenLoaded] so in practice the load has
+  /// usually resolved first; this flag covers the instant-after-enable case.
+  bool _serviceFieldsDirty = false;
+
   bool _saving = false;
 
   bool get _hasWorkspace => widget.args.workspace != null;
@@ -124,7 +145,11 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
     setState(() {
       _serviceTokenLoaded = true;
       _hasStoredToken = token != null;
-      if (token != null) {
+      // Only prefill the Client ID if the user/scan hasn't already touched the
+      // fields. Without this guard a late-resolving load would clobber a freshly
+      // SCANNED Client ID with the OLD stored one, leaving the scanned secret
+      // paired with a stale id (a corrupted Save). The secret is never prefilled.
+      if (token != null && !_serviceFieldsDirty) {
         _serviceIdCtrl.text = token.clientId;
       }
     });
@@ -144,6 +169,88 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
     });
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Cloudflare service token removed')),
+    );
+  }
+
+  /// Scan a QR code and, if it carries a Cloudflare service token, PREFILL the
+  /// Client ID + Secret fields for the user to review and Save. Deliberately
+  /// does NOT persist directly — it only fills the form, so the existing
+  /// write-only Save path (`setHostServiceToken`) stays the single persistence
+  /// route and the secret field stays obscured.
+  ///
+  /// If the scanned token's `host` doesn't match this host's origin, a warning
+  /// dialog asks the user to confirm before the fields are filled (a token is
+  /// host-scoped at the Cloudflare edge, so applying one host's token to another
+  /// host would silently fail to authenticate).
+  ///
+  /// SECURITY: the confirmation SnackBar names the host + Client ID only — never
+  /// the secret — matching the `[CfAuth]` value-free breadcrumb discipline.
+  Future<void> _scanServiceToken() async {
+    final launch = widget.scanLauncher ?? QrScanScreen.push;
+    final payload = await launch(context);
+    if (!mounted || payload == null) return;
+
+    if (payload is! CfServiceTokenPayload) {
+      // A legacy server QR (or any non-service-token payload) can't be applied
+      // here — Edit Host only provisions the CF service token.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "That QR code isn't a Cloudflare service token. Scan the service-"
+            'token QR from Settings → Mobile.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    // Warn (don't block) when the token targets a different host.
+    if (!originsMatch(payload.host, widget.args.host.origin)) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          backgroundColor: const Color(0xFF24283B),
+          title: const Text(
+            'Different host',
+            style: TextStyle(color: Colors.white),
+          ),
+          content: Text(
+            'This QR code is for ${payload.host}, but this host is '
+            '${widget.args.host.origin}. Use it anyway?',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogCtx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogCtx).pop(true),
+              child: const Text('Use anyway'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || proceed != true) return;
+    }
+
+    // Prefill only — the user reviews and taps the existing Save.
+    setState(() {
+      _serviceIdCtrl.text = payload.clientId;
+      _serviceSecretCtrl.text = payload.clientSecret;
+      // Mark the fields as user-modified so a still-in-flight _loadServiceToken
+      // can't overwrite the scanned Client ID with the stored one.
+      _serviceFieldsDirty = true;
+      // Reveal nothing automatically; the secret stays obscured.
+      _secretVisible = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Scanned service token for ${payload.host} '
+          '(Client ID ${payload.clientId}). Review and Save.',
+        ),
+      ),
     );
   }
 
@@ -285,6 +392,26 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
                     : 'For hosts behind Cloudflare Access. Create under '
                         'Zero Trust → Access → Service Tokens.',
                 style: const TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+              const SizedBox(height: 8),
+              // Scan the service-token QR rendered by Settings → Mobile on the
+              // web to fill the fields below (review-and-Save; never persists
+              // directly). Disabled until the async stored-token load resolves
+              // (mirrors the Clear button) so a scan can't race _loadServiceToken
+              // and have the late load clobber the scanned Client ID.
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: (_serviceTokenLoaded && !_saving)
+                      ? _scanServiceToken
+                      : null,
+                  icon: const Icon(Icons.qr_code_scanner, size: 18),
+                  label: const Text('Scan QR'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Colors.white24),
+                  ),
+                ),
               ),
               const SizedBox(height: 12),
               TextFormField(
