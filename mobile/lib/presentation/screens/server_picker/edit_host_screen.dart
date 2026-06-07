@@ -4,7 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../domain/host_config.dart';
 import '../../../domain/workspace_config.dart';
 import '../webview_host/session_route_host.dart'
-    show activeWorkspaceProvider, hostWorkspaceStoreProvider;
+    show
+        activeWorkspaceProvider,
+        hostWorkspaceStoreProvider,
+        mobileCredentialsStoreProvider;
 import 'server_picker_screen.dart' show serverPickerDataProvider;
 
 /// `go_router` `extra` payload for the `/servers/edit` route: the host being
@@ -29,6 +32,15 @@ class EditHostArgs {
 /// sorts first), then invalidates [activeWorkspaceProvider] so the
 /// display-only shim re-derives the (possibly renamed) active label.
 ///
+/// Also edits the host's optional **Cloudflare Access service token** (the
+/// `CF-Access-Client-Id` / `CF-Access-Client-Secret` pair). This is the
+/// permanent off-LAN edge credential: when set, [MobileCredentialsStore]
+/// persists it host-wide and [CfAuthInterceptor] attaches both headers on every
+/// request so Cloudflare admits it at the edge with no session and no expiry
+/// (complementing the harvested `CF_Authorization` cookie, which expires with
+/// the CF Access session). The fields are prefilled from secure storage when
+/// editing a host that already has one; saving both blank clears the token.
+///
 /// Unlike the add-host flow this runs no health-check probe — the user already
 /// proved the host worked when they added it; a transient network hiccup
 /// shouldn't block fixing a typo in a label.
@@ -50,6 +62,17 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _labelCtrl;
   TextEditingController? _workspaceNameCtrl;
+
+  /// CF Access service-token fields. Prefilled asynchronously from secure
+  /// storage in [initState] (the read is async, so the controllers start empty
+  /// and are populated once [_loadServiceToken] resolves).
+  final _serviceIdCtrl = TextEditingController();
+  final _serviceSecretCtrl = TextEditingController();
+
+  /// Whether the secret field renders its value (false → obscured). The user's
+  /// own device/storage, so revealing is acceptable; default obscured.
+  bool _secretVisible = false;
+
   bool _saving = false;
 
   bool get _hasWorkspace => widget.args.workspace != null;
@@ -62,6 +85,20 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
     if (ws != null) {
       _workspaceNameCtrl = TextEditingController(text: ws.displayName);
     }
+    _loadServiceToken();
+  }
+
+  /// Prefill the service-token fields from secure storage. Best-effort: if the
+  /// host has no token (or the read fails) the fields simply stay empty. Guards
+  /// on [mounted] because the read is async and the screen may have been popped.
+  Future<void> _loadServiceToken() async {
+    final creds = ref.read(mobileCredentialsStoreProvider);
+    final token = await creds.getHostServiceToken(widget.args.host.id);
+    if (!mounted || token == null) return;
+    setState(() {
+      _serviceIdCtrl.text = token.clientId;
+      _serviceSecretCtrl.text = token.clientSecret;
+    });
   }
 
   Future<void> _save() async {
@@ -104,6 +141,22 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
         }
       }
 
+      // Persist the CF Access service token. Both fields filled → save the
+      // pair; both blank → clear any existing token. A half-filled pair is
+      // rejected by the form validator below, so it never reaches here.
+      final creds = ref.read(mobileCredentialsStoreProvider);
+      final clientId = _serviceIdCtrl.text.trim();
+      final clientSecret = _serviceSecretCtrl.text.trim();
+      if (clientId.isNotEmpty && clientSecret.isNotEmpty) {
+        await creds.setHostServiceToken(
+          host.id,
+          clientId: clientId,
+          clientSecret: clientSecret,
+        );
+      } else {
+        await creds.clearHostServiceToken(host.id);
+      }
+
       // Refresh both the picker list and the active-connection shim (the active
       // workspace's display name may have just changed).
       ref.invalidate(serverPickerDataProvider);
@@ -118,6 +171,8 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
   void dispose() {
     _labelCtrl.dispose();
     _workspaceNameCtrl?.dispose();
+    _serviceIdCtrl.dispose();
+    _serviceSecretCtrl.dispose();
     super.dispose();
   }
 
@@ -163,6 +218,75 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
                       (v == null || v.trim().isEmpty) ? 'Required' : null,
                 ),
               ],
+
+              // --- Cloudflare Access service token (optional) ----------------
+              const SizedBox(height: 24),
+              const Text(
+                'Cloudflare service token',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'For hosts behind Cloudflare Access. Create under '
+                'Zero Trust → Access → Service Tokens.',
+                style: TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _serviceIdCtrl,
+                style: const TextStyle(color: Colors.white),
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: const InputDecoration(
+                  labelText: 'Client ID',
+                ),
+                // Both-or-neither: a service token is only usable as a complete
+                // pair, so require the secret too when an id is given.
+                validator: (v) {
+                  final id = (v ?? '').trim();
+                  final secret = _serviceSecretCtrl.text.trim();
+                  if (id.isNotEmpty && secret.isEmpty) {
+                    return 'Enter the client secret too';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _serviceSecretCtrl,
+                style: const TextStyle(color: Colors.white),
+                autocorrect: false,
+                enableSuggestions: false,
+                obscureText: !_secretVisible,
+                decoration: InputDecoration(
+                  labelText: 'Client Secret',
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      _secretVisible
+                          ? Icons.visibility_off
+                          : Icons.visibility,
+                      color: Colors.white54,
+                    ),
+                    onPressed: () =>
+                        setState(() => _secretVisible = !_secretVisible),
+                    tooltip: _secretVisible ? 'Hide secret' : 'Show secret',
+                  ),
+                ),
+                // Both-or-neither mirror of the Client ID validator.
+                validator: (v) {
+                  final secret = (v ?? '').trim();
+                  final id = _serviceIdCtrl.text.trim();
+                  if (secret.isNotEmpty && id.isEmpty) {
+                    return 'Enter the client ID too';
+                  }
+                  return null;
+                },
+              ),
+
               const SizedBox(height: 32),
               ElevatedButton(
                 onPressed: _saving ? null : _save,

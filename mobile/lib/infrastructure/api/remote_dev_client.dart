@@ -26,8 +26,18 @@ class RemoteDevClient implements ApiClientPort {
       authReader: (id) async {
         final apiKey = await _credentials.readApiKey(id);
         final cfToken = await _credentials.readCfToken(id);
+        // A CF Access service token is host-wide; the legacy per-server client
+        // predates the host/workspace split, so its [serverId] IS the host
+        // identity for service-token purposes — read it from the same
+        // host-namespaced store the workspace reader uses.
+        final service = await _credentials.getHostServiceToken(id);
         // Legacy per-server client uses the old cfCookie field for compat.
-        return AuthMaterial(apiKey: apiKey, cfCookie: cfToken);
+        return AuthMaterial(
+          apiKey: apiKey,
+          cfCookie: cfToken,
+          serviceClientId: service?.clientId,
+          serviceClientSecret: service?.clientSecret,
+        );
       },
       refreshAuth: refreshAuth ?? ((_) async => null),
       onReauthNeeded: onReauthNeeded,
@@ -72,7 +82,19 @@ class RemoteDevClient implements ApiClientPort {
         // MobileCredentialsStore.getInstanceCookies / design §7.2.
         final cookies =
             await _credentials.getInstanceCookies(hostId, workspaceId);
-        return AuthMaterial(apiKey: apiKey, cookies: cookies);
+        // The host-wide CF Access service token (permanent edge credential).
+        // When present, [AuthMaterial] attaches the CF-Access-Client-* headers
+        // and drops the redundant CF_Authorization cookie that
+        // getInstanceCookies may have included from the host — the OIDC session
+        // cookies it also returns stay, authenticating the instance behind the
+        // edge.
+        final service = await _credentials.getHostServiceToken(hostId);
+        return AuthMaterial(
+          apiKey: apiKey,
+          cookies: cookies,
+          serviceClientId: service?.clientId,
+          serviceClientSecret: service?.clientSecret,
+        );
       },
       // The interceptor passes its captured scope id; the workspace refresh
       // closure ignores it (it already closes over the right host/workspace),

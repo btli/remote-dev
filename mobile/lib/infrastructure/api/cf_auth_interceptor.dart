@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io' show HttpHeaders;
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../../domain/auth_cookie.dart';
 
@@ -25,11 +26,25 @@ import '../../domain/auth_cookie.dart';
 /// [cookies]. When [cfCookie] is non-null and [cookies] is empty, the
 /// interceptor synthesises `[AuthCookie(name:"CF_Authorization", ...)]`
 /// so that old callers continue to work unchanged.
+///
+/// [serviceClientId] / [serviceClientSecret] carry an optional per-host
+/// Cloudflare Access **service token** (the `CF-Access-Client-Id` /
+/// `CF-Access-Client-Secret` pair). Unlike the harvested `CF_Authorization`
+/// cookie — which expires with the CF Access session and so leaves headless
+/// work (e.g. the push registrar) unauthenticated off-LAN until the next
+/// interactive open — a service token is a permanent credential validated by
+/// Cloudflare at the edge with no session and no expiry. When BOTH are present
+/// the interceptor attaches them as headers AND omits the now-redundant
+/// `CF_Authorization` cookie from the outbound `Cookie:` header (see
+/// [_effectiveCookies]); all other cookies (the instance's OIDC session
+/// cookies) are still required behind the edge and are retained.
 class AuthMaterial {
   const AuthMaterial({
     this.apiKey,
     this.cfCookie,
     this.cookies = const [],
+    this.serviceClientId,
+    this.serviceClientSecret,
   });
 
   final String? apiKey;
@@ -40,13 +55,49 @@ class AuthMaterial {
   /// Named auth cookies to be sent as `Cookie: name=value; …`.
   final List<AuthCookie> cookies;
 
+  /// Public half of an optional CF Access service token, attached as the
+  /// `CF-Access-Client-Id` header when paired with [serviceClientSecret].
+  final String? serviceClientId;
+
+  /// Confidential half of an optional CF Access service token, attached as the
+  /// `CF-Access-Client-Secret` header when paired with [serviceClientId].
+  ///
+  /// SECURITY: never logged, printed, or interpolated anywhere.
+  final String? serviceClientSecret;
+
+  /// True when a complete service token (both halves, both non-empty) is
+  /// present. Cloudflare only honours the pair, so a half-populated token is
+  /// treated as absent.
+  bool get hasServiceToken =>
+      serviceClientId != null &&
+      serviceClientId!.isNotEmpty &&
+      serviceClientSecret != null &&
+      serviceClientSecret!.isNotEmpty;
+
   bool get isEmpty =>
       (apiKey == null || apiKey!.isEmpty) &&
-      _effectiveCookies.isEmpty;
+      _effectiveCookies.isEmpty &&
+      !hasServiceToken;
 
   /// Resolved cookie list: [cookies] when non-empty; otherwise synthesise
   /// from legacy [cfCookie] for backwards compatibility.
+  ///
+  /// When a complete service token is present ([hasServiceToken]) the
+  /// `CF_Authorization` edge cookie is filtered out: the service-token headers
+  /// already satisfy the Cloudflare edge, so the cookie is redundant, and a
+  /// stale `CF_Authorization` sent ALONGSIDE valid service headers creates
+  /// ambiguity at the edge (two competing edge credentials). Every OTHER cookie
+  /// is preserved — the instance behind the edge still authenticates via its
+  /// OIDC session cookies, which the service token does not replace.
   List<AuthCookie> get _effectiveCookies {
+    final base = _baseCookies;
+    if (!hasServiceToken) return base;
+    return base.where((c) => c.name != 'CF_Authorization').toList();
+  }
+
+  /// The cookie list before service-token filtering: [cookies] when non-empty;
+  /// otherwise synthesise from legacy [cfCookie] for backwards compatibility.
+  List<AuthCookie> get _baseCookies {
     if (cookies.isNotEmpty) return cookies;
     final cf = cfCookie;
     if (cf != null && cf.isNotEmpty) {
@@ -56,11 +107,22 @@ class AuthMaterial {
   }
 }
 
-/// Reads the active server's auth material (API key + CF Access JWT) and
-/// attaches them to every outbound request:
+/// Reads the active server's auth material (API key + CF Access JWT +
+/// optional CF Access service token) and attaches them to every outbound
+/// request:
 /// - `Authorization: Bearer <apiKey>` when an API key is stored
-/// - `Cookie: CF_Authorization=<cfCookie>` appended to any existing
-///   `Cookie` header so upstream interceptors are preserved
+/// - `CF-Access-Client-Id` / `CF-Access-Client-Secret` when a complete
+///   per-host service token is stored (the permanent off-LAN edge credential);
+///   the redundant `CF_Authorization` cookie is then dropped, while every
+///   other cookie (the instance's OIDC session) is kept
+/// - `Cookie: CF_Authorization=<cfCookie>` (plus any other auth cookies)
+///   appended to any existing `Cookie` header so upstream interceptors are
+///   preserved
+///
+/// The `onError` silent-refresh / interactive-reauth flow below is unchanged
+/// by the service token: if a service token is revoked at the edge Cloudflare
+/// still answers with a `302 → cloudflareaccess.com`, which this interceptor
+/// classifies as an auth failure and recovers from via the existing path.
 ///
 /// On a CF Access intervention (401/403, redirect to
 /// `cloudflareaccess.com`, or a 200 HTML response) the interceptor first
@@ -167,6 +229,20 @@ class CfAuthInterceptor extends Interceptor {
     final apiKey = material.apiKey;
     if (apiKey != null && apiKey.isNotEmpty) {
       options.headers[HttpHeaders.authorizationHeader] = 'Bearer $apiKey';
+    }
+
+    // Cloudflare Access service token: when a complete pair is present, attach
+    // both headers so Cloudflare admits the request at the edge with no session
+    // and no expiry (the permanent off-LAN credential). `_effectiveCookies`
+    // separately drops the now-redundant `CF_Authorization` cookie. SECURITY:
+    // only a boolean "present" fact is ever logged below — never the values.
+    if (material.hasServiceToken) {
+      options.headers['CF-Access-Client-Id'] = material.serviceClientId;
+      options.headers['CF-Access-Client-Secret'] = material.serviceClientSecret;
+      // Host-only, boolean-only breadcrumb to aid on-device validation. Must
+      // NOT include either credential value (the id is the public half, but we
+      // keep the log minimal and value-free on principle).
+      debugPrint('[CfAuth] service token attached for $serverId');
     }
 
     final effectiveCookies = material._effectiveCookies;

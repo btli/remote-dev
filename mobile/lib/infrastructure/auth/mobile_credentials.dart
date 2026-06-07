@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show immutable;
+
 import '../../application/ports/secure_storage_port.dart';
 import '../../domain/auth_cookie.dart';
 
@@ -30,6 +32,45 @@ class MobileCredentials {
   final String? cfToken;
   final String? userId;
   final String? email;
+}
+
+/// A Cloudflare Access **service token**: the `CF-Access-Client-Id` /
+/// `CF-Access-Client-Secret` pair the user creates under Zero Trust → Access →
+/// Service Tokens and pastes once per host.
+///
+/// Both halves are required for the credential to be usable — Cloudflare only
+/// admits a request when BOTH headers are present and match a Service Auth
+/// policy. The app therefore stores and reads them as a single unit; a host
+/// either has a complete pair or none (a partial pair is treated as "unset" by
+/// the store — see [MobileCredentialsStore.getHostServiceToken]).
+///
+/// SECURITY: [clientSecret] is confidential. This class deliberately does NOT
+/// override [toString] (it inherits `Object`'s identity-only form, e.g.
+/// `Instance of 'CfServiceToken'`) so that neither half — and in particular the
+/// secret — can ever leak via string interpolation, logging, or an exception
+/// message. Do not add a value-revealing `toString`.
+@immutable
+class CfServiceToken {
+  const CfServiceToken({
+    required this.clientId,
+    required this.clientSecret,
+  });
+
+  /// Public half of the pair, sent as the `CF-Access-Client-Id` header.
+  final String clientId;
+
+  /// Confidential half of the pair, sent as the `CF-Access-Client-Secret`
+  /// header. NEVER log, print, or interpolate this value.
+  final String clientSecret;
+
+  @override
+  bool operator ==(Object other) =>
+      other is CfServiceToken &&
+      other.clientId == clientId &&
+      other.clientSecret == clientSecret;
+
+  @override
+  int get hashCode => Object.hash(clientId, clientSecret);
 }
 
 /// Storage keys used by [MobileCredentialsStore]. Exposed so tests can
@@ -72,6 +113,27 @@ abstract final class MobileCredentialsKeys {
   /// Preferred over [hostCfToken] for new installs (OIDC + CF both use this).
   /// Reads fall back to [hostCfToken] if this key is absent.
   static const hostAuthCookies = 'authCookies';
+
+  /// Host-wide Cloudflare Access **service token** client id. Logical key:
+  /// `host.<hostId>.cfServiceClientId`.
+  ///
+  /// Paired with [hostCfServiceClientSecret]. Unlike the harvested
+  /// [hostCfToken] / `CF_Authorization` edge cookie (which expires with the CF
+  /// Access *session*), a service token is a permanent credential: the app
+  /// attaches it as the `CF-Access-Client-Id` / `CF-Access-Client-Secret`
+  /// header pair on every request and Cloudflare validates it against a
+  /// Service Auth policy at the edge — no session, no expiry. The client id is
+  /// not itself secret (it is the public half of the pair), but it is stored
+  /// in the same secure storage as the secret for locality.
+  static const hostCfServiceClientId = 'cfServiceClientId';
+
+  /// Host-wide Cloudflare Access service token client **secret**. Logical key:
+  /// `host.<hostId>.cfServiceClientSecret`.
+  ///
+  /// The confidential half of the service-token pair. Treated like
+  /// [hostCfToken]: persisted only in secure storage, NEVER logged, printed,
+  /// or interpolated into messages/exceptions.
+  static const hostCfServiceClientSecret = 'cfServiceClientSecret';
 
   /// Per-workspace API key. Logical key: `workspace.<workspaceId>.apiKey`.
   static const workspaceApiKey = 'apiKey';
@@ -259,6 +321,78 @@ class MobileCredentialsStore {
       return [AuthCookie(name: 'CF_Authorization', value: cfToken, path: '/')];
     }
     return const [];
+  }
+
+  // --- Host Cloudflare Access service token ---------------------------------
+  //
+  // A service token is the PERMANENT off-LAN edge credential (cf. the harvested
+  // `CF_Authorization` cookie, which expires with the CF Access session). The
+  // user pastes a `CF-Access-Client-Id` / `CF-Access-Client-Secret` pair once
+  // per host; [CfAuthInterceptor] then attaches both as headers on every
+  // request to that host and Cloudflare validates them at the edge with no
+  // session and no expiry. The instance's own auth (OIDC cookie / API key) is
+  // unchanged — the service token only gets the request past the CF perimeter.
+
+  /// Persist the host-wide CF Access service token for [hostId].
+  ///
+  /// Both halves are written together so the credential is always stored as a
+  /// complete pair. To remove a token, call [clearHostServiceToken] (or save
+  /// from a UI that cleared both fields) — do NOT write empty strings here.
+  ///
+  /// SECURITY: [clientSecret] is confidential and must never be logged. It is
+  /// only ever written to secure storage and read back by the interceptor.
+  Future<void> setHostServiceToken(
+    String hostId, {
+    required String clientId,
+    required String clientSecret,
+  }) async {
+    await _storage.write(
+      _hostNs(hostId),
+      MobileCredentialsKeys.hostCfServiceClientId,
+      clientId,
+    );
+    await _storage.write(
+      _hostNs(hostId),
+      MobileCredentialsKeys.hostCfServiceClientSecret,
+      clientSecret,
+    );
+  }
+
+  /// Read the host-wide CF Access service token for [hostId].
+  ///
+  /// Returns `null` unless BOTH halves are present and non-empty — a service
+  /// token is only usable as a complete pair, so a partially-written or empty
+  /// pair is reported as "unset" (the interceptor then attaches no service
+  /// headers and the normal cookie/API-key auth applies).
+  Future<CfServiceToken?> getHostServiceToken(String hostId) async {
+    final clientId = await _storage.read(
+      _hostNs(hostId),
+      MobileCredentialsKeys.hostCfServiceClientId,
+    );
+    final clientSecret = await _storage.read(
+      _hostNs(hostId),
+      MobileCredentialsKeys.hostCfServiceClientSecret,
+    );
+    if (clientId == null ||
+        clientId.isEmpty ||
+        clientSecret == null ||
+        clientSecret.isEmpty) {
+      return null;
+    }
+    return CfServiceToken(clientId: clientId, clientSecret: clientSecret);
+  }
+
+  /// Best-effort clear of the host-wide CF Access service token for [hostId]
+  /// (both halves). Leaves every other host credential untouched.
+  Future<void> clearHostServiceToken(String hostId) async {
+    await _storage.delete(
+      _hostNs(hostId),
+      MobileCredentialsKeys.hostCfServiceClientId,
+    );
+    await _storage.delete(
+      _hostNs(hostId),
+      MobileCredentialsKeys.hostCfServiceClientSecret,
+    );
   }
 
   /// Best-effort clear of every credential under this host's namespace.
