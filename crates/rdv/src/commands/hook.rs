@@ -139,10 +139,24 @@ fn sanitize_for_digest(s: &str) -> String {
 /// Report an agent activity status to the terminal server.
 /// Silently returns if no session ID is available.
 async fn report_status(client: &Client, status: &str) {
+    report_status_with_source(client, status, None).await;
+}
+
+/// Report an agent activity status with an optional `source` tag.
+///
+/// [remote-dev-1aa5c] The SubagentStop hook posts "running" with
+/// `source=subagent-stop` so the server refuses to let it resurrect a turn that
+/// already ended (a clean Stop wrote "idle"/"ended"). A legitimately new turn
+/// re-asserts running via PreToolUse immediately. Kept consistent with the curl
+/// fallback (`curlForStatus(status, "subagent-stop")`).
+async fn report_status_with_source(client: &Client, status: &str, source: Option<&str>) {
     let Some(sid) = client.session_id() else {
         return;
     };
-    let query = [("sessionId", sid), ("status", status)];
+    let mut query: Vec<(&str, &str)> = vec![("sessionId", sid), ("status", status)];
+    if let Some(src) = source {
+        query.push(("source", src));
+    }
     if let Err(e) = client.post_empty_with_query("/internal/agent-status", &query).await {
         eprintln!("warning: failed to report {status} status: {e}");
     }
@@ -621,7 +635,9 @@ async fn handle_stop(
         .unwrap_or("Stop");
     if hook_event == "SubagentStop" || payload.get("agent_id").is_some() {
         // Parent is still active; do not flip to idle and do not notify.
-        report_status(client, "running").await;
+        // [remote-dev-1aa5c] Tag the source so a subagent-stop "running" can't
+        // resurrect a turn that already ended ('idle'/'ended').
+        report_status_with_source(client, "running", Some("subagent-stop")).await;
         return Ok(());
     }
 
@@ -766,8 +782,10 @@ pub async fn run(
             // A Task subagent finished — the parent agent is about to resume.
             // Report "running" (parent will pick up) and create no notification.
             // Drain stdin to avoid blocking the pipe.
+            // [remote-dev-1aa5c] Tag the source so a subagent-stop "running" can't
+            // resurrect a turn that already ended ('idle'/'ended').
             drain_stdin();
-            report_status(client, "running").await;
+            report_status_with_source(client, "running", Some("subagent-stop")).await;
         }
         HookCommand::Validate => {
             let mut results: Vec<serde_json::Value> = Vec::new();
@@ -897,6 +915,35 @@ mod stop_tests {
         assert!(
             body.contains("/internal/channels/send"),
             "check-out must post to the #agents channel"
+        );
+    }
+
+    /// [remote-dev-1aa5c] Both subagent-stop report paths must tag the source so
+    /// the server refuses to let their "running" resurrect a turn that already
+    /// ended. Asserted at source level: (1) the dedicated SubagentStop arm, and
+    /// (2) the Stop-handler safety belt for older Claude Code versions.
+    #[test]
+    fn subagent_stop_paths_tag_source() {
+        let src = include_str!("hook.rs");
+
+        // (1) Dedicated SubagentStop handler arm.
+        let arm_start = src
+            .find("HookCommand::SubagentStop =>")
+            .expect("SubagentStop arm exists");
+        let arm = &src[arm_start..arm_start + 700];
+        assert!(
+            arm.contains(r#"report_status_with_source(client, "running", Some("subagent-stop"))"#),
+            "SubagentStop arm must report running tagged source=subagent-stop"
+        );
+
+        // (2) Stop-handler safety belt (SubagentStop routed through Stop).
+        let belt_start = src
+            .find(r#"if hook_event == "SubagentStop""#)
+            .expect("stop-handler safety belt exists");
+        let belt = &src[belt_start..belt_start + 400];
+        assert!(
+            belt.contains(r#"report_status_with_source(client, "running", Some("subagent-stop"))"#),
+            "Stop-handler safety belt must tag source=subagent-stop"
         );
     }
 }

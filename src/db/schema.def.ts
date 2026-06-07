@@ -388,6 +388,11 @@ export const schema: SchemaDefinition = [
       { field: "agentExitedAt", dbName: "agent_exited_at", kind: "timestampMs" },
       { field: "agentRestartCount", dbName: "agent_restart_count", kind: "integer", default: { kind: "value", value: "0" } },
       { field: "agentActivityStatus", dbName: "agent_activity_status", kind: "text" },
+      // [remote-dev-1aa5] Server-arrival epoch ms of the most recent activity
+      // status write. Plain integer (NOT timestampMs) so the value stays a raw
+      // number comparable with `<=` in the monotonic WHERE guard that rejects
+      // out-of-order writes. Nullable: older rows / non-agent sessions have none.
+      { field: "agentActivityStatusAt", dbName: "agent_activity_status_at", kind: "integer" },
       { field: "typeMetadata", dbName: "type_metadata", kind: "text" },
       { field: "scopeKey", dbName: "scope_key", kind: "text" },
       { field: "parentSessionId", dbName: "parent_session_id", kind: "text" },

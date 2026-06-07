@@ -92,6 +92,7 @@ export default async function Home() {
     agentExitedAt: s.agentExitedAt ? new Date(s.agentExitedAt) : null,
     agentRestartCount: s.agentRestartCount ?? 0,
     agentActivityStatus: s.agentActivityStatus ?? null,
+    agentActivityStatusAt: s.agentActivityStatusAt ?? null,
     typeMetadata: s.typeMetadata ? JSON.parse(s.typeMetadata) : null,
     parentSessionId: s.parentSessionId ?? null,
     status: s.status as "active" | "suspended" | "closed" | "trashed",

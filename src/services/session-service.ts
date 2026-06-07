@@ -1231,6 +1231,9 @@ export async function markAgentExited(
       agentExitCode: exitCode,
       agentExitedAt: now,
       agentActivityStatus: exitCode != null && exitCode !== 0 ? "error" : "idle",
+      // [remote-dev-1aa5] Stamp arrival time so a late stale hook write (older
+      // statusAt) can't overwrite this authoritative lifecycle transition.
+      agentActivityStatusAt: now.getTime(),
       updatedAt: now,
     })
     .where(
@@ -1264,6 +1267,7 @@ export async function markAgentRestarting(
     .set({
       agentExitState: "restarting",
       agentActivityStatus: "running",
+      agentActivityStatusAt: now.getTime(),
       agentRestartCount: (session.agentRestartCount ?? 0) + 1,
       updatedAt: now,
     })
@@ -1300,6 +1304,7 @@ export async function markAgentRunning(
       agentExitCode: null,
       agentExitedAt: null,
       agentActivityStatus: "running",
+      agentActivityStatusAt: now.getTime(),
       lastActivityAt: now,
       updatedAt: now,
     })
@@ -1334,6 +1339,7 @@ export async function markAgentClosed(
     .set({
       agentExitState: "closed",
       agentActivityStatus: "idle",
+      agentActivityStatusAt: now.getTime(),
       updatedAt: now,
     })
     .where(
@@ -1726,6 +1732,7 @@ export function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferS
     agentExitedAt: dbSession.agentExitedAt ? new Date(dbSession.agentExitedAt) : null,
     agentRestartCount: dbSession.agentRestartCount ?? 0,
     agentActivityStatus: dbSession.agentActivityStatus ?? null,
+    agentActivityStatusAt: dbSession.agentActivityStatusAt ?? null,
     typeMetadata: dbSession.typeMetadata ? JSON.parse(dbSession.typeMetadata) : null,
     scopeKey: dbSession.scopeKey ?? null,
     parentSessionId: dbSession.parentSessionId ?? null,

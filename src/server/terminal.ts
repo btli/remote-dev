@@ -737,26 +737,71 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
 
   // Handle agent activity status from Claude Code hooks
   // Called by hooks: POST /internal/agent-status?sessionId=xxx&status=running|waiting
+  //   [&source=subagent-stop]
   if (pathname === "/internal/agent-status" && req.method === "POST") {
     const sessionId = query.sessionId as string;
     const status = query.status as string;
+    // [remote-dev-1aa5c] Source tag. The SubagentStop hook posts "running" when a
+    // Task subagent finishes, but the parent turn may already have ended (a clean
+    // Stop wrote "idle"/"ended"). A subagent-stop "running" must NOT resurrect a
+    // turn that already ended — a legitimately new turn re-asserts running via
+    // PreToolUse immediately.
+    const source = (query.source as string | undefined) ?? null;
 
     if (!sessionId || !status) {
       sendJson(res, 400, { error: "Missing sessionId or status parameter" });
       return true;
     }
 
-    // Broadcast to all clients so any connected client can update the sidebar indicator
-    broadcastToClients({ type: "agent_activity_status", sessionId, status });
+    // [remote-dev-1aa5b] Server-arrival epoch ms — the monotonic ordering key.
+    // Captured at request arrival so a slow/late hook write carries an older
+    // timestamp than a newer one and the WHERE guard below rejects it.
+    const statusAt = Date.now();
 
-    // Persist to DB (fire-and-forget) so page refreshes restore the current activity state
-    Promise.all([import("@/db"), import("@/db/schema"), import("drizzle-orm")])
-      .then(([{ db }, { terminalSessions }, { eq }]) =>
-        retryOnBusy(() =>
-          db.update(terminalSessions).set({ agentActivityStatus: status }).where(eq(terminalSessions.id, sessionId))
-        )
-      )
-      .catch((err) => agentStatusLog.error("Failed to persist activity status", { error: String(err) }));
+    // [remote-dev-1aa5a] AWAIT the DB persist BEFORE broadcasting. The old
+    // fire-and-forget order let a focus-triggered refreshSessions read the DB
+    // mid-flight and roll the live cache back to a stale "running". On persist
+    // failure we still broadcast (best-effort liveness) and log the error.
+    let persistOk = false;
+    try {
+      const [{ db }, { terminalSessions }, { eq, and, sql }] = await Promise.all([
+        import("@/db"),
+        import("@/db/schema"),
+        import("drizzle-orm"),
+      ]);
+      // Monotonic WHERE guard: only write when this arrival is newer-or-equal
+      // than the persisted one (or none recorded yet). A subagent-stop "running"
+      // additionally refuses to overwrite a terminal 'idle'/'ended' status.
+      // This atomic SQL mirrors the (unit-tested) predicate in
+      // `@/server/agent-status-ordering` (shouldApplyStatusWrite) — keep them in
+      // lockstep.
+      const guards = [
+        eq(terminalSessions.id, sessionId),
+        sql`(${terminalSessions.agentActivityStatusAt} IS NULL OR ${terminalSessions.agentActivityStatusAt} <= ${statusAt})`,
+      ];
+      if (source === "subagent-stop" && status === "running") {
+        guards.push(sql`(${terminalSessions.agentActivityStatus} IS NULL OR ${terminalSessions.agentActivityStatus} NOT IN ('idle', 'ended'))`);
+      }
+      await retryOnBusy(() =>
+        db
+          .update(terminalSessions)
+          .set({ agentActivityStatus: status, agentActivityStatusAt: statusAt })
+          .where(and(...guards))
+      );
+      persistOk = true;
+    } catch (err) {
+      agentStatusLog.error("Failed to persist activity status", { error: String(err), sessionId, status });
+    }
+
+    // Broadcast to all clients so any connected client can update the sidebar
+    // indicator. Carries statusAt so the client cache can apply monotonic
+    // ordering too; clients ignore the broadcast's ordering only when missing
+    // (older servers). Always broadcast — even if persist failed — so live
+    // viewers still see the transition.
+    broadcastToClients({ type: "agent_activity_status", sessionId, status, statusAt });
+    if (!persistOk) {
+      agentStatusLog.warn("Broadcast activity status without persistence", { sessionId, status });
+    }
 
     // [n6uc] Refresh live tree metadata (dirty/ports/attention) on every status
     // transition, scoped to the session's owner. Fire-and-forget.

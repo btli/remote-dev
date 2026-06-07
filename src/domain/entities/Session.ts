@@ -38,6 +38,10 @@ export interface SessionProps {
   agentExitedAt: Date | null;
   agentRestartCount: number;
   agentActivityStatus: string | null;
+  // [remote-dev-1aa5] Server-arrival epoch ms of the most recent activity-status
+  // write. Drives monotonic ordering so an out-of-order (slow-hook) write never
+  // overwrites a newer status. Null for rows that never received a status.
+  agentActivityStatusAt: number | null;
   // Plugin-specific metadata
   typeMetadata: Record<string, unknown> | null;
   parentSessionId: string | null;
@@ -111,6 +115,7 @@ export class Session {
       agentExitedAt: null,
       agentRestartCount: 0,
       agentActivityStatus: null,
+      agentActivityStatusAt: null,
       typeMetadata: props.typeMetadata ?? null,
       parentSessionId: null,
       pinned: false,
@@ -203,6 +208,10 @@ export class Session {
 
   get agentActivityStatus(): string | null {
     return this.props.agentActivityStatus;
+  }
+
+  get agentActivityStatusAt(): number | null {
+    return this.props.agentActivityStatusAt;
   }
 
   get typeMetadata(): Record<string, unknown> | null {

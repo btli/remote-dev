@@ -48,6 +48,10 @@ export interface TerminalSession {
   agentRestartCount: number;
   // Real-time agent activity status (persisted for page reload)
   agentActivityStatus: string | null;
+  // [remote-dev-1aa5] Server-arrival epoch ms of the latest activity-status
+  // write. Lets the client re-seed (refreshSessions) compare DB-row freshness
+  // against the live cache so a stale push can't shadow a newer DB truth.
+  agentActivityStatusAt: number | null;
   // Plugin-specific metadata (parsed from JSON)
   typeMetadata: Record<string, unknown> | null;
   // Scope key for server-side deduplication. See CreateSessionInput.scopeKey.

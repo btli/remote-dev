@@ -34,6 +34,7 @@ function suspendedAgentSession(
     agentExitedAt: now,
     agentRestartCount: 0,
     agentActivityStatus: "running",
+    agentActivityStatusAt: now.getTime(),
     typeMetadata: null,
     parentSessionId: null,
     pinned: false,

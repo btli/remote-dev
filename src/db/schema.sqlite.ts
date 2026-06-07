@@ -336,6 +336,7 @@ export const terminalSessions = sqliteTable(
     agentExitedAt: integer("agent_exited_at", { mode: "timestamp_ms" }),
     agentRestartCount: integer("agent_restart_count").default(0),
     agentActivityStatus: text("agent_activity_status"),
+    agentActivityStatusAt: integer("agent_activity_status_at"),
     typeMetadata: text("type_metadata"),
     scopeKey: text("scope_key"),
     parentSessionId: text("parent_session_id"),

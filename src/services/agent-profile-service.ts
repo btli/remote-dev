@@ -691,8 +691,12 @@ function curlCmd(path: string, opts = "", prefix = ""): string {
     'fi';
 }
 
-function curlForStatus(status: string): string {
-  return CURL_ENV_PREAMBLE + curlCmd(`/internal/agent-status?sessionId=\${RDV_SESSION_ID}&status=${status}`) + ' || true';
+function curlForStatus(status: string, source?: string): string {
+  // [remote-dev-1aa5c] Optional &source tag lets the server apply the
+  // subagent-stop ordering rule (a subagent-stop "running" must not resurrect a
+  // turn that already ended). Kept consistent with the rdv CLI hook path.
+  const sourceParam = source ? `&source=${source}` : "";
+  return CURL_ENV_PREAMBLE + curlCmd(`/internal/agent-status?sessionId=\${RDV_SESSION_ID}&status=${status}${sourceParam}`) + ' || true';
 }
 
 /**
@@ -752,8 +756,10 @@ export async function installAgentHooks(
   // SubagentStop hook: a Task subagent finished; parent will resume.
   // Reports status only — must NOT create a notification (avoids fatigue
   // from many subagent completions during a single user turn).
+  // [remote-dev-1aa5c] Tagged source=subagent-stop so the server refuses to let
+  // this "running" overwrite a turn that already ended ('idle'/'ended').
   const subagentStopHook = {
-    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook subagent-stop", curlForStatus("running")), timeout: 5 }],
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook subagent-stop", curlForStatus("running", "subagent-stop")), timeout: 5 }],
   };
 
   // PostToolUse hook for Bash: git-push peer broadcast

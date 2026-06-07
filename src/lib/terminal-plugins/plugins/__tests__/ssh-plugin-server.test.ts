@@ -275,6 +275,7 @@ describe("SshServerPlugin lifecycle hooks", () => {
       agentExitedAt: new Date(),
       agentRestartCount: 0,
       agentActivityStatus: null,
+      agentActivityStatusAt: null,
       typeMetadata: { connectionId: "conn-1" },
       scopeKey: null,
       parentSessionId: null,

@@ -33,6 +33,7 @@ function makeSession(
     agentExitedAt: null,
     agentRestartCount: 0,
     agentActivityStatus: null,
+    agentActivityStatusAt: null,
     typeMetadata,
     scopeKey: null,
     parentSessionId: null,

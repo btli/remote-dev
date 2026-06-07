@@ -147,7 +147,7 @@ interface TerminalProps {
   onAgentRestarted?: (resumed?: boolean) => void;
   /** Called when agent activity status changes (from Claude Code hooks).
    *  Includes sessionId so broadcast messages correctly target the right session. */
-  onAgentActivityStatus?: (sessionId: string, status: string) => void;
+  onAgentActivityStatus?: (sessionId: string, status: string, statusAt?: number) => void;
   /** Called when beads issues are updated */
   onBeadsIssuesUpdated?: (sessionId: string) => void;
   /** Called when an agent session is auto-titled from its .jsonl file.
@@ -943,7 +943,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
                 break;
               case "agent_activity_status":
                 // Agent activity status from Claude Code hooks (broadcast — may be for any session)
-                onAgentActivityStatusRef.current?.(msg.sessionId, msg.status);
+                // [remote-dev-1aa5d] Thread statusAt for client-side ordering.
+                onAgentActivityStatusRef.current?.(msg.sessionId, msg.status, msg.statusAt);
                 break;
               case "beads_issues_updated":
                 // Beads issues updated — refresh sidebar

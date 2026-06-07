@@ -31,6 +31,7 @@ export class SessionPresenter {
       agentExitedAt: session.agentExitedAt,
       agentRestartCount: session.agentRestartCount,
       agentActivityStatus: session.agentActivityStatus ?? null,
+      agentActivityStatusAt: session.agentActivityStatusAt ?? null,
       typeMetadata: session.typeMetadata,
       // Scope-key dedup field (may not be tracked on the domain entity yet —
       // surface null so API consumers always see a stable shape).
