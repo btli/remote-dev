@@ -256,7 +256,12 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         });
 
         if (!response.ok) {
-          throw new Error("Failed to update folder preferences");
+          // Surface the server's specific message (validation errors etc. —
+          // the route returns errorResponse(String(err), 400)) so callers like
+          // ProjectPreferencesView can show it, matching the old direct-fetch
+          // behavior.
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.error || "Failed to update folder preferences");
         }
 
         // Optimistically merge the applied updates into the local map so
@@ -289,7 +294,10 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         });
 
         if (!response.ok) {
-          throw new Error("Failed to delete folder preferences");
+          // Surface the server's specific message, matching the old
+          // direct-fetch behavior the prefs pane relied on.
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.error || "Failed to delete folder preferences");
         }
 
         setNodePreferences((prev) => {

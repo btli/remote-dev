@@ -492,11 +492,17 @@ export async function createSessionWithDedupFlag(
   // `allowDangerous` setting controls dangerous-flag filtering.
   //
   // Uses `mergedAgentProvider` (input → folder default → user default →
-  // "claude" for agent/loop types) — NOT the raw `input.agentProvider` — so a
-  // client that omits `agentProvider` and relies on server-side resolution
-  // still auto-launches the correct CLI. For shell-type sessions the merge is
-  // a no-op (`mergedAgentProvider === input.agentProvider`), so this is
-  // unchanged there.
+  // "claude" for agent/loop types) rather than the raw `input.agentProvider`
+  // for consistency/robustness, NOT to fix production behavior: this
+  // `startupCommand` only reaches tmux when a plugin returns
+  // `shellCommand: null` (effective command is
+  // `sessionConfig.shellCommand ?? startupCommand`), and the built-in
+  // agent/loop plugins always return a non-null `shellCommand` built from the
+  // already-merged `pluginInput.agentProvider`. So for current callers this
+  // block is inert; the merged provider just keeps a `shellCommand: null`
+  // plugin (e.g. a future or test plugin) consistent with the merge. For
+  // shell-type sessions the merge is a no-op
+  // (`mergedAgentProvider === input.agentProvider`).
   //
   // SECURITY: reads from `pluginInput.agentFlags` (the merged flags) — NOT
   // `input.agentFlags` — so the per-provider preference flags are honored
