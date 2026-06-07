@@ -21,10 +21,22 @@ interface FakeSession {
   agentActivityStatus: string;
 }
 const state: {
+  // Active-session pass candidates.
   candidates: FakeSession[];
+  // [remote-dev-5xpc] Suspended-session pass candidates (silent clear).
+  suspendedCandidates: FakeSession[];
   tmuxPid: Record<string, string | null>; // tmuxSessionName → pid string, or null = no session
   updates: Array<{ id: string; set: Record<string, unknown> }>;
-} = { candidates: [], tmuxPid: {}, updates: [] };
+} = { candidates: [], suspendedCandidates: [], tmuxPid: {}, updates: [] };
+
+/**
+ * The service issues two findMany calls — one filtered to status="active", one
+ * to status="suspended". The drizzle mock below stringifies the `where` so we
+ * can route each call to the right candidate list.
+ */
+function isSuspendedQuery(where: unknown): boolean {
+  return JSON.stringify(where ?? "").includes("suspended");
+}
 
 const createNotification =
   vi.fn<(input: Record<string, unknown>) => Promise<{ id: string }>>(async () => ({ id: "n1" }));
@@ -51,7 +63,9 @@ vi.mock("@/db", () => ({
   db: {
     query: {
       terminalSessions: {
-        findMany: vi.fn(async () => state.candidates),
+        findMany: vi.fn(async (args?: { where?: unknown }) =>
+          isSuspendedQuery(args?.where) ? state.suspendedCandidates : state.candidates
+        ),
       },
     },
     update: vi.fn(() => ({
@@ -94,6 +108,7 @@ vi.mock("@/services/notification-service", () => ({
 
 beforeEach(() => {
   state.candidates = [];
+  state.suspendedCandidates = [];
   state.tmuxPid = {};
   state.updates = [];
   createNotification.mockClear();
@@ -165,5 +180,74 @@ describe("reconcileLiveness", () => {
     const n = await reconcileLiveness();
     expect(n).toBe(0);
     expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  // [remote-dev-5xpc] Second pass over suspended sessions.
+  describe("suspended-session pass", () => {
+    it("clears a dead suspended session SILENTLY (no notification)", async () => {
+      state.suspendedCandidates = [
+        { id: "sus1", name: "bg", userId: "u1", tmuxSessionName: "rdv-sus1", agentActivityStatus: "running" },
+      ];
+      state.tmuxPid = { "rdv-sus1": "2147483646" }; // dead PID
+
+      const { reconcileLiveness } = await loadService();
+      const n = await reconcileLiveness();
+
+      expect(n).toBe(1);
+      // Silent: no agent_stuck notification for backgrounded sessions.
+      expect(createNotification).not.toHaveBeenCalled();
+      expect(state.updates.length).toBe(1);
+      expect(state.updates[0].set).toMatchObject({ agentActivityStatus: "idle", agentExitState: "exited" });
+    });
+
+    it("treats a missing tmux session as dead and clears it silently", async () => {
+      state.suspendedCandidates = [
+        { id: "sus2", name: "gone", userId: "u1", tmuxSessionName: "rdv-sus2", agentActivityStatus: "subagent" },
+      ];
+      state.tmuxPid = {}; // no session → dead
+
+      const { reconcileLiveness } = await loadService();
+      const n = await reconcileLiveness();
+
+      expect(n).toBe(1);
+      expect(createNotification).not.toHaveBeenCalled();
+    });
+
+    it("leaves a suspended session whose process is ALIVE untouched", async () => {
+      // resume() no longer wipes status (remote-dev-3m5s), so a live background
+      // agent is legitimate — keep its status.
+      state.suspendedCandidates = [
+        { id: "sus3", name: "live-bg", userId: "u1", tmuxSessionName: "rdv-sus3", agentActivityStatus: "running" },
+      ];
+      state.tmuxPid = { "rdv-sus3": String(process.pid) };
+
+      const { reconcileLiveness } = await loadService();
+      const n = await reconcileLiveness();
+
+      expect(n).toBe(0);
+      expect(createNotification).not.toHaveBeenCalled();
+      expect(state.updates.length).toBe(0);
+    });
+
+    it("processes both passes: active notifies, suspended is silent", async () => {
+      state.candidates = [
+        { id: "act1", name: "active", userId: "u1", tmuxSessionName: "rdv-act1", agentActivityStatus: "running" },
+      ];
+      state.suspendedCandidates = [
+        { id: "sus1", name: "bg", userId: "u1", tmuxSessionName: "rdv-sus1", agentActivityStatus: "running" },
+      ];
+      state.tmuxPid = { "rdv-act1": "2147483646", "rdv-sus1": "2147483645" }; // both dead
+
+      const { reconcileLiveness } = await loadService();
+      const n = await reconcileLiveness();
+
+      expect(n).toBe(2);
+      // Exactly one notification — for the active session only.
+      expect(createNotification).toHaveBeenCalledTimes(1);
+      const arg = createNotification.mock.calls[0][0] as { sessionId: string; type: string };
+      expect(arg.sessionId).toBe("act1");
+      expect(arg.type).toBe("agent_stuck");
+      expect(state.updates.length).toBe(2);
+    });
   });
 });

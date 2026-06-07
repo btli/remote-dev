@@ -47,8 +47,12 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 const INITIAL_POLL_DELAY_MS = 200;
 const MAX_POLL_DELAY_MS = 2_000;
 
-/** Count the committed PostgreSQL migration files in `drizzle/pg/`. */
-function countCommittedPgMigrations(): number {
+/**
+ * Count the committed PostgreSQL migration files in `drizzle/pg/`.
+ * Exported for tests so the readiness-poll expectation stays in sync with the
+ * actual migration count (rather than hard-coding a number).
+ */
+export function countCommittedPgMigrations(): number {
   const folder = resolvePgMigrationsFolder();
   return readdirSync(folder).filter((name) => name.endsWith(".sql")).length;
 }

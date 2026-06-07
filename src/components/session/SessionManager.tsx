@@ -320,8 +320,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // Handle agent activity status updates from WebSocket
   const handleAgentActivityStatus = useCallback(
-    (sid: string, status: string) => {
-      setAgentActivityStatus(sid, status as AgentActivityStatus);
+    (sid: string, status: string, statusAt?: number) => {
+      // [remote-dev-1aa5d] Pass statusAt so the cache rejects out-of-order pushes.
+      setAgentActivityStatus(sid, status as AgentActivityStatus, statusAt);
     },
     [setAgentActivityStatus]
   );

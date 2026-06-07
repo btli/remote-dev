@@ -49,6 +49,7 @@ export interface SessionDbRecord {
   agentExitedAt: Date | string | null;
   agentRestartCount: number | null;
   agentActivityStatus: string | null;
+  agentActivityStatusAt: number | null;
   typeMetadata: string | null;
   parentSessionId: string | null;
   status: string;
@@ -85,6 +86,7 @@ export interface SessionDbInsert {
   agentExitedAt: Date | null;
   agentRestartCount: number;
   agentActivityStatus: string | null;
+  agentActivityStatusAt: number | null;
   typeMetadata: string | null;
   parentSessionId: string | null;
   status: "active" | "suspended" | "closed" | "trashed";
@@ -119,6 +121,7 @@ export class SessionMapper {
       agentExitedAt: record.agentExitedAt ? toDate(record.agentExitedAt) : null,
       agentRestartCount: record.agentRestartCount ?? 0,
       agentActivityStatus: record.agentActivityStatus ?? null,
+      agentActivityStatusAt: record.agentActivityStatusAt ?? null,
       typeMetadata: record.typeMetadata ? JSON.parse(record.typeMetadata) : null,
       parentSessionId: record.parentSessionId ?? null,
       pinned: !!record.pinned,
@@ -161,6 +164,7 @@ export class SessionMapper {
       agentExitedAt: session.agentExitedAt,
       agentRestartCount: session.agentRestartCount,
       agentActivityStatus: session.agentActivityStatus,
+      agentActivityStatusAt: session.agentActivityStatusAt,
       typeMetadata: session.typeMetadata ? JSON.stringify(session.typeMetadata) : null,
       parentSessionId: session.parentSessionId,
       // Cast is safe because SessionStatus.toString() only returns valid status values
@@ -195,6 +199,7 @@ export class SessionMapper {
     agentExitedAt: Date | null;
     agentRestartCount: number;
     agentActivityStatus: string | null;
+    agentActivityStatusAt: number | null;
     typeMetadata: Record<string, unknown> | null;
     parentSessionId: string | null;
     status: string;
@@ -222,6 +227,7 @@ export class SessionMapper {
       agentExitedAt: session.agentExitedAt,
       agentRestartCount: session.agentRestartCount,
       agentActivityStatus: session.agentActivityStatus,
+      agentActivityStatusAt: session.agentActivityStatusAt,
       typeMetadata: session.typeMetadata,
       parentSessionId: session.parentSessionId,
       status: session.status.toString(),

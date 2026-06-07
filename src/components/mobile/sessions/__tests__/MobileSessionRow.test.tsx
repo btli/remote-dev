@@ -43,6 +43,7 @@ function makeSession(over: Partial<TerminalSession> = {}): TerminalSession {
     agentExitedAt: null,
     agentRestartCount: 0,
     agentActivityStatus: null,
+    agentActivityStatusAt: null,
     typeMetadata: null,
     scopeKey: null,
     parentSessionId: null,

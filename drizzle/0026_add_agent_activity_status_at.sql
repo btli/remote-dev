@@ -1,0 +1,13 @@
+-- [remote-dev-1aa5] Monotonic ordering for agent activity-status writes.
+--
+-- `agent_activity_status_at` stores the server-arrival epoch ms of the most
+-- recent activity status write. The /internal/agent-status handler updates the
+-- status only when this column is NULL or <= the new arrival time, so a late
+-- (slow-hook) write can never overwrite a newer one in the DB. Plain integer
+-- (NOT a timestamp_ms column) so the value stays a raw number directly
+-- comparable with `<=` in the WHERE guard.
+--
+-- Hand-written to match the SQLite migration convention (0013-0025); the
+-- generated dialect file is src/db/schema.sqlite.ts via `bun run db:codegen`.
+-- The matching PostgreSQL migration is drizzle/pg/0008_*.sql.
+ALTER TABLE `terminal_session` ADD `agent_activity_status_at` integer;

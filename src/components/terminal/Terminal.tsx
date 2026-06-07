@@ -147,7 +147,7 @@ interface TerminalProps {
   onAgentRestarted?: (resumed?: boolean) => void;
   /** Called when agent activity status changes (from Claude Code hooks).
    *  Includes sessionId so broadcast messages correctly target the right session. */
-  onAgentActivityStatus?: (sessionId: string, status: string) => void;
+  onAgentActivityStatus?: (sessionId: string, status: string, statusAt?: number) => void;
   /** Called when beads issues are updated */
   onBeadsIssuesUpdated?: (sessionId: string) => void;
   /** Called when an agent session is auto-titled from its .jsonl file.
@@ -255,6 +255,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const intentionalExitRef = useRef(false);
+  // [remote-dev-d5ci] True once this terminal's socket has opened at least once,
+  // so ws.onopen can tell a FIRST connect from a RE-open and only fire the
+  // sidebar re-seed on reconnect (mirrors useTerminalWebSocket's hasConnectedBefore).
+  const hasConnectedBeforeRef = useRef(false);
   const maxReconnectAttempts = 5;
 
   /**
@@ -455,6 +459,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     let mounted = true;
     isUnmountingRef.current = false;
     intentionalExitRef.current = false;
+    // [remote-dev-d5ci] Fresh effect run == a new session/socket → the upcoming
+    // open is a FIRST connect, not a reconnect. (Stays true across reconnect
+    // attempts within this same effect run.)
+    hasConnectedBeforeRef.current = false;
 
     // Dynamically import xterm modules (browser-only)
     async function initTerminal() {
@@ -878,6 +886,17 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
               })
             );
           });
+
+          // [remote-dev-d5ci] On a RE-open (not the first connect), dispatch the
+          // same sidebar-refresh event useTerminalWebSocket fires so SessionManager
+          // re-seeds. A socket that silently dropped while the tab was hidden could
+          // have missed running→idle status pushes; the refresh pulls authoritative
+          // agentActivityStatus for every session from the DB.
+          if (hasConnectedBeforeRef.current) {
+            document.dispatchEvent(new CustomEvent("rdv:sidebar-changed"));
+          } else {
+            hasConnectedBeforeRef.current = true;
+          }
         };
 
         ws.onmessage = (event) => {
@@ -943,7 +962,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
                 break;
               case "agent_activity_status":
                 // Agent activity status from Claude Code hooks (broadcast — may be for any session)
-                onAgentActivityStatusRef.current?.(msg.sessionId, msg.status);
+                // [remote-dev-1aa5d] Thread statusAt for client-side ordering.
+                onAgentActivityStatusRef.current?.(msg.sessionId, msg.status, msg.statusAt);
                 break;
               case "beads_issues_updated":
                 // Beads issues updated — refresh sidebar

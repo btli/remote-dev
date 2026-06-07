@@ -29,7 +29,7 @@ export interface UseTerminalWebSocketOptions {
   onAgentExited?: (exitCode: number | null, exitedAt: string) => void;
   // [hgwo] `resumed` distinguishes a resumed conversation from a fresh relaunch.
   onAgentRestarted?: (resumed?: boolean) => void;
-  onAgentActivityStatus?: (sessionId: string, status: string) => void;
+  onAgentActivityStatus?: (sessionId: string, status: string, statusAt?: number) => void;
   onBeadsIssuesUpdated?: (sessionId: string) => void;
   // [hgwo] `agentSessionId` is the generic per-provider native-id map.
   onSessionRenamed?: (
@@ -316,7 +316,10 @@ export function useTerminalWebSocket({
               break;
 
             case "agent_activity_status":
-              onAgentActivityStatusRef.current?.(msg.sessionId, msg.status);
+              // [remote-dev-1aa5d] Thread the server-arrival statusAt so the
+              // client cache can reject out-of-order pushes. Older servers omit
+              // it (undefined) → applied unconditionally (back-compat).
+              onAgentActivityStatusRef.current?.(msg.sessionId, msg.status, msg.statusAt);
               break;
 
             // [n6uc] Live per-session metadata push. Re-dispatched as a DOM

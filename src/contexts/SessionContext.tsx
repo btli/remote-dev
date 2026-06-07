@@ -26,6 +26,12 @@ import { useProjectTree } from "./ProjectTreeContext";
 import { apiFetch } from "@/lib/api-fetch";
 import type { SessionMetadata } from "@/types/session-metadata";
 import { primeSessionMetadata } from "@/hooks/useSessionMetadata";
+import {
+  type ActivityStatusCache,
+  mergeActivityStatus,
+  reseedActivityStatuses,
+} from "./agent-activity-cache";
+import { useStatusControlSocket } from "@/hooks/useStatusControlSocket";
 
 const ACTIVE_SESSION_STORAGE_KEY = "remote-dev:activeSessionId";
 const VALID_ACTIVITY_STATUSES = new Set<AgentActivityStatus>(["running", "waiting", "idle", "error", "compacting", "ended", "subagent"]);
@@ -89,7 +95,15 @@ interface SessionContextValue extends SessionState {
   patchSessionLocal: (sessionId: string, updates: Partial<TerminalSession>) => void;
   /** Agent activity statuses for real-time sidebar indicators */
   agentActivityStatuses: Record<string, AgentActivityStatus>;
-  setAgentActivityStatus: (sessionId: string, status: AgentActivityStatus) => void;
+  /**
+   * Update the live activity-status cache for a session.
+   *
+   * [remote-dev-1aa5d] `at` is the server-arrival epoch ms of the write. When
+   * provided, an update whose `at` is OLDER than the currently-cached entry is
+   * ignored — a late (slow-hook) push can't roll a newer status back. Missing
+   * `at` (old broadcasts) always applies, preserving prior behavior.
+   */
+  setAgentActivityStatus: (sessionId: string, status: AgentActivityStatus, at?: number) => void;
   getAgentActivityStatus: (sessionId: string) => AgentActivityStatus;
   /** Per-session custom status indicators (e.g. agent-reported status text) */
   sessionStatusIndicators: Record<string, Record<string, SessionStatusIndicator>>;
@@ -220,15 +234,29 @@ export function SessionProvider({
   // caller didn't pass an explicit projectId/folderId.
   const { activeNode } = useProjectTree();
 
-  // Agent activity statuses (client-side only, not persisted)
-  const [agentActivityStatuses, setAgentActivityStatuses] = useState<Record<string, AgentActivityStatus>>({});
+  // Agent activity statuses (client-side only, not persisted).
+  // [remote-dev-1aa5d] Stored as {status, at} so a late push (older arrival ms)
+  // can't roll a newer status back. The public `agentActivityStatuses` map is a
+  // memoized {sessionId: status} projection so existing consumers are unchanged.
+  const [agentActivityStatusEntries, setAgentActivityStatusEntries] =
+    useState<ActivityStatusCache<AgentActivityStatus>>({});
 
-  const setAgentActivityStatus = useCallback((sessionId: string, status: AgentActivityStatus) => {
-    setAgentActivityStatuses((prev) => {
-      if (prev[sessionId] === status) return prev;
-      return { ...prev, [sessionId]: status };
-    });
-  }, []);
+  const agentActivityStatuses = useMemo<Record<string, AgentActivityStatus>>(() => {
+    const out: Record<string, AgentActivityStatus> = {};
+    for (const [id, entry] of Object.entries(agentActivityStatusEntries)) {
+      out[id] = entry.status;
+    }
+    return out;
+  }, [agentActivityStatusEntries]);
+
+  const setAgentActivityStatus = useCallback(
+    (sessionId: string, status: AgentActivityStatus, at?: number) => {
+      setAgentActivityStatusEntries((prev) =>
+        mergeActivityStatus(prev, sessionId, status, at)
+      );
+    },
+    []
+  );
 
   // [n6uc] Live per-session metadata, fed by WebSocket session_metadata pushes.
   const [sessionMetadata, setSessionMetadataState] = useState<Record<string, SessionMetadata>>({});
@@ -347,30 +375,28 @@ export function SessionProvider({
       const data = await response.json();
       const sessions: TerminalSession[] = data.sessions;
       dispatch({ type: "LOAD_SESSIONS", sessions });
-      // [remote-dev-f9y9] Re-seed the live activity-status cache from DB truth.
-      // agentActivityStatuses is fed by one-shot WS pushes that can be missed while
-      // the tab is hidden/asleep (no replay), and getAgentActivityStatus() prefers
-      // that cache over the DB row — so a stale "running" would otherwise shadow a
-      // fresh "idle" forever. On every authoritative reload, overwrite the cache
-      // with the persisted status (only when the DB has a concrete valid value, so a
-      // just-pushed status whose fire-and-forget DB write hasn't landed is never
-      // wrongly cleared). Subsequent WS pushes keep updating the cache live.
-      setAgentActivityStatuses((prev) => {
-        let changed = false;
-        const next = { ...prev };
-        for (const s of sessions) {
-          const dbStatus = s.agentActivityStatus;
-          if (
-            dbStatus &&
-            VALID_ACTIVITY_STATUSES.has(dbStatus as AgentActivityStatus) &&
-            next[s.id] !== dbStatus
-          ) {
-            next[s.id] = dbStatus as AgentActivityStatus;
-            changed = true;
-          }
-        }
-        return changed ? next : prev;
-      });
+      // [remote-dev-f9y9 / remote-dev-1aa5d] Re-seed the live activity-status
+      // cache from DB truth. agentActivityStatusEntries is fed by one-shot WS
+      // pushes that can be missed while the tab is hidden/asleep (no replay), and
+      // getAgentActivityStatus() prefers that cache over the DB row — so a stale
+      // "running" would otherwise shadow a fresh "idle" forever.
+      //
+      // Ordering: only overwrite the cache when the DB row's agentActivityStatusAt
+      // is NEWER-or-equal than the cached `at` (or the cache has no entry / no
+      // ordering key). This stops the re-seed from rolling back a just-pushed
+      // status whose fire-and-forget DB write hasn't landed yet (the broadcast's
+      // statusAt is already in the cache; the DB row is still the older value).
+      setAgentActivityStatusEntries((prev) =>
+        reseedActivityStatuses(
+          prev,
+          sessions.map((s) => ({
+            id: s.id,
+            status: s.agentActivityStatus as AgentActivityStatus | null,
+            at: s.agentActivityStatusAt ?? null,
+          })),
+          (status) => VALID_ACTIVITY_STATUSES.has(status as AgentActivityStatus)
+        )
+      );
     } catch (error) {
       console.error("Error fetching sessions:", error);
     }
@@ -379,6 +405,14 @@ export function SessionProvider({
   // Debounced refresh — coalesces rapid WebSocket events and auto-refreshes
   // on page visibility change (tab switch, wake from sleep).
   const debouncedRefreshSessions = useDebouncedRefresh(refreshSessions);
+
+  // [remote-dev-d5ci] One control-mode status socket per tab so the sidebar's
+  // live activity indicators update even with no terminal attached. Feeds the
+  // activity-status cache directly; re-seeds via refreshSessions on reconnect.
+  useStatusControlSocket({
+    setAgentActivityStatus,
+    refreshSessions: debouncedRefreshSessions,
+  });
 
   // Fetch sessions on mount if none provided (once on mount)
   useEffect(() => {

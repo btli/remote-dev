@@ -1,0 +1,1 @@
+ALTER TABLE "terminal_session" ADD COLUMN "agent_activity_status_at" integer;

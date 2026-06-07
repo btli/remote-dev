@@ -29,6 +29,7 @@ function makeSession(
     agentExitedAt: null,
     agentRestartCount: 0,
     agentActivityStatus: null,
+    agentActivityStatusAt: null,
     typeMetadata: { foo: "bar" },
     scopeKey: null,
     parentSessionId: null,

@@ -38,6 +38,10 @@ export interface SessionProps {
   agentExitedAt: Date | null;
   agentRestartCount: number;
   agentActivityStatus: string | null;
+  // [remote-dev-1aa5] Server-arrival epoch ms of the most recent activity-status
+  // write. Drives monotonic ordering so an out-of-order (slow-hook) write never
+  // overwrites a newer status. Null for rows that never received a status.
+  agentActivityStatusAt: number | null;
   // Plugin-specific metadata
   typeMetadata: Record<string, unknown> | null;
   parentSessionId: string | null;
@@ -111,6 +115,7 @@ export class Session {
       agentExitedAt: null,
       agentRestartCount: 0,
       agentActivityStatus: null,
+      agentActivityStatusAt: null,
       typeMetadata: props.typeMetadata ?? null,
       parentSessionId: null,
       pinned: false,
@@ -205,6 +210,10 @@ export class Session {
     return this.props.agentActivityStatus;
   }
 
+  get agentActivityStatusAt(): number | null {
+    return this.props.agentActivityStatusAt;
+  }
+
   get typeMetadata(): Record<string, unknown> | null {
     return this.props.typeMetadata;
   }
@@ -252,6 +261,14 @@ export class Session {
    * Resume this session from suspended state.
    * Resets agent exit state so stale exit/error status doesn't persist.
    * @throws InvalidStateTransitionError if not in suspended state
+   *
+   * [remote-dev-3m5s] Resume MUST NOT clear `agentActivityStatus`. SessionManager
+   * auto-suspends backgrounded sessions, so any attach/resume cycle previously
+   * wiped the live status of an actively-running agent until the next hook fired
+   * — making a busy agent render idle (the stash-scripts case). Exit state is
+   * still reset (a resume means we intend the agent to be live again), but the
+   * real-time activity status is left untouched; the PID-liveness sweep
+   * (session-liveness-service.ts) corrects truly-dead agents.
    */
   resume(): Session {
     this.props.status.validateTransitionTo(SessionStatus.active(), "resume");
@@ -263,7 +280,6 @@ export class Session {
       updates.agentExitState = "running";
       updates.agentExitCode = null;
       updates.agentExitedAt = null;
-      updates.agentActivityStatus = null;
     }
     return this.withUpdates(updates);
   }
