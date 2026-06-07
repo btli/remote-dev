@@ -119,6 +119,14 @@ function useBoth() {
   };
 }
 
+function countPreferencesGets(): number {
+  return apiFetchMock.mock.calls.filter(([u, init]) => {
+    const url = typeof u === "string" ? u : String(u);
+    const method = (init?.method ?? "GET").toUpperCase();
+    return url.includes("/api/preferences") && method === "GET";
+  }).length;
+}
+
 describe("ProjectTreeContext refreshes the preferences cache on mutation (remote-dev-u84s)", () => {
   beforeEach(() => {
     preferencesFetchCount = 0;
@@ -139,11 +147,7 @@ describe("ProjectTreeContext refreshes the preferences cache on mutation (remote
         .defaultWorkingDirectory
     ).toBe("/home/user");
 
-    const preferencesGetsBefore = apiFetchMock.mock.calls.filter(([u, init]) => {
-      const url = typeof u === "string" ? u : String(u);
-      const method = (init?.method ?? "GET").toUpperCase();
-      return url.includes("/api/preferences") && method === "GET";
-    }).length;
+    const preferencesGetsBefore = countPreferencesGets();
 
     // Create the project — this should trigger a preferences refetch.
     await act(async () => {
@@ -152,12 +156,7 @@ describe("ProjectTreeContext refreshes the preferences cache on mutation (remote
 
     // A second GET /api/preferences happened (the cache was refreshed).
     await waitFor(() => {
-      const preferencesGetsAfter = apiFetchMock.mock.calls.filter(([u, init]) => {
-        const url = typeof u === "string" ? u : String(u);
-        const method = (init?.method ?? "GET").toUpperCase();
-        return url.includes("/api/preferences") && method === "GET";
-      }).length;
-      expect(preferencesGetsAfter).toBeGreaterThan(preferencesGetsBefore);
+      expect(countPreferencesGets()).toBeGreaterThan(preferencesGetsBefore);
     });
 
     // And now resolution picks up the freshly-created project's working dir.
