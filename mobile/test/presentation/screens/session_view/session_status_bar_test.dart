@@ -133,6 +133,62 @@ void main() {
     );
   });
 
+  group('parseActivityArgs (onActivity bridge payload)', () {
+    // The bridge sends `notifyToNative("onActivity", { state })` — an OBJECT.
+    // flutter_inappwebview JSON-encodes args JS-side and JSON-decodes them
+    // Dart-side, so the handler receives `[{state: <s>}]`, a decoded Map.
+    // A naive `args.first.toString()` would yield `"{state: running}"` and
+    // never match the switch — coercing every live transition to Idle.
+    test('reads the state field from the decoded Map (object payload)', () {
+      expect(
+        parseActivityArgs([
+          {'state': 'subagent'},
+        ]),
+        SessionActivity.subagent,
+      );
+      expect(
+        parseActivityArgs([
+          {'state': 'compacting'},
+        ]),
+        SessionActivity.compacting,
+      );
+      expect(
+        parseActivityArgs([
+          {'state': 'running'},
+        ]),
+        SessionActivity.running,
+      );
+      expect(
+        parseActivityArgs([
+          {'state': 'ended'},
+        ]),
+        SessionActivity.ended,
+      );
+    });
+
+    test('accepts a legacy bare-string arg for back-compat', () {
+      expect(parseActivityArgs(['running']), SessionActivity.running);
+      expect(parseActivityArgs(['waiting']), SessionActivity.waiting);
+    });
+
+    test('falls back to idle for empty / null / unknown args', () {
+      expect(parseActivityArgs([]), SessionActivity.idle);
+      expect(parseActivityArgs([null]), SessionActivity.idle);
+      expect(
+        parseActivityArgs([
+          {'state': 'bogus'},
+        ]),
+        SessionActivity.idle,
+      );
+      expect(
+        parseActivityArgs([
+          {'no_state_key': 'running'},
+        ]),
+        SessionActivity.idle,
+      );
+    });
+  });
+
   testWidgets('tap on title area fires onTap', (tester) async {
     var taps = 0;
     await tester.pumpWidget(

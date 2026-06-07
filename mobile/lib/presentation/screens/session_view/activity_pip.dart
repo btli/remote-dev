@@ -90,6 +90,38 @@ class ActivityPip extends StatelessWidget {
   }
 }
 
+/// Maps a single `onActivity` bridge status STRING onto the status-bar
+/// [SessionActivity]. Unknown / unrecognized values fall back to
+/// [SessionActivity.idle].
+SessionActivity sessionActivityFromString(String? state) {
+  return switch (state) {
+    'running' => SessionActivity.running,
+    'waiting' => SessionActivity.waiting,
+    'error' => SessionActivity.error,
+    'subagent' => SessionActivity.subagent,
+    'compacting' => SessionActivity.compacting,
+    'ended' => SessionActivity.ended,
+    _ => SessionActivity.idle,
+  };
+}
+
+/// Parses the raw argument list delivered to the `onActivity` JavaScript
+/// handler into a [SessionActivity].
+///
+/// `notifyToNative("onActivity", { state })` sends an OBJECT, and
+/// flutter_inappwebview JSON-encodes the args JS-side / JSON-decodes them
+/// Dart-side, so `args.first` arrives as a decoded `Map` (`{state: running}`),
+/// NOT a bare string. A naive `args.first.toString()` would yield the literal
+/// `"{state: running}"` and never match — coercing every live transition to
+/// Idle (remote-dev-sguu). We therefore read the `state` field when the arg is
+/// a Map, and still accept a legacy bare-string arg for forward/back-compat.
+/// Empty / null args fall back to idle.
+SessionActivity parseActivityArgs(List<dynamic> args) {
+  final raw = args.isNotEmpty ? args.first : null;
+  final state = raw is Map ? raw['state']?.toString() : raw?.toString();
+  return sessionActivityFromString(state);
+}
+
 /// Bridges the server-reported [AgentActivityStatus] (carried on a
 /// [SessionSummary]) onto the status-bar [SessionActivity]. Used to SEED the
 /// in-session pip from the session's last-known activity when the view opens,

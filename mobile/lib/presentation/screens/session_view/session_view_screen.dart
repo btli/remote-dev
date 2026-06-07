@@ -209,19 +209,12 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
     controller.addJavaScriptHandler(
       handlerName: 'onActivity',
       callback: (args) {
-        final state = args.isNotEmpty ? args.first?.toString() : 'idle';
+        // The bridge sends `{ state }` as an OBJECT, which arrives here as a
+        // decoded Map after flutter_inappwebview's JSON round-trip — see
+        // parseActivityArgs (remote-dev-sguu).
+        final activity = parseActivityArgs(args);
         if (mounted) {
-          setState(() {
-            _activity = switch (state) {
-              'running' => SessionActivity.running,
-              'waiting' => SessionActivity.waiting,
-              'error' => SessionActivity.error,
-              'subagent' => SessionActivity.subagent,
-              'compacting' => SessionActivity.compacting,
-              'ended' => SessionActivity.ended,
-              _ => SessionActivity.idle,
-            };
-          });
+          setState(() => _activity = activity);
         }
         return null;
       },
