@@ -444,3 +444,99 @@ describe("proxy — Cloudflare Access path is unchanged by the branch", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("proxy — service-token (CF token present but no identity) falls through, not 401", () => {
+  // Regression: remote-dev-2w1o. A Cloudflare Access SERVICE token clears the
+  // edge and CF injects a verified-but-non-identity JWT (common_name, no email),
+  // so validateAccessJWT returns null. The proxy must NOT terminate with a 401:
+  // it must fall through to the same NextAuth/Bearer/login logic as a no-CF
+  // request, so route handlers (withApiAuth Bearer / getAuthSession) decide.
+  beforeEach(() => {
+    // A CF token IS present on the request, but it yields no CF identity.
+    getAccessTokenMock.mockReturnValue("cf-service-jwt");
+    validateAccessJWTMock.mockResolvedValue(null);
+  });
+
+  it("(i) API route + Bearer token → reaches the route (next(), not 401) despite the service CF token", async () => {
+    slugHolder.value = ""; // unscoped single-server
+    vi.stubEnv("AUTH_SECRET", "a-real-secret");
+    getTokenMock.mockResolvedValue(null); // no NextAuth session
+    const req = makeRequest("/api/sessions", {
+      headers: { authorization: "Bearer api-key-123" },
+    });
+
+    const res = await proxy(req);
+
+    // Bearer passthrough wins — the route (withApiAuth) authenticates it.
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-cf-user-email")).toBeNull();
+  });
+
+  it("(i, scoped) API route + Bearer token → reaches the route even in the instance proxy realm", async () => {
+    slugHolder.value = "dev"; // scoped instance proxy realm
+    vi.stubEnv("AUTH_SECRET", "");
+    const req = makeRequest("/api/sessions", {
+      headers: { authorization: "Bearer api-key-123" },
+    });
+
+    const res = await proxy(req);
+
+    expect(getTokenMock).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+  });
+
+  it("API route, service CF token, NO Bearer and no session → 401 from the fall-through (route-gate parity)", async () => {
+    // The fall-through still protects API routes: without Bearer OR a session the
+    // request is unauthorized — but via the standard API gate, not the old
+    // terminal CF 401. (Same 401 a no-CF request would get.)
+    slugHolder.value = "";
+    vi.stubEnv("AUTH_SECRET", "a-real-secret");
+    getTokenMock.mockResolvedValue(null);
+    const req = makeRequest("/api/sessions");
+
+    const res = await proxy(req);
+
+    expect(res.status).toBe(401);
+  });
+
+  it("(ii) page route + no session → /login redirect (NOT naked 401 JSON)", async () => {
+    slugHolder.value = ""; // unscoped → getToken decides
+    vi.stubEnv("AUTH_SECRET", "a-real-secret");
+    getTokenMock.mockResolvedValue(null); // unauthenticated
+    const req = makeRequest("/dashboard");
+
+    const res = await proxy(req);
+
+    // A stale harvested CF cookie on a page now yields a login redirect, not 401.
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe(
+      "https://host/login?callbackUrl=%2Fdashboard",
+    );
+  });
+
+  it("(ii, scoped) page route + no session cookie → prefixed /login redirect", async () => {
+    slugHolder.value = "dev"; // scoped → cookie-presence gate
+    vi.stubEnv("AUTH_SECRET", "");
+    const req = makeRequest("/dashboard", { cookies: [] });
+
+    const res = await proxy(req);
+
+    expect(getTokenMock).not.toHaveBeenCalled();
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe(
+      "https://host/dev/login?callbackUrl=%2Fdev%2Fdashboard",
+    );
+  });
+
+  it("page route + valid session → passes through (service CF token does not block it)", async () => {
+    slugHolder.value = "";
+    vi.stubEnv("AUTH_SECRET", "a-real-secret");
+    getTokenMock.mockResolvedValue({ sub: "user-1" }); // valid OIDC session
+    const req = makeRequest("/dashboard");
+
+    const res = await proxy(req);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("location")).toBeNull();
+  });
+});

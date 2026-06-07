@@ -21,7 +21,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // email-less path (the guard short-circuits before any drizzle call).
 const cfState: { token: string | null; user: unknown } = { token: null, user: null };
 const authState: { session: unknown } = { session: null };
-const dbState: { authorizedLookups: number } = { authorizedLookups: 0 };
+// `usersFindFirst` lets a test inject the DB-backed user the NextAuth branch
+// resolves by JWT id; `authorizedLookups` counts CF-branch authorization lookups
+// (must stay 0 on the email-less path — the guard short-circuits before drizzle).
+const dbState: {
+  authorizedLookups: number;
+  usersFindFirst: { id: string; email: string; name: string | null } | undefined;
+} = { authorizedLookups: 0, usersFindFirst: undefined };
 
 vi.mock("next/headers", () => ({
   headers: async () => ({
@@ -38,9 +44,12 @@ vi.mock("@/auth", () => ({
   auth: vi.fn(async () => authState.session),
 }));
 
-// DB seam: any consultation in the CF branch is a BUG when the email is missing.
-// Throwing turns "drizzle was handed undefined" into a hard test failure, while
-// the production guard means these are never reached on the email-less path.
+// DB seam:
+//   - authorizedUsers.findFirst THROWS — any CF-branch consultation when the
+//     email is missing is a BUG; throwing turns "drizzle was handed undefined"
+//     into a hard test failure. It is never reached on the email-less path.
+//   - users.findFirst returns the injected NextAuth-branch user (resolve-by-id),
+//     so a test can prove the fall-through actually returns a DB-backed session.
 vi.mock("@/db", () => ({
   db: {
     query: {
@@ -52,7 +61,7 @@ vi.mock("@/db", () => ({
           );
         },
       },
-      users: { findFirst: async () => undefined },
+      users: { findFirst: async () => dbState.usersFindFirst },
     },
   },
 }));
@@ -64,6 +73,7 @@ vi.mock("@/lib/user-identity", () => ({
 }));
 
 import { getAuthSession } from "@/lib/auth-utils";
+import { auth } from "@/auth";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -71,6 +81,7 @@ beforeEach(() => {
   cfState.user = null;
   authState.session = null;
   dbState.authorizedLookups = 0;
+  dbState.usersFindFirst = undefined;
 });
 
 afterEach(() => {
@@ -96,6 +107,28 @@ describe("getAuthSession — CF service-token (email-less) fall-through", () => 
     authState.session = null;
 
     await expect(getAuthSession()).resolves.toBeNull();
+    expect(dbState.authorizedLookups).toBe(0);
+  });
+
+  it("(c) RETURNS the DB-backed NextAuth session when CF is a service token but a real session exists", async () => {
+    // A CF service token is present (email-less → CF branch skipped), AND the
+    // user is also signed in via NextAuth. The proxy let this request through
+    // (Bearer/session path); getAuthSession must IGNORE the CF service token,
+    // CONSULT auth(), and return the DB-backed session — not null.
+    cfState.token = "cf-service-token";
+    cfState.user = { email: undefined, sub: "service-sub" };
+    authState.session = { user: { id: "user-1", email: "real@example.com", name: "Real" } };
+    // The NextAuth branch resolves the user by JWT id from the DB.
+    dbState.usersFindFirst = { id: "user-1", email: "real@example.com", name: "Real" };
+
+    const result = await getAuthSession();
+
+    expect(result).toEqual({
+      user: { id: "user-1", email: "real@example.com", name: "Real" },
+    });
+    // The fall-through genuinely consulted NextAuth (the CF branch did not satisfy it).
+    expect(vi.mocked(auth)).toHaveBeenCalledTimes(1);
+    // And it never touched the CF-branch authorization lookup with an empty email.
     expect(dbState.authorizedLookups).toBe(0);
   });
 

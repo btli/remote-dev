@@ -70,6 +70,23 @@ describe("supervisor proxy edge gate (I1)", () => {
     }
   });
 
+  it("passes an API route carrying a CF SERVICE token to self-gating (mobile workspace discovery; remote-dev-2w1o)", async () => {
+    // The mobile app's workspace discovery hits the supervisor through the same
+    // edge with a CF Access service token (CF-Access-Client-Id/Secret → a
+    // non-identity assertion). The supervisor proxy never hard-rejects a
+    // present-but-invalid CF token: API routes always pass through to
+    // withSupervisorAuth, which authenticates the Bearer/session itself. So the
+    // service token + a real Authorization header must reach the route, NOT 401
+    // at the edge.
+    const res = await proxy(
+      makeReq("/api/instances", {
+        "cf-access-jwt-assertion": PLAUSIBLE_JWT,
+        authorization: "Bearer rdv_apikey123",
+      }),
+    );
+    expect(res.status).toBe(200);
+  });
+
   it("401s a page route in prod-config when no token is present", async () => {
     const res = await proxy(makeReq("/"));
     expect(res.status).toBe(401);
