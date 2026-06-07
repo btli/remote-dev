@@ -6,9 +6,11 @@
  * unit-testable with mocks and never imports a live cluster at module load.
  *
  * Create order (§6.4): Namespace → Secret `rdv-shared` → Secret `rdv-<slug>` →
- * Service `rdv` → StatefulSet (+ optional seed Job). On the FIRST error, the
- * whole instance is rolled back by deleting the namespace (atomic cascade,
- * §15 B2) and a typed {@link ProvisioningError} is rethrown.
+ * Service `rdv` → StatefulSet. (First-boot user authorization is NOT a separate
+ * Job — the StatefulSet carries AUTHORIZED_USERS and the instance seeds itself at
+ * boot; remote-dev-sb98.) On the FIRST error, the whole instance is rolled back by
+ * deleting the namespace (atomic cascade, §15 B2) and a typed
+ * {@link ProvisioningError} is rethrown.
  *
  * Idempotency: a 409 AlreadyExists for any object is treated as success per
  * object, so a retried reconcile after a partial create does not fail just
@@ -202,9 +204,14 @@ export interface ProvisionOptions {
    * PVC manifest at boot. Validated as JSON upstream (parseProvisionBaseline).
    */
   provisionBaseline?: string;
-  // NOTE: first-boot seed emails are intentionally NOT a provisioning input in
-  // Phase 1 — the seed Job dispatch is deferred to Phase 2 (jvcx.8). See the
-  // comment at the end of provisionInstance.
+  /**
+   * Emails to authorize on the fresh instance (remote-dev-sb98). Injected as a
+   * plain `AUTHORIZED_USERS` env on the StatefulSet (NOT a secret); the instance
+   * app seeds `authorized_users` from it at boot. Replaces the never-dispatched
+   * seed Job. Omitted/empty → no env (the instance starts with no authorized
+   * users until one is added another way).
+   */
+  authorizedEmails?: string[];
 }
 
 /**
@@ -400,15 +407,20 @@ export async function provisionInstance(
           // (operator-provisioned pull Secret); the nodeSelector pins arch.
           imagePullSecretName: opts.imagePullSecret?.name,
           nodeSelector: opts.nodeSelector,
+          // First-boot user authorization (remote-dev-sb98): the emails ride as a
+          // plain AUTHORIZED_USERS env; the instance seeds authorized_users from
+          // it at boot. No separate seed Job (see below).
+          authorizedEmails: opts.authorizedEmails,
         }),
       }),
     );
 
-    // 6. First-boot seed Job — DEFERRED to Phase 2.
-    // TODO(jvcx.8): seed must run over HTTP against the ready instance (the RWO
-    // PVC can't be co-mounted by a Job while the StatefulSet pod holds it, and
-    // `bun run db:seed` talks to the running instance). The builder
-    // (buildSeedJob) stays, but provisioning does NOT dispatch it in Phase 1.
+    // First-boot user authorization happens at INSTANCE BOOT, not via a Job
+    // (remote-dev-sb98). The StatefulSet above carries AUTHORIZED_USERS (from
+    // opts.authorizedEmails); the instance app seeds `authorized_users` from it
+    // on startup (seedAuthorizedUsersFromEnv). A Job is unworkable here — it can't
+    // co-mount the instance's RWO PVC while the StatefulSet pod holds it — so the
+    // earlier seed-Job builder was removed.
 
     log.info("provisioning succeeded", { slug, namespace });
     return dbConfigSnapshot;

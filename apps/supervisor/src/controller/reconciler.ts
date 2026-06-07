@@ -39,6 +39,7 @@ import { db as defaultDb } from "@/db";
 import {
   instance,
   instanceAuditLog,
+  instanceSeed,
   type InstanceRow,
   type InstanceStatus,
 } from "@/db/schema";
@@ -427,6 +428,51 @@ function storageFromRow(row: InstanceRow): ResolvedStorageTarget {
 }
 
 /**
+ * Read + parse the instance's first-boot authorized emails (remote-dev-sb98).
+ *
+ * They live in the one-to-one `instance_seed` row (written by POST /api/instances
+ * when the caller supplied `authorizedEmails`), stored as a JSON string array.
+ * Returns undefined when there is no seed row / no emails (so the StatefulSet gets
+ * no AUTHORIZED_USERS env at all — back-compat for instances created without it).
+ *
+ * A malformed/unreadable seed row is NON-FATAL: log + return undefined rather than
+ * fail provisioning over seed metadata. The emails then flow into the StatefulSet's
+ * plain AUTHORIZED_USERS env; the instance seeds `authorized_users` from it at boot.
+ */
+async function readSeedEmails(
+  deps: ReconcilerDeps,
+  row: InstanceRow,
+): Promise<string[] | undefined> {
+  let seed: { authorizedEmails: string | null } | undefined;
+  try {
+    seed = await deps.db.query.instanceSeed.findFirst({
+      where: eq(instanceSeed.instanceId, row.id),
+    });
+  } catch (err) {
+    log.warn("failed to read instance_seed; provisioning without AUTHORIZED_USERS", {
+      slug: row.slug,
+      error: String(err),
+    });
+    return undefined;
+  }
+  if (!seed?.authorizedEmails) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(seed.authorizedEmails);
+    if (!Array.isArray(parsed)) return undefined;
+    const emails = parsed.filter(
+      (e): e is string => typeof e === "string" && e.trim().length > 0,
+    );
+    return emails.length > 0 ? emails : undefined;
+  } catch (err) {
+    log.warn("instance_seed.authorizedEmails is not valid JSON; skipping seed", {
+      slug: row.slug,
+      error: String(err),
+    });
+    return undefined;
+  }
+}
+
+/**
  * Build the provisioning options for an instance (shared by the initial
  * `requested→provisioning` claim and the within-budget self-heal re-provision).
  * Generates a fresh UNIQUE AUTH_SECRET each call (never logged, never persisted).
@@ -434,12 +480,18 @@ function storageFromRow(row: InstanceRow): ResolvedStorageTarget {
  * Storage is rebuilt from the row's authoritative `storageConfigSnapshot`
  * (see {@link storageFromRow}), NOT re-resolved live.
  *
- * NOTE: `authorizedEmails`/seed handling is intentionally NOT wired in here —
- * the seed Job dispatch is deferred to Phase 2 (jvcx.8), see provisionInstance.
+ * First-boot authorized emails (remote-dev-sb98) are read from the `instance_seed`
+ * row and ride in `authorizedEmails` → the StatefulSet's plain AUTHORIZED_USERS env
+ * → the instance's boot-time seed. Reading them is idempotent across the self-heal
+ * re-provision (the StatefulSet's AUTHORIZED_USERS just stays the same).
  */
-function buildProvisionOptions(row: InstanceRow): ProvisionOptions {
+async function buildProvisionOptions(
+  deps: ReconcilerDeps,
+  row: InstanceRow,
+): Promise<ProvisionOptions> {
   const env = readProvisionEnv();
   const storage = storageFromRow(row);
+  const authorizedEmails = await readSeedEmails(deps, row);
   return {
     image: env.image,
     host: env.host,
@@ -453,6 +505,7 @@ function buildProvisionOptions(row: InstanceRow): ProvisionOptions {
     imagePullSecret: env.imagePullSecret,
     nodeSelector: env.nodeSelector,
     provisionBaseline: env.provisionBaseline,
+    authorizedEmails,
   };
 }
 
@@ -471,7 +524,7 @@ async function attemptProvision(
 ): Promise<boolean> {
   let opts: ProvisionOptions;
   try {
-    opts = buildProvisionOptions(row);
+    opts = await buildProvisionOptions(deps, row);
   } catch (err) {
     // Misconfiguration (missing image/host/CF tags). Deterministic — won't
     // self-heal without operator action; mark error.
