@@ -78,7 +78,12 @@ export async function getAuthSession(): Promise<AuthSession | null> {
   const cfToken = await getCFTokenFromHeaders();
   if (cfToken) {
     const cfUser = await validateAccessJWT(cfToken);
-    if (cfUser) {
+    // Only enter the DB-lookup path for an IDENTITY token. A non-identity
+    // (service) token clears the CF edge but carries no email; validateAccessJWT
+    // already returns null for those, but guard here too so this call site never
+    // hands drizzle an undefined `email` (which throws → 500). An email-less CF
+    // user falls through to the API key / NextAuth arms below.
+    if (cfUser && typeof cfUser.email === "string" && cfUser.email.length > 0) {
       // Check if user is authorized
       const authorized = await db.query.authorizedUsers.findFirst({
         where: eq(authorizedUsers.email, cfUser.email),
