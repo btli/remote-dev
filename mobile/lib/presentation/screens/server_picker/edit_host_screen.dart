@@ -28,6 +28,11 @@ class EditHostArgs {
   final WorkspaceConfig? workspace;
 }
 
+/// Test seam — replaces the camera scan (`QrScanScreen.push`) so the QR
+/// prefill path can be exercised in a widget test without real camera plumbing.
+/// Returns the scanned [QrPayload], or `null` if the user backed out.
+typedef QrScanLauncher = Future<QrPayload?> Function(BuildContext context);
+
 /// Edits a [HostConfig] label and, when supplied, a [WorkspaceConfig] display
 /// name. Persists via [HostWorkspaceStore.upsertHost] / `upsertWorkspace`
 /// (preserving ids and bumping `lastUsedAt` so the most-recently-touched row
@@ -62,11 +67,15 @@ class EditHostScreen extends ConsumerStatefulWidget {
   const EditHostScreen({
     required this.args,
     required this.onSaved,
+    this.scanLauncher,
     super.key,
   });
 
   final EditHostArgs args;
   final VoidCallback onSaved;
+
+  /// Test seam — overrides the camera scan. Defaults to [QrScanScreen.push].
+  final QrScanLauncher? scanLauncher;
 
   @override
   ConsumerState<EditHostScreen> createState() => _EditHostScreenState();
@@ -98,6 +107,16 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
   /// the "blank secret keeps the stored pair" save branch.
   bool _hasStoredToken = false;
 
+  /// True once a scan (or any deliberate edit) has populated the service-token
+  /// fields. Belt-and-suspenders against the load/scan race: if [_loadServiceToken]
+  /// is still in flight when a scan fills the fields, the late load must NOT
+  /// overwrite the scanned Client ID with the OLD stored one (which would leave
+  /// the scanned secret paired with a stale id → a corrupted Save). Checked
+  /// before the load's `_serviceIdCtrl.text =` assignment. The Scan button is
+  /// also disabled until [_serviceTokenLoaded] so in practice the load has
+  /// usually resolved first; this flag covers the instant-after-enable case.
+  bool _serviceFieldsDirty = false;
+
   bool _saving = false;
 
   bool get _hasWorkspace => widget.args.workspace != null;
@@ -126,7 +145,11 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
     setState(() {
       _serviceTokenLoaded = true;
       _hasStoredToken = token != null;
-      if (token != null) {
+      // Only prefill the Client ID if the user/scan hasn't already touched the
+      // fields. Without this guard a late-resolving load would clobber a freshly
+      // SCANNED Client ID with the OLD stored one, leaving the scanned secret
+      // paired with a stale id (a corrupted Save). The secret is never prefilled.
+      if (token != null && !_serviceFieldsDirty) {
         _serviceIdCtrl.text = token.clientId;
       }
     });
@@ -163,7 +186,8 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
   /// SECURITY: the confirmation SnackBar names the host + Client ID only — never
   /// the secret — matching the `[CfAuth]` value-free breadcrumb discipline.
   Future<void> _scanServiceToken() async {
-    final payload = await QrScanScreen.push(context);
+    final launch = widget.scanLauncher ?? QrScanScreen.push;
+    final payload = await launch(context);
     if (!mounted || payload == null) return;
 
     if (payload is! CfServiceTokenPayload) {
@@ -214,6 +238,9 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
     setState(() {
       _serviceIdCtrl.text = payload.clientId;
       _serviceSecretCtrl.text = payload.clientSecret;
+      // Mark the fields as user-modified so a still-in-flight _loadServiceToken
+      // can't overwrite the scanned Client ID with the stored one.
+      _serviceFieldsDirty = true;
       // Reveal nothing automatically; the secret stays obscured.
       _secretVisible = false;
     });
@@ -369,11 +396,15 @@ class _EditHostScreenState extends ConsumerState<EditHostScreen> {
               const SizedBox(height: 8),
               // Scan the service-token QR rendered by Settings → Mobile on the
               // web to fill the fields below (review-and-Save; never persists
-              // directly).
+              // directly). Disabled until the async stored-token load resolves
+              // (mirrors the Clear button) so a scan can't race _loadServiceToken
+              // and have the late load clobber the scanned Client ID.
               Align(
                 alignment: Alignment.centerLeft,
                 child: OutlinedButton.icon(
-                  onPressed: _saving ? null : _scanServiceToken,
+                  onPressed: (_serviceTokenLoaded && !_saving)
+                      ? _scanServiceToken
+                      : null,
                   icon: const Icon(Icons.qr_code_scanner, size: 18),
                   label: const Text('Scan QR'),
                   style: OutlinedButton.styleFrom(

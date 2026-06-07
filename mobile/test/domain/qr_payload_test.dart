@@ -137,6 +137,78 @@ void main() {
       final raw = jsonEncode({'v': 1, 'type': 42, 'host': 'x'});
       expect(() => QrPayload.parse(raw), throwsA(isA<QrPayloadError>()));
     });
+
+    // --- codex finding: routing must key off the PRESENCE of `type`, not its
+    // non-null-ness, so a malformed `{"type":null}` can't be misread as legacy.
+    test('rejects {type:null} instead of treating it as legacy', () {
+      final raw = jsonEncode({
+        'type': null,
+        'url': 'https://dev.example.com',
+        'apiKey': 'placeholder-api-key',
+      });
+      // Presence of the `type` key routes to the envelope parser, which rejects
+      // the null type rather than falling through to the legacy url+apiKey path.
+      expect(
+        () => QrPayload.parse(raw),
+        throwsA(
+          isA<QrPayloadError>().having(
+            (e) => e.message,
+            'message',
+            contains('Unsupported QR code type'),
+          ),
+        ),
+      );
+    });
+
+    test(
+      'a legacy-shaped object carrying a type key is rejected as an envelope, '
+      'not parsed as legacy',
+      () {
+        final raw = jsonEncode({
+          'type': 'rdv.somethingElse',
+          'url': 'https://dev.example.com',
+          'apiKey': 'placeholder-api-key',
+        });
+        // Even though url+apiKey are present, the `type` key forces envelope
+        // handling, which rejects the unknown type.
+        expect(
+          () => QrPayload.parse(raw),
+          throwsA(
+            isA<QrPayloadError>().having(
+              (e) => e.message,
+              'message',
+              contains('Unsupported QR code type'),
+            ),
+          ),
+        );
+      },
+    );
+
+    // --- codex finding: the unknown-type error must NOT echo the scanned,
+    // attacker-controlled `type` value (the scanner renders messages verbatim).
+    test('unknown-type error never reflects a hostile type value', () {
+      final hostileType =
+          'EVIL\u0007${'A' * 500}<script>alert(1)</script>\nCONTROL';
+      final raw = jsonEncode({'type': hostileType});
+
+      QrPayloadError? caught;
+      try {
+        QrPayload.parse(raw);
+      } on QrPayloadError catch (e) {
+        caught = e;
+      }
+
+      expect(caught, isNotNull);
+      // The message must contain none of the hostile input — not the marker,
+      // the long run, the script tag, or any control character.
+      expect(caught!.message, isNot(contains('EVIL')));
+      expect(caught.message, isNot(contains('AAAA')));
+      expect(caught.message, isNot(contains('<script>')));
+      expect(caught.message, isNot(contains('\u0007')));
+      // And toString (used by any logging) is equally clean.
+      expect(caught.toString(), isNot(contains('EVIL')));
+      expect(caught.toString(), isNot(contains('<script>')));
+    });
   });
 
   group('QrPayload.parse — legacy server payload', () {

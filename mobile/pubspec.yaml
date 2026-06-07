@@ -64,7 +64,9 @@ dependencies:
   image_picker: ^1.1.2
 
   # QR-code scanner for credential provisioning from the web/desktop UI
-  # (remote-dev-8xfo). 7.2.0 is the latest stable on pub.dev.
+  # (remote-dev-8xfo). 7.2.0 is the latest stable on pub.dev. Its Android plugin
+  # needs minSdk >= 23; Flutter 3.41's default minSdk is 24, so no gradle change
+  # is required (we inherit flutter.minSdkVersion in android/app/build.gradle.kts).
   mobile_scanner: ^7.2.0
 
 dev_dependencies:

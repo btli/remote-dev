@@ -60,16 +60,15 @@ sealed class QrPayload {
       );
     }
 
-    // A `type` string => typed envelope. Validate version + known type.
-    final typeValue = decoded['type'];
-    if (typeValue != null) {
-      if (typeValue is! String) {
-        throw const QrPayloadError('Unsupported QR code.');
-      }
-      return _parseEnvelope(typeValue, decoded);
+    // The PRESENCE of a `type` key (even `null`) marks a typed envelope — the
+    // legacy payload is defined by the ABSENCE of `type`. Routing on
+    // containsKey (not `!= null`) means a malformed `{"type":null,...}` can
+    // never be misread as legacy and is rejected by the envelope validator.
+    if (decoded.containsKey('type')) {
+      return _parseEnvelope(decoded);
     }
 
-    // No `type` => legacy server-provisioning payload. Requires url + apiKey.
+    // No `type` key => legacy server-provisioning payload. Requires url + apiKey.
     if (decoded['url'] is String && decoded['apiKey'] is String) {
       return LegacyServerPayload._fromJson(decoded);
     }
@@ -79,9 +78,15 @@ sealed class QrPayload {
     );
   }
 
-  static QrPayload _parseEnvelope(String type, Map<String, dynamic> json) {
-    if (type != cfServiceTokenType) {
-      throw QrPayloadError('Unsupported QR code type "$type".');
+  static QrPayload _parseEnvelope(Map<String, dynamic> json) {
+    // `type` must be a present, non-null string. (containsKey routed us here,
+    // so a null/non-string value is a malformed envelope, not legacy.)
+    final type = json['type'];
+    if (type is! String || type != cfServiceTokenType) {
+      // SECURITY: never interpolate the scanned `type` value into a message —
+      // it is attacker-controlled and the scanner renders parser messages
+      // verbatim. A value-free message avoids reflecting hostile content.
+      throw const QrPayloadError('Unsupported QR code type.');
     }
 
     // Version gate: only v1 is understood. A missing version is treated as

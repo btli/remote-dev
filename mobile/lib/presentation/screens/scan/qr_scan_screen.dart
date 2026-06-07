@@ -65,9 +65,20 @@ class _QrScanScreenState extends State<QrScanScreen> {
       return;
     }
 
+    // Accept exactly once. Set _handled BEFORE the await so a detection that
+    // fires while stop() is in flight is ignored.
     _handled = true;
-    await _controller.stop();
-    if (mounted) Navigator.of(context).pop(payload);
+    try {
+      // Best-effort: stopping the camera before popping is a nicety, not a
+      // correctness requirement. If it throws (e.g. the platform camera is
+      // already torn down) we must STILL pop — otherwise the screen wedges and
+      // every further detection is dropped by the _handled guard above.
+      await _controller.stop();
+    } catch (_) {
+      // Intentionally ignored — the pop in `finally` is what matters.
+    } finally {
+      if (mounted) Navigator.of(context).pop(payload);
+    }
   }
 
   @override
