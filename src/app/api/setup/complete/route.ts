@@ -4,6 +4,7 @@ import { setupConfig } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { existsSync } from "node:fs";
 import { createLogger } from "@/lib/logger";
+import { isSetupRequestAllowed } from "@/lib/setup-gate";
 
 const log = createLogger("api/setup");
 
@@ -18,11 +19,18 @@ interface SetupConfiguration {
 
 /**
  * POST /api/setup/complete
- * Saves the setup configuration to the database
+ * Saves the setup configuration to the database.
  *
- * This route is public (no auth) for first-run setup.
+ * Gated by `isSetupRequestAllowed()` (remote-dev-2rob): permitted only while
+ * first-run setup is incomplete (the wizard runs before any session exists) OR
+ * for an authenticated session; otherwise 401. This prevents an unauthenticated
+ * caller from rewriting the setup config once setup has completed.
  */
 export async function POST(request: NextRequest) {
+  if (!(await isSetupRequestAllowed())) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const config: SetupConfiguration = await request.json();
 
@@ -111,7 +119,14 @@ export async function POST(request: NextRequest) {
 
 /**
  * GET /api/setup/complete
- * Checks if setup has been completed
+ * Checks if setup has been completed.
+ *
+ * Contract (remote-dev-2rob): the `{ isComplete: boolean }` flag is always
+ * public — it is cheap and needed to decide whether to even show the wizard. The
+ * stored `config` payload (working-directory path, ports, WSL distro) is
+ * disclosed ONLY when `isSetupRequestAllowed()` permits it (i.e. setup is still
+ * incomplete, or the caller is authenticated). Once setup is complete, an
+ * unauthenticated caller gets just `{ isComplete: true }` with no config.
  */
 export async function GET() {
   try {
@@ -120,6 +135,13 @@ export async function GET() {
     if (!config || !config.isComplete) {
       return NextResponse.json({
         isComplete: false,
+      });
+    }
+
+    // Setup is complete: only reveal the stored config to an allowed caller.
+    if (!(await isSetupRequestAllowed())) {
+      return NextResponse.json({
+        isComplete: true,
       });
     }
 

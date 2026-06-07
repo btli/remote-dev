@@ -3,6 +3,7 @@ import { platform } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createLogger } from "@/lib/logger";
+import { isSetupRequestAllowed } from "@/lib/setup-gate";
 
 const log = createLogger("api/setup");
 
@@ -125,11 +126,17 @@ function getInstallCommand(name: string, packageManager?: string): string {
 
 /**
  * GET /api/setup/dependencies
- * Checks all required dependencies
+ * Checks all required dependencies (runs `execFile` version probes of system
+ * binaries — system-info disclosure).
  *
- * This route is public (no auth) for first-run setup.
+ * Gated by `isSetupRequestAllowed()` (remote-dev-2rob): permitted only while
+ * first-run setup is incomplete OR for an authenticated session; otherwise 401.
  */
 export async function GET() {
+  if (!(await isSetupRequestAllowed())) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     // Detect package manager first
     let packageManager: string | undefined;
