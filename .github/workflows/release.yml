@@ -55,6 +55,12 @@ jobs:
             node_modules/node-pty/
             node_modules/better-sqlite3/
             node_modules/@libsql/
+          # `.next/` is a hidden (dot-prefixed) directory; upload-artifact
+          # excludes hidden paths by default (since v4.4), which would silently
+          # drop the entire Next.js build from the artifact. Safe here: CI builds
+          # from a clean checkout (no stray secret dotfiles) and the artifact is
+          # same-repo with 1-day retention.
+          include-hidden-files: true
           retention-days: 1
 
   # ─── Build rdv CLI + pack tarball per platform ────────────────────────────
