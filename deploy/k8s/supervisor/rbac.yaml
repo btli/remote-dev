@@ -21,8 +21,11 @@
 #
 # ── Deliberately never granted ───────────────────────────────────────────────
 #   • watch (any resource)   — poll model, no Watch streams (§6.3).
-#   • pods/exec              — the first-boot seed runs as a batch/Job, not exec
-#                              (§6.4); exec into instance pods is out of scope.
+#   • pods/exec              — not needed; the only batch/Job use is the ephemeral
+#                              read-only storage inspector (jvcx.16). First-boot
+#                              user authorization is NOT a Job — the instance seeds
+#                              itself from its AUTHORIZED_USERS env (remote-dev-sb98).
+#                              exec into instance pods is out of scope.
 #   • persistentvolumes      — NFS uses the nfs-subdir-external-provisioner
 #                              (a DYNAMIC StorageClass), so no static PVs are
 #                              created and no `persistentvolumes` verbs are
@@ -58,9 +61,9 @@ rules:
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "list", "patch", "update"]
   # Pod status + logs (read-only): readiness checks and the logs/events API
-  # surface (§6.7). NO pods/exec (seed runs via a Job, §6.4). The READ-ONLY
-  # storage browser (remote-dev-jvcx.16) reuses these too — it dispatches an
-  # ephemeral inspector Job and reads its pod's log — so it needs NO new verbs:
+  # surface (§6.7). NO pods/exec. The READ-ONLY storage browser
+  # (remote-dev-jvcx.16) reuses these too — it dispatches an ephemeral inspector
+  # Job and reads its pod's log — so it needs NO new verbs:
   # `jobs: create,delete,get,list` (below) + `pods: get,list` + `pods/log: get`
   # already cover it. Do NOT add verbs for the inspector.
   - apiGroups: [""]
@@ -82,10 +85,11 @@ rules:
   - apiGroups: ["apps"]
     resources: ["statefulsets"]
     verbs: ["get", "list", "create", "patch", "update", "delete"]
-  # Jobs (§15 B3): the first-boot seed Job (buildSeedJob) AND the ephemeral
-  # read-only storage-inspector Job (buildInspectorJob, remote-dev-jvcx.16) —
-  # both create/get/list/delete; the inspector also self-deletes after reading
-  # its pod's log. No new verbs are required for the inspector.
+  # Jobs (§15 B3): the ephemeral read-only storage-inspector Job
+  # (buildInspectorJob, remote-dev-jvcx.16) — create/get/list/delete; it
+  # self-deletes after reading its pod's log. (The old first-boot seed Job was
+  # removed in remote-dev-sb98 — instances now seed users from their
+  # AUTHORIZED_USERS env at boot — but these verbs stay for the inspector.)
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list", "create", "delete"]

@@ -1,12 +1,12 @@
 /**
  * Boot-time authorized-user seeding (remote-dev-sb98).
  *
- * A freshly provisioned instance has no automated path to authorize users: the
- * manual `src/db/seed.ts` CLI is not shipped in the standalone runtime image, and
- * the supervisor's first-boot seed Job was never dispatched (it could not co-mount
- * the instance's RWO PVC). The replacement is THIS step: the supervisor injects
- * `AUTHORIZED_USERS` as plain container env on the instance StatefulSet, and the
- * app seeds the `authorized_users` table from it once the schema exists at boot.
+ * A freshly provisioned instance had no automated path to authorize users: the
+ * supervisor's first-boot seed Job was never dispatched (it could not co-mount the
+ * instance's RWO PVC) and the manual `src/db/seed.ts` CLI requires a `kubectl exec`.
+ * The replacement is THIS step: the supervisor injects `AUTHORIZED_USERS` as plain
+ * container env on the instance StatefulSet, and the app seeds the
+ * `authorized_users` table from it once the schema exists at boot.
  *
  * DIALECT-AGNOSTIC: this runs for BOTH backends. On the SQLite path the schema is
  * already present pre-app (the entrypoint's instance-bootstrap-db.mjs runs before
@@ -14,11 +14,14 @@
  * creates the schema in the step immediately before this one in instrumentation.ts.
  * Either way the table exists by the time we insert.
  *
- * RESILIENCE: this is NON-FATAL. An EXISTING instance whose users were already
- * seeded must boot even if this step hiccups (a transient DB blip, a duplicate
- * race), so we catch + warn LOUDLY (structured) rather than rethrow. Contrast
- * with migrate.ts, which DOES rethrow — a failed migrate leaves a tableless app,
- * but a failed re-seed of an already-populated table does not break the instance.
+ * RESILIENCE: mostly NON-FATAL, with ONE loud exception. A transient DB blip /
+ * duplicate race on an already-seeded instance must NOT break boot, so those are
+ * caught + warned LOUDLY (structured) rather than rethrown. BUT a "table does not
+ * exist" error is different: it means AUTHORIZED_USERS is set yet the schema is
+ * missing — a misconfigured boot where seeding can NEVER succeed and the instance
+ * would come up silently unauthorized. That case is logged at ERROR and RETHROWN
+ * (like migrate.ts) so the boot fails loud instead of serving an instance nobody
+ * intended to be open. All other errors stay a non-fatal warn.
  *
  * IDEMPOTENT: `onConflictDoNothing()` means re-running on every boot is a no-op
  * for already-authorized emails, so this also retro-seeds an EXISTING instance the
@@ -38,9 +41,18 @@ import { createLogger } from "@/lib/logger";
 const log = createLogger("db/boot-seed");
 
 /**
+ * Defensive cap on the number of authorized emails parsed from the env (mirrors
+ * the supervisor's `MAX_ENTRIES`). The supervisor already bounds the list at write
+ * time, but the instance app must not blindly insert an unbounded set if the env
+ * was set by hand; extras past the cap are dropped (with a warn).
+ */
+const MAX_ENTRIES = 100;
+
+/**
  * Parse a comma-separated `AUTHORIZED_USERS` value into a deduped, trimmed,
  * non-empty email list — the SAME semantics as `src/db/seed.ts` (trim each entry,
  * drop empties), plus a de-dup so a value like `a@x.com,a@x.com` inserts once.
+ * Capped at {@link MAX_ENTRIES}.
  */
 function parseAuthorizedEmails(raw: string): string[] {
   const seen = new Set<string>();
@@ -48,7 +60,18 @@ function parseAuthorizedEmails(raw: string): string[] {
     const email = part.trim();
     if (email.length > 0) seen.add(email);
   }
-  return [...seen];
+  return [...seen].slice(0, MAX_ENTRIES);
+}
+
+/**
+ * True when `error` indicates the `authorized_users` table is missing (schema not
+ * applied). Covers SQLite (`no such table`) and PostgreSQL (`relation "…" does not
+ * exist` / a generic `does not exist`). This is the one class we treat as FATAL.
+ */
+function isMissingTableError(error: unknown): boolean {
+  return /no such table|does not exist|relation .* does not exist/i.test(
+    String(error),
+  );
 }
 
 /**
@@ -79,8 +102,19 @@ export async function seedAuthorizedUsersFromEnv(): Promise<void> {
     log.info("Seeded authorized users from AUTHORIZED_USERS", { count: emails.length });
     log.debug("Authorized-user seed details", { emails });
   } catch (error) {
-    // NON-FATAL: an already-seeded instance must still boot. Make the warning
-    // loud + structured so a genuinely-broken seed is impossible to miss.
+    if (isMissingTableError(error)) {
+      // FATAL: AUTHORIZED_USERS is set but the schema is missing — seeding can
+      // never succeed and the instance would boot silently unauthorized. Fail
+      // loud (like migrate.ts) rather than mask it.
+      log.error(
+        "Boot-time authorized-user seeding failed: authorized_users table is missing — schema not applied (FATAL)",
+        { error: String(error), count: emails.length },
+      );
+      throw error;
+    }
+    // NON-FATAL: a transient blip / duplicate race on an already-seeded instance
+    // must still boot. Make the warning loud + structured so a genuinely-broken
+    // seed is impossible to miss.
     log.warn("Boot-time authorized-user seeding failed (non-fatal; instance continues booting)", {
       error: String(error),
       count: emails.length,

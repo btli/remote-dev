@@ -22,7 +22,8 @@
 # Required env at runtime (set in K8s manifest):
 #   AUTH_SECRET            openssl rand -base64 32
 #   AUTH_URL               https://<external host>
-#   AUTHORIZED_USERS       comma-separated allowlist for db:seed
+#   AUTHORIZED_USERS       comma-separated allowlist; seeded into authorized_users
+#                          at boot (src/db/boot-seed.ts), remote-dev-sb98
 #   RDV_DATA_DIR           /var/lib/rdv  (mount a PVC here)
 #   CF_ACCESS_TEAM         your CF team subdomain
 #   CF_ACCESS_AUD          your CF Access Application Audience tag
@@ -309,9 +310,11 @@ COPY --from=build --chown=rdv:rdv /app/scripts ./scripts
 COPY --from=build --chown=rdv:rdv /app/instance-bootstrap-schema.sql ./instance-bootstrap-schema.sql
 COPY --from=build --chown=rdv:rdv /app/drizzle ./drizzle
 COPY --from=build --chown=rdv:rdv /app/package.json ./package.json
-# src + tsconfig are needed so `bun run db:seed` can resolve @/lib/paths
-# and @/db/schema imports from src/db/seed.ts when invoked via
-# `kubectl exec`. Not used at runtime by the standalone server.
+# src + tsconfig are shipped so the manual `bun run db:seed` CLI (src/db/seed.ts)
+# still works via `kubectl exec` as a FALLBACK — they resolve @/lib/paths +
+# @/db/schema. The normal authorization path is boot-time env seeding from
+# AUTHORIZED_USERS (remote-dev-sb98); db:seed is no longer required. Not used at
+# runtime by the standalone server.
 COPY --from=build --chown=rdv:rdv /app/src ./src
 COPY --from=build --chown=rdv:rdv /app/tsconfig.json ./tsconfig.json
 

@@ -93,6 +93,73 @@ describe("POST /api/instances — success", () => {
   });
 });
 
+describe("POST /api/instances — authorizedEmails seeding (remote-dev-sb98)", () => {
+  /** The seed insert (instanceId + authorizedEmails JSON) captured by the db mock. */
+  function seedRow() {
+    return auditInserts.find((v) => "authorizedEmails" in v);
+  }
+
+  it("DEFAULTS the seed to the creator's email when the field is omitted", async () => {
+    authState.user = { id: "op-1", email: "creator@example.com", role: "operator" };
+    const res = await POST(postReq({ slug: "alpha", displayName: "Alpha" }));
+    expect(res.status).toBe(202);
+    const seed = seedRow();
+    expect(seed).toBeDefined();
+    expect(JSON.parse(seed!.authorizedEmails as string)).toEqual([
+      "creator@example.com",
+    ]);
+  });
+
+  it("uses an explicit non-empty list (normalized: trimmed + deduped) over the default", async () => {
+    authState.user = { id: "op-1", email: "creator@example.com", role: "operator" };
+    const res = await POST(
+      postReq({
+        slug: "alpha",
+        displayName: "Alpha",
+        authorizedEmails: [" a@example.com ", "b@example.com", "a@example.com"],
+      }),
+    );
+    expect(res.status).toBe(202);
+    expect(JSON.parse(seedRow()!.authorizedEmails as string)).toEqual([
+      "a@example.com",
+      "b@example.com",
+    ]);
+  });
+
+  it("DEFAULTS to the creator when an explicit list is empty", async () => {
+    authState.user = { id: "op-1", email: "creator@example.com", role: "operator" };
+    const res = await POST(
+      postReq({ slug: "alpha", displayName: "Alpha", authorizedEmails: [] }),
+    );
+    expect(res.status).toBe(202);
+    expect(JSON.parse(seedRow()!.authorizedEmails as string)).toEqual([
+      "creator@example.com",
+    ]);
+  });
+
+  it("400s when an entry contains a comma (env-delimiter injection)", async () => {
+    const res = await POST(
+      postReq({
+        slug: "alpha",
+        displayName: "Alpha",
+        authorizedEmails: ["a@example.com,b@example.com"],
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("INVALID_BODY");
+    // No seed row written on a rejected request.
+    expect(seedRow()).toBeUndefined();
+  });
+
+  it("400s when authorizedEmails contains a non-string", async () => {
+    const res = await POST(
+      postReq({ slug: "alpha", displayName: "Alpha", authorizedEmails: [123] }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("INVALID_BODY");
+  });
+});
+
 describe("POST /api/instances — validation", () => {
   it("400 on invalid slug", async () => {
     const res = await POST(postReq({ slug: "Bad_Slug", displayName: "x" }));

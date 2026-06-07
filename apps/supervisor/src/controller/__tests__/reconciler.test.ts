@@ -206,6 +206,36 @@ describe("reconcileInstances — requested → provisioning", () => {
     expect(updates.some((u) => u.set.status === "error")).toBe(false);
   });
 
+  it("DROPS a comma-bearing seed entry but keeps the valid remainder (remote-dev-sb98)", async () => {
+    // A comma inside an entry would split into extra authorized users via the env
+    // round-trip — the lenient normalizer drops it; provisioning continues.
+    const { db, updates } = makeDb([row("requested")], {
+      authorizedEmails: JSON.stringify([
+        "ok@example.com",
+        "evil@example.com,extra@example.com",
+        "ok2@example.com",
+      ]),
+    });
+    const provisionInstance = seedProvisionMock();
+    await reconcileInstances(baseDeps({ db, provisionInstance }));
+
+    const opts = provisionInstance.mock.calls[0]?.[1];
+    expect(opts?.authorizedEmails).toEqual(["ok@example.com", "ok2@example.com"]);
+    expect(updates.some((u) => u.set.status === "error")).toBe(false);
+  });
+
+  it("caps seed emails at 100 entries at the reconciler read", async () => {
+    const many = Array.from({ length: 150 }, (_, i) => `u${i}@example.com`);
+    const { db } = makeDb([row("requested")], {
+      authorizedEmails: JSON.stringify(many),
+    });
+    const provisionInstance = seedProvisionMock();
+    await reconcileInstances(baseDeps({ db, provisionInstance }));
+
+    const opts = provisionInstance.mock.calls[0]?.[1];
+    expect(opts?.authorizedEmails).toHaveLength(100);
+  });
+
   it("persists dbConfigSnapshot when provisionInstance returns one (Postgres, Unit 8)", async () => {
     const { db, updates } = makeDb([row("requested")]);
     const snapshot = {

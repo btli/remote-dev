@@ -52,8 +52,9 @@ Secret `rdv-shared` (Cloudflare Access tags), a Secret `rdv-<slug>` (the
 instance's **unique `AUTH_SECRET`** + optional GitHub OAuth creds), a headless
 Service `rdv` (ports `http`=6001, `ws`=6002), and a single-replica StatefulSet
 running the slug-aware instance image under `RDV_BASE_PATH=/<slug>` with a `data`
-PVC mounted at `/var/lib/rdv`. An optional first-boot seed Job authorises the
-initial emails.
+PVC mounted at `/var/lib/rdv`. The initial authorized users ride on the
+StatefulSet as a plain `AUTHORIZED_USERS` env (defaulting to the creator) and the
+instance seeds `authorized_users` from it at boot — no seed Job (remote-dev-sb98).
 
 Lifecycle is driven by the **controller** (not the API): the API only writes DB
 rows + audit entries. The reconciler (30s poll) advances each instance through
@@ -62,7 +63,7 @@ cluster state:
 
 - `POST /api/instances` (operator) inserts a `requested` row and returns `202`.
   The reconciler then **generates the `AUTH_SECRET`**, creates the k8s objects in
-  order (namespace → secrets → service → statefulset → optional seed Job), and on
+  order (namespace → secrets → service → statefulset), and on
   the first error **rolls back by deleting the namespace** (atomic cascade).
   `AUTH_SECRET` is generated in the controller process so it never reaches the
   API response, the API process, or the database.

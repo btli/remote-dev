@@ -434,17 +434,21 @@ DROP ROLE rdv_<slug>;
 The app seeds `authorized_users` at boot from the `AUTHORIZED_USERS` container
 env (`src/db/boot-seed.ts`, remote-dev-sb98) — comma-separated emails, inserted
 idempotently (`onConflictDoNothing`). Under the supervisor this is automatic:
-the StatefulSet carries `AUTHORIZED_USERS` (from the `authorizedEmails` passed to
-`POST /api/instances`), so a freshly provisioned instance authorizes its users
-with no manual step. The seeding step is **non-fatal** — an already-seeded
-instance still boots if it hiccups — and runs on **both** the SQLite and
-PostgreSQL backends (the table exists before the app inserts: SQLite via the
-entrypoint's pre-app schema bootstrap, PostgreSQL via migrate-on-boot).
+`POST /api/instances` records the authorized emails (an explicit list, or a
+**default of just the creator** so the instance is always loginable), the
+reconciler injects them as the StatefulSet's `AUTHORIZED_USERS` env, and the
+instance seeds itself on startup — no manual step. It runs on **both** the SQLite
+and PostgreSQL backends (the table exists before the app inserts: SQLite via the
+entrypoint's pre-app schema bootstrap, PostgreSQL via migrate-on-boot). The step
+is **non-fatal for transient errors** (an already-seeded instance still boots if
+it hiccups) but **fails loud** if `AUTHORIZED_USERS` is set while the schema is
+missing — that is a misconfigured boot where seeding can never succeed.
 
-For a standalone image that lacks the env, set `AUTHORIZED_USERS` on the
-container and restart, or insert rows directly. The manual `bun run db:seed` CLI
-(`src/db/seed.ts`) still exists for **local / dev** use, but it is **not shipped
-in the standalone runtime image**, so it is not the instance path.
+For an instance that lacks the env, set `AUTHORIZED_USERS` on the container and
+restart, or insert rows directly. The manual `bun run db:seed` CLI
+(`src/db/seed.ts`) remains available — the instance image carries `bun` + `src/`,
+so `kubectl exec … bun run db:seed` still works as a **fallback** — but boot-time
+env seeding is the provisioning path, so db:seed is no longer required.
 
 ---
 

@@ -44,6 +44,7 @@ import {
   type InstanceStatus,
 } from "@/db/schema";
 import { assertTransition } from "@/lib/instance-state";
+import { normalizeAuthorizedEmailsLenient } from "@/lib/authorized-emails";
 import {
   resolveDefaultStorageTarget,
   resolvedFromSnapshot,
@@ -456,13 +457,9 @@ async function readSeedEmails(
     return undefined;
   }
   if (!seed?.authorizedEmails) return undefined;
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(seed.authorizedEmails);
-    if (!Array.isArray(parsed)) return undefined;
-    const emails = parsed.filter(
-      (e): e is string => typeof e === "string" && e.trim().length > 0,
-    );
-    return emails.length > 0 ? emails : undefined;
+    parsed = JSON.parse(seed.authorizedEmails);
   } catch (err) {
     log.warn("instance_seed.authorizedEmails is not valid JSON; skipping seed", {
       slug: row.slug,
@@ -470,6 +467,20 @@ async function readSeedEmails(
     });
     return undefined;
   }
+  // LENIENT normalize: drop comma/control-char/oversized/dup entries (a comma in
+  // an entry would split into extra authorized users via the env round-trip) and
+  // cap the list, logging each drop. A stored bad row degrades to its valid
+  // remainder — it must NEVER fail provisioning. Comparison is exact-case (matches
+  // the app's auth + seed.ts).
+  const emails = normalizeAuthorizedEmailsLenient(parsed, (entry, reason) => {
+    log.warn("dropping invalid instance_seed authorizedEmails entry", {
+      slug: row.slug,
+      reason,
+      // The entry may be malformed; log its length, not its raw value (anti-injection).
+      entryLength: typeof entry === "string" ? entry.length : null,
+    });
+  });
+  return emails.length > 0 ? emails : undefined;
 }
 
 /**

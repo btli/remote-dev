@@ -147,7 +147,7 @@ describe("seedAuthorizedUsersFromEnv", () => {
     expect(debugMeta).toEqual({ emails: ["secret-user@example.com", "other@example.com"] });
   });
 
-  it("is NON-FATAL on a DB error: warns and does not throw", async () => {
+  it("is NON-FATAL on a transient DB error: warns and does not throw", async () => {
     process.env.AUTHORIZED_USERS = "a@example.com";
     seam.throwOnInsert = new Error("db is down");
 
@@ -158,5 +158,41 @@ describe("seedAuthorizedUsersFromEnv", () => {
     expect(warnMeta).toMatchObject({ error: "Error: db is down", count: 1 });
     // No success info line when the insert failed.
     expect(seam.logs.info).not.toHaveBeenCalled();
+    // A transient failure is a WARN, never an ERROR.
+    expect(seam.logs.error).not.toHaveBeenCalled();
+  });
+
+  it("is FATAL on a missing-table error: logs error AND rethrows (SQLite)", async () => {
+    process.env.AUTHORIZED_USERS = "a@example.com";
+    seam.throwOnInsert = new Error(
+      "SQLITE_ERROR: no such table: authorized_users",
+    );
+
+    await expect(seedAuthorizedUsersFromEnv()).rejects.toThrow(/no such table/);
+
+    expect(seam.logs.error).toHaveBeenCalledOnce();
+    // Not masked as a warn.
+    expect(seam.logs.warn).not.toHaveBeenCalled();
+  });
+
+  it("is FATAL on a missing-relation error: logs error AND rethrows (Postgres)", async () => {
+    process.env.AUTHORIZED_USERS = "a@example.com";
+    seam.throwOnInsert = new Error(
+      'error: relation "authorized_users" does not exist',
+    );
+
+    await expect(seedAuthorizedUsersFromEnv()).rejects.toThrow(/does not exist/);
+    expect(seam.logs.error).toHaveBeenCalledOnce();
+    expect(seam.logs.warn).not.toHaveBeenCalled();
+  });
+
+  it("caps the parsed list at 100 entries (defensive bound)", async () => {
+    // 150 distinct emails -> only the first 100 are inserted.
+    const emails = Array.from({ length: 150 }, (_, i) => `u${i}@example.com`);
+    process.env.AUTHORIZED_USERS = emails.join(",");
+    await seedAuthorizedUsersFromEnv();
+    expect(seam.insertedValues).toHaveLength(100);
+    const [, infoMeta] = seam.logs.info.mock.calls[0];
+    expect(infoMeta).toEqual({ count: 100 });
   });
 });

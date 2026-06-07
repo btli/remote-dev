@@ -75,7 +75,7 @@ export function getStorageV1Api(): StorageV1Api {
   return getKubeConfig().makeApiClient(StorageV1Api);
 }
 
-/** Batch API (Jobs — first-boot seed Job, jvcx.4). */
+/** Batch API (Jobs — ephemeral read-only storage-inspector Jobs, jvcx.16). */
 export function getBatchV1Api(): BatchV1Api {
   return getKubeConfig().makeApiClient(BatchV1Api);
 }

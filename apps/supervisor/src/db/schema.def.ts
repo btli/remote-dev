@@ -153,7 +153,12 @@ export const schema: SchemaDefinition = [
     columns: [
       { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
       { field: "instanceId", dbName: "instance_id", kind: "text", notNull: true, unique: true, references: { table: "instance", column: "id", onDelete: "cascade" } },
+      // The authorized emails (JSON array) injected as the instance StatefulSet's
+      // AUTHORIZED_USERS env; the instance seeds authorized_users from it at boot.
       { field: "authorizedEmails", dbName: "authorized_emails", kind: "text" },
+      // LEGACY (remote-dev-sb98): jobDispatched/jobName/completedAt tracked the
+      // first-boot seed JOB, which was removed in favor of boot-time env seeding.
+      // No readers or writers remain; kept to avoid a destructive migration.
       { field: "jobDispatched", dbName: "job_dispatched", kind: "boolean", notNull: true, default: { kind: "value", value: "false" } },
       { field: "jobName", dbName: "job_name", kind: "text" },
       { field: "completedAt", dbName: "completed_at", kind: "timestampMs" },
