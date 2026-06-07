@@ -41,7 +41,11 @@
  *       platform WebView — app background→resume and Flutter route
  *       pop-back. Present on non-session embeds as a no-op stub. Older
  *       deployed PWA builds (pre-v4: v2/v3) lack the method, so the Dart
- *       side guards the call and silently no-ops.
+ *       side guards the call and silently no-ops. Also adds the outbound
+ *       `onFontSizeChanged: { px }` event (remote-dev-u5q5.3): the embed
+ *       fires it on a pinch-zoom commit so the native shell can mirror the
+ *       new absolute terminal font size into its own appearance store and
+ *       avoid echoing a redundant setFontSize back into the WebView.
  */
 export const RDV_BRIDGE_VERSION = 4;
 
@@ -187,7 +191,8 @@ export type NotifyName =
   | "onSelectionChange"
   | "onWantsPaste"
   | "onActivity"
-  | "onLinkOpen";
+  | "onLinkOpen"
+  | "onFontSizeChanged";
 
 /** Payload union — kept narrow on purpose; bump version to extend. */
 export type NotifyPayload =
@@ -207,7 +212,13 @@ export type NotifyPayload =
           | "subagent";
       };
     }
-  | { name: "onLinkOpen"; data: { url: string } };
+  | { name: "onLinkOpen"; data: { url: string } }
+  // Emitted on a pinch-zoom commit (v4, remote-dev-u5q5.3). `px` is the
+  // committed absolute terminal font size, already clamped to the embed's
+  // [FONT_SIZE_MIN, FONT_SIZE_MAX]. The native shell mirrors it into its
+  // appearance store and suppresses the echo setFontSize it would otherwise
+  // push back into this WebView.
+  | { name: "onFontSizeChanged"; data: { px: number } };
 
 /**
  * Send an event to the native shell. No-op when not running inside a

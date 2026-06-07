@@ -252,28 +252,111 @@ describe("EmbeddedSessionView", () => {
     expect(sendInputSpy).toHaveBeenCalledWith("ls -la\n");
   });
 
-  it("rdvBridge.setFontSize persists clamped value through preferences", () => {
+  it("rdvBridge.setFontSize updates the rendered size immediately and clamps, WITHOUT persisting to shared web prefs", () => {
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+    });
     render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+    expect(
+      screen.getByTestId("terminal-mock").getAttribute("data-font-size")
+    ).toBe("14");
 
-    // In-range: persisted as-is.
-    window.rdvBridge?.setFontSize(15);
-    expect(updateUserSettingsSpy).toHaveBeenLastCalledWith({ fontSize: 15 });
+    // In-range: applied to local state immediately.
+    act(() => {
+      window.rdvBridge?.setFontSize(15);
+    });
+    expect(
+      screen.getByTestId("terminal-mock").getAttribute("data-font-size")
+    ).toBe("15");
 
-    // Above max → clamped to 22.
-    window.rdvBridge?.setFontSize(99);
-    expect(updateUserSettingsSpy).toHaveBeenLastCalledWith({ fontSize: 22 });
+    // Above max → clamped to 22 in local state.
+    act(() => {
+      window.rdvBridge?.setFontSize(99);
+    });
+    expect(
+      screen.getByTestId("terminal-mock").getAttribute("data-font-size")
+    ).toBe("22");
 
-    // Below min → clamped to 9.
-    window.rdvBridge?.setFontSize(2);
-    expect(updateUserSettingsSpy).toHaveBeenLastCalledWith({ fontSize: 9 });
+    // Below min → clamped to 9 in local state.
+    act(() => {
+      window.rdvBridge?.setFontSize(2);
+    });
+    expect(
+      screen.getByTestId("terminal-mock").getAttribute("data-font-size")
+    ).toBe("9");
+
+    // REGRESSION (remote-dev-u5q5.3): a native setFontSize push (fired on
+    // EVERY onTerminalReady from the Flutter "Terminal font size" setting)
+    // must NOT PATCH the user-level web preference — that is shared with
+    // desktop, so a passive session-open would clobber the desktop font.
+    expect(updateUserSettingsSpy).not.toHaveBeenCalled();
   });
 
   it("rdvBridge.setFontSize ignores non-finite values", () => {
     render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
 
-    window.rdvBridge?.setFontSize(Number.NaN);
-    window.rdvBridge?.setFontSize(Number.POSITIVE_INFINITY);
+    act(() => {
+      window.rdvBridge?.setFontSize(Number.NaN);
+      window.rdvBridge?.setFontSize(Number.POSITIVE_INFINITY);
+    });
 
+    expect(updateUserSettingsSpy).not.toHaveBeenCalled();
+  });
+
+  it("a native setFontSize survives a later prefs settle (latch)", () => {
+    // Cold start: prefs not yet finite (so the one-shot reconciliation is
+    // still armed), seed defaults to DEFAULT_FONT_SIZE (12).
+    setMockPrefs({
+      currentPreferences: {
+        fontFamily: "MockMono, monospace",
+        fontSize: Number.NaN,
+      },
+    });
+    const { rerender } = render(
+      <EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />
+    );
+    expect(
+      screen.getByTestId("terminal-mock").getAttribute("data-font-size")
+    ).toBe("12");
+
+    // Native pushes an absolute size of 14 — applies immediately and latches.
+    act(() => {
+      window.rdvBridge?.setFontSize(14);
+    });
+    expect(
+      screen.getByTestId("terminal-mock").getAttribute("data-font-size")
+    ).toBe("14");
+
+    // Prefs now settle to a DIFFERENT stored value (16). Because the native
+    // push already latched seededFromUpstream, the one-shot reconciliation is
+    // a no-op and must NOT revert the live 14.
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 16 },
+    });
+    rerender(
+      <EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />
+    );
+    expect(
+      screen.getByTestId("terminal-mock").getAttribute("data-font-size")
+    ).toBe("14");
+  });
+
+  it("a native setFontSize does not clobber a different desktop pref (cross-device regression)", () => {
+    // Desktop has saved 14. The native shell pushes 12 (the Flutter default)
+    // on session open. The terminal renders 12 locally but the shared web
+    // pref MUST stay untouched — no PATCH that would change desktop to 12.
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+    });
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    act(() => {
+      window.rdvBridge?.setFontSize(12);
+    });
+
+    expect(
+      screen.getByTestId("terminal-mock").getAttribute("data-font-size")
+    ).toBe("12");
     expect(updateUserSettingsSpy).not.toHaveBeenCalled();
   });
 });
@@ -326,6 +409,28 @@ describe("EmbeddedSessionView, pinch-to-zoom", () => {
     expect(updateUserSettingsSpy).toHaveBeenLastCalledWith({ fontSize: 18 });
     const terminal = screen.getByTestId("terminal-mock");
     expect(terminal.getAttribute("data-font-size")).toBe("18");
+  });
+
+  it("notifies native onFontSizeChanged with the committed px on gesture commit", async () => {
+    // Install the flutter_inappwebview bridge seam so notifyToNative fires.
+    const callHandler = vi.fn().mockResolvedValue(undefined);
+    window.flutter_inappwebview = { callHandler };
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+    });
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    await act(async () => {
+      capturedPinchOpts?.onScaleCommit?.(1.3);
+      // Let the awaited notifyToNative microtask settle.
+      await Promise.resolve();
+    });
+
+    // 14 * 1.3 = 18.2 → 18. The native shell uses this to mirror the size
+    // into its appearance store + arm its echo guard.
+    expect(callHandler).toHaveBeenCalledWith("onFontSizeChanged", { px: 18 });
+
+    delete window.flutter_inappwebview;
   });
 
   it("clamps the commit value to [FONT_SIZE_MIN, FONT_SIZE_MAX]", () => {
@@ -553,53 +658,70 @@ describe("EmbeddedSessionView, agent session lifecycle", () => {
   });
 });
 
-describe("EmbeddedSessionView, setFontScale", () => {
-  it("rdvBridge.setFontScale persists scale * base via preferences", () => {
-    // Cold start: prefs settle at 14 px. setFontScale(1.5) → 14 * 1.5 = 21
-    // (clamped under MAX 22), persisted as { fontSize: 21 }.
+describe("EmbeddedSessionView, setFontScale (compounding-bug regression, remote-dev-u5q5.3)", () => {
+  it("does NOT persist a derived fontSize (the old base*scale path is gone)", () => {
+    // REGRESSION: the native shell pushes setFontScale on EVERY
+    // onTerminalReady. The old handler multiplied the stored px by the scale
+    // and re-persisted it, so the font drifted on every session open
+    // (12→16→21→22…). setFontScale must no longer touch fontSize at all.
     setMockPrefs({
       currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
     });
     render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
 
-    window.rdvBridge?.setFontScale(1.5);
-
-    expect(updateUserSettingsSpy).toHaveBeenLastCalledWith({ fontSize: 21 });
-  });
-
-  it("rdvBridge.setFontScale clamps the resulting px into the accepted range", () => {
-    setMockPrefs({
-      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+    act(() => {
+      window.rdvBridge?.setFontScale(1.3);
     });
-    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
 
-    // 14 * 3 = 42 → clamped to MAX 22.
-    window.rdvBridge?.setFontScale(3);
-    expect(updateUserSettingsSpy).toHaveBeenLastCalledWith({ fontSize: 22 });
+    // No persistence — and the rendered terminal size is untouched.
+    expect(updateUserSettingsSpy).not.toHaveBeenCalled();
+    expect(
+      screen.getByTestId("terminal-mock").getAttribute("data-font-size")
+    ).toBe("14");
 
-    // 14 * 0.4 = 5.6 → clamped to MIN 9.
-    window.rdvBridge?.setFontScale(0.4);
-    expect(updateUserSettingsSpy).toHaveBeenLastCalledWith({ fontSize: 9 });
-  });
-
-  it("rdvBridge.setFontScale ignores non-finite and non-positive values", () => {
-    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
-
-    window.rdvBridge?.setFontScale(Number.NaN);
-    window.rdvBridge?.setFontScale(Number.POSITIVE_INFINITY);
-    window.rdvBridge?.setFontScale(0);
-    window.rdvBridge?.setFontScale(-1);
-
+    // Even repeated pushes (simulating many session opens) never persist.
+    act(() => {
+      window.rdvBridge?.setFontScale(1.3);
+      window.rdvBridge?.setFontScale(1.3);
+    });
     expect(updateUserSettingsSpy).not.toHaveBeenCalled();
   });
 
-  it("rdvBridge.setFontScale also writes --rdv-font-scale on <html> for sibling embeds", () => {
+  it("still writes --rdv-font-scale on <html> for sibling embeds", () => {
     render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
 
-    window.rdvBridge?.setFontScale(1.25);
+    act(() => {
+      window.rdvBridge?.setFontScale(1.25);
+    });
 
     expect(
       document.documentElement.style.getPropertyValue("--rdv-font-scale")
     ).toBe("1.25");
+  });
+
+  it("does NOT write the CSS var for non-finite / non-positive scales (no NaN poisoning)", () => {
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    // Seed a known-good value so we can prove the bad calls leave it intact
+    // rather than overwriting it with `NaN`/`Infinity` (which would poison
+    // every calc(... * var(--rdv-font-scale)) consumer in sibling embeds).
+    act(() => {
+      window.rdvBridge?.setFontScale(1.1);
+    });
+    expect(
+      document.documentElement.style.getPropertyValue("--rdv-font-scale")
+    ).toBe("1.1");
+
+    act(() => {
+      window.rdvBridge?.setFontScale(Number.NaN);
+      window.rdvBridge?.setFontScale(Number.POSITIVE_INFINITY);
+      window.rdvBridge?.setFontScale(0);
+      window.rdvBridge?.setFontScale(-1);
+    });
+
+    // Untouched — still the last valid value, never "NaN"/"Infinity"/"0"/"-1".
+    expect(
+      document.documentElement.style.getPropertyValue("--rdv-font-scale")
+    ).toBe("1.1");
   });
 });

@@ -28,16 +28,57 @@ Future<ProviderContainer> _pump(WidgetTester tester) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('renders title and all three controls', (tester) async {
+  testWidgets('renders title and all controls', (tester) async {
     final container = await _pump(tester);
     addTearDown(container.dispose);
 
     expect(find.text('Appearance'), findsOneWidget);
     expect(find.text('Font scale'), findsOneWidget);
+    expect(find.text('Terminal font size'), findsOneWidget);
     expect(find.text('Reduce motion'), findsOneWidget);
     expect(find.text('Cursor blink'), findsOneWidget);
-    expect(find.byType(Slider), findsOneWidget);
+    // Two sliders now: font scale + terminal font size.
+    expect(find.byType(Slider), findsNWidgets(2));
+    expect(find.byKey(const Key('appearance.fontScale')), findsOneWidget);
+    expect(
+      find.byKey(const Key('appearance.terminalFontSize')),
+      findsOneWidget,
+    );
     expect(find.byType(SwitchListTile), findsNWidgets(2));
+  });
+
+  testWidgets('terminal font size tile shows the default px label',
+      (tester) async {
+    final container = await _pump(tester);
+    addTearDown(container.dispose);
+
+    expect(
+      container.read(appearanceSettingsProvider).terminalFontSize,
+      AppearanceSettings.defaultTerminalFontSize,
+    );
+    // The tile renders "<n>px"; default is 12.
+    expect(find.text('12px'), findsWidgets);
+  });
+
+  testWidgets('dragging the terminal font size slider updates the setting',
+      (tester) async {
+    final container = await _pump(tester);
+    addTearDown(container.dispose);
+
+    final initial =
+        container.read(appearanceSettingsProvider).terminalFontSize;
+    expect(initial, AppearanceSettings.defaultTerminalFontSize);
+
+    // Drag right to increase the size.
+    await tester.drag(
+      find.byKey(const Key('appearance.terminalFontSize')),
+      const Offset(200, 0),
+    );
+    await tester.pumpAndSettle();
+
+    final after = container.read(appearanceSettingsProvider).terminalFontSize;
+    expect(after, greaterThan(initial));
+    expect(after, lessThanOrEqualTo(AppearanceSettings.maxTerminalFontSize));
   });
 
   testWidgets('defaults match AppearanceSettings defaults', (tester) async {

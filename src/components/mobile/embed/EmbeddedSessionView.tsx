@@ -19,6 +19,10 @@
  *   - onActivity forwards live agent activity-status transitions (from
  *     the session WebSocket) to the native shell so it can drive the
  *     in-session status-bar pip (remote-dev-sguu).
+ *   - onFontSizeChanged fires on a pinch-zoom commit with `{ px }` (the
+ *     committed absolute terminal font size) so the native shell mirrors
+ *     it into its appearance store and suppresses the echo `setFontSize`
+ *     it would otherwise push back into this WebView (remote-dev-u5q5.3).
  *
  * @see docs/superpowers/specs/2026-05-08-flutter-app-redesign-design.md §4
  */
@@ -199,6 +203,14 @@ export function EmbeddedSessionView({
       // The user's first deliberate size choice IS a real upstream value
       // — latch so a later async prefs settle cannot overwrite the pinch.
       seededFromUpstreamRef.current = true;
+      // Report the committed absolute size to the native shell so it can
+      // mirror it into the "Terminal font size" appearance setting. The
+      // native side records this as `_lastBridgeFontSize` and SKIPS the
+      // echo setFontSize it would otherwise push back into this WebView
+      // (remote-dev-u5q5.3). No-op outside the Flutter WebView.
+      notifyToNative("onFontSizeChanged", { px: next }).catch((err) => {
+        console.error("onFontSizeChanged notify failed", err);
+      });
       updateUserSettings({ fontSize: next }).catch((err) => {
         // Persistence failures shouldn't crash the WebView; surface in
         // console for observability while keeping the UI alive.
@@ -222,7 +234,6 @@ export function EmbeddedSessionView({
     seededFromUpstreamRef.current = true;
     fontSizeBaselineRef.current = clamped;
     if (clamped !== fontSize) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot hydration from async preferences fetch
       setFontSize(clamped);
     }
   }, [currentPreferences.fontSize, fontSize]);
@@ -318,25 +329,36 @@ export function EmbeddedSessionView({
       },
       paste: (text) => terminalRef.current?.sendInput(text),
       setFontSize: (px) => {
-        // Bridge handler: the native shell calls this with a target px
-        // size. We clamp into the PWA's accepted range and persist via
-        // PATCH /api/preferences; PreferencesContext re-renders, and the
-        // updated `fontSize` flows back to this component on the next
-        // render (subject to the seeded-from-upstream latch — once a
-        // user has pinched, bridge.setFontSize still persists but does
-        // not override the pinched local state mid-session).
+        // Bridge handler: the native shell calls this with an ABSOLUTE
+        // target px size (the mobile "Terminal font size" setting, or an
+        // external caller). Drive LOCAL state ONLY — do NOT persist.
         //
-        // The JS-side pinch detector (usePinchZoom, bound below) drives
-        // its own state + persistence path; this bridge handler remains
-        // wired so the native shell or external callers can still set
-        // the font directly.
+        // Why local state, not just persistence: once the user has pinched
+        // (or prefs have settled), `seededFromUpstreamRef` is latched and
+        // the one-shot reconciliation effect is a permanent no-op, so a
+        // value that only landed in prefs would never flow back into
+        // `fontSize`. By setting state + baseline here and re-latching, a
+        // native push applies immediately and isn't clobbered by the
+        // subsequent prefs settle.
+        //
+        // Why NO updateUserSettings here (remote-dev-u5q5.3): the native
+        // shell pushes this on EVERY onTerminalReady from the Flutter-side
+        // "Terminal font size" setting (default 12). `updateUserSettings`
+        // PATCHes the USER-level web preference, which is SHARED with desktop
+        // — so a passive mobile session-open would silently overwrite the
+        // user's desktop terminal font (e.g. 14 → 12). A passive action must
+        // never mutate a cross-device pref. The mobile terminal font's source
+        // of truth is the Flutter-side setting; the shared web pref is only
+        // written by a DELIBERATE pinch gesture (usePinchZoom's onScaleCommit
+        // below still calls updateUserSettings), preserving PWA parity.
         if (!Number.isFinite(px)) return;
         const clamped = clampFontSize(px);
-        updateUserSettings({ fontSize: clamped }).catch((err) => {
-          // Persistence failures shouldn't crash the WebView; surface in
-          // console for observability while keeping the UI alive.
-          console.error("bridge.setFontSize persist failed", err);
-        });
+        // Setting state from inside a bridge callback is an EVENT handler
+        // (native → JS), not a render-phase effect, so it does not trip
+        // react-hooks/set-state-in-effect.
+        setFontSize(clamped);
+        fontSizeBaselineRef.current = clamped;
+        seededFromUpstreamRef.current = true;
       },
       setFontScale: (scale) => {
         // Apply the scale to <html> as a CSS variable so sibling embeds
@@ -345,36 +367,34 @@ export function EmbeddedSessionView({
         //
         // The terminal embed itself does NOT visually consume the CSS
         // variable: xterm.js sizes its glyph grid from the JS
-        // `terminal.options.fontSize` option, which is wired to the
-        // `fontSize` React prop on TerminalWithKeyboard. Wrapping the
-        // viewport in a `font-size: calc(... * var(--rdv-font-scale))`
-        // div has no effect on the rendered grid — xterm.js measures
-        // glyphs against its own option, not the cascaded CSS.
+        // `terminal.options.fontSize` option (wired to the `fontSize` prop),
+        // not from cascaded CSS — so a `font-size: calc(...)` wrapper has no
+        // effect on the rendered grid. The terminal now has its OWN absolute
+        // size control (the native "Terminal font size" setting → bridge
+        // .setFontSize, plus pinch-to-zoom), so this handler deliberately
+        // does NOTHING to the terminal font.
         //
-        // To get an actual visual change in the terminal, we translate
-        // the scale into a px target against a stable base (the latest
-        // upstream-settled prefs value, or DEFAULT_FONT_SIZE if prefs
-        // haven't settled yet) and route it through the same
-        // updateUserSettings path as setFontSize. PreferencesContext
-        // re-renders, the `fontSize` prop flows back through, and
-        // xterm.js resizes the grid. Subject to the same
-        // seeded-from-upstream latch as bridge.setFontSize: once a user
-        // has pinched, persistence still lands but the local pinch
-        // state is not stomped mid-session.
+        // It used to translate the scale into a px target and persist it via
+        // updateUserSettings({ fontSize }). That was the compounding bug
+        // (remote-dev-u5q5.3): the native shell pushes setFontScale on EVERY
+        // onTerminalReady, and the embed multiplied the *current* stored px
+        // by the scale and re-persisted it — so with scale 1.3 the saved
+        // size grew on every session open (12→16→21→22…) until clamped, and
+        // with 0.85 it shrank to the 9px floor. Dropping the persistence
+        // here is the fix: the scale only affects sibling-embed chrome via
+        // the CSS var; absolute terminal sizing goes through setFontSize.
+        //
+        // Validate before writing the CSS var: a NaN/Infinity/non-positive
+        // scale would stringify to `--rdv-font-scale: NaN` (etc.) and poison
+        // every `calc(... * var(--rdv-font-scale))` consumer in the sibling
+        // embeds. Drop the bogus value rather than propagate it.
+        if (!Number.isFinite(scale) || scale <= 0) return;
         if (typeof document !== "undefined") {
           document.documentElement.style.setProperty(
             "--rdv-font-scale",
             String(scale),
           );
         }
-        if (!Number.isFinite(scale) || scale <= 0) return;
-        const base = Number.isFinite(currentPreferences.fontSize)
-          ? currentPreferences.fontSize
-          : DEFAULT_FONT_SIZE;
-        const clamped = clampFontSize(base * scale);
-        updateUserSettings({ fontSize: clamped }).catch((err) => {
-          console.error("bridge.setFontScale persist failed", err);
-        });
       },
       setCursorBlink: (blink) => {
         terminalRef.current?.setCursorBlink(blink);
@@ -447,13 +467,16 @@ export function EmbeddedSessionView({
     });
 
     return uninstall;
-    // `updateUserSettings` is stable across renders (memoized by
-    // PreferencesContext via useCallback), so reinstalling the bridge
-    // on its identity is acceptable. `currentPreferences.fontSize` is
-    // captured by `setFontScale` for the scale → px conversion: when
-    // prefs settle (or change after a pinch / setFontSize), the bridge
-    // gets rebound so the next setFontScale call uses the fresh base.
-  }, [updateUserSettings, currentPreferences.fontSize]);
+    // Empty deps: the bridge install is a true mount-once effect now. None of
+    // the adapter handlers close over reactive values — they reference only
+    // the terminal ref, the `setFontSize` state setter + the size refs (all
+    // stable), `document`, and `notifyToNative`. `setFontSize` takes an
+    // absolute px arg and drives local state directly (no persistence), and
+    // `setFontScale` only writes the CSS var, so the handlers no longer use
+    // `updateUserSettings` or `currentPreferences.fontSize`. The deliberate
+    // pinch persistence lives in usePinchZoom's onScaleCommit, outside this
+    // effect. Installing once avoids needless bridge re-installs.
+  }, []);
 
   // Inflate the narrow embed-session shape into a full TerminalSession
   // so TerminalWithKeyboard can render the agent SessionEndedOverlay

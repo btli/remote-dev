@@ -47,11 +47,12 @@ import 'smart_key_strip.dart';
 ///   WebView reserves so the two stay flush. See the `bottomReserve` rationale
 ///   in `build`.
 ///
-/// All five outbound bridge handlers are registered in `onWebViewCreated`
-/// (Spec §2.2 rule 1). All native→WebView calls go through `BridgeController`
-/// (Spec §2.2 rule 2). The WebView shrinks to track the keyboard inset so
-/// xterm.js sees a viewport resize and tmux reflows its grid; the chrome
-/// floats above the keyboard via `Stack + Positioned`.
+/// All six outbound bridge handlers (onTerminalReady, onSelectionChange,
+/// onWantsPaste, onActivity, onLinkOpen, onFontSizeChanged) are registered in
+/// `onWebViewCreated` (Spec §2.2 rule 1). All native→WebView calls go through
+/// `BridgeController` (Spec §2.2 rule 2). The WebView shrinks to track the
+/// keyboard inset so xterm.js sees a viewport resize and tmux reflows its grid;
+/// the chrome floats above the keyboard via `Stack + Positioned`.
 ///
 /// The state is also a `WidgetsBindingObserver` + `RouteAware`: it refits the
 /// embedded terminal on app resume (gated on the session route being current,
@@ -91,6 +92,15 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
   /// hook transitions arrive over the WebSocket.
   SessionActivity _activity = SessionActivity.idle;
   final String _projectName = '';
+
+  /// Echo guard for the terminal font size (remote-dev-u5q5.3). When the
+  /// WebView reports a pinch-zoom commit via `onFontSizeChanged`, we update
+  /// the appearance notifier — which fires `ref.listen` below. Without this
+  /// guard we'd then push `setFontSize` back into the WebView that JUST told
+  /// us the value, a redundant round-trip. We record the reported px here and
+  /// skip the matching `ref.listen` push. See [FontSizeEchoGuard] for the
+  /// read-and-clear contract and the stale-guard sequence it defends against.
+  final FontSizeEchoGuard _fontSizeEchoGuard = FontSizeEchoGuard();
 
   /// The session's display name once resolved. Null until resolution
   /// completes; the header falls back to `initialSummary?.name` and then the
@@ -243,6 +253,11 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
         final settings = ref.read(appearanceSettingsProvider);
         bridge.setFontScale(settings.fontScale);
         bridge.setCursorBlink(settings.cursorBlink);
+        // Push the absolute terminal font size so the embed renders at the
+        // user's chosen px immediately (remote-dev-u5q5.3). This replaces the
+        // old behavior where the only terminal-size signal was setFontScale,
+        // which the embed multiplied into the stored px every ready event.
+        bridge.setFontSize(settings.terminalFontSize);
         return null;
       },
     );
@@ -297,6 +312,26 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
         if (uri != null) {
           unawaited(_openExternal(uri));
         }
+        return null;
+      },
+    );
+
+    controller.addJavaScriptHandler(
+      handlerName: 'onFontSizeChanged',
+      callback: (args) {
+        // The embed reports a pinch-zoom commit as
+        // `notifyToNative('onFontSizeChanged', { px })`. flutter_inappwebview
+        // marshals the payload as the first arg — usually a Map `{px: n}`,
+        // but parse defensively (it may arrive as a bare num on some
+        // platforms). Mirror the value into the appearance setting AND record
+        // it as the echo guard so the `ref.listen` push below skips re-sending
+        // the size the WebView just told us (remote-dev-u5q5.3).
+        final px = parseOnFontSizeChangedPayload(args);
+        if (px == null) return null;
+        _fontSizeEchoGuard.record(px);
+        unawaited(
+          ref.read(appearanceSettingsProvider.notifier).setTerminalFontSize(px),
+        );
         return null;
       },
     );
@@ -436,6 +471,18 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
       }
       if (prev?.cursorBlink != next.cursorBlink) {
         _bridge?.setCursorBlink(next.cursorBlink);
+      }
+      if (prev?.terminalFontSize != next.terminalFontSize) {
+        // Echo guard (remote-dev-u5q5.3): [FontSizeEchoGuard.shouldPush]
+        // reads-and-CLEARS on every fire. If this change is the one the WebView
+        // itself just reported via onFontSizeChanged (a pinch commit), it
+        // returns false so we DON'T push it back — a redundant round-trip to
+        // the WebView that already has the value. Clearing unconditionally
+        // (not just on a match) prevents a stale guard from wrongly suppressing
+        // a later legitimate push (see FontSizeEchoGuard's doc).
+        if (_fontSizeEchoGuard.shouldPush(next.terminalFontSize)) {
+          _bridge?.setFontSize(next.terminalFontSize);
+        }
       }
     });
     // Header title: resolved name, else the route-supplied summary name,
@@ -776,5 +823,78 @@ Future<void> _openExternal(Uri uri) async {
     }
   } catch (err) {
     debugPrint('[SessionView] launchUrl threw for $uri: $err');
+  }
+}
+
+/// Extracts the px size from an `onFontSizeChanged` JS-handler callback's args
+/// (remote-dev-u5q5.3).
+///
+/// The embed fires `notifyToNative('onFontSizeChanged', { px })`, which
+/// flutter_inappwebview delivers as the first callback arg — canonically a
+/// `Map {px: n}`. This parses that shape and also tolerates a bare numeric
+/// first arg, a double (rounded), and a num-as-String, returning null when
+/// nothing parseable is present so the handler no-ops rather than pushing a
+/// garbage size into the appearance store.
+///
+/// Top-level + `@visibleForTesting` so the defensive parsing can be unit
+/// tested without standing up the (unavailable-under-flutter_test) WebView
+/// platform.
+@visibleForTesting
+int? parseOnFontSizeChangedPayload(List<dynamic> args) {
+  if (args.isEmpty) return null;
+  final first = args.first;
+  dynamic raw = first;
+  if (first is Map) {
+    raw = first['px'];
+  }
+  if (raw is int) return raw;
+  if (raw is double) return raw.round();
+  if (raw is num) return raw.round();
+  if (raw is String) {
+    final parsed = num.tryParse(raw);
+    if (parsed != null) return parsed.round();
+  }
+  return null;
+}
+
+/// One-shot echo guard for the terminal font size (remote-dev-u5q5.3).
+///
+/// The WebView reports a pinch-zoom commit via `onFontSizeChanged`; the session
+/// screen mirrors that px into the appearance notifier, which then fires its
+/// `ref.listen`. Without a guard, the listener would push `setFontSize` straight
+/// back into the WebView that JUST reported the value — a redundant round-trip.
+///
+/// [record] stores the px the WebView reported; [shouldPush] is called by the
+/// listener for EVERY terminalFontSize change and returns whether to push,
+/// always CLEARING the recorded value (read-and-clear) — even on a match.
+///
+/// Clearing on every call (not only on a match) is the crux: a clear-on-match-
+/// only guard can go stale and wrongly suppress a later legitimate push. The
+/// concrete failure it prevents:
+///   1. Setting is 14; the user pinch-commits at the baseline 14. The embed
+///      fires `onFontSizeChanged(14)` unconditionally on every commit, so
+///      [record] stores 14 — but `setTerminalFontSize(14)` is a no-op, so the
+///      listener never fires and the guard is never consumed.
+///   2. The user drags the slider to 16 → listener fires. With read-and-clear,
+///      [shouldPush] sees recorded 14 != 16, clears it, and returns true (push
+///      16). A clear-on-match-only guard would still hold 14 here.
+///   3. The user drags back to 14 → listener fires. The stale guard (14) would
+///      match and wrongly suppress the push, leaving the WebView rendering 16
+///      while the setting says 14. With read-and-clear the guard is already
+///      empty, so [shouldPush] returns true and 14 is pushed correctly.
+@visibleForTesting
+class FontSizeEchoGuard {
+  int? _recorded;
+
+  /// Record the px the WebView just reported via `onFontSizeChanged`.
+  void record(int px) => _recorded = px;
+
+  /// Returns whether the listener should push [next] to the WebView, always
+  /// clearing the recorded value. Returns false ONLY when [next] equals the
+  /// value the WebView itself reported (the echo we want to suppress).
+  bool shouldPush(int next) {
+    final recorded = _recorded;
+    _recorded = null;
+    return recorded != next;
   }
 }

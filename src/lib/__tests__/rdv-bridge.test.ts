@@ -240,5 +240,14 @@ describe("rdv-bridge", () => {
         });
       });
     });
+
+    it("forwards onFontSizeChanged { px } (v4 pinch-commit event)", async () => {
+      const callHandler = vi.fn().mockResolvedValue(undefined);
+      window.flutter_inappwebview = { callHandler };
+
+      await notifyToNative("onFontSizeChanged", { px: 18 });
+
+      expect(callHandler).toHaveBeenCalledWith("onFontSizeChanged", { px: 18 });
+    });
   });
 });

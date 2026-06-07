@@ -40,6 +40,95 @@ import 'package:remote_dev/presentation/screens/session_view/session_view_screen
 import 'package:remote_dev/presentation/screens/session_view/smart_key_strip.dart';
 
 void main() {
+  // ── onFontSizeChanged payload parsing (remote-dev-u5q5.3) ─────────────
+  //
+  // The bridge round-trip can't run under flutter_test (no InAppWebView
+  // platform), so the most bug-prone piece — defensively parsing the px out
+  // of the JS-handler args — is unit-tested directly via the
+  // @visibleForTesting helper.
+  group('parseOnFontSizeChangedPayload', () {
+    test('reads px from the canonical {px: n} Map', () {
+      expect(
+        parseOnFontSizeChangedPayload(<dynamic>[<String, int>{'px': 18}]),
+        18,
+      );
+    });
+
+    test('rounds a double px (Map and bare)', () {
+      expect(
+        parseOnFontSizeChangedPayload(<dynamic>[<String, double>{'px': 18.6}]),
+        19,
+      );
+      expect(parseOnFontSizeChangedPayload(<dynamic>[13.2]), 13);
+    });
+
+    test('accepts a bare numeric first arg', () {
+      expect(parseOnFontSizeChangedPayload(<dynamic>[14]), 14);
+    });
+
+    test('parses a num-as-String', () {
+      expect(
+        parseOnFontSizeChangedPayload(<dynamic>[<String, String>{'px': '16'}]),
+        16,
+      );
+      expect(parseOnFontSizeChangedPayload(<dynamic>['15']), 15);
+    });
+
+    test('returns null for empty / missing / unparseable payloads', () {
+      expect(parseOnFontSizeChangedPayload(<dynamic>[]), isNull);
+      expect(parseOnFontSizeChangedPayload(<dynamic>[null]), isNull);
+      expect(
+        parseOnFontSizeChangedPayload(<dynamic>[<String, int>{'notPx': 12}]),
+        isNull,
+      );
+      expect(parseOnFontSizeChangedPayload(<dynamic>['not-a-number']), isNull);
+    });
+  });
+
+  // ── Echo guard read-and-clear (remote-dev-u5q5.3) ─────────────────────
+  group('FontSizeEchoGuard', () {
+    test('suppresses exactly the recorded echo, then resumes pushing', () {
+      final guard = FontSizeEchoGuard();
+      // No record yet → every change pushes.
+      expect(guard.shouldPush(14), isTrue);
+
+      // WebView reports 18 (pinch commit) → the matching listen fire is the
+      // echo and must be suppressed once.
+      guard.record(18);
+      expect(guard.shouldPush(18), isFalse);
+      // Guard consumed → a subsequent identical value pushes again.
+      expect(guard.shouldPush(18), isTrue);
+    });
+
+    test('read-and-clear prevents a stale guard from suppressing a later '
+        'legitimate push', () {
+      final guard = FontSizeEchoGuard();
+
+      // 1. Setting is 14; user pinch-commits at the baseline 14. The embed
+      //    fires onFontSizeChanged(14) unconditionally, so the guard records
+      //    14 — but setTerminalFontSize(14) is a no-op, so the listener never
+      //    fires and the guard is NOT consumed here.
+      guard.record(14);
+
+      // 2. User drags the slider to 16 → listener fires. Read-and-clear: the
+      //    stale 14 != 16 so we push 16 AND clear the guard.
+      expect(guard.shouldPush(16), isTrue);
+
+      // 3. User drags back to 14 → listener fires. A clear-on-match-only guard
+      //    would still hold 14 and wrongly suppress this. With read-and-clear
+      //    the guard is already empty, so 14 IS pushed (WebView is on 16 and
+      //    must be corrected to 14).
+      expect(guard.shouldPush(14), isTrue);
+    });
+
+    test('clears on every call even when the value matches', () {
+      final guard = FontSizeEchoGuard();
+      guard.record(20);
+      expect(guard.shouldPush(20), isFalse); // suppressed + cleared
+      expect(guard.shouldPush(20), isTrue); // no longer guarded
+    });
+  });
+
   testWidgets('SessionViewScreen mounts in a Scaffold', (tester) async {
     final originalOnError = FlutterError.onError;
     FlutterError.onError = (details) {
