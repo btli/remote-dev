@@ -461,6 +461,9 @@ class _SwitcherPip extends StatelessWidget {
       AgentActivityStatus.waiting => const Color(0xFFE0AF68),
       AgentActivityStatus.idle => const Color(0xFF565F89),
       AgentActivityStatus.error => const Color(0xFFF7768E),
+      AgentActivityStatus.subagent => const Color(0xFFBB9AF7),
+      AgentActivityStatus.compacting => const Color(0xFF7AA2F7),
+      AgentActivityStatus.ended => const Color(0xFF565F89),
       AgentActivityStatus.none => null,
     };
     return SizedBox(

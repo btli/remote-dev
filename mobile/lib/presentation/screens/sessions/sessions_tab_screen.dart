@@ -286,6 +286,12 @@ class _ActivityPip extends StatelessWidget {
         return const Color(0xFF565F89);
       case AgentActivityStatus.error:
         return const Color(0xFFF7768E);
+      case AgentActivityStatus.subagent:
+        return const Color(0xFFBB9AF7);
+      case AgentActivityStatus.compacting:
+        return const Color(0xFF7AA2F7);
+      case AgentActivityStatus.ended:
+        return const Color(0xFF565F89);
       case AgentActivityStatus.none:
         return null;
     }

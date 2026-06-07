@@ -69,6 +69,12 @@ class SessionViewScreen extends ConsumerStatefulWidget {
 
 class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
   BridgeController? _bridge;
+
+  /// The live in-session activity status driving the status-bar pip. Seeded in
+  /// [initState] from the route-supplied summary's last-known activity (so a
+  /// session opened mid-run shows its real state immediately — subagent runs
+  /// are long), then updated by the `onActivity` bridge handler as live agent
+  /// hook transitions arrive over the WebSocket.
   SessionActivity _activity = SessionActivity.idle;
   final String _projectName = '';
 
@@ -80,6 +86,13 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
   @override
   void initState() {
     super.initState();
+    // Seed the pip from the session's last-known activity (when the route
+    // carried a summary) so opening a mid-run session reflects reality at once
+    // rather than flashing 'Idle' until the next live hook transition.
+    final seeded = widget.initialSummary?.activity;
+    if (seeded != null) {
+      _activity = seeded.toSessionActivity();
+    }
     _resolveSessionName();
   }
 
@@ -196,16 +209,12 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
     controller.addJavaScriptHandler(
       handlerName: 'onActivity',
       callback: (args) {
-        final state = args.isNotEmpty ? args.first?.toString() : 'idle';
+        // The bridge sends `{ state }` as an OBJECT, which arrives here as a
+        // decoded Map after flutter_inappwebview's JSON round-trip — see
+        // parseActivityArgs (remote-dev-sguu).
+        final activity = parseActivityArgs(args);
         if (mounted) {
-          setState(() {
-            _activity = switch (state) {
-              'running' => SessionActivity.running,
-              'waiting' => SessionActivity.waiting,
-              'error' => SessionActivity.error,
-              _ => SessionActivity.idle,
-            };
-          });
+          setState(() => _activity = activity);
         }
         return null;
       },

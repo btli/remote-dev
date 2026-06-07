@@ -32,6 +32,7 @@ let restartAgentSpy: ReturnType<typeof vi.fn>;
 // is the rule-compliant equivalent for test-spy purposes.
 const capturedTerminalProps: {
   onNotification?: (n: Record<string, unknown>) => void;
+  onAgentActivityStatus?: (sessionId: string, status: string) => void;
   onSessionRestart?: () => Promise<void>;
   onSessionDelete?: (deleteWorktree?: boolean) => Promise<void>;
 } = {};
@@ -43,6 +44,7 @@ type StubTerminalProps = {
   fontSize?: number;
   fontFamily?: string;
   onNotification?: (n: Record<string, unknown>) => void;
+  onAgentActivityStatus?: (sessionId: string, status: string) => void;
   onSessionRestart?: () => Promise<void>;
   onSessionDelete?: (deleteWorktree?: boolean) => Promise<void>;
 };
@@ -82,9 +84,15 @@ vi.mock("@/components/terminal/TerminalWithKeyboard", async () => {
     // need to drive the captured callbacks.
     React.useEffect(() => {
       capturedTerminalProps.onNotification = p.onNotification;
+      capturedTerminalProps.onAgentActivityStatus = p.onAgentActivityStatus;
       capturedTerminalProps.onSessionRestart = p.onSessionRestart;
       capturedTerminalProps.onSessionDelete = p.onSessionDelete;
-    }, [p.onNotification, p.onSessionRestart, p.onSessionDelete]);
+    }, [
+      p.onNotification,
+      p.onAgentActivityStatus,
+      p.onSessionRestart,
+      p.onSessionDelete,
+    ]);
     return React.createElement("div", {
       "data-testid": "terminal-mock",
       "data-font-size": p.fontSize,
@@ -163,6 +171,7 @@ beforeEach(() => {
   addNotificationSpy.mockClear();
   capturedPinchOpts = null;
   delete capturedTerminalProps.onNotification;
+  delete capturedTerminalProps.onAgentActivityStatus;
   delete capturedTerminalProps.onSessionRestart;
   delete capturedTerminalProps.onSessionDelete;
   setMockPrefs({
@@ -173,6 +182,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   delete window.rdvBridge;
+  delete window.flutter_inappwebview;
 });
 
 describe("EmbeddedSessionView", () => {
@@ -190,8 +200,9 @@ describe("EmbeddedSessionView", () => {
     render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
 
     expect(window.rdvBridge).toBeDefined();
-    // v2 added uploadImage + openSearch / closeSearch.
-    expect(window.rdvBridge?.version).toBe(2);
+    // v2 added uploadImage + openSearch / closeSearch; v3 extended the
+    // onActivity payload union + made the embed emit onActivity.
+    expect(window.rdvBridge?.version).toBe(3);
   });
 
   it("bridge.openSearch / closeSearch forward to the terminal ref", () => {
@@ -406,6 +417,61 @@ describe("EmbeddedSessionView, notification forwarding", () => {
 
     expect(addNotificationSpy).toHaveBeenCalledTimes(1);
     expect(addNotificationSpy).toHaveBeenCalledWith(payload);
+  });
+});
+
+describe("EmbeddedSessionView, agent activity forwarding", () => {
+  it("forwards a matching-session activity status to native via onActivity", () => {
+    const callHandler = vi.fn().mockResolvedValue(undefined);
+    window.flutter_inappwebview = { callHandler };
+
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    capturedTerminalProps.onAgentActivityStatus?.("session-1", "subagent");
+
+    expect(callHandler).toHaveBeenCalledWith("onActivity", {
+      state: "subagent",
+    });
+  });
+
+  it("forwards compacting and ended statuses for the current session", () => {
+    const callHandler = vi.fn().mockResolvedValue(undefined);
+    window.flutter_inappwebview = { callHandler };
+
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    capturedTerminalProps.onAgentActivityStatus?.("session-1", "compacting");
+    capturedTerminalProps.onAgentActivityStatus?.("session-1", "ended");
+
+    expect(callHandler).toHaveBeenNthCalledWith(1, "onActivity", {
+      state: "compacting",
+    });
+    expect(callHandler).toHaveBeenNthCalledWith(2, "onActivity", {
+      state: "ended",
+    });
+  });
+
+  it("ignores activity broadcasts for a different session", () => {
+    const callHandler = vi.fn().mockResolvedValue(undefined);
+    window.flutter_inappwebview = { callHandler };
+
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    // The WS broadcast can carry ANY session's id; only ours should forward.
+    capturedTerminalProps.onAgentActivityStatus?.("other-session", "running");
+
+    expect(callHandler).not.toHaveBeenCalled();
+  });
+
+  it("drops unknown activity statuses rather than forwarding a bogus pip", () => {
+    const callHandler = vi.fn().mockResolvedValue(undefined);
+    window.flutter_inappwebview = { callHandler };
+
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    capturedTerminalProps.onAgentActivityStatus?.("session-1", "bogus");
+
+    expect(callHandler).not.toHaveBeenCalled();
   });
 });
 

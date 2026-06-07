@@ -42,5 +42,8 @@ const _$AgentActivityStatusEnumMap = {
   AgentActivityStatus.waiting: 'waiting',
   AgentActivityStatus.idle: 'idle',
   AgentActivityStatus.error: 'error',
+  AgentActivityStatus.subagent: 'subagent',
+  AgentActivityStatus.compacting: 'compacting',
+  AgentActivityStatus.ended: 'ended',
   AgentActivityStatus.none: 'none',
 };

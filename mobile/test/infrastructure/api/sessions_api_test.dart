@@ -145,6 +145,41 @@ void main() {
       final sessions = await api.list();
       expect(sessions[0].activity, AgentActivityStatus.none);
     });
+
+    test('maps subagent / compacting / ended activity statuses', () async {
+      when(() => client.get('/api/sessions')).thenAnswer(
+        (_) async => {
+          'sessions': [
+            {
+              'id': 'sess-sub',
+              'name': 'Subagent',
+              'tmuxSessionName': 'rdv-sub',
+              'status': 'active',
+              'agentActivityStatus': 'subagent',
+            },
+            {
+              'id': 'sess-comp',
+              'name': 'Compacting',
+              'tmuxSessionName': 'rdv-comp',
+              'status': 'active',
+              'agentActivityStatus': 'compacting',
+            },
+            {
+              'id': 'sess-end',
+              'name': 'Ended',
+              'tmuxSessionName': 'rdv-end',
+              'status': 'active',
+              'agentActivityStatus': 'ended',
+            },
+          ],
+        },
+      );
+
+      final sessions = await api.list();
+      expect(sessions[0].activity, AgentActivityStatus.subagent);
+      expect(sessions[1].activity, AgentActivityStatus.compacting);
+      expect(sessions[2].activity, AgentActivityStatus.ended);
+    });
   });
 
   group('suspend()', () {

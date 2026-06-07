@@ -193,5 +193,32 @@ describe("rdv-bridge", () => {
         url: "https://example.com",
       });
     });
+
+    it("forwards the full onActivity status union to native", async () => {
+      const callHandler = vi.fn().mockResolvedValue(undefined);
+      window.flutter_inappwebview = { callHandler };
+
+      // All seven AgentActivityStatus values must be valid onActivity states
+      // (subagent/compacting/ended were previously missing — remote-dev-sguu).
+      const states = [
+        "running",
+        "waiting",
+        "idle",
+        "error",
+        "compacting",
+        "ended",
+        "subagent",
+      ] as const;
+      for (const state of states) {
+        await notifyToNative("onActivity", { state });
+      }
+
+      expect(callHandler).toHaveBeenCalledTimes(states.length);
+      states.forEach((state, i) => {
+        expect(callHandler).toHaveBeenNthCalledWith(i + 1, "onActivity", {
+          state,
+        });
+      });
+    });
   });
 });

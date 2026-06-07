@@ -17,6 +17,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:remote_dev/domain/session_summary.dart';
+import 'package:remote_dev/presentation/screens/session_view/activity_pip.dart';
 import 'package:remote_dev/presentation/screens/session_view/session_view_screen.dart';
 
 void main() {
@@ -46,6 +48,54 @@ void main() {
 
     expect(find.byType(Scaffold), findsAtLeast(1));
   });
+
+  testWidgets(
+    'seeds the status-bar pip from the initial summary activity',
+    (tester) async {
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.exceptionAsString().contains('InAppWebViewPlatform')) {
+          return;
+        }
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
+
+      // A session opened mid-subagent-run must show its real activity at once,
+      // not flash 'Idle' until the next live hook transition (remote-dev-sguu).
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            home: SessionViewScreen(
+              sessionId: 'test-session',
+              initialSummary: const SessionSummary(
+                id: 'test-session',
+                name: 'Mid-run',
+                tmuxSessionName: 'rdv-test-session',
+                status: SessionStatus.active,
+                activity: AgentActivityStatus.subagent,
+              ),
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      // The pip is the violet (subagent) circle, seeded before any onActivity
+      // bridge transition fires.
+      final pipFinder = find.byWidgetPredicate((w) {
+        if (w is! Container) return false;
+        final dec = w.decoration;
+        if (dec is! BoxDecoration) return false;
+        return dec.shape == BoxShape.circle &&
+            dec.color == const Color(0xFFBB9AF7);
+      });
+      expect(pipFinder, findsOneWidget);
+      expect(find.byType(ActivityPip), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'webview-frame shrinks by keyboard inset when keyboard rises',
