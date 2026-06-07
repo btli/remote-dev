@@ -429,6 +429,16 @@ export interface BuildStatefulSetOptions {
    * cluster; remote-dev-389c). Omitted when unset/empty.
    */
   nodeSelector?: Record<string, string>;
+  /**
+   * Emails to authorize on first boot (remote-dev-sb98). Joined comma-separated
+   * into a PLAIN `AUTHORIZED_USERS` container env (NOT a secretKeyRef — emails are
+   * not secrets, and the now-deleted seed Job used a plain value too). The
+   * instance app seeds its `authorized_users` table from this at boot
+   * (seedAuthorizedUsersFromEnv, idempotent), which replaces the never-dispatched
+   * seed Job. Omitted (no env) when unset/empty so non-seeded instances are
+   * byte-identical.
+   */
+  authorizedEmails?: string[];
 }
 
 /**
@@ -476,6 +486,13 @@ export function buildStatefulSet(
     // Postgres dual-backend (Unit 8): DATABASE_URL comes from the per-instance
     // `rdv-<slug>-db` Secret (Pooler-pointed). Pushed only on the Postgres path.
     env.push(secretEnv("DATABASE_URL", dbSecretName(slug), "DATABASE_URL"));
+  }
+  if (opts.authorizedEmails && opts.authorizedEmails.length > 0) {
+    // First-boot user authorization (remote-dev-sb98). PLAIN inline value (emails
+    // are not secrets); the instance app seeds `authorized_users` from this at
+    // boot (seedAuthorizedUsersFromEnv). Pushed ONLY when non-empty so non-seeded
+    // instances get byte-identical output.
+    env.push({ name: "AUTHORIZED_USERS", value: opts.authorizedEmails.join(",") });
   }
 
   return {
@@ -571,84 +588,15 @@ export function buildStatefulSet(
 }
 
 /**
- * V1Job — first-boot seed (a `bun run db:seed`-style run that authorises the
- * given emails on the fresh instance DB). Minimal: runs the instance image with
- * the seed command + AUTHORIZED_USERS, mounts nothing (it talks to the instance
- * over its in-namespace Service), and does not retry forever.
- *
- * RBAC: dispatching/cleaning up this Job needs `batch/jobs: create,get,list,delete`
- * on the Supervisor ServiceAccount (§15 B3). The ClusterRole/RBAC yaml is jvcx.7;
- * this builder only constructs the object.
+ * First-boot user authorization (remote-dev-sb98) does NOT use a Job. The earlier
+ * design dispatched a `bun run db:seed` Job here, but a Job cannot co-mount the
+ * instance's RWO PVC while the StatefulSet pod holds it, and the seed CLI is not
+ * shipped in the standalone image. Instead, {@link buildStatefulSet} injects a
+ * plain `AUTHORIZED_USERS` env (from `opts.authorizedEmails`) and the instance app
+ * seeds `authorized_users` from it at boot (seedAuthorizedUsersFromEnv). No Job,
+ * no extra RBAC, and it idempotently retro-seeds an existing instance on the next
+ * rolling restart.
  */
-export function buildSeedJob(
-  slug: string,
-  opts: {
-    authorizedEmails: string[];
-    image: string;
-    /**
-     * Same private-registry pull (remote-dev-2xhg) + mixed-arch pinning
-     * (remote-dev-389c) as the StatefulSet: the seed Job runs the SAME instance
-     * image on the SAME arch, so it must pull/pin identically if ever dispatched.
-     */
-    imagePullSecretName?: string;
-    nodeSelector?: Record<string, string>;
-    /**
-     * Postgres dual-backend (Unit 8): wire the DATABASE_URL secretKeyRef from the
-     * per-instance `rdv-<slug>-db` Secret so the seed run targets the instance's
-     * CNPG database instead of a sqlite.db. Omitted on the SQLite path.
-     */
-    withDatabase?: boolean;
-  },
-): V1Job {
-  const ns = namespaceForSlug(slug);
-  const env: V1EnvVar[] = [
-    { name: "AUTHORIZED_USERS", value: opts.authorizedEmails.join(",") },
-    { name: "RDV_INSTANCE_SLUG", value: slug },
-    { name: "RDV_DATA_DIR", value: DATA_DIR },
-  ];
-  if (opts.withDatabase) {
-    env.push(secretEnv("DATABASE_URL", dbSecretName(slug), "DATABASE_URL"));
-  }
-  return {
-    metadata: {
-      name: `rdv-${slug}-seed`,
-      namespace: ns,
-      labels: instanceLabels(slug),
-    },
-    spec: {
-      backoffLimit: 3,
-      // Clean up the Job object an hour after it finishes.
-      ttlSecondsAfterFinished: 3600,
-      template: {
-        metadata: { labels: instanceLabels(slug) },
-        spec: {
-          restartPolicy: "Never",
-          securityContext: {
-            fsGroup: RUN_AS_ID,
-            runAsUser: RUN_AS_ID,
-            runAsNonRoot: true,
-          },
-          // Spread in ONLY when set (see buildStatefulSet) so an undispatched /
-          // public-registry seed Job's output is unchanged.
-          ...(opts.imagePullSecretName
-            ? { imagePullSecrets: [{ name: opts.imagePullSecretName }] }
-            : {}),
-          ...(opts.nodeSelector && Object.keys(opts.nodeSelector).length > 0
-            ? { nodeSelector: opts.nodeSelector }
-            : {}),
-          containers: [
-            {
-              name: "seed",
-              image: opts.image,
-              command: ["bun", "run", "db:seed"],
-              env,
-            },
-          ],
-        },
-      },
-    },
-  };
-}
 
 /** Role label marking an object as an ephemeral storage-inspector. */
 export const INSPECTOR_ROLE = "inspector";

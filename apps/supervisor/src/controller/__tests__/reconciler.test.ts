@@ -9,6 +9,7 @@ import {
   type ReconcilerDeps,
 } from "@/controller/reconciler";
 import { ProvisioningError } from "@/lib/provisioner-service";
+import type { ProvisionOptions } from "@/lib/provisioner-service";
 import type { InstanceRow, InstanceStatus } from "@/db/schema";
 
 const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
@@ -160,6 +161,79 @@ describe("reconcileInstances — requested → provisioning", () => {
     expect(provisionInstance).toHaveBeenCalledOnce();
     // No error transition.
     expect(updates.some((u) => u.set.status === "error")).toBe(false);
+  });
+
+  // Typed mock so `.mock.calls[i][1]` is a ProvisionOptions (a bare
+  // `vi.fn(async () => null)` infers zero params, hiding opts.authorizedEmails).
+  const seedProvisionMock = () =>
+    vi.fn(async (_row: InstanceRow, _opts: ProvisionOptions) => null);
+
+  it("passes the instance_seed authorizedEmails into provisionInstance (remote-dev-sb98)", async () => {
+    // A seed row carrying a JSON email array → opts.authorizedEmails populated
+    // (these become the StatefulSet's AUTHORIZED_USERS env → boot-time seed).
+    const { db } = makeDb([row("requested")], {
+      authorizedEmails: JSON.stringify(["a@example.com", "b@example.com"]),
+    });
+    const provisionInstance = seedProvisionMock();
+    await reconcileInstances(baseDeps({ db, provisionInstance }));
+
+    const opts = provisionInstance.mock.calls[0]?.[1];
+    expect(opts?.authorizedEmails).toEqual(["a@example.com", "b@example.com"]);
+  });
+
+  it("leaves authorizedEmails undefined when there is no instance_seed row", async () => {
+    // makeDb without a seed arg → findFirst returns undefined.
+    const { db } = makeDb([row("requested")]);
+    const provisionInstance = seedProvisionMock();
+    await reconcileInstances(baseDeps({ db, provisionInstance }));
+
+    const opts = provisionInstance.mock.calls[0]?.[1];
+    expect(opts?.authorizedEmails).toBeUndefined();
+  });
+
+  it("treats a malformed instance_seed.authorizedEmails as no seed (non-fatal)", async () => {
+    // Invalid JSON must NOT fail provisioning — it just yields no AUTHORIZED_USERS.
+    const { db, updates } = makeDb([row("requested")], {
+      authorizedEmails: "not-json",
+    });
+    const provisionInstance = seedProvisionMock();
+    await reconcileInstances(baseDeps({ db, provisionInstance }));
+
+    const opts = provisionInstance.mock.calls[0]?.[1];
+    expect(opts?.authorizedEmails).toBeUndefined();
+    // Provisioning still proceeds (no error transition).
+    expect(provisionInstance).toHaveBeenCalledOnce();
+    expect(updates.some((u) => u.set.status === "error")).toBe(false);
+  });
+
+  it("DROPS a comma-bearing seed entry but keeps the valid remainder (remote-dev-sb98)", async () => {
+    // A comma inside an entry would split into extra authorized users via the env
+    // round-trip — the lenient normalizer drops it; provisioning continues.
+    const { db, updates } = makeDb([row("requested")], {
+      authorizedEmails: JSON.stringify([
+        "ok@example.com",
+        "evil@example.com,extra@example.com",
+        "ok2@example.com",
+      ]),
+    });
+    const provisionInstance = seedProvisionMock();
+    await reconcileInstances(baseDeps({ db, provisionInstance }));
+
+    const opts = provisionInstance.mock.calls[0]?.[1];
+    expect(opts?.authorizedEmails).toEqual(["ok@example.com", "ok2@example.com"]);
+    expect(updates.some((u) => u.set.status === "error")).toBe(false);
+  });
+
+  it("caps seed emails at 100 entries at the reconciler read", async () => {
+    const many = Array.from({ length: 150 }, (_, i) => `u${i}@example.com`);
+    const { db } = makeDb([row("requested")], {
+      authorizedEmails: JSON.stringify(many),
+    });
+    const provisionInstance = seedProvisionMock();
+    await reconcileInstances(baseDeps({ db, provisionInstance }));
+
+    const opts = provisionInstance.mock.calls[0]?.[1];
+    expect(opts?.authorizedEmails).toHaveLength(100);
   });
 
   it("persists dbConfigSnapshot when provisionInstance returns one (Postgres, Unit 8)", async () => {

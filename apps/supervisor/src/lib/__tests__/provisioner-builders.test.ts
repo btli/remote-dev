@@ -9,7 +9,6 @@ import {
   buildImagePullSecret,
   buildService,
   buildStatefulSet,
-  buildSeedJob,
   buildInspectorJob,
   buildInstanceEnv,
   authSecretName,
@@ -477,60 +476,35 @@ describe("buildStatefulSet", () => {
     });
     expect(withEmpty.spec?.template.spec?.nodeSelector).toBeUndefined();
   });
-});
 
-describe("buildSeedJob", () => {
-  it("builds a Job named rdv-<slug>-seed with AUTHORIZED_USERS", () => {
-    const job = buildSeedJob(SLUG, {
+  it("sets AUTHORIZED_USERS (plain, joined) only when authorizedEmails is non-empty (remote-dev-sb98)", () => {
+    // Default options (the top-of-describe `sts`) carry no authorizedEmails.
+    expect(envByName(container?.env, "AUTHORIZED_USERS")).toBeUndefined();
+
+    const withEmails = buildStatefulSet(SLUG, {
+      image: "img",
+      env: {},
+      volumeClaimTemplate: PVC,
       authorizedEmails: ["a@example.com", "b@example.com"],
-      image: "img",
     });
-    expect(job.metadata?.name).toBe("rdv-alpha-seed");
-    expect(job.metadata?.namespace).toBe("rdv-alpha");
-    const c = job.spec?.template.spec?.containers[0];
-    expect(c?.command).toEqual(["bun", "run", "db:seed"]);
-    const authd = c?.env?.find((e) => e.name === "AUTHORIZED_USERS");
+    const authd = envByName(
+      withEmails.spec?.template.spec?.containers[0].env,
+      "AUTHORIZED_USERS",
+    );
+    // PLAIN inline value (emails are not secrets), comma-joined — NOT a secretKeyRef.
     expect(authd?.value).toBe("a@example.com,b@example.com");
-    expect(job.spec?.template.spec?.restartPolicy).toBe("Never");
-  });
+    expect(authd?.valueFrom).toBeUndefined();
 
-  it("applies imagePullSecrets + nodeSelector identically to the StatefulSet (remote-dev-2xhg/389c)", () => {
-    const job = buildSeedJob(SLUG, {
-      authorizedEmails: ["a@example.com"],
+    // An empty list adds no env (output unchanged for non-seeded instances).
+    const withEmpty = buildStatefulSet(SLUG, {
       image: "img",
-      imagePullSecretName: "harbor-registry",
-      nodeSelector: { "kubernetes.io/arch": "amd64" },
+      env: {},
+      volumeClaimTemplate: PVC,
+      authorizedEmails: [],
     });
-    expect(job.spec?.template.spec?.imagePullSecrets).toEqual([
-      { name: "harbor-registry" },
-    ]);
-    expect(job.spec?.template.spec?.nodeSelector).toEqual({
-      "kubernetes.io/arch": "amd64",
-    });
-
-    // Omitted when unset (output unchanged for existing callers).
-    const plain = buildSeedJob(SLUG, { authorizedEmails: ["a@example.com"], image: "img" });
-    expect(plain.spec?.template.spec?.imagePullSecrets).toBeUndefined();
-    expect(plain.spec?.template.spec?.nodeSelector).toBeUndefined();
-  });
-
-  it("wires DATABASE_URL as a secretKeyRef only when withDatabase (Unit 8)", () => {
-    // Without withDatabase, the seed Job carries no DATABASE_URL.
-    const plain = buildSeedJob(SLUG, { authorizedEmails: ["a@example.com"], image: "img" });
-    expect(plain.spec?.template.spec?.containers[0].env?.find((e) => e.name === "DATABASE_URL")).toBeUndefined();
-
-    const withDb = buildSeedJob(SLUG, {
-      authorizedEmails: ["a@example.com"],
-      image: "img",
-      withDatabase: true,
-    });
-    const env = withDb.spec?.template.spec?.containers[0].env;
-    const databaseUrl = env?.find((e) => e.name === "DATABASE_URL");
-    expect(databaseUrl?.value).toBeUndefined();
-    expect(databaseUrl?.valueFrom?.secretKeyRef?.name).toBe(dbSecretName(SLUG));
-    expect(databaseUrl?.valueFrom?.secretKeyRef?.key).toBe("DATABASE_URL");
-    // The base seed env (AUTHORIZED_USERS / slug / data dir) is still present.
-    expect(env?.find((e) => e.name === "AUTHORIZED_USERS")?.value).toBe("a@example.com");
+    expect(
+      envByName(withEmpty.spec?.template.spec?.containers[0].env, "AUTHORIZED_USERS"),
+    ).toBeUndefined();
   });
 });
 

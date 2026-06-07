@@ -146,12 +146,32 @@ describe("provisionInstance — happy path", () => {
     ]);
   });
 
-  it("does NOT dispatch a seed Job in Phase 1 (deferred to jvcx.8)", async () => {
+  it("never dispatches a seed Job — user authorization seeds at instance boot (remote-dev-sb98)", async () => {
     const { clients, order } = makeClients();
     await provisionInstance(row(), OPTS, clients);
-    // Provisioning succeeds without a Job; the batch client is never touched.
+    // First-boot seeding is the instance app's job (via the StatefulSet's
+    // AUTHORIZED_USERS env), so provisioning never creates a Job; the batch
+    // client is never touched.
     expect(order).not.toContain("job");
     expect(clients.batch.createNamespacedJob).not.toHaveBeenCalled();
+  });
+
+  it("passes authorizedEmails through to the StatefulSet's AUTHORIZED_USERS env (remote-dev-sb98)", async () => {
+    const { clients } = makeClients();
+    await provisionInstance(
+      row(),
+      { ...OPTS, authorizedEmails: ["ops@example.com", "you@example.com"] },
+      clients,
+    );
+    const stsBody = (clients.apps.createNamespacedStatefulSet as ReturnType<typeof vi.fn>)
+      .mock.calls[0][0].body;
+    const env = stsBody.spec.template.spec.containers[0].env as Array<{
+      name: string;
+      value?: string;
+    }>;
+    const authd = env.find((e) => e.name === "AUTHORIZED_USERS");
+    // Plain inline value (not a secret), comma-joined.
+    expect(authd?.value).toBe("ops@example.com,you@example.com");
   });
 
   it("back-compat: no imagePullSecret/nodeSelector → no pull Secret, STS has neither field", async () => {

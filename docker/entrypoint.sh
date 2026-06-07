@@ -133,11 +133,13 @@ if grep -rq '/rdvslug' "${MATERIALIZE_TARGETS[@]}" 2>/dev/null; then
 fi
 echo "[entrypoint] basePath materialization complete"
 
-# Seed the authorized_users table by running `bun run db:seed` against this
-# container after first boot:
-#   kubectl -n rdv exec deploy/rdv -- env AUTHORIZED_USERS=... bun run db:seed
-# We deliberately do not run it from the entrypoint because the seed script
-# lives at src/db/seed.ts and is not shipped in the standalone runtime image.
+# Authorized-user seeding (remote-dev-sb98) happens INSIDE the app at boot, not
+# here. If AUTHORIZED_USERS is set in the container env, the app seeds the
+# authorized_users table from it on startup (src/db/boot-seed.ts, idempotent) —
+# the supervisor injects it on the instance StatefulSet. The entrypoint does NOT
+# run the manual `bun run db:seed` CLI (src/db/seed.ts), which is not shipped in
+# the standalone runtime image. To seed an instance that lacks the env, set
+# AUTHORIZED_USERS on the StatefulSet (or insert rows directly).
 
 # Bootstrap the instance DB schema (remote-dev-fmcq) on a fresh per-instance PVC.
 # Idempotent (CREATE ... IF NOT EXISTS) so it is a no-op on an existing DB. MUST
