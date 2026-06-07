@@ -37,6 +37,11 @@ class AppearanceScreen extends ConsumerWidget {
             onChanged: notifier.setFontScale,
           ),
           const Divider(color: _muted, height: 1),
+          _TerminalFontSizeTile(
+            value: settings.terminalFontSize,
+            onChanged: notifier.setTerminalFontSize,
+          ),
+          const Divider(color: _muted, height: 1),
           _SwitchTile(
             key: const Key('appearance.reduceMotion'),
             icon: Icons.motion_photos_off_outlined,
@@ -137,7 +142,77 @@ class _FontScaleTile extends StatelessWidget {
           const Padding(
             padding: EdgeInsets.only(top: 4),
             child: Text(
-              'Adjust app and terminal text size.',
+              // The terminal now has its own absolute size control below, so
+              // this scale only affects app/embed chrome (remote-dev-u5q5.3).
+              'Adjust app text size.',
+              style: TextStyle(color: _muted, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TerminalFontSizeTile extends StatelessWidget {
+  const _TerminalFontSizeTile({required this.value, required this.onChanged});
+
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: _surface,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.terminal, color: _textSecondary),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Terminal font size',
+                  style: TextStyle(color: _textPrimary, fontSize: 16),
+                ),
+              ),
+              Text(
+                '${value}px',
+                style: const TextStyle(color: _textSecondary, fontSize: 14),
+              ),
+            ],
+          ),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              activeTrackColor: _accent,
+              inactiveTrackColor: _muted,
+              thumbColor: _accent,
+              overlayColor: _accent.withValues(alpha: 0.2),
+              valueIndicatorColor: _accent,
+              valueIndicatorTextStyle: const TextStyle(color: _bg),
+            ),
+            child: Slider(
+              key: const Key('appearance.terminalFontSize'),
+              min: AppearanceSettings.minTerminalFontSize.toDouble(),
+              max: AppearanceSettings.maxTerminalFontSize.toDouble(),
+              divisions: AppearanceSettings.maxTerminalFontSize -
+                  AppearanceSettings.minTerminalFontSize, // 13 steps (9→22)
+              label: '${value}px',
+              value: value
+                  .clamp(
+                    AppearanceSettings.minTerminalFontSize,
+                    AppearanceSettings.maxTerminalFontSize,
+                  )
+                  .toDouble(),
+              onChanged: (v) => onChanged(v.round()),
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: Text(
+              'Set the terminal text size in pixels.',
               style: TextStyle(color: _muted, fontSize: 12),
             ),
           ),

@@ -92,6 +92,16 @@ export interface TerminalRef {
   sendInput: (data: string) => void;
   /** Scroll the terminal to the bottom (latest output) */
   scrollToBottom: () => void;
+  /**
+   * Force a container re-measure + xterm.js re-fit and push the resulting
+   * cols/rows to the terminal server. Used by the mobile native shell
+   * (rdv-bridge `refit`, remote-dev-u5q5.2) on app resume / route pop-back,
+   * where a platform WebView produces no page-level resize signal so the
+   * in-page resize pipeline (ResizeObserver / visualViewport /
+   * visibilitychange) never fires and the grid would otherwise stay stale
+   * until the next pinch. No-op if the terminal hasn't initialized yet.
+   */
+  refit: () => void;
   /** Toggle xterm.js cursor blink at runtime (no remount). */
   setCursorBlink: (blink: boolean) => void;
   /**
@@ -215,6 +225,19 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   // fresh socket starts with a clean baseline (the server's debounce state
   // resets per-connection on its side too).
   const lastSentFocusStateRef = useRef<"focus" | "blur" | null>(null);
+  // Points at the init-effect's `handleResize` (settle → fit → ws-resize →
+  // onDimensions) while the terminal is mounted, so the imperative `refit()`
+  // can drive the exact same pipeline the in-page resize listeners use. Set
+  // inside the init effect after `handleResize` is defined; cleared on
+  // teardown so a post-unmount call is a safe no-op (remote-dev-u5q5.2).
+  const handleResizeRef = useRef<(() => void) | null>(null);
+  // Focus-signal sender for the imperative `refit()`, mirroring the
+  // `handleVisibilityChange` intent (tell the server this client is active
+  // so it promotes us as primary before the resize lands). Set alongside
+  // `handleResizeRef` inside the init effect; cleared on teardown.
+  const sendFocusSignalRef = useRef<((next: "focus" | "blur") => void) | null>(
+    null,
+  );
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -354,6 +377,38 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       }
     },
     scrollToBottom: () => {
+      xtermRef.current?.scrollToBottom();
+    },
+    refit: () => {
+      // Mirror handleVisibilityChange's intent for the native-shell resume /
+      // route-pop path, MINUS terminal.focus(): on mobile the terminal runs
+      // in mobileMode (xterm's internal textarea disabled) and the native
+      // shell owns the input bar + keyboard, so calling terminal.focus()
+      // here would steal the keyboard context (collapse / refocus the
+      // wrong field). We only need the grid re-measured and the viewport
+      // pinned to the latest output.
+      //
+      // 1. Re-assert focus so the server promotes this client to primary
+      //    before the resize message from settleAndFit arrives (another
+      //    tmux client may have resized the session while we were
+      //    backgrounded). 2. settle + fit + ws-resize via the init effect's
+      //    handleResize. 3. scrollToBottom so a grid that grew taller shows
+      //    the prompt, matching the visibilitychange handler.
+      //
+      // FORCE the focus signal past the client-side dedupe. `sendFocusSignal`
+      // early-returns when `lastSentFocusStateRef.current === "focus"`, but
+      // refit() exists precisely for lifecycle edges (app resume, route
+      // pop-back) where the page got NO blur/visibilitychange event — so the
+      // last-sent state is STILL "focus" and a plain call would be skipped.
+      // If another client became primary while this view was backgrounded,
+      // the server only resizes tmux for the primary connection, so the
+      // resize from handleResize below would be ignored. Clearing the
+      // baseline first guarantees a fresh `client_focus` frame re-elects this
+      // connection BEFORE the resize lands. The server's own 1s cooldown
+      // still bounds any thrash, so this is safe to force.
+      lastSentFocusStateRef.current = null;
+      sendFocusSignalRef.current?.("focus");
+      handleResizeRef.current?.();
       xtermRef.current?.scrollToBottom();
     },
     setCursorBlink: (blink: boolean) => {
@@ -1128,6 +1183,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         }
       };
 
+      // Expose this terminal's resize + focus-signal closures to the
+      // imperative `refit()` (rdv-bridge, remote-dev-u5q5.2). Cleared in the
+      // cleanup below so a refit after teardown is a no-op.
+      handleResizeRef.current = handleResize;
+      sendFocusSignalRef.current = sendFocusSignal;
+
       // Per-terminal focus signal: window/visibilitychange only fire for
       // coarse browser-level transitions, so they miss clicks between panels
       // or between terminal tabs in the same window. xterm's textarea is what
@@ -1231,6 +1292,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
       // Store cleanup in closure
       return () => {
+        // Drop the refit closures so a post-unmount imperative refit() is a
+        // safe no-op (the xterm instance + ws are torn down below).
+        if (handleResizeRef.current === handleResize) {
+          handleResizeRef.current = null;
+        }
+        if (sendFocusSignalRef.current === sendFocusSignal) {
+          sendFocusSignalRef.current = null;
+        }
         if (visibilityTimeout) {
           clearTimeout(visibilityTimeout);
         }

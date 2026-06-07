@@ -170,4 +170,35 @@ void main() {
     expect(captured[0], 'window.rdvBridge.setFontScale(1.2)');
     expect(captured[1], 'window.rdvBridge.setCursorBlink(false)');
   });
+
+  test('refit emits a GUARDED window.rdvBridge.refit() call (v4)', () {
+    // The guard makes the call a silent no-op on any pre-v4 PWA build (v2/v3)
+    // where window.rdvBridge.refit is undefined (remote-dev-u5q5.2).
+    bridge.markReady();
+    bridge.refit();
+    final captured = verify(
+      () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
+    ).captured.single as String;
+    expect(captured, contains('window.rdvBridge && window.rdvBridge.refit'));
+    expect(captured, contains('window.rdvBridge.refit()'));
+  });
+
+  test('refit queues while not ready then drains on markReady', () {
+    bridge.refit();
+    verifyNever(() => ctl.evaluateJavascript(source: any(named: 'source')));
+    bridge.markReady();
+    verify(
+      () => ctl.evaluateJavascript(source: any(named: 'source')),
+    ).called(1);
+  });
+
+  test('setFontSize emits window.rdvBridge.setFontSize(<px>)', () {
+    bridge.markReady();
+    bridge.setFontSize(14);
+    verify(
+      () => ctl.evaluateJavascript(
+        source: 'window.rdvBridge.setFontSize(14)',
+      ),
+    ).called(1);
+  });
 }

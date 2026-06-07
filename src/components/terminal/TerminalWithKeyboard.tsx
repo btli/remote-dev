@@ -27,6 +27,12 @@ export interface TerminalWithKeyboardRef {
   restartAgent: () => void;
   /** Scroll the underlying xterm.js viewport to the bottom. */
   scrollToBottom: () => void;
+  /**
+   * Force the underlying terminal to re-measure + re-fit its grid and push
+   * the new size to the server. Used by the mobile native shell via
+   * rdv-bridge `refit` (remote-dev-u5q5.2) on app resume / route pop-back.
+   */
+  refit: () => void;
   /** Toggle xterm.js cursor blink at runtime. */
   setCursorBlink: (blink: boolean) => void;
   /**
@@ -181,6 +187,9 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
     },
     scrollToBottom: () => {
       terminalRef.current?.scrollToBottom();
+    },
+    refit: () => {
+      terminalRef.current?.refit();
     },
     setCursorBlink: (blink: boolean) => {
       terminalRef.current?.setCursorBlink(blink);

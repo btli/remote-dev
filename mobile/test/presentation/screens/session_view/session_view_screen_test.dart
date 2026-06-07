@@ -33,11 +33,102 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_dev/domain/session_summary.dart';
+import 'package:remote_dev/presentation/router/app_router.dart'
+    show routeObserver;
 import 'package:remote_dev/presentation/screens/session_view/activity_pip.dart';
 import 'package:remote_dev/presentation/screens/session_view/session_view_screen.dart';
 import 'package:remote_dev/presentation/screens/session_view/smart_key_strip.dart';
 
 void main() {
+  // ── onFontSizeChanged payload parsing (remote-dev-u5q5.3) ─────────────
+  //
+  // The bridge round-trip can't run under flutter_test (no InAppWebView
+  // platform), so the most bug-prone piece — defensively parsing the px out
+  // of the JS-handler args — is unit-tested directly via the
+  // @visibleForTesting helper.
+  group('parseOnFontSizeChangedPayload', () {
+    test('reads px from the canonical {px: n} Map', () {
+      expect(
+        parseOnFontSizeChangedPayload(<dynamic>[<String, int>{'px': 18}]),
+        18,
+      );
+    });
+
+    test('rounds a double px (Map and bare)', () {
+      expect(
+        parseOnFontSizeChangedPayload(<dynamic>[<String, double>{'px': 18.6}]),
+        19,
+      );
+      expect(parseOnFontSizeChangedPayload(<dynamic>[13.2]), 13);
+    });
+
+    test('accepts a bare numeric first arg', () {
+      expect(parseOnFontSizeChangedPayload(<dynamic>[14]), 14);
+    });
+
+    test('parses a num-as-String', () {
+      expect(
+        parseOnFontSizeChangedPayload(<dynamic>[<String, String>{'px': '16'}]),
+        16,
+      );
+      expect(parseOnFontSizeChangedPayload(<dynamic>['15']), 15);
+    });
+
+    test('returns null for empty / missing / unparseable payloads', () {
+      expect(parseOnFontSizeChangedPayload(<dynamic>[]), isNull);
+      expect(parseOnFontSizeChangedPayload(<dynamic>[null]), isNull);
+      expect(
+        parseOnFontSizeChangedPayload(<dynamic>[<String, int>{'notPx': 12}]),
+        isNull,
+      );
+      expect(parseOnFontSizeChangedPayload(<dynamic>['not-a-number']), isNull);
+    });
+  });
+
+  // ── Echo guard read-and-clear (remote-dev-u5q5.3) ─────────────────────
+  group('FontSizeEchoGuard', () {
+    test('suppresses exactly the recorded echo, then resumes pushing', () {
+      final guard = FontSizeEchoGuard();
+      // No record yet → every change pushes.
+      expect(guard.shouldPush(14), isTrue);
+
+      // WebView reports 18 (pinch commit) → the matching listen fire is the
+      // echo and must be suppressed once.
+      guard.record(18);
+      expect(guard.shouldPush(18), isFalse);
+      // Guard consumed → a subsequent identical value pushes again.
+      expect(guard.shouldPush(18), isTrue);
+    });
+
+    test('read-and-clear prevents a stale guard from suppressing a later '
+        'legitimate push', () {
+      final guard = FontSizeEchoGuard();
+
+      // 1. Setting is 14; user pinch-commits at the baseline 14. The embed
+      //    fires onFontSizeChanged(14) unconditionally, so the guard records
+      //    14 — but setTerminalFontSize(14) is a no-op, so the listener never
+      //    fires and the guard is NOT consumed here.
+      guard.record(14);
+
+      // 2. User drags the slider to 16 → listener fires. Read-and-clear: the
+      //    stale 14 != 16 so we push 16 AND clear the guard.
+      expect(guard.shouldPush(16), isTrue);
+
+      // 3. User drags back to 14 → listener fires. A clear-on-match-only guard
+      //    would still hold 14 and wrongly suppress this. With read-and-clear
+      //    the guard is already empty, so 14 IS pushed (WebView is on 16 and
+      //    must be corrected to 14).
+      expect(guard.shouldPush(14), isTrue);
+    });
+
+    test('clears on every call even when the value matches', () {
+      final guard = FontSizeEchoGuard();
+      guard.record(20);
+      expect(guard.shouldPush(20), isFalse); // suppressed + cleared
+      expect(guard.shouldPush(20), isTrue); // no longer guarded
+    });
+  });
+
   testWidgets('SessionViewScreen mounts in a Scaffold', (tester) async {
     final originalOnError = FlutterError.onError;
     FlutterError.onError = (details) {
@@ -576,6 +667,167 @@ void main() {
               'contraction. insets=$insets heights=$heights',
         );
       }
+    },
+  );
+
+  // ── Terminal refit on lifecycle / route pop-back (remote-dev-u5q5.2) ──
+  //
+  // Under flutter_test the InAppWebView platform plugin is unavailable, so
+  // `onWebViewCreated` never fires and `_bridge` stays null. We therefore
+  // can't assert the eval reaches a controller here (that's covered in
+  // bridge_controller_test.dart's refit tests). What we CAN verify is that
+  // the screen wires itself into the app lifecycle + RouteObserver and that
+  // driving a resume / pop-back exercises the (null-safe) refit path without
+  // throwing — i.e. the observer registrations are correct and survive.
+
+  // Helper: drive a full background→foreground cycle through the test binding.
+  // The framework enforces valid adjacent transitions
+  // (resumed⇄inactive⇄hidden⇄paused), so we step through them rather than
+  // jumping straight to paused (which throws an invalid-transition assertion).
+  void cycleToResumed(WidgetTester tester) {
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+  }
+
+  testWidgets(
+    'AppLifecycleState.resumed while the session route is CURRENT reaches the '
+    'screen without throwing (refit wiring)',
+    (tester) async {
+      suppressWebViewPlatformError(tester);
+
+      await tester.pumpWidget(
+        const ProviderScope(
+          child: MaterialApp(
+            home: SessionViewScreen(sessionId: 'test-session'),
+          ),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      // The screen is a WidgetsBindingObserver and, on resume, refits ONLY
+      // when its route is current (Codex Fix 2). Here the session IS the top
+      // (current) route, so the gate passes and `_bridge?.refit()` runs (a
+      // safe no-op with the null bridge) — proving the observer is registered
+      // (an unregistered observer would never be invoked) and the gate admits
+      // the visible session.
+      cycleToResumed(tester);
+      await tester.pump();
+
+      expect(find.byType(Scaffold), findsAtLeast(1));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'AppLifecycleState.resumed while the session route is COVERED does not '
+    'crash and the session stays under the covering route (refit gate, '
+    'Codex Fix 2)',
+    (tester) async {
+      suppressWebViewPlatformError(tester);
+
+      final navKey = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            navigatorKey: navKey,
+            home: const SessionViewScreen(sessionId: 'test-session'),
+          ),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(find.byType(SessionViewScreen), findsOneWidget);
+
+      // Push a route ON TOP of the session (mirrors opening Recordings /
+      // Appearance). The session route stays MOUNTED but is no longer current.
+      navKey.currentState!.push(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text('covering route')),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(find.text('covering route'), findsOneWidget);
+
+      // Resume while covered. Codex Fix 2 gates the refit on
+      // `ModalRoute.of(context)?.isCurrent`, so the covered (off-screen)
+      // session must NOT refit/focus-signal — that would steal primary from
+      // the visible surface. The session screen is still mounted (its element
+      // is kept alive beneath the covering route), and resume must not crash
+      // it: the `mounted && isCurrent` guard evaluates safely on a covered
+      // route and short-circuits before the bridge call. (With a null bridge
+      // refit is a no-op either way, so no-crash + survival is the observable
+      // ceiling at widget-test fidelity; the eval itself is covered in
+      // bridge_controller_test.dart.)
+      cycleToResumed(tester);
+      await tester.pump();
+
+      expect(find.text('covering route'), findsOneWidget);
+      expect(find.byType(SessionViewScreen), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'didPopNext fires on the session screen when a covering route is popped '
+    '(refit wiring)',
+    (tester) async {
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.exceptionAsString().contains('InAppWebViewPlatform')) {
+          return;
+        }
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
+
+      // Register the SAME app-wide routeObserver the screen subscribes to as
+      // a Navigator observer, so RouteAware callbacks (didPushNext /
+      // didPopNext) actually fire in the test.
+      final navKey = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            navigatorKey: navKey,
+            navigatorObservers: [routeObserver],
+            home: const SessionViewScreen(sessionId: 'test-session'),
+          ),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(find.byType(SessionViewScreen), findsOneWidget);
+
+      // Push a covering route on top of the session (mirrors opening
+      // Recordings / Settings), then pop it — `didPopNext` fires on the
+      // session screen's RouteAware and triggers the (null-safe) refit.
+      navKey.currentState!.push(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text('covering route')),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(find.text('covering route'), findsOneWidget);
+
+      navKey.currentState!.pop();
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      // Back on the session screen, no exception from the refit path.
+      expect(find.byType(SessionViewScreen), findsOneWidget);
+      expect(tester.takeException(), isNull);
     },
   );
 }

@@ -35,8 +35,19 @@
  *       and `subagent`; the session embed now actually emits `onActivity`
  *       (live agent activity → native status-bar pip) instead of leaving
  *       it permanently Idle (remote-dev-sguu).
+ *   4 — add `refit()` (remote-dev-u5q5.2) so the native shell can force
+ *       the embedded terminal to re-measure + re-fit its xterm.js grid on
+ *       events that don't surface as page-level resize signals inside a
+ *       platform WebView — app background→resume and Flutter route
+ *       pop-back. Present on non-session embeds as a no-op stub. Older
+ *       deployed PWA builds (pre-v4: v2/v3) lack the method, so the Dart
+ *       side guards the call and silently no-ops. Also adds the outbound
+ *       `onFontSizeChanged: { px }` event (remote-dev-u5q5.3): the embed
+ *       fires it on a pinch-zoom commit so the native shell can mirror the
+ *       new absolute terminal font size into its own appearance store and
+ *       avoid echoing a redundant setFontSize back into the WebView.
  */
-export const RDV_BRIDGE_VERSION = 3;
+export const RDV_BRIDGE_VERSION = 4;
 
 export interface RdvBridgeKeyMods {
   ctrl?: boolean;
@@ -74,6 +85,21 @@ export interface RdvBridgeAdapter {
   setCursorBlink: (blink: boolean) => void;
   /** Scroll terminal viewport to the bottom (session view only). */
   scrollToBottom: () => void;
+  /**
+   * Force the embedded terminal to re-measure its container and re-fit the
+   * xterm.js grid (session view only). Added in v4 (remote-dev-u5q5.2).
+   *
+   * Inside a platform WebView, app background→resume and Flutter route
+   * pop-back (returning from Recordings / Settings stacked on the session
+   * route) do NOT reliably emit page-level `resize` / `visibilitychange` /
+   * `visualViewport` events, so the in-page resize pipeline never runs and
+   * the grid goes stale until the user pinch-zooms. The native shell calls
+   * `refit()` on those lifecycle edges to recompute cols/rows and push the
+   * fresh size to the terminal server (another tmux client may also have
+   * resized the session while this view was unfocused). Non-session embeds
+   * treat the call as a no-op.
+   */
+  refit: () => void;
   /**
    * Open the in-terminal SearchAddon overlay (session view only).
    * Non-session embeds may treat the call as a no-op. Added in v2 of
@@ -143,6 +169,7 @@ export function installRdvBridge(adapter: RdvBridgeAdapter): () => void {
     setFontScale: (scale) => adapter.setFontScale(scale),
     setCursorBlink: (blink) => adapter.setCursorBlink(blink),
     scrollToBottom: () => adapter.scrollToBottom(),
+    refit: () => adapter.refit(),
     openSearch: () => adapter.openSearch(),
     closeSearch: () => adapter.closeSearch(),
     back: () => adapter.back(),
@@ -164,7 +191,8 @@ export type NotifyName =
   | "onSelectionChange"
   | "onWantsPaste"
   | "onActivity"
-  | "onLinkOpen";
+  | "onLinkOpen"
+  | "onFontSizeChanged";
 
 /** Payload union — kept narrow on purpose; bump version to extend. */
 export type NotifyPayload =
@@ -184,7 +212,13 @@ export type NotifyPayload =
           | "subagent";
       };
     }
-  | { name: "onLinkOpen"; data: { url: string } };
+  | { name: "onLinkOpen"; data: { url: string } }
+  // Emitted on a pinch-zoom commit (v4, remote-dev-u5q5.3). `px` is the
+  // committed absolute terminal font size, already clamped to the embed's
+  // [FONT_SIZE_MIN, FONT_SIZE_MAX]. The native shell mirrors it into its
+  // appearance store and suppresses the echo setFontSize it would otherwise
+  // push back into this WebView.
+  | { name: "onFontSizeChanged"; data: { px: number } };
 
 /**
  * Send an event to the native shell. No-op when not running inside a

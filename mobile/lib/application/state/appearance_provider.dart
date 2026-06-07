@@ -8,6 +8,7 @@ class AppearancePrefsKeys {
   static const fontScale = 'appearance.fontScale';
   static const reduceMotion = 'appearance.reduceMotion';
   static const cursorBlink = 'appearance.cursorBlink';
+  static const terminalFontSize = 'appearance.terminalFontSize';
 }
 
 /// StateNotifier that owns the device-local [AppearanceSettings] and
@@ -63,11 +64,16 @@ class AppearanceNotifier extends StateNotifier<AppearanceSettings> {
     final scale = rawScale == null
         ? AppearanceSettings.defaultFontScale
         : _quantizeScale(_clampScale(rawScale));
+    final rawTermSize = prefs.getInt(AppearancePrefsKeys.terminalFontSize);
+    final termSize = rawTermSize == null
+        ? AppearanceSettings.defaultTerminalFontSize
+        : _clampTerminalFontSize(rawTermSize);
     return AppearanceSettings(
       fontScale: scale,
       reduceMotion:
           prefs.getBool(AppearancePrefsKeys.reduceMotion) ?? false,
       cursorBlink: prefs.getBool(AppearancePrefsKeys.cursorBlink) ?? true,
+      terminalFontSize: termSize,
     );
   }
 
@@ -77,6 +83,16 @@ class AppearanceNotifier extends StateNotifier<AppearanceSettings> {
     }
     if (v > AppearanceSettings.maxFontScale) {
       return AppearanceSettings.maxFontScale;
+    }
+    return v;
+  }
+
+  static int _clampTerminalFontSize(int v) {
+    if (v < AppearanceSettings.minTerminalFontSize) {
+      return AppearanceSettings.minTerminalFontSize;
+    }
+    if (v > AppearanceSettings.maxTerminalFontSize) {
+      return AppearanceSettings.maxTerminalFontSize;
     }
     return v;
   }
@@ -108,6 +124,15 @@ class AppearanceNotifier extends StateNotifier<AppearanceSettings> {
     final prefs = _prefs ?? await SharedPreferences.getInstance();
     _prefs = prefs;
     await prefs.setBool(AppearancePrefsKeys.cursorBlink, value);
+  }
+
+  Future<void> setTerminalFontSize(int value) async {
+    _userTouched = true;
+    final clamped = _clampTerminalFontSize(value);
+    state = state.copyWith(terminalFontSize: clamped);
+    final prefs = _prefs ?? await SharedPreferences.getInstance();
+    _prefs = prefs;
+    await prefs.setInt(AppearancePrefsKeys.terminalFontSize, clamped);
   }
 }
 

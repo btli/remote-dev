@@ -22,6 +22,10 @@ void main() {
     expect(state.fontScale, AppearanceSettings.defaultFontScale);
     expect(state.reduceMotion, isFalse);
     expect(state.cursorBlink, isTrue);
+    expect(
+      state.terminalFontSize,
+      AppearanceSettings.defaultTerminalFontSize,
+    );
   });
 
   test('writes each preference to SharedPreferences', () async {
@@ -32,16 +36,79 @@ void main() {
     await notifier.setFontScale(1.15);
     await notifier.setReduceMotion(true);
     await notifier.setCursorBlink(false);
+    await notifier.setTerminalFontSize(16);
 
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getDouble(AppearancePrefsKeys.fontScale), 1.15);
     expect(prefs.getBool(AppearancePrefsKeys.reduceMotion), isTrue);
     expect(prefs.getBool(AppearancePrefsKeys.cursorBlink), isFalse);
+    expect(prefs.getInt(AppearancePrefsKeys.terminalFontSize), 16);
 
     final state = container.read(appearanceSettingsProvider);
     expect(state.fontScale, 1.15);
     expect(state.reduceMotion, isTrue);
     expect(state.cursorBlink, isFalse);
+    expect(state.terminalFontSize, 16);
+  });
+
+  test('clamps terminal font size to allowed range on write', () async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    final notifier = container.read(appearanceSettingsProvider.notifier);
+    await notifier.setTerminalFontSize(99);
+    expect(
+      container.read(appearanceSettingsProvider).terminalFontSize,
+      AppearanceSettings.maxTerminalFontSize,
+    );
+
+    await notifier.setTerminalFontSize(1);
+    expect(
+      container.read(appearanceSettingsProvider).terminalFontSize,
+      AppearanceSettings.minTerminalFontSize,
+    );
+
+    // The clamped value is what gets persisted, too.
+    final prefs = await SharedPreferences.getInstance();
+    expect(
+      prefs.getInt(AppearancePrefsKeys.terminalFontSize),
+      AppearanceSettings.minTerminalFontSize,
+    );
+  });
+
+  test('hydrates a persisted terminal font size (and clamps on read)',
+      () async {
+    SharedPreferences.setMockInitialValues({
+      AppearancePrefsKeys.terminalFontSize: 18,
+    });
+    final prefs = await SharedPreferences.getInstance();
+    final container = ProviderContainer(
+      overrides: [
+        appearanceSettingsProvider.overrideWith(
+          (ref) => AppearanceNotifier.test(prefs),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    expect(container.read(appearanceSettingsProvider).terminalFontSize, 18);
+
+    // An out-of-range persisted value is clamped on read.
+    SharedPreferences.setMockInitialValues({
+      AppearancePrefsKeys.terminalFontSize: 999,
+    });
+    final prefs2 = await SharedPreferences.getInstance();
+    final container2 = ProviderContainer(
+      overrides: [
+        appearanceSettingsProvider.overrideWith(
+          (ref) => AppearanceNotifier.test(prefs2),
+        ),
+      ],
+    );
+    addTearDown(container2.dispose);
+    expect(
+      container2.read(appearanceSettingsProvider).terminalFontSize,
+      AppearanceSettings.maxTerminalFontSize,
+    );
   });
 
   test('clamps font scale to allowed range', () async {
