@@ -804,8 +804,10 @@ export async function createSessionWithDedupFlag(
   }
 
   // Track if we created a worktree so we can clean it up on failure. Both
-  // values are set inside the worktree blocks above (server-resolved), so
-  // this no longer depends on the client sending `input.projectPath`.
+  // values are set inside the worktree blocks above (folder-context:
+  // server-resolved from folder preferences; explicit-path: the validated
+  // input.projectPath), so cleanup no longer silently skips when the client
+  // omits projectPath.
   const createdWorktree = didCreateWorktree && branchName;
   const repoPath = resolvedWorktreeRepoPath;
 

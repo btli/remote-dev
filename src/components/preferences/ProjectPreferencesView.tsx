@@ -39,7 +39,6 @@ import type { PinnedFile } from "@/types/pinned-files";
 
 import { apiFetch } from "@/lib/api-fetch";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
-import type { UpdateFolderPreferencesInput } from "@/types/preferences";
 const INHERIT_VALUE = "__inherit__";
 type ConfigurableProvider = Exclude<AgentProviderType, "none">;
 
@@ -82,7 +81,9 @@ interface ProjectPrefs {
   // Project-only
   githubRepoId?: string | null;
   localRepoPath?: string | null;
-  defaultAgentProvider?: string | null;
+  // Matches UpdateFolderPreferencesInput so save() needs no cast; the form's
+  // <select> only ever writes valid provider ids (or null for inherit).
+  defaultAgentProvider?: AgentProviderType | null;
   agentProviderSettings?: AgentProviderSettingsMap | null;
   pinnedFiles?: PinnedFile[] | null;
 }
@@ -135,13 +136,9 @@ export function ProjectPreferencesView({
     setSaving(true);
     setError(null);
     try {
-      // `prefs` is the same payload the view PUT directly before; cast to the
-      // context input type (the field shapes are runtime-compatible — both are
-      // the node-preferences project surface).
-      await updateFolderPreferences(
-        projectId,
-        prefs as UpdateFolderPreferencesInput
-      );
+      // `prefs` now matches UpdateFolderPreferencesInput field-for-field, so no
+      // cast is needed; it's the same payload the view PUT directly before.
+      await updateFolderPreferences(projectId, prefs);
       onDone?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -220,8 +217,13 @@ export function ProjectPreferencesView({
                 onValueChange={(value) =>
                   setPrefs({
                     ...prefs,
+                    // The options below are restricted to AGENT_PROVIDERS ids
+                    // (minus "none"), so a non-inherit value is a valid
+                    // AgentProviderType.
                     defaultAgentProvider:
-                      value === INHERIT_VALUE ? null : value,
+                      value === INHERIT_VALUE
+                        ? null
+                        : (value as AgentProviderType),
                   })
                 }
               >

@@ -104,11 +104,12 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
 
   // Every tree mutation refreshes both the tree and the preferences cache, so a
   // node touched after page load is immediately visible to preference
-  // resolution. Kept out of the mount-time `refresh()` to avoid double-fetching
-  // with PreferencesContext's own mount load. (remote-dev-u84s)
+  // resolution. The two refreshes hit independent endpoints and independent
+  // state, so they run in parallel. Kept out of the mount-time `refresh()` to
+  // avoid double-fetching with PreferencesContext's own mount load.
+  // (remote-dev-u84s)
   const refreshAll = useCallback(async () => {
-    await refresh();
-    await refreshPreferences?.();
+    await Promise.all([refresh(), refreshPreferences?.()]);
   }, [refresh, refreshPreferences]);
 
   useEffect(() => {
