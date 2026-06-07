@@ -1,7 +1,49 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest";
-import { Session } from "./Session";
+import { Session, type SessionProps } from "./Session";
+import { SessionStatus } from "../value-objects/SessionStatus";
+import { TmuxSessionName } from "../value-objects/TmuxSessionName";
 import { InvalidValueError, InvalidStateTransitionError } from "../errors/DomainError";
+
+/**
+ * Build a suspended AGENT session that carries a live activity status + stale
+ * exit state — the exact shape produced when SessionManager auto-suspends a
+ * backgrounded but still-running agent. `Session.create()` always seeds
+ * agentActivityStatus = null, so we reconstitute the persisted shape directly.
+ */
+function suspendedAgentSession(
+  overrides: Partial<SessionProps> = {}
+): Session {
+  const now = new Date();
+  return Session.reconstitute({
+    id: "123e4567-e89b-12d3-a456-426614174000",
+    userId: "u1",
+    name: "agent",
+    tmuxSessionName: TmuxSessionName.fromString("rdv-123e4567-e89b-12d3-a456-426614174000"),
+    status: SessionStatus.suspended(),
+    projectPath: null,
+    githubRepoId: null,
+    worktreeBranch: null,
+    worktreeType: null,
+    projectId: "p1",
+    profileId: null,
+    terminalType: "agent",
+    agentProvider: "claude",
+    agentExitState: "exited",
+    agentExitCode: 1,
+    agentExitedAt: now,
+    agentRestartCount: 0,
+    agentActivityStatus: "running",
+    typeMetadata: null,
+    parentSessionId: null,
+    pinned: false,
+    tabOrder: 0,
+    lastActivityAt: now,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  });
+}
 
 describe("Session Entity", () => {
   describe("creation", () => {
@@ -141,6 +183,34 @@ describe("Session Entity", () => {
         const closed = Session.create({ userId: "u1", name: "Test" }).close();
 
         expect(() => closed.resume()).toThrow(InvalidStateTransitionError);
+      });
+
+      // [remote-dev-3m5s] Resuming an agent session must PRESERVE the live
+      // activity status. SessionManager auto-suspends backgrounded sessions, so
+      // wiping it on resume made a still-running agent render idle until the next
+      // hook fired. Exit state is still reset (the intent is the agent is live).
+      it("preserves agentActivityStatus when resuming an agent session", () => {
+        const suspended = suspendedAgentSession();
+        const resumed = suspended.resume();
+
+        expect(resumed.isActive()).toBe(true);
+        // Live status is untouched...
+        expect(resumed.agentActivityStatus).toBe("running");
+        // ...while stale exit state is reset.
+        expect(resumed.agentExitState).toBe("running");
+        expect(resumed.agentExitCode).toBeNull();
+        expect(resumed.agentExitedAt).toBeNull();
+      });
+
+      it("preserves agentActivityStatus when resuming a loop session", () => {
+        const suspended = suspendedAgentSession({
+          terminalType: "loop",
+          agentActivityStatus: "waiting",
+        });
+        const resumed = suspended.resume();
+
+        expect(resumed.agentActivityStatus).toBe("waiting");
+        expect(resumed.agentExitState).toBe("running");
       });
     });
 

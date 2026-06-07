@@ -252,6 +252,14 @@ export class Session {
    * Resume this session from suspended state.
    * Resets agent exit state so stale exit/error status doesn't persist.
    * @throws InvalidStateTransitionError if not in suspended state
+   *
+   * [remote-dev-3m5s] Resume MUST NOT clear `agentActivityStatus`. SessionManager
+   * auto-suspends backgrounded sessions, so any attach/resume cycle previously
+   * wiped the live status of an actively-running agent until the next hook fired
+   * — making a busy agent render idle (the stash-scripts case). Exit state is
+   * still reset (a resume means we intend the agent to be live again), but the
+   * real-time activity status is left untouched; the PID-liveness sweep
+   * (session-liveness-service.ts) corrects truly-dead agents.
    */
   resume(): Session {
     this.props.status.validateTransitionTo(SessionStatus.active(), "resume");
@@ -263,7 +271,6 @@ export class Session {
       updates.agentExitState = "running";
       updates.agentExitCode = null;
       updates.agentExitedAt = null;
-      updates.agentActivityStatus = null;
     }
     return this.withUpdates(updates);
   }
