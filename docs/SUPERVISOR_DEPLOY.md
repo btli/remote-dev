@@ -258,8 +258,10 @@ kubectl apply -f deploy/k8s/supervisor/router.yaml
 
 > **Instance namespaces/objects are created at runtime by the Supervisor.** When
 > an operator provisions an instance, the reconciler creates the `rdv-<slug>`
-> namespace and its Service/Secret(s)/StatefulSet (+ optional seed Job). There
-> are **no per-instance manifests** in this repo.
+> namespace and its Service/Secret(s)/StatefulSet. (First-boot user authorization
+> is **not** a separate Job — the StatefulSet carries `AUTHORIZED_USERS` from the
+> instance's `authorizedEmails` and the app seeds itself at boot; remote-dev-sb98.)
+> There are **no per-instance manifests** in this repo.
 
 ---
 

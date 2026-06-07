@@ -431,13 +431,20 @@ DROP ROLE rdv_<slug>;
 
 ## First-boot seeding
 
-The image deliberately does not seed `authorized_users` from the
-entrypoint. Run the seed manually once per instance:
+The app seeds `authorized_users` at boot from the `AUTHORIZED_USERS` container
+env (`src/db/boot-seed.ts`, remote-dev-sb98) — comma-separated emails, inserted
+idempotently (`onConflictDoNothing`). Under the supervisor this is automatic:
+the StatefulSet carries `AUTHORIZED_USERS` (from the `authorizedEmails` passed to
+`POST /api/instances`), so a freshly provisioned instance authorizes its users
+with no manual step. The seeding step is **non-fatal** — an already-seeded
+instance still boots if it hiccups — and runs on **both** the SQLite and
+PostgreSQL backends (the table exists before the app inserts: SQLite via the
+entrypoint's pre-app schema bootstrap, PostgreSQL via migrate-on-boot).
 
-```sh
-kubectl -n rdv exec -it rdv-alpha-0 -- \
-  env AUTHORIZED_USERS=ops@example.com,you@example.com bun run db:seed
-```
+For a standalone image that lacks the env, set `AUTHORIZED_USERS` on the
+container and restart, or insert rows directly. The manual `bun run db:seed` CLI
+(`src/db/seed.ts`) still exists for **local / dev** use, but it is **not shipped
+in the standalone runtime image**, so it is not the instance path.
 
 ---
 
