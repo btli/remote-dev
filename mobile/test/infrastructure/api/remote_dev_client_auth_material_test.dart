@@ -1,7 +1,9 @@
 // Tests for the Task 8 AuthMaterial build paths in RemoteDevClient:
 //   - forWorkspace builds merged AuthMaterial from ws authCookies + host authCookies
 //   - OIDC workspace (authCookies, no apiKey) yields AuthMaterial with cookies + null apiKey
-//   - merging deduplicates cookies by name (workspace-scoped ones win)
+//   - the host-wide CF_Authorization edge cookie WINS over a stale workspace one
+//     of the same name (the host copy is the freshly-harvested canonical JWT);
+//     other host cookies (e.g. the supervisor session) are not forwarded
 import 'dart:io' show HttpHeaders;
 import 'dart:typed_data';
 
@@ -136,24 +138,25 @@ void main() {
     );
 
     test(
-      'workspace authCookies take priority over host cookies of the same name',
+      'host CF_Authorization wins over a stale workspace one of the same name',
       () async {
         final storage = _FakeStorage();
         final creds = MobileCredentialsStore(storage);
 
-        // Workspace has a CF_Authorization cookie (newer one from ws login).
+        // Workspace has a STALE CF_Authorization (e.g. an old ws login).
         await creds.setWorkspaceAuthCookies('ws-3', [
           const AuthCookie(
             name: 'CF_Authorization',
-            value: 'ws-jwt',
+            value: 'old',
             path: '/',
           ),
         ]);
-        // Host also has CF_Authorization (older one from host login).
+        // Host has the FRESH, canonical edge cookie (harvested from the
+        // WebView / refreshed via re-auth).
         await creds.setHostAuthCookies('host-1', [
           const AuthCookie(
             name: 'CF_Authorization',
-            value: 'host-jwt',
+            value: 'fresh',
             path: '/',
           ),
         ]);
@@ -170,9 +173,12 @@ void main() {
 
         await client.get('/api/sessions');
 
-        final opts = adapter.captured!;
-        // Workspace cookie wins; host duplicate is dropped.
-        expect(opts.headers['cookie'], 'CF_Authorization=ws-jwt');
+        final cookie = adapter.captured!.headers['cookie'] as String;
+        // The fresh host edge cookie wins; the stale workspace copy is dropped.
+        expect(cookie, contains('CF_Authorization=fresh'));
+        expect(cookie, isNot(contains('old')));
+        // Exactly ONE CF_Authorization is sent (no duplicate).
+        expect('CF_Authorization='.allMatches(cookie).length, 1);
       },
     );
 

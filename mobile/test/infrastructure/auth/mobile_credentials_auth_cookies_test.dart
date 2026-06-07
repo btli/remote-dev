@@ -42,7 +42,11 @@ void main() {
       final store = MobileCredentialsStore(storage);
 
       final cookies = [
-        const AuthCookie(name: '__Secure-next-auth.session-token', value: 'tok', path: '/'),
+        const AuthCookie(
+          name: '__Secure-next-auth.session-token',
+          value: 'tok',
+          path: '/',
+        ),
         const AuthCookie(name: 'CF_Authorization', value: 'cf-jwt', path: '/'),
       ];
       await store.setHostAuthCookies('host-1', cookies);
@@ -99,8 +103,9 @@ void main() {
       () async {
         final storage = _FakeStorage();
         // Both keys present — new one wins.
-        storage.data['server.host.h1.authCookies'] =
-            jsonEncode([{'name': 'session', 'value': 'new', 'path': '/'}]);
+        storage.data['server.host.h1.authCookies'] = jsonEncode([
+          {'name': 'session', 'value': 'new', 'path': '/'},
+        ]);
         storage.data['server.host.h1.cfToken'] = 'old-jwt';
         final store = MobileCredentialsStore(storage);
 
@@ -108,6 +113,67 @@ void main() {
         expect(cookies.length, 1);
         expect(cookies[0].name, 'session');
         expect(cookies[0].value, 'new');
+      },
+    );
+
+    test(
+      'setHostCfToken stays effective after the harvest has created authCookies',
+      () async {
+        // Regression (codex review): getHostAuthCookies prefers authCookies
+        // once it exists (the WebView harvest creates it via
+        // upsertHostAuthCookie). A later re-auth refresh calls setHostCfToken,
+        // which must therefore ALSO update authCookies — otherwise the refresh
+        // would be silently ignored and a stale CF JWT keeps getting sent.
+        final storage = _FakeStorage();
+        final store = MobileCredentialsStore(storage);
+
+        // Harvest writes the authCookies representation.
+        await store.upsertHostAuthCookie(
+          'h-refresh',
+          const AuthCookie(
+            name: 'CF_Authorization',
+            value: 'harvested',
+            path: '/',
+          ),
+        );
+
+        // Re-auth refresh writes only the legacy scalar API…
+        await store.setHostCfToken('h-refresh', 'newtok');
+
+        // …but the PREFERRED authCookies read must reflect the new token.
+        final cookies = await store.getHostAuthCookies('h-refresh');
+        final cf = cookies.where((c) => c.name == 'CF_Authorization').toList();
+        expect(cf.length, 1);
+        expect(cf.single.value, 'newtok');
+        // And the legacy scalar is updated too (both representations in sync).
+        expect(await store.getHostCfToken('h-refresh'), 'newtok');
+      },
+    );
+
+    test(
+      'setHostCfToken replaces CF_Authorization without clobbering other host '
+      'cookies',
+      () async {
+        final storage = _FakeStorage();
+        final store = MobileCredentialsStore(storage);
+
+        // An unrelated host cookie + an old CF already persisted as authCookies.
+        await store.setHostAuthCookies('h-merge', const [
+          AuthCookie(name: 'other', value: 'keep-me', path: '/'),
+          AuthCookie(name: 'CF_Authorization', value: 'old', path: '/'),
+        ]);
+
+        await store.setHostCfToken('h-merge', 'fresh');
+
+        final cookies = await store.getHostAuthCookies('h-merge');
+        final byName = {for (final c in cookies) c.name: c.value};
+        expect(byName['other'], 'keep-me'); // preserved
+        expect(byName['CF_Authorization'], 'fresh'); // replaced
+        expect(
+          cookies.where((c) => c.name == 'CF_Authorization').length,
+          1,
+          reason: 'CF_Authorization must be replaced, not duplicated',
+        );
       },
     );
 
@@ -122,7 +188,11 @@ void main() {
         final store = MobileCredentialsStore(storage);
 
         final cookies = [
-          const AuthCookie(name: '__Secure-next-auth.session-token', value: 'ws-tok', path: '/'),
+          const AuthCookie(
+            name: '__Secure-next-auth.session-token',
+            value: 'ws-tok',
+            path: '/',
+          ),
         ];
         await store.setWorkspaceAuthCookies('ws-1', cookies);
 

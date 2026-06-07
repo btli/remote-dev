@@ -11,6 +11,7 @@ import '../../../infrastructure/storage/flutter_secure_storage_port.dart';
 import '../../../infrastructure/storage/host_workspace_store_impl.dart';
 import '../../../infrastructure/storage/server_config_store_impl.dart';
 import '../../../infrastructure/url/workspace_urls.dart';
+import '../../../infrastructure/webview/webview_cookie_harvester.dart';
 import '../../../infrastructure/webview/webview_cookie_seeder.dart';
 import 'webview_host_screen.dart';
 
@@ -46,6 +47,15 @@ final mobileCredentialsStoreProvider = Provider<MobileCredentialsStore>(
 /// a fake that records calls instead of touching the platform plugin.
 final webViewCookieSeederProvider = Provider<WebViewCookieSeeder>(
   (_) => WebViewCookieSeeder(),
+);
+
+/// Harvests the host-wide `CF_Authorization` edge cookie back OUT of the
+/// in-app WebView's `CookieManager` after a session WebView completes the
+/// interactive Cloudflare Access login (remote-dev off-LAN CF Access).
+/// Overrideable so widget tests can substitute a fake that returns a canned
+/// cookie instead of touching the platform plugin.
+final webViewCookieHarvesterProvider = Provider<WebViewCookieHarvester>(
+  (_) => WebViewCookieHarvester(),
 );
 
 /// Resolves the active [WorkspaceConfig] AND its owning [HostConfig] into an

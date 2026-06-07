@@ -181,11 +181,22 @@ class MobileCredentialsStore {
   static String _workspaceNs(String workspaceId) =>
       '${MobileCredentialsKeys.workspaceNsPrefix}$workspaceId';
 
-  Future<void> setHostCfToken(String hostId, String token) => _storage.write(
-        _hostNs(hostId),
-        MobileCredentialsKeys.hostCfToken,
-        token,
-      );
+  Future<void> setHostCfToken(String hostId, String token) async {
+    await _storage.write(
+      _hostNs(hostId),
+      MobileCredentialsKeys.hostCfToken,
+      token,
+    );
+    // Keep the PREFERRED authCookies representation in sync — getHostAuthCookies
+    // prefers authCookies once it exists (the harvest creates it), so writing
+    // only the legacy scalar would be ignored. A refreshed CF token must be
+    // sent. upsertHostAuthCookie replaces the same-name entry and preserves any
+    // other host cookies — no loop, no clobber.
+    await upsertHostAuthCookie(
+      hostId,
+      AuthCookie(name: 'CF_Authorization', value: token, path: '/'),
+    );
+  }
 
   Future<String?> getHostCfToken(String hostId) =>
       _storage.read(_hostNs(hostId), MobileCredentialsKeys.hostCfToken);
@@ -197,6 +208,27 @@ class MobileCredentialsStore {
         MobileCredentialsKeys.hostAuthCookies,
         jsonEncode(cookies.map((c) => c.toJson()).toList()),
       );
+
+  /// Insert-or-replace a single host auth cookie by name, preserving every
+  /// other host cookie.
+  ///
+  /// Used by the WebView CF_Authorization harvest (remote-dev off-LAN CF
+  /// Access): when the session WebView completes the interactive CF Access
+  /// login, the harvested `CF_Authorization` is upserted here so the existing
+  /// [CfAuthInterceptor] sends it on every Dio call. Merging (rather than
+  /// overwriting the whole list) is deliberate — a CF instance callback may
+  /// already have stored other host cookies, and a fresh CF JWT must not
+  /// clobber them. Reads the current list via [getHostAuthCookies] (which
+  /// includes the legacy `cfToken` fallback), drops any existing entry with
+  /// the same [AuthCookie.name], appends [cookie], and writes the result back.
+  Future<void> upsertHostAuthCookie(String hostId, AuthCookie cookie) async {
+    final existing = await getHostAuthCookies(hostId);
+    final merged = [
+      ...existing.where((c) => c.name != cookie.name),
+      cookie,
+    ];
+    await setHostAuthCookies(hostId, merged);
+  }
 
   /// Read the host's auth cookies.
   ///
@@ -288,17 +320,33 @@ class MobileCredentialsStore {
   /// deliberately excluded — it must never leak to instances (design §7.2).
   /// Single source of truth shared by [RemoteDevClient.forWorkspace] (REST)
   /// and the WebView cookie seeder.
+  ///
+  /// Precedence for `CF_Authorization`: the **host-wide** edge cookie WINS over
+  /// any workspace-scoped `CF_Authorization`. The host copy is the canonical,
+  /// freshly-harvested edge JWT (written by the WebView harvest via
+  /// [upsertHostAuthCookie] / by a re-auth refresh via [setHostCfToken]); a
+  /// workspace-scoped `CF_Authorization` is at best a stale duplicate that
+  /// would otherwise shadow the fresh one and re-trigger a CF `302`. Only
+  /// `CF_Authorization` is taken from the host — every other host cookie (e.g.
+  /// the supervisor's app session) stays excluded.
   Future<List<AuthCookie>> getInstanceCookies(
     String hostId,
     String workspaceId,
   ) async {
     final ws = await getWorkspaceAuthCookies(workspaceId);
-    final wsNames = ws.map((c) => c.name).toSet();
     final host = await getHostAuthCookies(hostId);
-    final edge = host.where(
-      (c) => c.name == 'CF_Authorization' && !wsNames.contains(c.name),
-    );
-    return [...ws, ...edge];
+    final hostCf = host.where((c) => c.name == 'CF_Authorization').toList();
+    if (hostCf.isNotEmpty) {
+      // Host-wide CF_Authorization (the freshly-harvested edge cookie) WINS
+      // over any stale workspace-scoped CF_Authorization — drop the workspace
+      // copy and append the host one.
+      return [
+        ...ws.where((c) => c.name != 'CF_Authorization'),
+        ...hostCf,
+      ];
+    }
+    // No host edge cookie → workspace cookies as-is (incl any workspace CF).
+    return ws;
   }
 
   /// Best-effort clear of every credential under this workspace's namespace.
