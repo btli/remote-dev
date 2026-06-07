@@ -29,8 +29,28 @@ const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_log_namespace ON log_entry(namespace);
 `;
 
+/**
+ * True only under an explicit test runner. Vitest sets `VITEST=true`; we also
+ * accept `NODE_ENV==='test'` as a belt-and-suspenders marker. Guarded this
+ * narrowly so it can NEVER trigger in production (which runs with
+ * `NODE_ENV==='production'` and no `VITEST`).
+ */
+function isTestEnv(): boolean {
+  return Boolean(process.env.VITEST) || process.env.NODE_ENV === "test";
+}
+
 export function getLogDatabase(): Database.Database {
   if (_db) return _db;
+
+  // Under test, write to an in-memory database instead of the real
+  // ~/.remote-dev/logs/logs.db. This keeps every logger code path exercised
+  // (so tests asserting on logging still work) while preventing test-fixture
+  // log entries from polluting the production logs database.
+  if (isTestEnv()) {
+    _db = new Database(":memory:");
+    _db.exec(SCHEMA_SQL);
+    return _db;
+  }
 
   mkdirSync(getLogsDir(), { recursive: true });
 

@@ -1377,6 +1377,14 @@ export async function suspendSession(
       )
     );
 
+  // Audit trail for lifecycle transitions (smwq): one INFO line per suspend so
+  // status debugging has a record of who/when. State changes are info-level.
+  log.info("Session suspended", {
+    sessionId,
+    name: session.name,
+    trigger: "suspendSession",
+  });
+
   // [aehq] Revoke the session's model-proxy tokens while suspended — the agent
   // is detached and resume re-mints a fresh token. Idempotent (revokes 0 rows
   // when none exist) and a no-op when the proxy was never enabled (empty table),
@@ -1414,6 +1422,11 @@ export async function resumeSession(
       .update(terminalSessions)
       .set({ status: "active", updatedAt: new Date() })
       .where(and(eq(terminalSessions.id, sessionId), eq(terminalSessions.userId, userId)));
+    log.info("Session resumed", {
+      sessionId,
+      name: session.name,
+      trigger: "resumeSession",
+    });
     return;
   }
 
@@ -1550,6 +1563,13 @@ export async function resumeSession(
         eq(terminalSessions.userId, userId)
       )
     );
+
+  // Audit trail for lifecycle transitions (smwq): one INFO line per resume.
+  log.info("Session resumed", {
+    sessionId,
+    name: session.name,
+    trigger: "resumeSession",
+  });
 }
 
 /**
