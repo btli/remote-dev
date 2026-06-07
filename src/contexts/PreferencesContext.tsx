@@ -75,7 +75,12 @@ interface PreferencesContextValue {
   refreshPreferences: () => Promise<void>;
 }
 
-const PreferencesContext = createContext<PreferencesContextValue | null>(null);
+// Exported so consumers that may render outside the provider (e.g. standalone
+// in tests, or a context that wants to degrade gracefully) can read it
+// optionally via `useContext(PreferencesContext)` with a null-check instead of
+// the throwing `usePreferencesContext` hook below.
+export const PreferencesContext =
+  createContext<PreferencesContextValue | null>(null);
 
 interface PreferencesProviderProps {
   children: ReactNode;

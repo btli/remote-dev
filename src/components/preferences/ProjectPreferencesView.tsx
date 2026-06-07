@@ -38,6 +38,8 @@ import {
 import type { PinnedFile } from "@/types/pinned-files";
 
 import { apiFetch } from "@/lib/api-fetch";
+import { usePreferencesContext } from "@/contexts/PreferencesContext";
+import type { UpdateFolderPreferencesInput } from "@/types/preferences";
 const INHERIT_VALUE = "__inherit__";
 type ConfigurableProvider = Exclude<AgentProviderType, "none">;
 
@@ -99,6 +101,15 @@ export function ProjectPreferencesView({
   const [error, setError] = useState<string | null>(null);
   const [agentOverridesOpen, setAgentOverridesOpen] = useState(false);
 
+  // Route persistence through the preferences context so the shared
+  // nodePreferences cache (used to resolve a session's working dir / agent
+  // provider) is optimistically updated. Both handlers PUT/DELETE the same
+  // /api/node-preferences/project/:id endpoint this view used directly, so the
+  // network behavior is unchanged — but a project's prefs set here are now
+  // immediately visible to new sessions without a page reload. (remote-dev-u84s)
+  const { updateFolderPreferences, deleteFolderPreferences } =
+    usePreferencesContext();
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -124,15 +135,13 @@ export function ProjectPreferencesView({
     setSaving(true);
     setError(null);
     try {
-      const res = await apiFetch(`/api/node-preferences/project/${projectId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(prefs),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || `Save failed (${res.status})`);
-      }
+      // `prefs` is the same payload the view PUT directly before; cast to the
+      // context input type (the field shapes are runtime-compatible — both are
+      // the node-preferences project surface).
+      await updateFolderPreferences(
+        projectId,
+        prefs as UpdateFolderPreferencesInput
+      );
       onDone?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -145,13 +154,7 @@ export function ProjectPreferencesView({
     setSaving(true);
     setError(null);
     try {
-      const res = await apiFetch(`/api/node-preferences/project/${projectId}`, {
-        method: "DELETE",
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || `Reset failed (${res.status})`);
-      }
+      await deleteFolderPreferences(projectId);
       setPrefs(EMPTY);
       onDone?.();
     } catch (err) {

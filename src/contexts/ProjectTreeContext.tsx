@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import { apiFetch } from "@/lib/api-fetch";
+import { PreferencesContext } from "@/contexts/PreferencesContext";
 
 export type NodeType = "group" | "project";
 
@@ -78,6 +79,22 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
   const [activeNode, setActiveNodeState] = useState<ActiveNode | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // PreferencesContext caches the folders + node-preferences maps it uses to
+  // resolve a session's working dir / agent provider. Those maps load once on
+  // mount, so a project created/updated/moved/deleted AFTER page load is
+  // invisible to preference resolution until a refetch. Every tree mutation
+  // below therefore also refreshes the preferences cache (NOT inside the
+  // mount-time `refresh()`, which would double-fetch with PreferencesContext's
+  // own mount load). (remote-dev-u84s)
+  //
+  // Consumed OPTIONALLY (not via the throwing `usePreferencesContext`): both
+  // production ProjectTreeProvider mount sites nest inside PreferencesProvider,
+  // but some tests render ProjectTreeProvider standalone — the null-safe read
+  // lets those keep working (the refresh is simply skipped when the provider
+  // is absent).
+  const preferences = useContext(PreferencesContext);
+  const refreshPreferences = preferences?.refreshPreferences;
+
   const refresh = useCallback(async () => {
     const [groupsRes, projectsRes] = await Promise.all([
       apiFetch("/api/groups").then((r) => r.json()),
@@ -121,9 +138,10 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
       });
       const body = await res.json();
       await refresh();
+      await refreshPreferences?.();
       return body.group as GroupNode;
     },
-    [groups, refresh],
+    [groups, refresh, refreshPreferences],
   );
 
   const updateGroup: ProjectTreeContextValue["updateGroup"] = useCallback(
@@ -135,8 +153,9 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify(patch),
       });
       await refresh();
+      await refreshPreferences?.();
     },
-    [refresh],
+    [refresh, refreshPreferences],
   );
 
   const deleteGroup: ProjectTreeContextValue["deleteGroup"] = useCallback(
@@ -144,8 +163,9 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
       const url = force ? `/api/groups/${id}?force=true` : `/api/groups/${id}`;
       await fetch(url, { method: "DELETE" });
       await refresh();
+      await refreshPreferences?.();
     },
-    [refresh],
+    [refresh, refreshPreferences],
   );
 
   const moveGroup: ProjectTreeContextValue["moveGroup"] = useCallback(
@@ -156,8 +176,9 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({ newParentGroupId: input.newParentGroupId }),
       });
       await refresh();
+      await refreshPreferences?.();
     },
-    [refresh],
+    [refresh, refreshPreferences],
   );
 
   const createProject: ProjectTreeContextValue["createProject"] = useCallback(
@@ -169,9 +190,10 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
       });
       const body = await res.json();
       await refresh();
+      await refreshPreferences?.();
       return body.project as ProjectNode;
     },
-    [refresh],
+    [refresh, refreshPreferences],
   );
 
   const updateProject: ProjectTreeContextValue["updateProject"] = useCallback(
@@ -183,16 +205,18 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify(patch),
       });
       await refresh();
+      await refreshPreferences?.();
     },
-    [refresh],
+    [refresh, refreshPreferences],
   );
 
   const deleteProject: ProjectTreeContextValue["deleteProject"] = useCallback(
     async (id) => {
       await apiFetch(`/api/projects/${id}`, { method: "DELETE" });
       await refresh();
+      await refreshPreferences?.();
     },
-    [refresh],
+    [refresh, refreshPreferences],
   );
 
   const moveProject: ProjectTreeContextValue["moveProject"] = useCallback(
@@ -203,8 +227,9 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({ newGroupId: input.newGroupId }),
       });
       await refresh();
+      await refreshPreferences?.();
     },
-    [refresh],
+    [refresh, refreshPreferences],
   );
 
   const setActiveNode: ProjectTreeContextValue["setActiveNode"] = useCallback(async (node) => {
