@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -36,10 +37,14 @@ import 'smart_key_strip.dart';
 /// Composes:
 /// - `SessionStatusBar` (top, fixed 44px, sits in the column)
 /// - WebView (middle, height tracks the keyboard inset via LayoutBuilder)
-/// - Chrome stack (bottom, 100px reserve): `SmartKeyStrip` (44px) +
-///   `MobileInputBar` (56px), rendered inside a single floating Positioned so
-///   they ride the keyboard together — smart keys ALWAYS stay visible above
-///   the input bar instead of being hidden behind the keyboard.
+/// - Chrome stack (bottom): `SmartKeyStrip` (44px) + `MobileInputBar` (56px) —
+///   a fixed 100px-TALL block rendered inside a single floating Positioned so
+///   they ride the keyboard together (smart keys ALWAYS stay visible above the
+///   input bar instead of being hidden behind the keyboard). Note the chrome's
+///   100px is its HEIGHT; its bottom OFFSET from the screen edge is the dynamic
+///   `bottomReserve` (= max(keyboardInset, bottom safe-area padding)), which the
+///   WebView reserves so the two stay flush. See the `bottomReserve` rationale
+///   in `build`.
 ///
 /// All five outbound bridge handlers are registered in `onWebViewCreated`
 /// (Spec §2.2 rule 1). All native→WebView calls go through `BridgeController`
@@ -350,6 +355,14 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
   @override
   Widget build(BuildContext context) {
     final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+    // Bottom safe-area inset (gesture-nav pill / home indicator). We read
+    // `paddingOf`, NOT `viewPaddingOf`: `padding` is `viewPadding` minus
+    // `viewInsets` floored at 0 — i.e. `max(viewPadding - viewInsets, 0)`.
+    // That floor is the linchpin of the `bottomReserve` invariant below: as
+    // the keyboard descends, `viewInsets.bottom` shrinks past `viewPadding`
+    // and this value rises smoothly from 0 back up to the full safe area,
+    // so there is no discontinuity at the dismiss frame.
+    final bottomSafePadding = MediaQuery.paddingOf(context).bottom;
     // Push appearance changes into the WebView whenever the user mutates
     // them. The bridge queues until markReady, so this is safe to fire
     // pre-load. Compare per-field so a `reduceMotion` toggle doesn't
@@ -378,17 +391,43 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
             const smartKeysHeight = 44.0;
             const inputBarHeight = 56.0;
             const chromeHeight = smartKeysHeight + inputBarHeight; // 100
-            // WebView shrinks to track the keyboard inset so xterm.js
-            // refits its grid (via visualViewport + ResizeObserver in
-            // Terminal.tsx) and the terminal server reflows tmux. The
-            // chrome (smart keys + input bar) still floats above the
-            // keyboard as a single block via Stack + Positioned, so the
-            // bottom 100px reserve stays present whether the keyboard is
-            // up or not.
+            // ONE shared bottom reserve drives both the WebView height AND the
+            // floating chrome's offset, so they can never drift out of lockstep.
+            //
+            // The outer SafeArea has `bottom: false`, so `maxHeight` runs to the
+            // PHYSICAL bottom of the screen (under the gesture-nav pill / home
+            // indicator). The chrome is pinned at `Positioned(bottom:
+            // bottomReserve)` and the WebView gives up the same `bottomReserve`,
+            // so the chrome occupies the band [bottomReserve, bottomReserve+100]
+            // from the screen bottom and the WebView's bottom edge lands at
+            // exactly `bottomReserve + chromeHeight`. They are flush BY
+            // CONSTRUCTION — no overlap, no gap — and this holds at every frame,
+            // not just in steady state.
+            //
+            // We take `max(keyboardInset, bottomSafePadding)` so the reserve is:
+            //   - keyboard UP   → the keyboard inset (which exceeds the safe
+            //     area), so the WebView shrinks to track the keyboard and
+            //     xterm.js refits its grid (visualViewport + ResizeObserver in
+            //     Terminal.tsx) while the chrome rides just above the keyboard;
+            //   - keyboard DOWN → the bottom safe area (inset is 0), so the
+            //     chrome clears the gesture-nav pill / home indicator instead of
+            //     sitting on top of the bottom terminal rows.
+            // It is also CONTINUOUS through the dismiss animation: as the inset
+            // descends past the safe area, `bottomSafePadding` (floored at
+            // `max(viewPadding - viewInsets, 0)`) rises to meet it, so the max
+            // dips smoothly to the crossover and back up — no one-frame WebView
+            // contraction or chrome pop (the discontinuity the old branchy
+            // `keyboardInset == 0 ? padding : inset` + conditional SafeArea had).
+            final bottomReserve = math.max(keyboardInset, bottomSafePadding);
             final webViewHeight = constraints.maxHeight -
                 statusBarHeight -
                 chromeHeight -
-                keyboardInset;
+                bottomReserve;
+            // Clamp to >= 0 for tiny heights where status + chrome +
+            // bottomReserve exceed maxHeight. The spacer below is then sized as
+            // the EXACT remainder (not `chromeHeight + bottomReserve`) so the
+            // Column always sums to <= maxHeight and never overflows.
+            final clampedWebViewHeight = math.max(0.0, webViewHeight);
             return Stack(
               children: [
                 Column(
@@ -405,51 +444,61 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
                     ),
                     SizedBox(
                       key: const Key('webview-frame'),
-                      // Defend against the WebView shrinking to a
-                      // negative height on small screens where status +
-                      // chrome + keyboardInset can exceed
-                      // constraints.maxHeight. A non-negative height
-                      // keeps the layout sane until the keyboard
-                      // collapses.
-                      height: webViewHeight < 0 ? 0 : webViewHeight,
+                      height: clampedWebViewHeight,
                       child: _Webview(
                         sessionId: widget.sessionId,
                         onWebViewCreated: _registerBridgeHandlers,
                       ),
                     ),
-                    // Reserve space for the floating chrome so the column
-                    // fills the screen; smart keys + input bar are
-                    // rendered in the Stack overlay so they ride the
-                    // keyboard together.
-                    const SizedBox(height: chromeHeight),
+                    // Reserve space for the floating chrome so the column fills
+                    // the screen; smart keys + input bar are rendered in the
+                    // Stack overlay so they ride the keyboard together. Size
+                    // this as the EXACT remaining height after the status bar
+                    // and the (clamped) WebView — NOT `chromeHeight +
+                    // bottomReserve` — so that when the WebView clamps to 0 on
+                    // tiny screens the three column slices still sum to <=
+                    // maxHeight and the Column never overflows. In steady states
+                    // (WebView un-clamped) this remainder equals `chromeHeight +
+                    // bottomReserve` anyway.
+                    SizedBox(
+                      height: math.max(
+                        0.0,
+                        constraints.maxHeight -
+                            statusBarHeight -
+                            clampedWebViewHeight,
+                      ),
+                    ),
                   ],
                 ),
+                // Float the chrome at the SAME `bottomReserve` the WebView
+                // gave up, so its top edge meets the WebView's bottom edge
+                // flush at every frame (see the bottomReserve rationale above).
+                // No SafeArea wrapper: `bottomReserve` already accounts for the
+                // gesture-nav / home-indicator inset (keyboard down) and the
+                // keyboard inset (keyboard up), so a `SafeArea(bottom: ...)`
+                // here would double-count and reintroduce the dismiss-frame pop.
                 Positioned(
                   left: 0,
                   right: 0,
-                  bottom: keyboardInset,
-                  child: SafeArea(
-                    top: false,
-                    bottom: keyboardInset == 0,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                          height: smartKeysHeight,
-                          child: SmartKeyStrip(
-                            onKeyPress: _handleKeyPress,
-                            onUploadImage: _handleUploadImage,
-                          ),
+                  bottom: bottomReserve,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        height: smartKeysHeight,
+                        child: SmartKeyStrip(
+                          onKeyPress: _handleKeyPress,
+                          onUploadImage: _handleUploadImage,
                         ),
-                        SizedBox(
-                          height: inputBarHeight,
-                          child: MobileInputBar(
-                            onSend: _handleSend,
-                            onPasteWithoutExecute: _handlePasteWithoutExecute,
-                          ),
+                      ),
+                      SizedBox(
+                        height: inputBarHeight,
+                        child: MobileInputBar(
+                          onSend: _handleSend,
+                          onPasteWithoutExecute: _handlePasteWithoutExecute,
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ],
