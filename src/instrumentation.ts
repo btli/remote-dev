@@ -62,6 +62,23 @@ export async function register() {
     const { runMigrations } = await import("@/db/migrate");
     await runMigrations();
 
+    // Seed the `authorized_users` table from AUTHORIZED_USERS (remote-dev-sb98).
+    // MUST run AFTER migrate-on-boot: on Postgres the migrate step above just
+    // created the schema; on SQLite the schema already exists (the instance
+    // entrypoint's pre-app bootstrap), so the table is present on both paths.
+    // No-op unless AUTHORIZED_USERS is set, idempotent (onConflictDoNothing), and
+    // NON-FATAL — seedAuthorizedUsersFromEnv swallows its own errors so an
+    // already-seeded instance still boots. The outer guard only covers the
+    // dynamic import itself (mirrors the other steps in this file).
+    try {
+      const { seedAuthorizedUsersFromEnv } = await import("@/db/boot-seed");
+      await seedAuthorizedUsersFromEnv();
+    } catch (error) {
+      log.warn("Authorized-user boot seeding step failed to run", {
+        error: String(error),
+      });
+    }
+
     const { isPostgres } = await import("@/db/is-postgres");
     if (isPostgres()) {
       // On the Postgres path, the sidecar datasets (logs + analytics) live in
