@@ -130,7 +130,8 @@ function getInstallCommand(name: string, packageManager?: string): string {
  * binaries — system-info disclosure).
  *
  * Gated by `isSetupRequestAllowed()` (remote-dev-2rob): permitted only while
- * first-run setup is incomplete OR for an authenticated session; otherwise 401.
+ * first-run setup is open (unscoped + not yet complete) OR for an authenticated
+ * session; otherwise 401. A scoped instance pod always requires a session.
  */
 export async function GET() {
   if (!(await isSetupRequestAllowed())) {

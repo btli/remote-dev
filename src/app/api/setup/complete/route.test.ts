@@ -1,25 +1,38 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Gate the route behind a mock of the shared setup gate so each test drives
-// allow/deny directly; the gate's own logic is covered in
-// src/lib/__tests__/setup-gate.test.ts.
+// Mock the shared setup gate so each test drives the gate decision directly; the
+// gate's own logic is covered in src/lib/__tests__/setup-gate.test.ts. POST uses
+// hasValidSession + isFirstRunOpen (it resolves the session once, then re-checks
+// completion inside the transaction); GET uses isSetupRequestAllowed.
 vi.mock("@/lib/setup-gate", () => ({
+  hasValidSession: vi.fn(),
+  isFirstRunOpen: vi.fn(),
   isSetupRequestAllowed: vi.fn(),
 }));
 
-// The route reads/writes setup_config via db.query.setupConfig.findFirst,
-// db.update(...).set(...).where(...) and db.insert(...).values(...). Back those
-// with controllable spies. The chained builders just need to be awaitable.
-const findFirst = vi.fn();
+// The route reads setup_config via db.query.setupConfig.findFirst (GET) and runs
+// the POST read-decide-write inside db.transaction(cb) where the re-read +
+// writes go through `tx`. We give `tx` its OWN findFirst spy (txFindFirst) so the
+// TOCTOU test can make the in-transaction re-read disagree with anything else.
+// The transaction propagates thrown errors and performs no write on throw, so a
+// SetupForbiddenError surfaces as a 401 with nothing written.
+const findFirst = vi.fn(); // GET path
+const txFindFirst = vi.fn(); // POST in-transaction re-read
 const setSpy = vi.fn();
 const whereSpy = vi.fn().mockResolvedValue(undefined);
 const valuesSpy = vi.fn().mockResolvedValue(undefined);
+
+const tx = {
+  query: { setupConfig: { findFirst: () => txFindFirst() } },
+  update: () => ({ set: (...a: unknown[]) => setSpy(...a) }),
+  insert: () => ({ values: (...a: unknown[]) => valuesSpy(...a) }),
+};
+
 vi.mock("@/db", () => ({
   db: {
     query: { setupConfig: { findFirst: () => findFirst() } },
-    update: () => ({ set: (...a: unknown[]) => setSpy(...a) }),
-    insert: () => ({ values: (...a: unknown[]) => valuesSpy(...a) }),
+    transaction: async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx),
   },
 }));
 
@@ -28,7 +41,11 @@ vi.mock("@/db", () => ({
 vi.mock("node:fs", () => ({ existsSync: () => true }));
 
 import type { NextRequest } from "next/server";
-import { isSetupRequestAllowed } from "@/lib/setup-gate";
+import {
+  hasValidSession,
+  isFirstRunOpen,
+  isSetupRequestAllowed,
+} from "@/lib/setup-gate";
 import { GET, POST } from "./route";
 
 setSpy.mockReturnValue({ where: (...a: unknown[]) => whereSpy(...a) });
@@ -51,17 +68,19 @@ function postRequest(body: unknown): NextRequest {
 
 describe("POST /api/setup/complete", () => {
   beforeEach(() => {
-    vi.mocked(isSetupRequestAllowed).mockReset();
-    findFirst.mockReset();
+    vi.mocked(hasValidSession).mockReset();
+    vi.mocked(isFirstRunOpen).mockReset();
+    txFindFirst.mockReset();
     setSpy.mockClear();
     whereSpy.mockClear();
     valuesSpy.mockClear();
     setSpy.mockReturnValue({ where: (...a: unknown[]) => whereSpy(...a) });
   });
 
-  it("allows the write when setup is incomplete and there is no session (first run)", async () => {
-    vi.mocked(isSetupRequestAllowed).mockResolvedValue(true);
-    findFirst.mockResolvedValue(undefined); // no existing row → insert path
+  it("allows the write when first-run is open and there is no session (insert path)", async () => {
+    vi.mocked(hasValidSession).mockResolvedValue(false);
+    vi.mocked(isFirstRunOpen).mockResolvedValue(true);
+    txFindFirst.mockResolvedValue(undefined); // no existing row → insert
 
     const res = await POST(postRequest(VALID_CONFIG));
     expect(res.status).toBe(200);
@@ -70,24 +89,55 @@ describe("POST /api/setup/complete", () => {
   });
 
   it("allows the write when setup is complete and the caller has a session (update path)", async () => {
-    vi.mocked(isSetupRequestAllowed).mockResolvedValue(true);
-    findFirst.mockResolvedValue({ id: "cfg-1", isComplete: true }); // existing → update
+    vi.mocked(hasValidSession).mockResolvedValue(true);
+    vi.mocked(isFirstRunOpen).mockResolvedValue(false); // not consulted (authed short-circuits)
+    txFindFirst.mockResolvedValue({ id: "cfg-1", isComplete: true }); // existing → update
 
     const res = await POST(postRequest(VALID_CONFIG));
     expect(res.status).toBe(200);
     expect(setSpy).toHaveBeenCalledTimes(1);
     expect(whereSpy).toHaveBeenCalledTimes(1);
+    // An authenticated caller never needs the first-run-open check.
+    expect(isFirstRunOpen).not.toHaveBeenCalled();
   });
 
-  it("returns 401 when setup is complete and there is no session", async () => {
-    vi.mocked(isSetupRequestAllowed).mockResolvedValue(false);
+  it("returns 401 up front when not authed and first-run is closed (no DB write)", async () => {
+    vi.mocked(hasValidSession).mockResolvedValue(false);
+    vi.mocked(isFirstRunOpen).mockResolvedValue(false);
 
     const res = await POST(postRequest(VALID_CONFIG));
     expect(res.status).toBe(401);
     await expect(res.json()).resolves.toEqual({ error: "Unauthorized" });
-    // The gate runs BEFORE any DB write.
+    // Rejected before the transaction even opens.
+    expect(txFindFirst).not.toHaveBeenCalled();
     expect(valuesSpy).not.toHaveBeenCalled();
     expect(setSpy).not.toHaveBeenCalled();
+  });
+
+  it("TOCTOU: passes the up-front gate but the in-transaction re-read shows complete + no session → 401, nothing written", async () => {
+    // Simulate the race: the up-front gate sees first-run OPEN (a concurrent POST
+    // has not yet committed), but by the time our transaction re-reads, the row is
+    // already complete. With no session, the in-transaction guard must reject and
+    // write nothing.
+    vi.mocked(hasValidSession).mockResolvedValue(false);
+    vi.mocked(isFirstRunOpen).mockResolvedValue(true); // up-front: still open
+    txFindFirst.mockResolvedValue({ id: "cfg-1", isComplete: true }); // re-read: now complete
+
+    const res = await POST(postRequest(VALID_CONFIG));
+    expect(res.status).toBe(401);
+    await expect(res.json()).resolves.toEqual({ error: "Unauthorized" });
+    // The overwrite was prevented inside the transaction.
+    expect(setSpy).not.toHaveBeenCalled();
+    expect(valuesSpy).not.toHaveBeenCalled();
+  });
+
+  it("authed caller may overwrite a completed config even if first-run looks open (no spurious 401)", async () => {
+    vi.mocked(hasValidSession).mockResolvedValue(true);
+    txFindFirst.mockResolvedValue({ id: "cfg-1", isComplete: true });
+
+    const res = await POST(postRequest(VALID_CONFIG));
+    expect(res.status).toBe(200);
+    expect(setSpy).toHaveBeenCalledTimes(1);
   });
 });
 
