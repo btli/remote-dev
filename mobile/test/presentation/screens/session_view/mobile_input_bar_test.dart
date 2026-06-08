@@ -71,4 +71,82 @@ void main() {
       contains('clip-text'),
     );
   });
+
+  // Regression: the input bar lives in a FIXED 56px slot and the parent
+  // (session_view_screen.dart) ALREADY reserves the bottom safe-area inset for
+  // the whole floating chrome (bottomReserve = max(keyboardInset, padding.bottom),
+  // Positioned(bottom: bottomReserve)). The bar must therefore NOT re-apply
+  // MediaQuery.padding.bottom itself — a SafeArea inside the bar double-counted the
+  // inset and, with the keyboard DOWN (padding.bottom = full safe area), crushed
+  // the TextField to ~0 height inside its 56px slot. That is the "input field too
+  // small on session load" bug (worst on devices with a tall bottom inset, e.g. the
+  // Android 3-button nav bar / Pixel Fold). We assert the field height does NOT
+  // depend on padding.bottom.
+  testWidgets(
+    'input field height is independent of the bottom safe-area inset '
+    '(keyboard down) — not crushed by a double-counted inset',
+    (tester) async {
+      // inputBarHeight from session_view_screen.dart's chrome layout.
+      const inputBarHeight = 56.0;
+
+      // Keyboard DOWN: viewInsets.bottom = 0, so the framework floor makes
+      // padding.bottom == viewPadding.bottom. We mount the bar in the exact 56px
+      // slot the parent gives it; the SizedBox(width: 400) below pins the bar's
+      // width so the test is independent of the flutter_test surface size.
+      Widget framed(double padBottom) => MaterialApp(
+            home: Scaffold(
+              // The real screen owns its layout and never lets the Scaffold reflow
+              // on the keyboard; mirror that so only our injected padding matters.
+              resizeToAvoidBottomInset: false,
+              body: MediaQuery(
+                data: MediaQueryData(
+                  viewPadding: EdgeInsets.only(bottom: padBottom),
+                  padding: EdgeInsets.only(bottom: padBottom),
+                ),
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: SizedBox(
+                    height: inputBarHeight,
+                    width: 400,
+                    child: MobileInputBar(onSend: (_) {}),
+                  ),
+                ),
+              ),
+            ),
+          );
+
+      await tester.pumpWidget(framed(0));
+      await tester.pumpAndSettle();
+      final heightNoInset = tester.getSize(find.byType(TextField)).height;
+
+      // A tall, realistic keyboard-down inset (Android 3-button system nav bar).
+      await tester.pumpWidget(framed(48));
+      await tester.pumpAndSettle();
+      final heightWithInset = tester.getSize(find.byType(TextField)).height;
+
+      // Sanity: with no inset the field occupies a substantial part of the 56px
+      // slot (Container padding is 12px total → ~44px available). If this is tiny,
+      // the test's framing is wrong, not the widget.
+      expect(
+        heightNoInset,
+        greaterThan(30),
+        reason:
+            'Baseline field height should fill most of the 56px slot; got '
+            '$heightNoInset.',
+      );
+      // The actual regression assertion: the bottom inset must NOT change the
+      // field height. Before the fix the inner SafeArea ate 48px of the 56px slot
+      // and this collapsed to ~0.
+      expect(
+        heightWithInset,
+        closeTo(heightNoInset, 0.5),
+        reason:
+            'The input field height must NOT depend on the bottom safe-area inset '
+            '— the parent already reserves it. A SafeArea inside the bar '
+            'double-counts the inset and crushes the field when the keyboard is '
+            'down. Found $heightNoInset (no inset) vs $heightWithInset (48px '
+            'inset).',
+      );
+    },
+  );
 }
