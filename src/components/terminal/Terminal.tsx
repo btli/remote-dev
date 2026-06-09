@@ -1874,8 +1874,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       </Activity>
 
       {isDragging && (
-        <div className="absolute inset-0 bg-blue-500/10 flex items-center justify-center pointer-events-none z-10">
-          <div className="bg-background/90 px-4 py-2 rounded-lg border border-blue-500/50 text-sm">
+        <div className="absolute inset-0 bg-[var(--color-signal-attention-solid)]/10 flex items-center justify-center pointer-events-none z-10">
+          <div className="bg-background/90 px-4 py-2 rounded-lg border border-[var(--color-signal-attention-solid)]/40 text-sm">
             Drop image to paste
           </div>
         </div>

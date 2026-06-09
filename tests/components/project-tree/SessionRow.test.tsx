@@ -91,7 +91,7 @@ describe("SessionRow", () => {
     const { container } = render(
       <SessionRow {...baseProps} session={agent} agentStatus="running" />
     );
-    expect(container.querySelector(".agent-breathing.text-green-500")).toBeTruthy();
+    expect(container.querySelector(".agent-breathing.text-green-600")).toBeTruthy();
   });
 
   it("shows schedule count when > 0", () => {
