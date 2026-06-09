@@ -78,10 +78,10 @@ export function SessionMetadataBar({
   // open PR is healthy, purple when closed/merged.
   const prTone =
     pr?.reviewDecision === "CHANGES_REQUESTED" || pr?.ciStatus === "failing"
-      ? "text-red-400 bg-red-400/10"
+      ? "text-red-600 dark:text-red-400 bg-red-500/10"
       : pr?.state === "open"
-        ? "text-green-400 bg-green-400/10"
-        : "text-purple-400 bg-purple-400/10";
+        ? "text-green-600 dark:text-green-400 bg-green-500/10"
+        : "text-purple-600 dark:text-purple-400 bg-purple-500/10";
 
   return (
     <div className="flex flex-wrap gap-1 mt-0.5 px-1">
@@ -91,20 +91,20 @@ export function SessionMetadataBar({
           <GitBranch className="w-2.5 h-2.5 shrink-0" />
           <span className="truncate">{git.branch}</span>
           {git.ahead > 0 && (
-            <span className="inline-flex items-center text-green-400">
+            <span className="inline-flex items-center text-green-600 dark:text-green-400">
               <ArrowUp className="w-2 h-2" />
               {git.ahead}
             </span>
           )}
           {git.behind > 0 && (
-            <span className="inline-flex items-center text-orange-400">
+            <span className="inline-flex items-center text-orange-600 dark:text-orange-400">
               <ArrowDown className="w-2 h-2" />
               {git.behind}
             </span>
           )}
           {git.dirtyCount > 0 && (
             <span
-              className="inline-flex items-center gap-0.5 text-amber-400"
+              className="inline-flex items-center gap-0.5 text-amber-600 dark:text-amber-400"
               title={`${git.dirtyCount} uncommitted change${git.dirtyCount === 1 ? "" : "s"}`}
             >
               <FileDiff className="w-2 h-2" />
@@ -172,7 +172,7 @@ export function SessionMetadataBar({
         const canOpen = Boolean(onOpenPort) || getProxyUrl?.(p.port) != null;
         const chipClasses = cn(
           "inline-flex items-center gap-0.5 text-[10px] rounded px-1 py-0.5",
-          "text-emerald-400 bg-emerald-400/10",
+          "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10",
         );
         if (canOpen) {
           return (
@@ -184,8 +184,8 @@ export function SessionMetadataBar({
               aria-label={`Open port ${p.port}`}
               className={cn(
                 chipClasses,
-                "hover:bg-emerald-400/20 transition-colors",
-                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400/50",
+                "hover:bg-emerald-500/20 transition-colors",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500/50",
               )}
             >
               <Radio className="w-2.5 h-2.5" />:{p.port}
