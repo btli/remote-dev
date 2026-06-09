@@ -49,6 +49,7 @@ export const ISSUE_TYPE_COLORS: Record<BeadsIssueType, string> = {
 export const STATUS_COLORS: Record<BeadsStatus, string> = {
   open: "text-muted-foreground",
   in_progress: "text-chart-2",
+  blocked: "text-orange-600 dark:text-orange-400",
   closed: "text-green-500",
   deferred: "text-muted-foreground/50",
 };
@@ -56,9 +57,13 @@ export const STATUS_COLORS: Record<BeadsStatus, string> = {
 export const STATUS_BADGE_STYLES: Record<BeadsStatus, string> = {
   open: "bg-muted text-muted-foreground",
   in_progress: "bg-chart-2/20 text-chart-2",
+  blocked: "bg-orange-400/20 text-orange-600 dark:text-orange-400",
   closed: "bg-green-500/20 text-green-500",
   deferred: "bg-muted text-muted-foreground/50",
 };
+
+/** Color for the dependency-count chip on issue rows. */
+export const DEP_CHIP_COLOR = "text-orange-600 dark:text-orange-400";
 
 /** Truncate a beads issue ID for display. */
 export function shortenId(id: string, maxLen = 12): string {
