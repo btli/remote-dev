@@ -252,14 +252,16 @@ describe("Sidebar collapsed mode (remote-dev-t9f3)", () => {
     const btn = screen.getByRole("button", { name: "Working agent" });
     const svg = btn.querySelector("svg");
     const iconClass = svg?.getAttribute("class") ?? "";
-    // getSessionIconColor returns "text-green-500 agent-breathing" for running.
-    expect(iconClass).toMatch(/text-green-500/);
+    // getSessionIconColor returns "text-green-600 dark:text-green-500
+    // agent-breathing" for running (light/dark pair).
+    expect(iconClass).toMatch(/text-green-600/);
+    expect(iconClass).toMatch(/dark:text-green-500/);
     expect(iconClass).toMatch(/agent-breathing/);
   });
 
   it("renders the rail without crashing when activity status is non-null", () => {
     // Smoke test: every status the helper handles should render cleanly.
-    for (const status of ["waiting", "error", "compacting", "idle", "ended"]) {
+    for (const status of ["subagent", "waiting", "error", "compacting", "idle", "ended"]) {
       mockAgentStatuses.clear();
       setMockAgentStatus("smoke", status);
       const { unmount } = renderCollapsedSidebar({

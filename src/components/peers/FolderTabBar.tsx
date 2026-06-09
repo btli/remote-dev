@@ -11,6 +11,7 @@
 
 import { TerminalSquare, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useSessionContext } from "@/contexts/SessionContext";
 import type { TerminalSession } from "@/types/session";
 import type { ActiveView } from "@/types/peer-chat";
 import {
@@ -35,13 +36,15 @@ const TAB_INACTIVE = "text-muted-foreground hover:text-foreground hover:bg-accen
 function getActivityDotClass(status: string | null): string {
   switch (status) {
     case "running":
-      return "bg-green-500 agent-breathing";
+      return "bg-green-600 dark:bg-green-500 agent-breathing";
+    case "subagent":
+      return "bg-violet-600 dark:bg-violet-500 agent-breathing";
     case "waiting":
-      return "bg-yellow-500 agent-breathing";
+      return "bg-yellow-600 dark:bg-yellow-500 agent-breathing";
     case "compacting":
-      return "bg-blue-500 agent-breathing";
+      return "bg-blue-600 dark:bg-blue-500 agent-breathing";
     case "error":
-      return "bg-red-500";
+      return "bg-red-600 dark:bg-red-500";
     case "idle":
     case "ended":
     default:
@@ -57,6 +60,10 @@ export function FolderTabBar({
   onAgentTabClick,
   chatUnreadCount,
 }: FolderTabBarProps) {
+  // Live merged activity status (hook-reported cache over DB row) — the same
+  // getter the sidebar uses, so the tab dot never lags behind the tree icon.
+  const { getAgentActivityStatus } = useSessionContext();
+
   return (
     <div className="flex items-center gap-1 px-2 py-1.5 bg-background/50 backdrop-blur-md border-b border-border shrink-0">
       <button
@@ -87,6 +94,7 @@ export function FolderTabBar({
       <div className="flex items-center gap-1 flex-1 overflow-x-auto scrollbar-hide">
         {agentSessions.map((session) => {
           const isActive = session.id === activeSessionId && activeView === "terminal";
+          const activityStatus = getAgentActivityStatus(session.id);
 
           return (
             <Tooltip key={session.id}>
@@ -103,7 +111,7 @@ export function FolderTabBar({
                   <span
                     className={cn(
                       "w-1.5 h-1.5 rounded-full shrink-0",
-                      getActivityDotClass(session.agentActivityStatus ?? null)
+                      getActivityDotClass(activityStatus)
                     )}
                   />
                   <span className="truncate">{session.name}</span>
@@ -115,9 +123,7 @@ export function FolderTabBar({
                   {session.agentProvider && (
                     <div className="text-muted-foreground capitalize">{session.agentProvider}</div>
                   )}
-                  {session.agentActivityStatus && (
-                    <div className="text-muted-foreground capitalize">{session.agentActivityStatus}</div>
-                  )}
+                  <div className="text-muted-foreground capitalize">{activityStatus}</div>
                 </div>
               </TooltipContent>
             </Tooltip>

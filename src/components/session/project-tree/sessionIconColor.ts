@@ -31,18 +31,18 @@ export function getSessionIconColor(
   const status = getAgentActivityStatus(session.id);
   switch (status) {
     case "running":
-      return "text-green-500 agent-breathing";
+      return "text-green-600 dark:text-green-500 agent-breathing";
     case "subagent":
-      return "text-violet-500 agent-breathing";
+      return "text-violet-600 dark:text-violet-500 agent-breathing";
     case "waiting":
-      return "text-yellow-500 agent-breathing";
+      return "text-yellow-600 dark:text-yellow-500 agent-breathing";
     case "compacting":
-      return "text-blue-500 agent-breathing";
+      return "text-blue-600 dark:text-blue-500 agent-breathing";
     case "idle":
     case "ended":
       return "text-muted-foreground";
     case "error":
-      return "text-red-500";
+      return "text-red-600 dark:text-red-500";
     default:
       return isActive ? "text-primary" : "text-muted-foreground";
   }
