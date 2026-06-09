@@ -118,6 +118,41 @@ describe("BeadsIssueDetail", () => {
     await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(2));
   });
 
+  it("shows loading (not a stale error) during an in-flight retry, with refresh disabled and spinning", async () => {
+    apiFetch.mockResolvedValueOnce(errorResponse());
+    renderDetail(makeIssue());
+
+    await waitFor(() =>
+      expect(screen.getByText("Failed to load")).toBeInTheDocument()
+    );
+
+    let resolveFetch!: (value: Response) => void;
+    apiFetch.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    // While the refetch is in flight: loading indicator replaces the error,
+    // and the refresh affordance is disabled + spinning.
+    expect(screen.getByText("Loading...")).toBeInTheDocument();
+    expect(screen.queryByText("Failed to load")).not.toBeInTheDocument();
+    const refresh = screen.getByRole("button", { name: "Refresh comments" });
+    expect(refresh).toBeDisabled();
+    expect(refresh.querySelector("svg")).toHaveClass("animate-spin");
+
+    resolveFetch(jsonResponse({ comments: [], events: [] }));
+
+    await waitFor(() =>
+      expect(screen.getByText("No comments")).toBeInTheDocument()
+    );
+    expect(refresh).toBeEnabled();
+    expect(refresh.querySelector("svg")).not.toHaveClass("animate-spin");
+  });
+
   it("renders 'unknown' instead of 'Invalid Date' for invalid dates", async () => {
     apiFetch.mockResolvedValue(jsonResponse({ comments: [], events: [] }));
     renderDetail(makeIssue({ createdAt: new Date("not-a-date") }));

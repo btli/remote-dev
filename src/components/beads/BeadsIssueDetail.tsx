@@ -365,7 +365,7 @@ export function BeadsIssueDetail({
                 onClick={() => setReloadCounter((c) => c + 1)}
                 disabled={loadingDetails}
                 aria-label="Refresh comments"
-                className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                className="shrink-0 text-muted-foreground hover:text-foreground transition-colors disabled:pointer-events-none"
               >
                 <RefreshCw
                   className={cn("w-3 h-3", loadingDetails && "animate-spin")}
