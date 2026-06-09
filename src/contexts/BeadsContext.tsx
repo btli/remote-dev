@@ -191,6 +191,9 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Unknown error");
+      // A real error supersedes any stale dolt-unavailable flag from a prior
+      // load — the two states must never be shown together.
+      setUnavailable(false);
     } finally {
       // Only clear loading if this controller wasn't aborted by a newer request
       if (!controller.signal.aborted) {

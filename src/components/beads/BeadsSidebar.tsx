@@ -421,12 +421,17 @@ export function BeadsSidebar({
   const epicProgressById = useMemo(() => {
     const map = new Map<string, { closed: number; total: number }>();
     for (const issue of issues) {
-      if (issue.issueType !== "epic" || issue.children.length === 0) continue;
+      if (issue.issueType !== "epic") continue;
+      // Dedupe by child id — the same pair can be linked via both 'child-of'
+      // and 'parent-child' rows (bd renamed the type in 1.0.5), and the dep
+      // loader keys its dedupe on type, so both rows survive.
+      const childIds = new Set(issue.children.map((child) => child.issueId));
+      if (childIds.size === 0) continue;
       let closedCount = 0;
-      for (const child of issue.children) {
-        if (issueMap.get(child.issueId)?.status === "closed") closedCount++;
+      for (const childId of childIds) {
+        if (issueMap.get(childId)?.status === "closed") closedCount++;
       }
-      map.set(issue.id, { closed: closedCount, total: issue.children.length });
+      map.set(issue.id, { closed: closedCount, total: childIds.size });
     }
     return map;
   }, [issues, issueMap]);
