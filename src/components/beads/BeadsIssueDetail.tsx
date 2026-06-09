@@ -17,6 +17,7 @@ import {
   ChevronDown,
   ChevronRight,
   MessageSquare,
+  RefreshCw,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -38,6 +39,7 @@ import { CheckSquare } from "lucide-react";
 
 import { apiFetch } from "@/lib/api-fetch";
 function formatDate(date: Date): string {
+  if (!date || isNaN(date.getTime())) return "unknown";
   return date.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
@@ -86,6 +88,9 @@ export function BeadsIssueDetail({
   const [comments, setComments] = useState<BeadsComment[]>([]);
   const [events, setEvents] = useState<BeadsEvent[]>([]);
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [detailsError, setDetailsError] = useState(false);
+  // Bumping this re-runs the fetch effect (retry / manual refresh)
+  const [reloadCounter, setReloadCounter] = useState(0);
 
   // Section collapse state
   const [descriptionExpanded, setDescriptionExpanded] = useState(true);
@@ -99,6 +104,7 @@ export function BeadsIssueDetail({
 
     async function fetchDetails() {
       setLoadingDetails(true);
+      setDetailsError(false);
       try {
         const res = await apiFetch(
           `/api/beads/${encodeURIComponent(issue.id)}/comments?includeEvents=true&projectPath=${encodeURIComponent(projectPath)}`
@@ -116,12 +122,14 @@ export function BeadsIssueDetail({
           } else {
             setComments([]);
             setEvents([]);
+            setDetailsError(true);
           }
         }
       } catch {
         if (!cancelled) {
           setComments([]);
           setEvents([]);
+          setDetailsError(true);
         }
       } finally {
         if (!cancelled) setLoadingDetails(false);
@@ -132,7 +140,7 @@ export function BeadsIssueDetail({
     return () => {
       cancelled = true;
     };
-  }, [issue.id, projectPath]);
+  }, [issue.id, projectPath, reloadCounter]);
 
   const hasDeps = issue.dependencies.length > 0 || issue.dependents.length > 0 || issue.parents.length > 0 || issue.children.length > 0;
 
@@ -212,6 +220,7 @@ export function BeadsIssueDetail({
         <div>
           <button
             onClick={() => setDescriptionExpanded(!descriptionExpanded)}
+            aria-expanded={descriptionExpanded}
             className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors w-full"
           >
             {descriptionExpanded ? (
@@ -302,6 +311,7 @@ export function BeadsIssueDetail({
             <div>
               <button
                 onClick={() => setDepsExpanded(!depsExpanded)}
+                aria-expanded={depsExpanded}
                 className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors w-full"
               >
                 {depsExpanded ? (
@@ -332,23 +342,36 @@ export function BeadsIssueDetail({
         <>
           <Separator />
           <div>
-            <button
-              onClick={() => setCommentsExpanded(!commentsExpanded)}
-              className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors w-full"
-            >
-              {commentsExpanded ? (
-                <ChevronDown className="w-3 h-3" />
-              ) : (
-                <ChevronRight className="w-3 h-3" />
-              )}
-              <MessageSquare className="w-3 h-3" />
-              Comments
-              {comments.length > 0 && (
-                <span className="ml-auto text-[10px] bg-muted px-1.5 py-0.5 rounded">
-                  {comments.length}
-                </span>
-              )}
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setCommentsExpanded(!commentsExpanded)}
+                aria-expanded={commentsExpanded}
+                className="flex-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {commentsExpanded ? (
+                  <ChevronDown className="w-3 h-3" />
+                ) : (
+                  <ChevronRight className="w-3 h-3" />
+                )}
+                <MessageSquare className="w-3 h-3" />
+                Comments
+                {comments.length > 0 && (
+                  <span className="ml-auto text-[10px] bg-muted px-1.5 py-0.5 rounded">
+                    {comments.length}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => setReloadCounter((c) => c + 1)}
+                disabled={loadingDetails}
+                aria-label="Refresh comments"
+                className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <RefreshCw
+                  className={cn("w-3 h-3", loadingDetails && "animate-spin")}
+                />
+              </button>
+            </div>
             {commentsExpanded && (
               <div className="mt-1.5 space-y-2 pl-2">
                 {loadingDetails ? (
@@ -357,6 +380,18 @@ export function BeadsIssueDetail({
                     <span className="text-[11px] text-muted-foreground">
                       Loading...
                     </span>
+                  </div>
+                ) : detailsError ? (
+                  <div className="flex items-center gap-2">
+                    <p className="text-[11px] text-destructive py-1">
+                      Failed to load
+                    </p>
+                    <button
+                      onClick={() => setReloadCounter((c) => c + 1)}
+                      className="text-[11px] text-muted-foreground hover:text-foreground underline transition-colors"
+                    >
+                      Retry
+                    </button>
                   </div>
                 ) : comments.length === 0 ? (
                   <p className="text-[11px] text-muted-foreground italic py-1">
@@ -390,6 +425,7 @@ export function BeadsIssueDetail({
           <div>
             <button
               onClick={() => setAuditExpanded(!auditExpanded)}
+              aria-expanded={auditExpanded}
               className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors w-full"
             >
               {auditExpanded ? (
@@ -413,6 +449,18 @@ export function BeadsIssueDetail({
                     <span className="text-[11px] text-muted-foreground">
                       Loading...
                     </span>
+                  </div>
+                ) : detailsError ? (
+                  <div className="flex items-center gap-2">
+                    <p className="text-[11px] text-destructive py-1">
+                      Failed to load
+                    </p>
+                    <button
+                      onClick={() => setReloadCounter((c) => c + 1)}
+                      className="text-[11px] text-muted-foreground hover:text-foreground underline transition-colors"
+                    >
+                      Retry
+                    </button>
                   </div>
                 ) : events.length === 0 ? (
                   <p className="text-[11px] text-muted-foreground italic py-1">

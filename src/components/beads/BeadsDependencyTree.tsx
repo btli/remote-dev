@@ -67,11 +67,12 @@ function DependencyNode({
       <div
         className="flex items-center gap-1.5 py-0.5 text-[11px] text-muted-foreground/50"
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
+        title="Not in the loaded issue set — usually closed beyond the retention window"
       >
         <span className="font-mono text-[10px]">
           {shortenId(issueId)}
         </span>
-        <span>(not found)</span>
+        <span>(not loaded)</span>
       </div>
     );
   }
@@ -104,6 +105,8 @@ function DependencyNode({
         {hasChildren ? (
           <button
             onClick={() => setExpanded(!expanded)}
+            aria-expanded={expanded}
+            aria-label={expanded ? "Collapse" : "Expand"}
             className="shrink-0 text-muted-foreground hover:text-foreground"
           >
             {expanded ? (
