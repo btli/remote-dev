@@ -88,3 +88,39 @@ export async function isBeadsAvailable(projectPath: string): Promise<boolean> {
     return false;
   }
 }
+
+/** Error codes that mean the dolt server itself is unreachable. */
+const UNAVAILABLE_CODES: ReadonlySet<string> = new Set([
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "ENOTFOUND",
+]);
+
+/**
+ * True when an error indicates bd's dolt server is unreachable (not running /
+ * connection refused / DNS failure) rather than a genuine query failure.
+ * Walks `code`, the `cause` chain, and `AggregateError.errors`, with a
+ * message-text fallback for errors that don't carry a code.
+ */
+export function isDoltUnavailable(err: unknown): boolean {
+  const seen = new Set<unknown>();
+  const stack: unknown[] = [err];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (current === null || typeof current !== "object" || seen.has(current)) {
+      continue;
+    }
+    seen.add(current);
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === "string" && UNAVAILABLE_CODES.has(code)) return true;
+    const cause = (current as { cause?: unknown }).cause;
+    if (cause) stack.push(cause);
+    if (current instanceof AggregateError) stack.push(...current.errors);
+  }
+  // Fallback: match the message text for errors that don't expose a code.
+  const msg = String(err);
+  for (const code of UNAVAILABLE_CODES) {
+    if (msg.includes(code)) return true;
+  }
+  return false;
+}

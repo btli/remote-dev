@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import { getIssue } from "@/services/beads-service";
 import { validateProjectPath } from "@/lib/beads-auth";
+import { isDoltUnavailable } from "@/lib/beads-db";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "@/lib/logger";
@@ -29,13 +30,15 @@ export const GET = withApiAuth(async (request, { userId, params }) => {
     if (!issue) return errorResponse("Issue not found", 404);
     return NextResponse.json(issue);
   } catch (err) {
-    const msg = String(err);
     // Dolt server not running is expected — the issue is simply unavailable
-    if (msg.includes("ECONNREFUSED") || msg.includes("ETIMEDOUT")) {
-      log.debug("Dolt server not reachable, treating issue as not found", { error: msg });
-      return errorResponse("Issue not found", 404);
+    if (isDoltUnavailable(err)) {
+      log.debug("Dolt server not reachable, treating issue as not found", { error: String(err) });
+      return NextResponse.json(
+        { error: "Issue not found", unavailable: true },
+        { status: 404 }
+      );
     }
-    log.error("getIssue failed", { error: msg });
+    log.error("getIssue failed", { error: String(err) });
     return errorResponse(err instanceof Error ? err.message : "Unknown error", 500);
   }
 });

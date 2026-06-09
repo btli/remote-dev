@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import { getIssues } from "@/services/beads-service";
 import { validateProjectPath } from "@/lib/beads-auth";
+import { isDoltUnavailable } from "@/lib/beads-db";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "@/lib/logger";
@@ -9,7 +10,7 @@ import type { BeadsStatus, BeadsIssueType } from "@/types/beads";
 
 const log = createLogger("api/beads");
 
-const VALID_STATUSES = new Set(["open", "in_progress", "closed", "deferred"]);
+const VALID_STATUSES = new Set(["open", "in_progress", "blocked", "closed", "deferred"]);
 const VALID_TYPES = new Set(["task", "bug", "feature", "epic", "chore", "message"]);
 
 export const GET = withApiAuth(async (request, { userId }) => {
@@ -51,13 +52,12 @@ export const GET = withApiAuth(async (request, { userId }) => {
 
     return NextResponse.json({ initialized: true, issues });
   } catch (err) {
-    const msg = String(err);
-    // Dolt server not running is expected — return empty rather than 500
-    if (msg.includes("ECONNREFUSED") || msg.includes("ETIMEDOUT")) {
-      log.debug("Dolt server not reachable, returning empty issues", { error: msg });
-      return NextResponse.json({ initialized: true, issues: [] });
+    // Dolt server not running is expected — flag it rather than 500
+    if (isDoltUnavailable(err)) {
+      log.debug("Dolt server not reachable, returning unavailable", { error: String(err) });
+      return NextResponse.json({ initialized: true, unavailable: true, issues: [] });
     }
-    log.error("getIssues failed", { error: msg });
+    log.error("getIssues failed", { error: String(err) });
     return errorResponse(err instanceof Error ? err.message : "Unknown error", 500);
   }
 });
