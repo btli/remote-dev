@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import { getIssueComments, getIssueEvents } from "@/services/beads-service";
 import { validateProjectPath } from "@/lib/beads-auth";
+import { isDoltUnavailable } from "@/lib/beads-db";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "@/lib/logger";
@@ -38,13 +39,14 @@ export const GET = withApiAuth(async (request, { userId, params }) => {
     const comments = await getIssueComments(resolved, id);
     return NextResponse.json(comments);
   } catch (err) {
-    const msg = String(err);
     // Dolt server not running is expected — return empty rather than 500
-    if (msg.includes("ECONNREFUSED") || msg.includes("ETIMEDOUT")) {
-      log.debug("Dolt server not reachable, returning empty comments", { error: msg });
-      return NextResponse.json(includeEvents ? { comments: [], events: [] } : []);
+    if (isDoltUnavailable(err)) {
+      log.debug("Dolt server not reachable, returning empty comments", { error: String(err) });
+      return NextResponse.json(
+        includeEvents ? { comments: [], events: [], unavailable: true } : []
+      );
     }
-    log.error("getIssueComments failed", { error: msg });
+    log.error("getIssueComments failed", { error: String(err) });
     return errorResponse(err instanceof Error ? err.message : "Unknown error", 500);
   }
 });

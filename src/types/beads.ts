@@ -32,7 +32,7 @@ export interface BeadsIssue {
   children: BeadsDependency[];
 }
 
-export type BeadsStatus = "open" | "in_progress" | "closed" | "deferred";
+export type BeadsStatus = "open" | "in_progress" | "blocked" | "closed" | "deferred";
 export type BeadsIssueType = "task" | "bug" | "feature" | "epic" | "chore" | "message";
 
 export interface BeadsDependency {
@@ -41,6 +41,26 @@ export interface BeadsDependency {
   type: string;
   createdAt: Date;
   createdBy: string;
+  /**
+   * Status of the blocker issue (dependsOnId) at fetch time, when known.
+   * Optional/additive so consumers that don't need it compile unchanged.
+   */
+  dependsOnStatus?: BeadsStatus | null;
+}
+
+/**
+ * Whether a blocking dependency still gates its issue. The `dependencies`
+ * dolt table keeps rows after the blocker closes, so a dep only counts as
+ * blocking while the blocker issue is still active (non-closed).
+ */
+export function isActiveBlocker(dep: BeadsDependency): boolean {
+  // Unknown blocker status is treated as active (conservative).
+  return dep.dependsOnStatus !== "closed";
+}
+
+/** Whether an issue has at least one still-active blocking dependency. */
+export function hasActiveBlockers(issue: BeadsIssue): boolean {
+  return issue.dependencies.some(isActiveBlocker);
 }
 
 export interface BeadsComment {

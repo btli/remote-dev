@@ -138,6 +138,14 @@ interface StatusCountRow extends RowDataPacket {
   cnt: number;
 }
 
+interface IssueStatusRow extends RowDataPacket {
+  id: string;
+  status: string;
+}
+
+/** Max placeholders per IN (...) clause — dolt chokes on very large prepared statements. */
+const CHUNK_SIZE = 50;
+
 // ----- Mappers -----
 
 function mapIssue(
@@ -178,7 +186,10 @@ function mapIssue(
   };
 }
 
-function mapDependency(row: DependencyRow): BeadsDependency {
+function mapDependency(
+  row: DependencyRow,
+  statusById: Map<string, BeadsStatus>
+): BeadsDependency {
   return {
     issueId: row.issue_id,
     // Callers exclude null-target (wisp/external) rows before mapping, so depends_on_issue_id is effectively set here; ?? "" only satisfies the string type.
@@ -186,7 +197,37 @@ function mapDependency(row: DependencyRow): BeadsDependency {
     type: row.type,
     createdAt: row.created_at,
     createdBy: row.created_by ?? "",
+    dependsOnStatus: statusById.get(row.depends_on_issue_id ?? "") ?? null,
   };
+}
+
+/**
+ * Fill `known` with the statuses of every dependency target not already in the
+ * map (e.g. blockers closed long enough ago to fall outside the fetched set),
+ * so active-blocker semantics can distinguish live blockers from closed ones.
+ */
+async function resolveDependsOnStatuses(
+  projectPath: string,
+  deps: DependencyRow[],
+  known: Map<string, BeadsStatus>
+): Promise<void> {
+  const missing = [
+    ...new Set(
+      deps
+        .map((d) => d.depends_on_issue_id)
+        .filter((id): id is string => id !== null && id !== "" && !known.has(id))
+    ),
+  ];
+  for (let i = 0; i < missing.length; i += CHUNK_SIZE) {
+    const chunk = missing.slice(i, i + CHUNK_SIZE);
+    const ph = chunk.map(() => "?").join(",");
+    const rows = await beadsQuery<IssueStatusRow>(
+      projectPath,
+      `SELECT id, status FROM issues WHERE id IN (${ph})`,
+      chunk
+    );
+    for (const r of rows) known.set(r.id, r.status as BeadsStatus);
+  }
 }
 
 function mapComment(row: CommentRow): BeadsComment {
@@ -280,6 +321,11 @@ export async function getIssues(
       if (opts?.status) {
         childSql += ` AND status = ?`;
         childParams.push(opts.status);
+      } else {
+        // Same retention predicate as the default query above — without it,
+        // closed children outside the retention window reappear forever.
+        childSql += ` AND (status != 'closed' OR closed_at >= ? OR issue_type = 'epic')`;
+        childParams.push(cutoff);
       }
       if (opts?.issueType) {
         childSql += ` AND issue_type = ?`;
@@ -300,7 +346,6 @@ export async function getIssues(
 
   // Batch-load labels and dependencies in chunks to avoid dolt choking on
   // large IN (...) clauses with hundreds of prepared-statement placeholders.
-  const CHUNK_SIZE = 50;
   const labels: LabelRow[] = [];
   const deps: DependencyRow[] = [];
   const seenDepKeys = new Set<string>();
@@ -339,10 +384,18 @@ export async function getIssues(
     labelMap.set(l.issue_id, arr);
   }
 
+  // Resolve blocker statuses: issues already in the fetched set are known;
+  // any dependency target outside the set (e.g. long-closed blockers) is
+  // looked up so active-blocker semantics stay correct.
+  const statusById = new Map<string, BeadsStatus>(
+    issues.map((i) => [i.id, i.status as BeadsStatus])
+  );
+  await resolveDependsOnStatuses(projectPath, deps, statusById);
+
   // Group dependencies by semantic class
   const mappedDeps = deps
     .filter((d) => d.depends_on_issue_id)
-    .map(mapDependency);
+    .map((d) => mapDependency(d, statusById));
   const { dependencies, dependents, parents, children } = groupDependencies(mappedDeps);
 
   return issues.map((row) =>
@@ -383,9 +436,14 @@ export async function getIssue(
     ),
   ]);
 
+  const statusById = new Map<string, BeadsStatus>([
+    [row.id, row.status as BeadsStatus],
+  ]);
+  await resolveDependsOnStatuses(projectPath, deps, statusById);
+
   const mappedDeps = deps
     .filter((d) => d.depends_on_issue_id)
-    .map(mapDependency);
+    .map((d) => mapDependency(d, statusById));
   const grouped = groupDependencies(mappedDeps);
 
   return mapIssue(
@@ -423,19 +481,37 @@ export async function getIssueEvents(
 }
 
 export async function getStats(projectPath: string): Promise<BeadsStats> {
-  const [statusCounts, blockedCount] = await Promise.all([
+  const blockingTypesPh = [...BLOCKING_DEP_TYPES].map(() => "?").join(",");
+  // Subquery: does issue `i` have a blocking dep whose blocker is still active?
+  const activeBlockerExists = `EXISTS (
+    SELECT 1 FROM dependencies d
+    JOIN issues b ON b.id = d.depends_on_issue_id
+    WHERE d.issue_id = i.id
+      AND d.type IN (${blockingTypesPh})
+      AND b.status != 'closed'
+  )`;
+
+  const [statusCounts, blockedCount, readyCount] = await Promise.all([
     beadsQuery<StatusCountRow>(
       projectPath,
       `SELECT status, COUNT(*) as cnt FROM issues GROUP BY status`
     ),
+    // blocked = non-closed AND (stored 'blocked' status OR active blocking dep)
     beadsQuery<CountRow>(
       projectPath,
-      `SELECT COUNT(DISTINCT d.issue_id) as cnt
-       FROM dependencies d
-       JOIN issues blocked ON blocked.id = d.issue_id
-       JOIN issues blocker ON blocker.id = d.depends_on_issue_id
-       WHERE blocked.status != 'closed' AND blocker.status != 'closed'
-         AND d.type IN (${[...BLOCKING_DEP_TYPES].map(() => "?").join(",")})`,
+      `SELECT COUNT(DISTINCT i.id) as cnt
+       FROM issues i
+       WHERE i.status != 'closed'
+         AND (i.status = 'blocked' OR ${activeBlockerExists})`,
+      [...BLOCKING_DEP_TYPES]
+    ),
+    // ready = open AND no active blocking dep (computed directly, not by subtraction)
+    beadsQuery<CountRow>(
+      projectPath,
+      `SELECT COUNT(*) as cnt
+       FROM issues i
+       WHERE i.status = 'open'
+         AND NOT ${activeBlockerExists}`,
       [...BLOCKING_DEP_TYPES]
     ),
   ]);
@@ -447,20 +523,13 @@ export async function getStats(projectPath: string): Promise<BeadsStats> {
     total += row.cnt;
   }
 
-  const blocked = blockedCount[0]?.cnt ?? 0;
-  const open = counts["open"] ?? 0;
-  const inProgress = counts["in_progress"] ?? 0;
-
-  // "ready" = open issues that are NOT blocked
-  const ready = Math.max(0, open - blocked);
-
   return {
     total,
-    open,
-    inProgress,
+    open: counts["open"] ?? 0,
+    inProgress: counts["in_progress"] ?? 0,
     closed: counts["closed"] ?? 0,
-    blocked,
-    ready,
+    blocked: blockedCount[0]?.cnt ?? 0,
+    ready: readyCount[0]?.cnt ?? 0,
     deferred: counts["deferred"] ?? 0,
   };
 }
