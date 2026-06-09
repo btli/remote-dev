@@ -34,24 +34,27 @@ function makeSession(overrides: Partial<TerminalSession> = {}): TerminalSession 
 }
 
 describe("getSessionIconColor", () => {
-  it("agent session + status running → text-green-500 agent-breathing", () => {
+  it("agent session + status running → green light/dark pair, agent-breathing", () => {
     const session = makeSession({ terminalType: "agent" });
     const result = getSessionIconColor(session, false, () => "running");
-    expect(result).toContain("text-green-500");
+    expect(result).toContain("text-green-600");
+    expect(result).toContain("dark:text-green-500");
     expect(result).toContain("agent-breathing");
   });
 
-  it("agent session + status waiting → text-yellow-500 agent-breathing", () => {
+  it("agent session + status waiting → yellow light/dark pair, agent-breathing", () => {
     const session = makeSession({ terminalType: "agent" });
     const result = getSessionIconColor(session, false, () => "waiting");
-    expect(result).toContain("text-yellow-500");
+    expect(result).toContain("text-yellow-600");
+    expect(result).toContain("dark:text-yellow-500");
     expect(result).toContain("agent-breathing");
   });
 
-  it("agent session + status error → text-red-500 (no agent-breathing)", () => {
+  it("agent session + status error → red light/dark pair (no agent-breathing)", () => {
     const session = makeSession({ terminalType: "agent" });
     const result = getSessionIconColor(session, false, () => "error");
-    expect(result).toContain("text-red-500");
+    expect(result).toContain("text-red-600");
+    expect(result).toContain("dark:text-red-500");
     expect(result).not.toContain("agent-breathing");
   });
 
