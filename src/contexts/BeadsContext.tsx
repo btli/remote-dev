@@ -10,8 +10,11 @@ import {
   useMemo,
   type ReactNode,
 } from "react";
-import type { BeadsIssue, BeadsStats } from "@/types/beads";
-import type { BeadsSectionExpandDefaults } from "@/types/preferences";
+import { hasActiveBlockers, type BeadsIssue, type BeadsStats } from "@/types/beads";
+import {
+  BEADS_SECTION_EXPAND_DEFAULTS,
+  type BeadsSectionExpandDefaults,
+} from "@/types/preferences";
 import { usePreferencesContext } from "./PreferencesContext";
 
 import { apiFetch } from "@/lib/api-fetch";
@@ -60,6 +63,8 @@ interface BeadsContextValue {
   error: string | null;
   /** Whether beads is initialized in the current project (.beads dir exists) */
   initialized: boolean;
+  /** Whether bd's dolt server was unreachable on the last load */
+  unavailable: boolean;
   /** The resolved project path used for queries */
   projectPath: string | null;
   /** Refresh issues from the API */
@@ -95,18 +100,12 @@ interface BeadsProviderProps {
   children: ReactNode;
 }
 
-const DEFAULT_SECTION_EXPANDED: BeadsSectionExpandDefaults = {
-  ready: true,
-  inProgress: true,
-  open: true,
-  closed: false,
-};
-
 export function BeadsProvider({ children }: BeadsProviderProps) {
   const [issues, setIssues] = useState<BeadsIssue[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
 
   const { currentPreferences, userSettings } = usePreferencesContext();
   const projectPath = currentPreferences.defaultWorkingDirectory || null;
@@ -116,7 +115,7 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
   const beadsSidebarCollapsed = userSettings?.beadsSidebarCollapsed ?? true;
   const beadsSidebarWidth = userSettings?.beadsSidebarWidth ?? 320;
   const beadsClosedRetentionDays = userSettings?.beadsClosedRetentionDays ?? 7;
-  const beadsSectionExpanded = userSettings?.beadsSectionExpanded ?? DEFAULT_SECTION_EXPANDED;
+  const beadsSectionExpanded = userSettings?.beadsSectionExpanded ?? BEADS_SECTION_EXPAND_DEFAULTS;
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -125,12 +124,19 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
     if (issues.length === 0) return null;
     const stats = { total: issues.length, open: 0, inProgress: 0, closed: 0, blocked: 0, ready: 0, deferred: 0 };
     for (const issue of issues) {
+      const activelyBlocked = hasActiveBlockers(issue);
       if (issue.status === "closed") stats.closed++;
       else if (issue.status === "in_progress") stats.inProgress++;
       else if (issue.status === "deferred") stats.deferred++;
-      else if (issue.status === "open" && issue.dependencies.length === 0) { stats.open++; stats.ready++; }
-      else stats.open++;
-      if (issue.dependencies.length > 0 && issue.status !== "closed") stats.blocked++;
+      else if (issue.status === "open") {
+        stats.open++;
+        // ready = open with no still-active blocking dependency
+        if (!activelyBlocked) stats.ready++;
+      }
+      // blocked = non-closed with stored 'blocked' status or an active blocker
+      if (issue.status !== "closed" && (issue.status === "blocked" || activelyBlocked)) {
+        stats.blocked++;
+      }
     }
     return stats;
   }, [issues]);
@@ -141,6 +147,7 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
     if (!projectPath) {
       setIssues([]);
       setInitialized(false);
+      setUnavailable(false);
       return;
     }
 
@@ -166,15 +173,17 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
 
       const data = await issuesRes.json();
 
-      // New response format: { initialized, issues }
+      // New response format: { initialized, unavailable?, issues }
       if (data && typeof data === "object" && "initialized" in data) {
         setInitialized(data.initialized);
+        setUnavailable(data.unavailable === true);
         setIssues(
           Array.isArray(data.issues) ? data.issues.map(hydrateIssue) : []
         );
       } else {
         // Legacy fallback: plain array response
         setInitialized(true);
+        setUnavailable(false);
         setIssues(
           Array.isArray(data) ? data.map(hydrateIssue) : []
         );
@@ -236,6 +245,7 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
       loading,
       error,
       initialized,
+      unavailable,
       projectPath,
       refreshIssues,
       debouncedRefresh,
@@ -245,7 +255,7 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
       beadsSectionExpanded,
       userSettingsLoaded,
     }),
-    [issues, computedStats, loading, error, initialized, projectPath, refreshIssues, debouncedRefresh,
+    [issues, computedStats, loading, error, initialized, unavailable, projectPath, refreshIssues, debouncedRefresh,
      beadsSidebarCollapsed, beadsSidebarWidth, beadsClosedRetentionDays, beadsSectionExpanded, userSettingsLoaded]
   );
 

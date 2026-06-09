@@ -17,12 +17,13 @@ import {
   RefreshCw,
   Circle,
   GitBranch,
+  Layers,
   PanelRightClose,
   PanelRightOpen,
-  Loader2,
   ArrowLeft,
   Clock,
   CircleOff,
+  ServerOff,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -32,15 +33,14 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type {
-  BeadsIssue,
-} from "@/types/beads";
+import { hasActiveBlockers, type BeadsIssue } from "@/types/beads";
 import { BeadsIssueDetail } from "./BeadsIssueDetail";
 import {
   PRIORITY_COLORS,
   ISSUE_TYPE_ICONS,
   ISSUE_TYPE_COLORS,
   STATUS_COLORS,
+  DEP_CHIP_COLOR,
   shortenId,
 } from "./beads-constants";
 import { CheckSquare } from "lucide-react";
@@ -124,9 +124,11 @@ function SectionHeader({
 interface BeadsIssueRowProps {
   issue: BeadsIssue;
   onSelect: (issue: BeadsIssue) => void;
+  /** Child completion progress for epic rows ({closed, total}). */
+  epicProgress?: { closed: number; total: number };
 }
 
-function BeadsIssueRow({ issue, onSelect }: BeadsIssueRowProps) {
+function BeadsIssueRow({ issue, onSelect, epicProgress }: BeadsIssueRowProps) {
   const TypeIcon = ISSUE_TYPE_ICONS[issue.issueType] ?? CheckSquare;
   const typeColor = ISSUE_TYPE_COLORS[issue.issueType] ?? "text-muted-foreground";
   const priorityColor = PRIORITY_COLORS[issue.priority] ?? "bg-gray-500";
@@ -190,15 +192,23 @@ function BeadsIssueRow({ issue, onSelect }: BeadsIssueRowProps) {
             {depCount > 0 && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span className="flex items-center gap-0.5 text-[10px] text-orange-400">
+                  <span className={cn("flex items-center gap-0.5 text-[10px]", DEP_CHIP_COLOR)}>
                     <GitBranch className="w-2.5 h-2.5" />
                     {depCount}
                   </span>
                 </TooltipTrigger>
                 <TooltipContent side="top">
-                  {issue.dependencies.length} blocking, {issue.dependents.length} dependent
+                  Blocked by {issue.dependencies.length} · blocks {issue.dependents.length}
                 </TooltipContent>
               </Tooltip>
+            )}
+
+            {/* Epic child progress */}
+            {epicProgress && (
+              <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground bg-muted px-1 py-0.5 rounded">
+                <Layers className="w-2.5 h-2.5" />
+                {epicProgress.closed}/{epicProgress.total}
+              </span>
             )}
 
             {/* Labels (first 2) */}
@@ -234,7 +244,7 @@ export function BeadsSidebar({
   onScheduleTargetConsumed,
 }: BeadsSidebarProps) {
   const {
-    issues, stats, loading, error, initialized, projectPath, refreshIssues,
+    issues, stats, loading, error, initialized, unavailable, projectPath, refreshIssues,
     beadsSidebarCollapsed: dbCollapsed,
     beadsSidebarWidth: dbWidth,
     beadsSectionExpanded: dbSectionExpanded,
@@ -250,8 +260,9 @@ export function BeadsSidebar({
   const [collapsed, setCollapsed] = useState(dbCollapsed);
   const [width, setWidth] = useState(dbWidth);
 
-  // Selected issue for detail view (declared early so switchTab can reference it)
-  const [selectedIssue, setSelectedIssue] = useState<BeadsIssue | null>(null);
+  // Selected issue id for detail view (declared early so switchTab can reference it).
+  // Storing the id (not an object snapshot) keeps the detail pane live across refreshes.
+  const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
 
   // Active tab state — seeded with SSR-safe default, hydrated from localStorage on mount.
   const [activeTab, setActiveTab] = useState<SidebarTab>("beads");
@@ -300,7 +311,7 @@ export function BeadsSidebar({
     setActiveTab(tab);
     setStoredTab(tab);
     // Clear issue detail when switching away from beads
-    if (tab !== "beads") setSelectedIssue(null);
+    if (tab !== "beads") setSelectedIssueId(null);
   }, []);
 
   // Auto-switch to schedules tab when a schedule target arrives
@@ -360,30 +371,65 @@ export function BeadsSidebar({
           inProgress.push(issue);
         } else if (
           issue.status === "open" &&
-          issue.dependencies.length === 0
+          !hasActiveBlockers(issue)
         ) {
-          // Ready = open with no blocking dependencies
+          // Ready = open with no still-active blocking dependencies
           ready.push(issue);
         } else {
-          // Open with blocking deps, or deferred
+          // Open with active blockers, stored 'blocked' status, or deferred
           open.push(issue);
         }
       }
+
+      // Most recently closed first; issues without a closedAt sort last.
+      const closedSorted = [...closed].sort((a, b) => {
+        if (a.closedAt && b.closedAt) return b.closedAt.getTime() - a.closedAt.getTime();
+        if (a.closedAt) return -1;
+        if (b.closedAt) return 1;
+        return 0;
+      });
 
       return {
         readyIssues: ready,
         inProgressIssues: inProgress,
         openIssues: open,
-        closedIssues: closed,
+        closedIssues: closedSorted,
       };
     }, [issues]);
 
+  // All non-closed issues (Ready + In Progress + Open buckets)
   const openCount = stats
-    ? (stats.open + stats.inProgress + stats.deferred)
+    ? (stats.total - stats.closed)
     : (readyIssues.length + openIssues.length + inProgressIssues.length);
 
   // O(1) lookup map for navigating to issues by ID
   const issueMap = useMemo(() => new Map(issues.map(i => [i.id, i])), [issues]);
+
+  // Derive the selected issue from the live list so the detail pane never
+  // shows a stale snapshot; if the issue is pruned, this returns null and the
+  // sidebar falls back to the list view.
+  const selectedIssue = useMemo(
+    () => (selectedIssueId ? issueMap.get(selectedIssueId) ?? null : null),
+    [selectedIssueId, issueMap]
+  );
+
+  const handleSelectIssue = useCallback((issue: BeadsIssue) => {
+    setSelectedIssueId(issue.id);
+  }, []);
+
+  // Child completion progress for epic rows
+  const epicProgressById = useMemo(() => {
+    const map = new Map<string, { closed: number; total: number }>();
+    for (const issue of issues) {
+      if (issue.issueType !== "epic" || issue.children.length === 0) continue;
+      let closedCount = 0;
+      for (const child of issue.children) {
+        if (issueMap.get(child.issueId)?.status === "closed") closedCount++;
+      }
+      map.set(issue.id, { closed: closedCount, total: issue.children.length });
+    }
+    return map;
+  }, [issues, issueMap]);
 
   // Listen for collapse state changes (cross-tab sync)
   useEffect(() => {
@@ -453,9 +499,8 @@ export function BeadsSidebar({
   // Navigate to a different issue from the detail view (e.g. clicking a dependency)
   const handleNavigateToIssue = useCallback(
     (issueId: string) => {
-      const target = issueMap.get(issueId);
-      if (target) {
-        setSelectedIssue(target);
+      if (issueMap.has(issueId)) {
+        setSelectedIssueId(issueId);
       }
     },
     [issueMap]
@@ -577,7 +622,7 @@ export function BeadsSidebar({
       <div className="flex items-center gap-2 px-3 h-10 shrink-0 border-b border-border">
         {selectedIssue && activeTab === "beads" ? (
           <button
-            onClick={() => setSelectedIssue(null)}
+            onClick={() => setSelectedIssueId(null)}
             className="text-muted-foreground hover:text-foreground transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -698,6 +743,27 @@ export function BeadsSidebar({
                   to get started
                 </p>
               </div>
+            ) : initialized && unavailable ? (
+              /* Dolt server unreachable */
+              <div className="flex flex-col items-center justify-center px-4 py-8 gap-2">
+                <ServerOff className="w-5 h-5 text-muted-foreground" />
+                <p className="text-xs text-muted-foreground text-center">
+                  bd&apos;s dolt server isn&apos;t reachable
+                </p>
+                <p className="text-[11px] text-muted-foreground text-center">
+                  Issues can&apos;t be loaded right now. Start bd in this
+                  project, then retry.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs mt-2"
+                  onClick={() => refreshIssues()}
+                >
+                  <RefreshCw className="w-3 h-3 mr-1.5" />
+                  Retry
+                </Button>
+              </div>
             ) : issues.length === 0 && !loading ? (
               /* Empty state */
               <div className="flex items-center justify-center px-4 py-8">
@@ -730,7 +796,8 @@ export function BeadsSidebar({
                           <BeadsIssueRow
                             key={issue.id}
                             issue={issue}
-                            onSelect={setSelectedIssue}
+                            onSelect={handleSelectIssue}
+                            epicProgress={epicProgressById.get(issue.id)}
                           />
                         ))
                       )}
@@ -762,7 +829,8 @@ export function BeadsSidebar({
                           <BeadsIssueRow
                             key={issue.id}
                             issue={issue}
-                            onSelect={setSelectedIssue}
+                            onSelect={handleSelectIssue}
+                            epicProgress={epicProgressById.get(issue.id)}
                           />
                         ))
                       )}
@@ -791,7 +859,8 @@ export function BeadsSidebar({
                           <BeadsIssueRow
                             key={issue.id}
                             issue={issue}
-                            onSelect={setSelectedIssue}
+                            onSelect={handleSelectIssue}
+                            epicProgress={epicProgressById.get(issue.id)}
                           />
                         ))
                       )}
@@ -820,7 +889,8 @@ export function BeadsSidebar({
                           <BeadsIssueRow
                             key={issue.id}
                             issue={issue}
-                            onSelect={setSelectedIssue}
+                            onSelect={handleSelectIssue}
+                            epicProgress={epicProgressById.get(issue.id)}
                           />
                         ))
                       )}
@@ -831,13 +901,6 @@ export function BeadsSidebar({
             )}
           </div>
         </ScrollArea>
-      )}
-
-      {/* Loading overlay */}
-      {loading && issues.length > 0 && (
-        <div className="absolute inset-0 bg-card/50 flex items-center justify-center pointer-events-none">
-          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-        </div>
       )}
     </div>
   );
