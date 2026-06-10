@@ -33,7 +33,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { hasActiveBlockers, type BeadsIssue } from "@/types/beads";
+import {
+  hasActiveBlockers,
+  type BeadsDependency,
+  type BeadsIssue,
+} from "@/types/beads";
 import { BeadsIssueDetail } from "./BeadsIssueDetail";
 import {
   PRIORITY_COLORS,
@@ -84,6 +88,32 @@ function getStoredTab(): SidebarTab {
 
 function setStoredTab(val: SidebarTab) {
   localStorage.setItem("beads-sidebar-tab", val);
+}
+
+/**
+ * Child completion progress for an epic ({closed, total}).
+ *
+ * Dedupes by child id — the same pair can be linked via both 'child-of' and
+ * 'parent-child' rows (bd renamed the type in 1.0.5), and the dep loader keys
+ * its dedupe on type, so both rows survive.
+ *
+ * A child link whose target is NOT in `issueMap` counts as closed: the
+ * beads-service epic-children augmentation always loads non-closed children
+ * (`status != 'closed' OR closed_at >= cutoff OR issue_type = 'epic'`), so a
+ * not-loaded child can only be a retention-pruned closed issue.
+ */
+export function computeEpicProgress(
+  children: BeadsDependency[],
+  issueMap: Map<string, BeadsIssue>
+): { closed: number; total: number } {
+  const childIds = new Set(children.map((child) => child.issueId));
+  let closed = 0;
+  for (const childId of childIds) {
+    const target = issueMap.get(childId);
+    // Not loaded ⇒ retention-pruned closed (non-closed children always load).
+    if (!target || target.status === "closed") closed++;
+  }
+  return { closed, total: childIds.size };
 }
 
 interface SectionHeaderProps {
@@ -422,16 +452,9 @@ export function BeadsSidebar({
     const map = new Map<string, { closed: number; total: number }>();
     for (const issue of issues) {
       if (issue.issueType !== "epic") continue;
-      // Dedupe by child id — the same pair can be linked via both 'child-of'
-      // and 'parent-child' rows (bd renamed the type in 1.0.5), and the dep
-      // loader keys its dedupe on type, so both rows survive.
-      const childIds = new Set(issue.children.map((child) => child.issueId));
-      if (childIds.size === 0) continue;
-      let closedCount = 0;
-      for (const childId of childIds) {
-        if (issueMap.get(childId)?.status === "closed") closedCount++;
-      }
-      map.set(issue.id, { closed: closedCount, total: childIds.size });
+      const progress = computeEpicProgress(issue.children, issueMap);
+      if (progress.total === 0) continue;
+      map.set(issue.id, progress);
     }
     return map;
   }, [issues, issueMap]);
