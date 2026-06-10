@@ -277,14 +277,34 @@ RUN set -eu; \
            fi \
     ) || echo "WARN: antigravity 'agy' install unavailable (installer URL 404); skipping — entrypoint auto-update will retry on a live box"
 
-# Build-time smoke check: fail the build if an agent CLI is missing from PATH so
-# a broken install surfaces here, not when an agent session can't find its CLI.
-# We check resolvability only (`command -v`) — NOT `<agent> --version`, which can
-# require auth/network and would make the build flaky. `agy` is intentionally
-# EXCLUDED: its installer is currently unavailable (see above), so gating on it
-# would fail every build.
+# Beads (`bd`) issue tracker + Dolt SQL CLI (remote-dev-vpap). Agents track
+# work with `bd`, and the app's beads sidebar reads the project's bd/dolt
+# stack — both binaries were MISSING on live instance pods (`command -v bd
+# dolt` → empty), so the sidebar could never connect. Bake them onto the
+# system PATH like the agent CLIs above. Both official installers fetch the
+# LATEST GitHub release (auto-updating per the global Docker policy, like the
+# npm + curl installs above) and derive the arch from `uname -m` internally
+# (amd64 + arm64), so nothing is hardcoded per-platform. This layer runs as
+# root (before `USER rdv`), so /usr/local/bin is writable and the dolt
+# installer's root requirement is satisfied:
+#   - beads installer (repo moved steveyegge→gastownhall; this is the README's
+#     documented URL): checksum-verifies the release asset against the
+#     release's checksums.txt, installs /usr/local/bin/bd + a `beads` symlink.
+#   - dolt installer: installs /usr/local/bin/dolt. bd manages
+#     `dolt sql-server` per-project; the binary just needs to be on PATH.
+# A silent installer failure (e.g. transient network → empty pipe into bash)
+# is caught by the `command -v bd` / `command -v dolt` smoke gate below.
+RUN curl -fsSL https://raw.githubusercontent.com/gastownhall/beads/main/scripts/install.sh | bash \
+    && curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/install.sh | bash
+
+# Build-time smoke check: fail the build if an agent CLI (or the bd/dolt beads
+# stack) is missing from PATH so a broken install surfaces here, not when an
+# agent session can't find its CLI. We check resolvability only (`command -v`)
+# — NOT `<tool> --version`, which can require auth/network and would make the
+# build flaky. `agy` is intentionally EXCLUDED: its installer is currently
+# unavailable (see above), so gating on it would fail every build.
 RUN command -v claude && command -v codex && command -v gemini \
-    && command -v opencode
+    && command -v opencode && command -v bd && command -v dolt
 
 # [oyej] Golden dev-env image flavor (epic remote-dev-oyej.7). The runtime stage
 # above ALREADY bakes all 5 agent CLIs + sudo/apt + gh; this build-arg just lets

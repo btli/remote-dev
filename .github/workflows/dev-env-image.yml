@@ -3,8 +3,9 @@
 # Build + smoke the "golden dev-env" Docker image (root Dockerfile, epic
 # remote-dev-oyej.7) on Node 24 BEFORE it is ever tagged/pushed. The runtime
 # stage bakes all 5 agent CLIs (claude, codex, gemini, opencode + best-effort
-# `agy`) plus sudo/apt; this workflow proves the image actually builds under CI
-# (network + Node-24 ABI) and that the 5-agent smoke gate passes.
+# `agy`) plus the beads stack (`bd` + `dolt`, remote-dev-vpap) and sudo/apt;
+# this workflow proves the image actually builds under CI (network + Node-24
+# ABI) and that the agent-CLI + bd/dolt smoke gate passes.
 #
 # SCOPE: build into the LOCAL daemon (`--load`) and smoke-test only. This
 # workflow deliberately does NOT push or tag any registry image — tagging/push
@@ -62,11 +63,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Smoke test — Node 24 + agent CLIs present
+      - name: Smoke test — Node 24 + agent CLIs + bd/dolt present
         timeout-minutes: 5
-        # Assert Node is v24 and the 4 hard-gated agent CLIs resolve on PATH.
-        # antigravity (`agy`) is BEST-EFFORT (its installer 404s) — intentionally
-        # NOT asserted here, mirroring the Dockerfile's build-time smoke gate. A
+        # Assert Node is v24 and the 4 hard-gated agent CLIs plus the beads
+        # stack (`bd` + `dolt`, remote-dev-vpap) resolve on PATH. antigravity
+        # (`agy`) is BEST-EFFORT (its installer 404s) — intentionally NOT
+        # asserted here, mirroring the Dockerfile's build-time smoke gate. A
         # non-zero exit from this command fails the job.
         #
         # `--entrypoint sh`: the image's entrypoint (docker/entrypoint.sh) starts
@@ -81,7 +83,9 @@ jobs:
               && command -v claude \
               && command -v codex \
               && command -v gemini \
-              && command -v opencode
+              && command -v opencode \
+              && command -v bd \
+              && command -v dolt
           '
 
       - name: Smoke test — RDV_IMAGE_FLAVOR is dev-env
