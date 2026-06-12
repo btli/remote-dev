@@ -42,6 +42,16 @@ vi.mock("@/lib/logger", () => ({
   }),
 }));
 
+// The first-run default-project seed is lazy-imported by `getOrCreateUserByEmail`
+// on a genuine new-user mint. Mock it so this test (a) doesn't pull the project
+// service / DI container into its module graph, and (b) can assert exactly WHEN
+// it fires (new users only — never an existing user, never a race loser).
+const ensureDefaultProjectForUserMock = vi.fn(async (_userId: string) => true);
+vi.mock("@/lib/ensure-default-project", () => ({
+  ensureDefaultProjectForUser: (userId: string) =>
+    ensureDefaultProjectForUserMock(userId),
+}));
+
 // --- In-memory fake DB ----------------------------------------------------
 interface UserRow {
   id: string;
@@ -345,6 +355,65 @@ describe("getOrCreateUserByEmail — CF Access / credentials resolution", () => 
     const user = await getOrCreateUserByEmail("shared@example.com");
     expect(user.id).toBe("u1");
     expect(userEmailTable.filter((r) => r.email === "shared@example.com")).toHaveLength(1);
+  });
+});
+
+describe("getOrCreateUserByEmail — first-run default-project seed trigger (remote-dev-bxcn)", () => {
+  it("seeds a default project EXACTLY ONCE for a brand-new user, with the new user's id", async () => {
+    const user = await getOrCreateUserByEmail("brandnew@example.com");
+
+    expect(ensureDefaultProjectForUserMock).toHaveBeenCalledTimes(1);
+    expect(ensureDefaultProjectForUserMock).toHaveBeenCalledWith(user.id);
+  });
+
+  it("does NOT seed when the user already exists (fast-path hit, no mint)", async () => {
+    seedUser("u1", "existing@example.com", "Existing");
+    seedUserEmail("u1", "existing@example.com", true);
+
+    const user = await getOrCreateUserByEmail("existing@example.com");
+
+    expect(user.id).toBe("u1");
+    expect(ensureDefaultProjectForUserMock).not.toHaveBeenCalled();
+  });
+
+  it("does NOT seed when resolving a legacy user (user.email fallback, no new account)", async () => {
+    // A legacy user is RESOLVED + index-healed, not minted — so no seed fires.
+    seedUser("legacy-1", "legacy@example.com", "Legacy");
+
+    const user = await getOrCreateUserByEmail("legacy@example.com");
+
+    expect(user.id).toBe("legacy-1");
+    expect(ensureDefaultProjectForUserMock).not.toHaveBeenCalled();
+  });
+
+  it("does NOT seed for a secondary email resolving to an existing account", async () => {
+    seedUser("u1", "a@example.com", "Alice");
+    seedUserEmail("u1", "a@example.com", true);
+    seedUserEmail("u1", "b@example.com", false);
+
+    await getOrCreateUserByEmail("b@example.com");
+
+    expect(ensureDefaultProjectForUserMock).not.toHaveBeenCalled();
+  });
+
+  it("does NOT seed when the email is already claimed (create races to an existing owner)", async () => {
+    seedUser("u1", "shared@example.com", "Owner");
+    seedUserEmail("u1", "shared@example.com", true);
+
+    await getOrCreateUserByEmail("shared@example.com");
+
+    expect(ensureDefaultProjectForUserMock).not.toHaveBeenCalled();
+  });
+
+  it("a seed failure does NOT break user creation (non-fatal)", async () => {
+    ensureDefaultProjectForUserMock.mockRejectedValueOnce(new Error("seed boom"));
+
+    // The user is still returned even though the seed rejected — but note the
+    // helper itself swallows errors in production; here we assert the call site
+    // doesn't depend on its success for the create to complete.
+    await expect(
+      getOrCreateUserByEmail("resilient@example.com")
+    ).resolves.toMatchObject({ email: "resilient@example.com" });
   });
 });
 

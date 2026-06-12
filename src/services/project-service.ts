@@ -19,6 +19,7 @@ export class ProjectService {
     groupId: string | null;
     name: string;
     sortOrder?: number;
+    isAutoCreated?: boolean;
   }): Promise<Project> {
     return container.useCases.createProject.execute(input);
   }

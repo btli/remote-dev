@@ -126,7 +126,11 @@ export async function getOrCreateUserByEmail(
   if (existing) return existing;
 
   try {
-    return await db.transaction(async (tx) => {
+    // Tracks whether THIS call actually minted the user row (vs. losing the
+    // in-transaction race recheck). Only a true mint triggers the one-time
+    // default-project seed below — never an existing user, never a race loser.
+    let createdNewUser = false;
+    const user = await db.transaction(async (tx) => {
       // Re-check inside the transaction to collapse a race where two callers
       // both missed on the fast path.
       const recheck = await findUserByAnyEmail(email, tx as unknown as UserIdentityDb);
@@ -146,9 +150,25 @@ export async function getOrCreateUserByEmail(
         .values({ userId: created.id, email, isPrimary: true })
         .onConflictDoNothing();
 
+      createdNewUser = true;
       log.info("Created user via email resolution", { userId: created.id });
       return { id: created.id, email: created.email, name: created.name };
     });
+
+    // First-run onboarding: give a brand-new user a usable default project so
+    // terminal creation works out of the box (a fresh instance seeds no
+    // project at boot — boot runs before any user exists). Runs AFTER the user
+    // transaction commits (the project FK references the now-committed user
+    // row), only on a genuine first-time mint, and is itself idempotent +
+    // non-fatal — a seed failure must never block login. Lazy-imported to keep
+    // this module (loaded very early by auth) free of the project-service /
+    // DI-container import graph at eval time. (remote-dev-bxcn)
+    if (createdNewUser) {
+      const { ensureDefaultProjectForUser } = await import("@/lib/ensure-default-project");
+      await ensureDefaultProjectForUser(user.id);
+    }
+
+    return user;
   } catch (error) {
     // A UNIQUE violation here means the email was claimed concurrently (either
     // a parallel create, or the email already belonged to another user). Re-read
