@@ -8,6 +8,7 @@ import { SaveTemplateModal } from "./SaveTemplateModal";
 import { CommandPalette } from "@/components/CommandPalette";
 import { KeyboardShortcutsPanel } from "@/components/KeyboardShortcutsPanel";
 import { SaveRecordingModal } from "@/components/session/SaveRecordingModal";
+import { resolveQuickSessionFolder } from "@/components/session/quick-session-folder";
 import { ResumeSessionModal } from "./ResumeSessionModal";
 import { shouldPatchSettingsTab } from "./settings-deep-link";
 import { BeadsSidebar } from "@/components/beads/BeadsSidebar";
@@ -607,6 +608,25 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [autoFollowEnabled, activeProject.isPinned, activeProject.folderId, setActiveFolder]
   );
 
+  // Resolve the project to launch a one-click ("Quick Terminal" / "New Agent")
+  // session into. Prefer the active project; but when none is active yet —
+  // exactly the brand-new-instance first-run case where the user hasn't clicked
+  // a project — fall back to the FIRST available project and select it so the
+  // session-create guard passes (`terminal_session.project_id` is NOT NULL) and
+  // subsequent preference resolution / the tree highlight follow along. Returns
+  // `undefined` only when there are genuinely zero projects (shouldn't happen
+  // after first-run seeding, but the downstream guard then reports it cleanly
+  // instead of this silently inventing a project). Existing behavior is
+  // unchanged whenever a project IS already active. (remote-dev-bxcn)
+  const resolveQuickSessionFolderId = useCallback((): string | undefined => {
+    const { folderId, selectFolderId } = resolveQuickSessionFolder({
+      activeFolderId: activeProject.folderId,
+      projects: projectTree.projects,
+    });
+    if (selectFolderId) setActiveFolder(selectFolderId);
+    return folderId;
+  }, [activeProject.folderId, projectTree.projects, setActiveFolder]);
+
   const handleCreateSession = useCallback(
     async (data: {
       name: string;
@@ -667,7 +687,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   );
 
   const handleQuickNewSession = useCallback(async () => {
-    const folderId = activeProject.folderId || undefined;
+    // Falls back to (and selects) the first project when none is active, so
+    // ⌘↵ / Quick Terminal works out of the box on a fresh instance. (remote-dev-bxcn)
+    const folderId = resolveQuickSessionFolderId();
     const name = generateSessionName(folderId);
     // Shell plugin returns shellCommand: null → tmux launches its default
     // shell. The legacy `startupCommand: ""` opt-out is no longer needed
@@ -687,7 +709,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   }, [
     createSession,
     generateSessionName,
-    activeProject.folderId,
+    resolveQuickSessionFolderId,
     logSessionError,
     maybeAutoFollowFolder,
   ]);
@@ -1233,7 +1255,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // provider (folder override > user setting > hard-coded "claude") so a
   // one-click "New Agent" honors the user's configured default.
   const handleNewAgent = useCallback(async () => {
-    const folderId = activeProject.folderId || undefined;
+    // Falls back to (and selects) the first project when none is active. (remote-dev-bxcn)
+    const folderId = resolveQuickSessionFolderId();
     const name = generateSessionName(folderId);
     const provider: AgentProviderType =
       currentPreferences.defaultAgentProvider ??
@@ -1257,7 +1280,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     generateSessionName,
     currentPreferences.defaultAgentProvider,
     userSettings?.defaultAgentProvider,
-    activeProject.folderId,
+    resolveQuickSessionFolderId,
     logSessionError,
     maybeAutoFollowFolder,
   ]);
@@ -1270,7 +1293,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // a specific project signals strong user intent to switch context.
   const handleNewAgentWithProvider = useCallback(
     async (provider: AgentProviderType) => {
-      const folderId = activeProject.folderId || undefined;
+      // Falls back to (and selects) the first project when none is active. (remote-dev-bxcn)
+      const folderId = resolveQuickSessionFolderId();
       const name = generateSessionName(folderId);
       try {
         // No projectPath: server resolves the working dir from projectId's
@@ -1289,7 +1313,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [
       createSession,
       generateSessionName,
-      activeProject.folderId,
+      resolveQuickSessionFolderId,
       logSessionError,
       maybeAutoFollowFolder,
     ]

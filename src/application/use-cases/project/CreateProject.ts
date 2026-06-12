@@ -10,6 +10,9 @@ export interface CreateProjectInput {
   groupId: string | null;
   name: string;
   sortOrder?: number;
+  // Marks the project as auto-created (e.g. the default project seeded for a
+  // brand-new user). Defaults to false so UI/API-created projects are unchanged.
+  isAutoCreated?: boolean;
 }
 
 export class CreateProject {
@@ -42,7 +45,7 @@ export class CreateProject {
       name: input.name,
       collapsed: false,
       sortOrder: input.sortOrder ?? 0,
-      isAutoCreated: false,
+      isAutoCreated: input.isAutoCreated ?? false,
       createdAt: now,
       updatedAt: now,
     });
