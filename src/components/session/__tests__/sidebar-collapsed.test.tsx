@@ -50,6 +50,13 @@ vi.mock("@/contexts/SessionContext", () => ({
   }),
 }));
 
+// Sidebar reads the project/group counts from useProjectTree() to decide
+// whether the expanded body shows the tree or the empty state. The collapsed
+// rail never branches on it, but the hook still runs, so it must be mocked.
+vi.mock("@/contexts/ProjectTreeContext", () => ({
+  useProjectTree: () => ({ groups: [], projects: [] }),
+}));
+
 // ProjectTreeSidebar is heavy (consumes many contexts) and is never rendered
 // in collapsed mode anyway. Stub it out so we don't have to mock the world.
 vi.mock("../ProjectTreeSidebar", () => ({

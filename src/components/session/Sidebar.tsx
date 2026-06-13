@@ -32,6 +32,7 @@ import { usePortContext } from "@/contexts/PortContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useSessionMCP, useSessionMCPAutoLoad } from "@/contexts/SessionMCPContext";
 import { useSessionContext } from "@/contexts/SessionContext";
+import { useProjectTree } from "@/contexts/ProjectTreeContext";
 import { MCPServersSection } from "@/components/mcp";
 import { FilesSection } from "./FilesSection";
 import {
@@ -258,6 +259,12 @@ export function Sidebar({
   // Pulled from SessionContext (same source ProjectTreeSidebar uses) so the
   // collapsed rail can color agent icons by their real-time activity status.
   const { getAgentActivityStatus } = useSessionContext();
+  // Project/group counts decide whether the expanded sidebar shows the
+  // bare "No sessions" quick-start or the full tree. We must NOT hide the
+  // tree just because there are zero terminal sessions — a migrated
+  // instance (sessions never migrate) or a user who closed every session
+  // still has projects/groups to show. Same source ProjectTreeSidebar uses.
+  const { groups: projectTreeGroups, projects: projectTreeProjects } = useProjectTree();
 
   // Resize handlers
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
@@ -301,6 +308,15 @@ export function Sidebar({
   const { mcpSupported } = useSessionMCP();
 
   const activeSessions = sessions.filter((s) => s.status !== "closed");
+
+  // Show the first-run quick-start ONLY when the instance is truly empty for
+  // this user (no sessions AND no projects AND no groups). Otherwise render
+  // the project tree even with zero sessions. (P1: tree was hidden whenever
+  // activeSessions was empty — invisible projects on every migrated instance.)
+  const hasAnyTreeContent =
+    activeSessions.length > 0 ||
+    projectTreeProjects.length > 0 ||
+    projectTreeGroups.length > 0;
 
   // Empty the trash permanently. Used by the right-click affordance on the
   // footer Trash button; see remote-dev-mtv7.7.
@@ -616,7 +632,7 @@ export function Sidebar({
                 })}
               </div>
             )
-          ) : activeSessions.length === 0 ? (
+          ) : !hasAnyTreeContent ? (
             <div className="text-center py-8 px-2">
               <Terminal className="w-6 h-6 mx-auto text-muted-foreground mb-2" />
               <p className="text-xs text-muted-foreground mb-2">No sessions</p>
