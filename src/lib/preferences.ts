@@ -162,6 +162,8 @@ export function resolvePreferences(
     localRepoPath: "default",
     defaultAgentProvider: "default",
     agentProviderSettings: "default",
+    claudeProfilePoolId: "default",
+    claudeAutoRelaunchMode: "default",
   };
 
   // Start with defaults (extended to include repo and agent fields)
@@ -171,6 +173,8 @@ export function resolvePreferences(
     localRepoPath: null,
     defaultAgentProvider: null,
     agentProviderSettings: null,
+    claudeProfilePoolId: null,
+    claudeAutoRelaunchMode: null,
   };
 
   // Layer 1: Apply user settings
@@ -202,6 +206,13 @@ export function resolvePreferences(
     if (userSettings.agentProviderSettings !== null) {
       resolved.agentProviderSettings = userSettings.agentProviderSettings;
       source.agentProviderSettings = "user";
+    }
+    // The global Claude auto-relaunch default lives on user settings (it is
+    // always set, defaulting to "notify"). It seeds the resolved value; a
+    // folder may still override it below.
+    if (userSettings.claudeAutoRelaunchMode !== null) {
+      resolved.claudeAutoRelaunchMode = userSettings.claudeAutoRelaunchMode;
+      source.claudeAutoRelaunchMode = "user";
     }
   }
 
@@ -250,6 +261,15 @@ export function resolvePreferences(
     if (folderPrefs.agentProviderSettings !== null) {
       resolved.agentProviderSettings = folderPrefs.agentProviderSettings;
       source.agentProviderSettings = folderRef;
+    }
+    // Claude fallback pool + auto-relaunch override inherit child-overrides-parent.
+    if (folderPrefs.claudeProfilePoolId !== null) {
+      resolved.claudeProfilePoolId = folderPrefs.claudeProfilePoolId;
+      source.claudeProfilePoolId = folderRef;
+    }
+    if (folderPrefs.claudeAutoRelaunchMode !== null) {
+      resolved.claudeAutoRelaunchMode = folderPrefs.claudeAutoRelaunchMode;
+      source.claudeAutoRelaunchMode = folderRef;
     }
   }
 

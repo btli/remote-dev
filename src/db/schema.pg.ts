@@ -17,6 +17,7 @@ import type { ChannelType } from "@/types/channels";
 import type { AgentRunStatus, AgentRunSource, TriggerKind } from "@/types/agent-run";
 import type { CrownRunStatus } from "@/types/crown";
 import type { MigrationJobStatus, MigrationImportStatus, MigrationWorkingTreeMode } from "@/types/migration";
+import type { ClaudeAccountKind, ClaudeLimitStatus, UsageDetectionSource, ClaudeAutoRelaunchMode } from "@/types/claude-limits";
 
 export const users = pgTable(
   "user",
@@ -119,6 +120,7 @@ export const userSettings = pgTable(
     beadsSidebarWidth: integer("beads_sidebar_width").default(320),
     beadsClosedRetentionDays: integer("beads_closed_retention_days").default(7),
     beadsSectionExpanded: text("beads_section_expanded"),
+    claudeAutoRelaunchMode: text("claude_auto_relaunch_mode").$type<ClaudeAutoRelaunchMode>().notNull().default("notify"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
     updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
   }
@@ -1176,6 +1178,79 @@ export const projects = pgTable(
   ]
 );
 
+export const claudeAccounts = pgTable(
+  "claude_account",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    profileId: text("profile_id").notNull().unique().references(() => agentProfiles.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    accountKind: text("account_kind").$type<ClaudeAccountKind>().notNull().default("subscription"),
+    credentialMode: text("credential_mode"),
+    emailAddress: text("email_address"),
+    organizationName: text("organization_name"),
+    rateLimitTier: text("rate_limit_tier"),
+    apiKeyPrefix: text("api_key_prefix"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("claude_account_profile_idx").on(table.profileId),
+    index("claude_account_user_idx").on(table.userId),
+  ]
+);
+
+export const claudeUsageLimitStates = pgTable(
+  "claude_usage_limit_state",
+  {
+    profileId: text("profile_id").primaryKey().references(() => agentProfiles.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    limitStatus: text("limit_status").$type<ClaudeLimitStatus>().notNull().default("unknown"),
+    window5hPct: integer("window_5h_pct"),
+    window7dPct: integer("window_7d_pct"),
+    resetAt5h: timestamp("reset_at_5h", { withTimezone: true, mode: "date" }),
+    resetAt7d: timestamp("reset_at_7d", { withTimezone: true, mode: "date" }),
+    effectiveResetAt: timestamp("effective_reset_at", { withTimezone: true, mode: "date" }),
+    detectionSource: text("detection_source").$type<UsageDetectionSource>(),
+    lastCheckedAt: timestamp("last_checked_at", { withTimezone: true, mode: "date" }),
+    lastPolledAt: timestamp("last_polled_at", { withTimezone: true, mode: "date" }),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("claude_usage_limit_user_status_idx").on(table.userId, table.limitStatus),
+    index("claude_usage_limit_user_idx").on(table.userId),
+  ]
+);
+
+export const claudeProfilePools = pgTable(
+  "claude_profile_pool",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("claude_profile_pool_user_idx").on(table.userId),
+  ]
+);
+
+export const claudeProfilePoolMembers = pgTable(
+  "claude_profile_pool_member",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    poolId: text("pool_id").notNull().references(() => claudeProfilePools.id, { onDelete: "cascade" }),
+    profileId: text("profile_id").notNull().references(() => agentProfiles.id, { onDelete: "cascade" }),
+    priority: integer("priority").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("claude_pool_member_pool_profile_unique").on(table.poolId, table.profileId),
+    index("claude_pool_member_pool_priority_idx").on(table.poolId, table.priority),
+    index("claude_pool_member_profile_idx").on(table.profileId),
+  ]
+);
+
 export const nodePreferences = pgTable(
   "node_preferences",
   {
@@ -1198,6 +1273,8 @@ export const nodePreferences = pgTable(
     gitIdentityName: text("git_identity_name"),
     gitIdentityEmail: text("git_identity_email"),
     isSensitive: boolean("is_sensitive").notNull().default(false),
+    claudeProfilePoolId: text("claude_profile_pool_id"),
+    claudeAutoRelaunchMode: text("claude_auto_relaunch_mode").$type<ClaudeAutoRelaunchMode>(),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
     updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
   },
@@ -1242,6 +1319,7 @@ export const projectProfileLinks = pgTable(
   {
     projectId: text("project_id").primaryKey().references(() => projects.id, { onDelete: "cascade" }),
     profileId: text("profile_id").notNull().references(() => agentProfiles.id, { onDelete: "cascade" }),
+    poolId: text("pool_id").references(() => claudeProfilePools.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
   },
   (table) => [
@@ -1302,6 +1380,7 @@ export const triggerConfigs = pgTable(
     agentFlags: text("agent_flags").notNull().default("[]"),
     promptTemplate: text("prompt_template").notNull(),
     worktreeType: text("worktree_type"),
+    profileId: text("profile_id").references(() => agentProfiles.id, { onDelete: "set null" }),
     enabled: boolean("enabled").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
     updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
@@ -1324,6 +1403,7 @@ export const agentSchedules = pgTable(
     prompt: text("prompt").notNull(),
     worktreeType: text("worktree_type"),
     baseBranch: text("base_branch"),
+    profileId: text("profile_id").references(() => agentProfiles.id, { onDelete: "set null" }),
     scheduleType: text("schedule_type").$type<ScheduleType>().notNull().default("recurring"),
     cronExpression: text("cron_expression"),
     scheduledAt: timestamp("scheduled_at", { withTimezone: true, mode: "date" }),
@@ -1354,6 +1434,7 @@ export const agentRuns = pgTable(
     source: text("source").$type<AgentRunSource>().notNull(),
     agentProvider: text("agent_provider").notNull(),
     agentFlags: text("agent_flags").notNull().default("[]"),
+    profileId: text("profile_id").references(() => agentProfiles.id, { onDelete: "set null" }),
     prompt: text("prompt").notNull(),
     sessionId: text("session_id").references(() => terminalSessions.id, { onDelete: "set null" }),
     headSha: text("head_sha"),

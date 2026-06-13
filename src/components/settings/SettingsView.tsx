@@ -15,6 +15,7 @@ import {
   Smartphone,
   Zap,
   Globe,
+  Gauge,
   X,
   Loader2,
 } from "lucide-react";
@@ -39,6 +40,12 @@ const ProxySection = lazy(() =>
 );
 const ProfilesSection = lazy(() =>
   import("./sections/ProfilesSection").then((m) => ({ default: m.ProfilesSection }))
+);
+// Claude usage-limit dashboard + fallback pools (cswap-style). [remote-dev-0yix]
+const ClaudeAccountsSection = lazy(() =>
+  import("./sections/ClaudeAccountsSection").then((m) => ({
+    default: m.ClaudeAccountsSection,
+  }))
 );
 const SshConnectionsSection = lazy(() =>
   import("./sections/SshConnectionsSection").then((m) => ({
@@ -76,6 +83,7 @@ export type SettingsSection =
   | "agents"
   | "proxy"
   | "profiles"
+  | "claude-accounts"
   | "ssh"
   | "secrets"
   | "beads"
@@ -99,6 +107,7 @@ const NAV_ITEMS: (NavItem | "divider")[] = [
   { id: "proxy", label: "Proxy", icon: Network },
   "divider",
   { id: "profiles", label: "Profiles", icon: Fingerprint },
+  { id: "claude-accounts", label: "Claude Accounts", icon: Gauge },
   { id: "ssh", label: "SSH", icon: Server },
   { id: "secrets", label: "Secrets", icon: KeyRound },
   { id: "beads", label: "Beads", icon: Circle },
@@ -169,6 +178,8 @@ export function SettingsView({
         return <ProxySection />;
       case "profiles":
         return <ProfilesSection />;
+      case "claude-accounts":
+        return <ClaudeAccountsSection />;
       case "ssh":
         return <SshConnectionsSection />;
       case "secrets":

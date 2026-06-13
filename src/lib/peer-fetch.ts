@@ -30,7 +30,7 @@
 import { Resolver } from "node:dns";
 import type { LookupFunction } from "node:net";
 
-import { Agent, type Dispatcher } from "undici";
+import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
 
 import { decrypt } from "@/lib/encryption";
 import { createLogger } from "@/lib/logger";
@@ -120,6 +120,21 @@ function getPublicDnsAgent(): Agent {
   return publicDnsAgent;
 }
 
+/**
+ * The minimal fetch signature peerFetch calls — a `string` URL plus an `init`
+ * that carries the undici-only `dispatcher` option (our public-DNS resolver for
+ * CF-fronted peers), returning a lib.dom `Response` (what {@link readPeerJson}
+ * consumes). Both undici's `fetch` and the global `fetch` are structurally
+ * compatible with this at the call boundary; the one genuine impedance mismatch
+ * (undici's distinct `Response`/`RequestInfo` nominal types) is absorbed by a
+ * single cast on the default value below. Injectable so tests can supply a
+ * double.
+ */
+type FetchLike = (
+  url: string,
+  init?: RequestInit & { dispatcher?: Dispatcher },
+) => Promise<Response>;
+
 /** The subset of a peer_instance row peerFetch needs. */
 export interface PeerTarget {
   id: string;
@@ -150,7 +165,14 @@ export async function peerFetch(
   peer: PeerTarget,
   path: string,
   init: RequestInit = {},
-  fetchImpl: typeof fetch = fetch,
+  // Default to undici's `fetch`, not the global. Next.js patches
+  // `globalThis.fetch` for its data cache and that patched fetch silently
+  // DROPS the undici-only `dispatcher` option — so our public-DNS resolver for
+  // CF-fronted peers would never apply and egress would hit the blocked LAN IP.
+  // Calling undici directly honors the dispatcher AND bypasses Next's
+  // fetch-cache (we never want server-to-server migration calls cached).
+  // `fetchImpl` stays injectable so tests can supply a double.
+  fetchImpl: FetchLike = undiciFetch as unknown as FetchLike,
 ): Promise<Response> {
   const label = peer.name?.trim() || peer.id;
 

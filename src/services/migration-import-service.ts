@@ -1347,6 +1347,11 @@ async function extractAgentSettings(
       if (existsSync(destPath)) {
         overwrittenTotal++;
         if (overwritten.length < OVERWRITE_LIST_CAP) overwritten.push(destPath);
+        // copyFile fails with EACCES when the existing target is read-only
+        // (git object files are mode 0444; agent settings can contain git
+        // repos like .claude/skills). Unlink first — rm needs only parent-dir
+        // write, so it succeeds on read-only files — then copyFile writes fresh.
+        await rm(destPath, { force: true });
       }
       await mkdir(dirname(destPath), { recursive: true });
       await copyFile(join(providerRoot, rel), destPath);

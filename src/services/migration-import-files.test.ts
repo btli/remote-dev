@@ -328,6 +328,42 @@ describe("MigrationImportService file phase", () => {
     expect(verify.ok).toBe(true);
   });
 
+  it("overwrites a READ-ONLY existing agent-settings file without EACCES", async () => {
+    // Agent settings can contain git repos (e.g. .claude/skills) whose
+    // .git/objects/** are mode 0444; a re-migration / baked ~/.claude leaves
+    // read-only targets in place. copyFile over a read-only file throws EACCES
+    // — finalize must unlink first and land the new content cleanly.
+    write("content_ro/file.txt", "tree");
+    const tree = await makeArchive("working-tree", join(fixtureRoot, "content_ro"), 1);
+
+    write("ascontent_ro/agent-settings/claude/settings.json", '{"new":true}');
+    const settings = await makeArchive("agent-settings", join(fixtureRoot, "ascontent_ro"), 1);
+
+    // Pre-existing READ-ONLY host file at the same dest path.
+    const dest = join(process.env.HOME!, ".claude/settings.json");
+    write("home/.claude/settings.json", '{"old":true}');
+    const { chmodSync } = await import("node:fs");
+    chmodSync(dest, 0o444);
+
+    try {
+      await initWithArchives([tree.entry, settings.entry]);
+      await pushChunks(tree);
+      await pushChunks(settings);
+
+      const { import: finalized, conflicts } = await finalizeImport(DEST_USER, JOB_ID);
+      expect(finalized.status).toBe("completed");
+      // The read-only target was replaced with the incoming content.
+      expect(readFileSync(dest, "utf8")).toBe('{"new":true}');
+      expect(
+        conflicts.some(
+          (c) => c.type === "file_overwritten" && c.detail === dest,
+        ),
+      ).toBe(true);
+    } finally {
+      if (existsSync(dest)) chmodSync(dest, 0o644);
+    }
+  });
+
   it("rejects a chunk whose sha256 does not match (tmp cleaned)", async () => {
     write("content2/file.txt", "data");
     const tree = await makeArchive("working-tree", join(fixtureRoot, "content2"), 1);

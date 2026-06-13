@@ -506,6 +506,13 @@ GITHUB_CLIENT_SECRET=<if-using-github>
 # Multi-instance hosting (optional, see "Multi-Instance Deployment" above)
 RDV_BASE_PATH=
 RDV_INSTANCE_SLUG=
+
+# Claude usage-limit poller (optional). Set to "1" to enable the PROACTIVE
+# Anthropic usage poller that refreshes each Claude profile's usage-limit state
+# on a timer. OFF by default — reactive detection (session-output scan + a Stop
+# hook) works without it. The poll sweep runs on a fixed ~10-minute interval
+# (not configurable). See API.md → "Claude usage limits & pools".
+RDV_CLAUDE_USAGE_POLL_ENABLED=
 ```
 
 ## Troubleshooting

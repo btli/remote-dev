@@ -6,6 +6,7 @@ import { NodeRef } from "@/domain/value-objects/NodeRef";
 import { NodePreferences } from "@/domain/value-objects/NodePreferences";
 import { NodePreferencesRepository } from "@/application/ports/NodePreferencesRepository";
 import * as mapper from "@/infrastructure/persistence/mappers/nodePreferencesMapper";
+import type { ClaudeAutoRelaunchMode } from "@/types/claude-limits";
 
 export class DrizzleNodePreferencesRepository implements NodePreferencesRepository {
   async findForNode(node: NodeRef, userId: string): Promise<NodePreferences | null> {
@@ -38,6 +39,10 @@ export class DrizzleNodePreferencesRepository implements NodePreferencesReposito
     const existing = await this.findForNode(node, userId);
     const now = new Date();
     const fields = prefs.fields;
+    // The domain layer keeps this loose (string) to avoid importing
+    // claude-limits types; narrow it back to the branded column type here.
+    const claudeAutoRelaunchMode =
+      (fields.claudeAutoRelaunchMode as ClaudeAutoRelaunchMode | null) ?? null;
     if (existing) {
       await db
         .update(nodePreferences)
@@ -51,6 +56,8 @@ export class DrizzleNodePreferencesRepository implements NodePreferencesReposito
           localRepoPath: fields.localRepoPath ?? null,
           defaultAgentProvider: fields.defaultAgentProvider ?? null,
           agentProviderSettings: fields.agentProviderSettings ?? null,
+          claudeProfilePoolId: fields.claudeProfilePoolId ?? null,
+          claudeAutoRelaunchMode,
           environmentVars: fields.environmentVars ?? null,
           pinnedFiles: fields.pinnedFiles ?? null,
           gitIdentityName: fields.gitIdentityName ?? null,
@@ -80,6 +87,8 @@ export class DrizzleNodePreferencesRepository implements NodePreferencesReposito
         localRepoPath: fields.localRepoPath ?? null,
         defaultAgentProvider: fields.defaultAgentProvider ?? null,
         agentProviderSettings: fields.agentProviderSettings ?? null,
+        claudeProfilePoolId: fields.claudeProfilePoolId ?? null,
+        claudeAutoRelaunchMode,
         environmentVars: fields.environmentVars ?? null,
         pinnedFiles: fields.pinnedFiles ?? null,
         gitIdentityName: fields.gitIdentityName ?? null,

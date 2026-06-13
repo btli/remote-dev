@@ -30,11 +30,13 @@ import {
 } from "@/components/ui/select";
 import { PathInput } from "@/components/common/PathInput";
 import { AgentProviderConfigCard } from "@/components/agents";
+import { PoolAssignmentPanel } from "@/components/claude-limits/PoolAssignmentPanel";
 import { AGENT_PROVIDERS, type AgentProviderType } from "@/types/session";
 import {
   DEFAULT_AGENT_PROVIDER_SETTINGS,
   type AgentProviderSettingsMap,
 } from "@/types/preferences";
+import type { ClaudeAutoRelaunchMode } from "@/types/claude-limits";
 import type { PinnedFile } from "@/types/pinned-files";
 
 import { apiFetch } from "@/lib/api-fetch";
@@ -85,6 +87,9 @@ interface ProjectPrefs {
   // <select> only ever writes valid provider ids (or null for inherit).
   defaultAgentProvider?: AgentProviderType | null;
   agentProviderSettings?: AgentProviderSettingsMap | null;
+  // Claude fallback pool + auto-relaunch override (null = inherit). [remote-dev-0yix]
+  claudeProfilePoolId?: string | null;
+  claudeAutoRelaunchMode?: ClaudeAutoRelaunchMode | null;
   pinnedFiles?: PinnedFile[] | null;
 }
 
@@ -299,6 +304,27 @@ export function ProjectPreferencesView({
                   )}
                 </div>
               )}
+            </div>
+
+            {/* Claude profile assignment: primary + fallback pool + auto-relaunch.
+                [remote-dev-0yix] Pool + auto-relaunch are node prefs saved with
+                this form; primary profile + pool membership persist immediately
+                via their own endpoints (inside the panel). */}
+            <div className="space-y-2 border-t border-border pt-3">
+              <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+                Claude profiles
+              </Label>
+              <PoolAssignmentPanel
+                projectId={projectId}
+                poolId={prefs.claudeProfilePoolId ?? null}
+                onPoolIdChange={(poolId) =>
+                  setPrefs({ ...prefs, claudeProfilePoolId: poolId })
+                }
+                autoRelaunchMode={prefs.claudeAutoRelaunchMode ?? null}
+                onAutoRelaunchModeChange={(mode) =>
+                  setPrefs({ ...prefs, claudeAutoRelaunchMode: mode })
+                }
+              />
             </div>
 
             <div className="space-y-2">

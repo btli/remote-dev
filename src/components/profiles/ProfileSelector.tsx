@@ -9,10 +9,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Fingerprint, Star } from "lucide-react";
+import { Fingerprint, Star, Clock } from "lucide-react";
 import { useProfileContext } from "@/contexts/ProfileContext";
 import { PROVIDER_DISPLAY_NAMES } from "@/types/agent";
 import type { AgentProvider } from "@/types/agent";
+import { formatLimitedBadgeLabel, isLimitedNow } from "@/components/claude-limits/limit-format";
 import { cn } from "@/lib/utils";
 
 interface ProfileSelectorProps {
@@ -41,13 +42,17 @@ export function ProfileSelector({
   className,
   showProviderBadge = true,
 }: ProfileSelectorProps) {
-  const { profiles, loading } = useProfileContext();
+  const { profiles, loading, getLimitState } = useProfileContext();
 
   // Get selected profile for display
   const selectedProfile = useMemo(() => {
     if (!value) return null;
     return profiles.find((p) => p.id === value) || null;
   }, [profiles, value]);
+
+  const selectedLimited = selectedProfile
+    ? isLimitedNow(getLimitState(selectedProfile.id))
+    : false;
 
   // Sort profiles: default first, then alphabetically
   const sortedProfiles = useMemo(() => {
@@ -89,6 +94,15 @@ export function ProfileSelector({
                   {PROVIDER_DISPLAY_NAMES[selectedProfile.provider]}
                 </Badge>
               )}
+              {selectedLimited && (
+                <Badge
+                  variant="outline"
+                  className="text-[10px] px-1 py-0 bg-amber-500/15 text-amber-400 border-amber-500/30"
+                >
+                  <Clock className="w-2.5 h-2.5" />
+                  {formatLimitedBadgeLabel(getLimitState(selectedProfile.id))}
+                </Badge>
+              )}
             </div>
           ) : (
             <span className="text-muted-foreground">{placeholder}</span>
@@ -125,6 +139,15 @@ export function ProfileSelector({
                   )}
                 >
                   {PROVIDER_DISPLAY_NAMES[profile.provider]}
+                </Badge>
+              )}
+              {isLimitedNow(getLimitState(profile.id)) && (
+                <Badge
+                  variant="outline"
+                  className="text-[10px] px-1 py-0 bg-amber-500/15 text-amber-400 border-amber-500/30"
+                >
+                  <Clock className="w-2.5 h-2.5" />
+                  {formatLimitedBadgeLabel(getLimitState(profile.id))}
                 </Badge>
               )}
             </div>

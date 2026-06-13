@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Folder, Github, Terminal, ChevronRight, Loader2, Sparkles, GitBranch, FileBox, Clock, Fingerprint, MessageCircle, Briefcase, Server } from "lucide-react";
 import { PathInput } from "@/components/common";
 import { ProfileSelector } from "@/components/profiles/ProfileSelector";
@@ -102,8 +102,18 @@ export function NewSessionWizard({
   const [templateCounter, setTemplateCounter] = useState(1);
 
   // Profile state
-  const { profiles } = useProfileContext();
+  const { profiles, getRecommendedProfile } = useProfileContext();
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
+  // True once the user explicitly picks a profile, so the project-driven
+  // recommendation pre-fill never clobbers an intentional choice. [remote-dev-0yix]
+  const [userPickedProfile, setUserPickedProfile] = useState(false);
+
+  // Wrap the profile setter so any manual pick (via ProfileSelector) marks the
+  // selection as explicit. `null` (No profile) is still an explicit choice.
+  const handleProfilePick = useCallback((profileId: string | null) => {
+    setUserPickedProfile(true);
+    setSelectedProfileId(profileId);
+  }, []);
 
   // Project state (selects which project the new session is created under).
   // Defaults to the active project from ProjectTreeContext when the wizard opens.
@@ -117,6 +127,29 @@ export function NewSessionWizard({
       setSelectedProjectId(active.id);
     }
   }, [open, projectTree.activeNode, selectedProjectId]);
+
+  // [remote-dev-0yix] When a project is selected (and the user hasn't already
+  // made an explicit profile choice), pre-fill the recommended profile from
+  // `/api/profiles/select` (primary → fallback pool with rotation). Best-effort:
+  // a null recommendation or a failed lookup leaves the selection untouched, and
+  // it never overrides an explicit user pick.
+  useEffect(() => {
+    if (!open) return;
+    if (!selectedProjectId) return;
+    if (userPickedProfile) return;
+    let cancelled = false;
+    void (async () => {
+      const { profileId } = await getRecommendedProfile(selectedProjectId);
+      // `cancelled` covers the case where the user picked a profile (or changed
+      // project) during the await: flipping `userPickedProfile` re-runs this
+      // effect, cancelling this stale run before it can write.
+      if (cancelled) return;
+      if (profileId) setSelectedProfileId(profileId);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, selectedProjectId, userPickedProfile, getRecommendedProfile]);
 
   // Feature session state
   const [featureDescription, setFeatureDescription] = useState("");
@@ -210,6 +243,7 @@ export function NewSessionWizard({
     setNewBranchName(undefined);
     setCloningStatus(null);
     setSelectedProfileId(null);
+    setUserPickedProfile(false);
     setSelectedProjectId(null);
     // Feature session reset
     setFeatureDescription("");
@@ -645,7 +679,7 @@ export function NewSessionWizard({
                   </Label>
                   <ProfileSelector
                     value={selectedProfileId}
-                    onChange={setSelectedProfileId}
+                    onChange={handleProfilePick}
                     placeholder="Select a profile (optional)"
                     showProviderBadge={true}
                   />
@@ -919,7 +953,7 @@ export function NewSessionWizard({
                   </Label>
                   <ProfileSelector
                     value={selectedProfileId}
-                    onChange={setSelectedProfileId}
+                    onChange={handleProfilePick}
                     placeholder="Select a profile (optional)"
                     showProviderBadge={true}
                   />
@@ -1136,7 +1170,7 @@ export function NewSessionWizard({
                 </Label>
                 <ProfileSelector
                   value={selectedProfileId}
-                  onChange={setSelectedProfileId}
+                  onChange={handleProfilePick}
                   placeholder="Select a profile (optional)"
                   showProviderBadge={true}
                 />

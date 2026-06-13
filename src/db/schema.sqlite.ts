@@ -17,6 +17,7 @@ import type { ChannelType } from "@/types/channels";
 import type { AgentRunStatus, AgentRunSource, TriggerKind } from "@/types/agent-run";
 import type { CrownRunStatus } from "@/types/crown";
 import type { MigrationJobStatus, MigrationImportStatus, MigrationWorkingTreeMode } from "@/types/migration";
+import type { ClaudeAccountKind, ClaudeLimitStatus, UsageDetectionSource, ClaudeAutoRelaunchMode } from "@/types/claude-limits";
 
 export const users = sqliteTable(
   "user",
@@ -120,6 +121,7 @@ export const userSettings = sqliteTable(
     beadsSidebarWidth: integer("beads_sidebar_width").default(320),
     beadsClosedRetentionDays: integer("beads_closed_retention_days").default(7),
     beadsSectionExpanded: text("beads_section_expanded"),
+    claudeAutoRelaunchMode: text("claude_auto_relaunch_mode").$type<ClaudeAutoRelaunchMode>().notNull().default("notify"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
   }
@@ -1177,6 +1179,79 @@ export const projects = sqliteTable(
   ]
 );
 
+export const claudeAccounts = sqliteTable(
+  "claude_account",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    profileId: text("profile_id").notNull().unique().references(() => agentProfiles.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    accountKind: text("account_kind").$type<ClaudeAccountKind>().notNull().default("subscription"),
+    credentialMode: text("credential_mode"),
+    emailAddress: text("email_address"),
+    organizationName: text("organization_name"),
+    rateLimitTier: text("rate_limit_tier"),
+    apiKeyPrefix: text("api_key_prefix"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("claude_account_profile_idx").on(table.profileId),
+    index("claude_account_user_idx").on(table.userId),
+  ]
+);
+
+export const claudeUsageLimitStates = sqliteTable(
+  "claude_usage_limit_state",
+  {
+    profileId: text("profile_id").primaryKey().references(() => agentProfiles.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    limitStatus: text("limit_status").$type<ClaudeLimitStatus>().notNull().default("unknown"),
+    window5hPct: integer("window_5h_pct"),
+    window7dPct: integer("window_7d_pct"),
+    resetAt5h: integer("reset_at_5h", { mode: "timestamp_ms" }),
+    resetAt7d: integer("reset_at_7d", { mode: "timestamp_ms" }),
+    effectiveResetAt: integer("effective_reset_at", { mode: "timestamp_ms" }),
+    detectionSource: text("detection_source").$type<UsageDetectionSource>(),
+    lastCheckedAt: integer("last_checked_at", { mode: "timestamp_ms" }),
+    lastPolledAt: integer("last_polled_at", { mode: "timestamp_ms" }),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("claude_usage_limit_user_status_idx").on(table.userId, table.limitStatus),
+    index("claude_usage_limit_user_idx").on(table.userId),
+  ]
+);
+
+export const claudeProfilePools = sqliteTable(
+  "claude_profile_pool",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("claude_profile_pool_user_idx").on(table.userId),
+  ]
+);
+
+export const claudeProfilePoolMembers = sqliteTable(
+  "claude_profile_pool_member",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    poolId: text("pool_id").notNull().references(() => claudeProfilePools.id, { onDelete: "cascade" }),
+    profileId: text("profile_id").notNull().references(() => agentProfiles.id, { onDelete: "cascade" }),
+    priority: integer("priority").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("claude_pool_member_pool_profile_unique").on(table.poolId, table.profileId),
+    index("claude_pool_member_pool_priority_idx").on(table.poolId, table.priority),
+    index("claude_pool_member_profile_idx").on(table.profileId),
+  ]
+);
+
 export const nodePreferences = sqliteTable(
   "node_preferences",
   {
@@ -1199,6 +1274,8 @@ export const nodePreferences = sqliteTable(
     gitIdentityName: text("git_identity_name"),
     gitIdentityEmail: text("git_identity_email"),
     isSensitive: integer("is_sensitive", { mode: "boolean" }).notNull().default(false),
+    claudeProfilePoolId: text("claude_profile_pool_id"),
+    claudeAutoRelaunchMode: text("claude_auto_relaunch_mode").$type<ClaudeAutoRelaunchMode>(),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   },
@@ -1243,6 +1320,7 @@ export const projectProfileLinks = sqliteTable(
   {
     projectId: text("project_id").primaryKey().references(() => projects.id, { onDelete: "cascade" }),
     profileId: text("profile_id").notNull().references(() => agentProfiles.id, { onDelete: "cascade" }),
+    poolId: text("pool_id").references(() => claudeProfilePools.id, { onDelete: "set null" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
   },
   (table) => [
@@ -1303,6 +1381,7 @@ export const triggerConfigs = sqliteTable(
     agentFlags: text("agent_flags").notNull().default("[]"),
     promptTemplate: text("prompt_template").notNull(),
     worktreeType: text("worktree_type"),
+    profileId: text("profile_id").references(() => agentProfiles.id, { onDelete: "set null" }),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
@@ -1325,6 +1404,7 @@ export const agentSchedules = sqliteTable(
     prompt: text("prompt").notNull(),
     worktreeType: text("worktree_type"),
     baseBranch: text("base_branch"),
+    profileId: text("profile_id").references(() => agentProfiles.id, { onDelete: "set null" }),
     scheduleType: text("schedule_type").$type<ScheduleType>().notNull().default("recurring"),
     cronExpression: text("cron_expression"),
     scheduledAt: integer("scheduled_at", { mode: "timestamp_ms" }),
@@ -1355,6 +1435,7 @@ export const agentRuns = sqliteTable(
     source: text("source").$type<AgentRunSource>().notNull(),
     agentProvider: text("agent_provider").notNull(),
     agentFlags: text("agent_flags").notNull().default("[]"),
+    profileId: text("profile_id").references(() => agentProfiles.id, { onDelete: "set null" }),
     prompt: text("prompt").notNull(),
     sessionId: text("session_id").references(() => terminalSessions.id, { onDelete: "set null" }),
     headSha: text("head_sha"),

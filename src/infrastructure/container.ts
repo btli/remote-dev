@@ -137,6 +137,26 @@ import { pruneStaleMigrations } from "@/services/migration-service";
 import { pruneStaleImports } from "@/services/migration-import-service";
 import { createLogger } from "@/lib/logger";
 
+// Claude Usage Limits + Profile Pools [remote-dev-3b3l]
+import { DrizzleUsageLimitStateRepository } from "./usage-limit/DrizzleUsageLimitStateRepository";
+import { DrizzleProfilePoolRepository } from "./usage-limit/DrizzleProfilePoolRepository";
+import { PriorityProfileSelectionPolicy } from "./usage-limit/PriorityProfileSelectionPolicy";
+import type { ProjectProfileLink } from "./usage-limit/PriorityProfileSelectionPolicy";
+import { ReactiveOutputDetector } from "./usage-limit/ReactiveOutputDetector";
+import { UsageEndpointPoller } from "./usage-limit/UsageEndpointPoller";
+import { CompositeUsageLimitGateway } from "./usage-limit/CompositeUsageLimitGateway";
+import {
+  TrackUsageLimitUseCase,
+  SelectProfileUseCase,
+} from "@/application/use-cases/profile";
+import type { UsageLimitStateRepository } from "@/application/ports/UsageLimitStateRepository";
+import type { ProfilePoolRepository } from "@/application/ports/ProfilePoolRepository";
+import type { ProfileSelectionPolicy } from "@/application/ports/ProfileSelectionPolicy";
+import type { UsageLimitGateway } from "@/application/ports/UsageLimitGateway";
+import { db as appDb } from "@/db";
+import { projectProfileLinks } from "@/db/schema";
+import { eq as drizzleEq } from "drizzle-orm";
+
 const log = createLogger("Container");
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -546,6 +566,83 @@ export const autoUpdateOrchestrator = new AutoUpdateOrchestrator(
   applyUpdateUseCase,
   deploymentRepository
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Claude Usage Limits + Profile Pools [remote-dev-3b3l]
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Per-profile authoritative usage-limit state store. */
+export const usageLimitStateRepository: UsageLimitStateRepository =
+  new DrizzleUsageLimitStateRepository();
+
+/** Claude fallback-pool persistence. */
+export const profilePoolRepository: ProfilePoolRepository =
+  new DrizzleProfilePoolRepository();
+
+/**
+ * The single usage-limit gateway: a reactive output detector + a (flag-gated,
+ * default-off) proactive poller, dispatched by AccountKind. Reactive supports
+ * subscription; the poller is a no-op unless RDV_CLAUDE_USAGE_POLL_ENABLED=1.
+ */
+export const usageLimitGateway: UsageLimitGateway = new CompositeUsageLimitGateway([
+  new ReactiveOutputDetector(),
+  new UsageEndpointPoller(),
+]);
+
+/**
+ * Reads `project_profile_link` for a project's primary profile + explicit pool.
+ */
+const readProjectProfileLink = async (
+  projectId: string
+): Promise<ProjectProfileLink | null> => {
+  const link = await appDb.query.projectProfileLinks.findFirst({
+    where: drizzleEq(projectProfileLinks.projectId, projectId),
+  });
+  if (!link) return null;
+  return { profileId: link.profileId ?? null, poolId: link.poolId ?? null };
+};
+
+/**
+ * Resolves the inherited `nodePreferences.claudeProfilePoolId` for a project
+ * through the existing preference chain (project→group). Lazily imports the
+ * preferences service to keep the container free of a static dependency on the
+ * services layer (avoids an init-time import cycle).
+ */
+const readInheritedPoolId = async (
+  projectId: string,
+  userId: string
+): Promise<string | null> => {
+  const { getResolvedPreferences } = await import(
+    "@/services/preferences-service"
+  );
+  const resolved = await getResolvedPreferences(userId, projectId);
+  return resolved.claudeProfilePoolId ?? null;
+};
+
+/** Priority-order primary→pool selection policy. */
+export const profileSelectionPolicy: ProfileSelectionPolicy =
+  new PriorityProfileSelectionPolicy(
+    profilePoolRepository,
+    usageLimitStateRepository,
+    readProjectProfileLink,
+    readInheritedPoolId
+  );
+
+/** Record a usage-limit observation (with the staleness guard). */
+export const trackUsageLimitUseCase = new TrackUsageLimitUseCase(
+  usageLimitStateRepository
+);
+
+/** Resolve which profile to launch for a project (explicit → primary → pool). */
+export const selectProfileUseCase = new SelectProfileUseCase(
+  profileSelectionPolicy
+);
+
+// NOTE: RelaunchOnLimitUseCase is intentionally NOT wired here. Its concrete
+// Notification/SessionLauncher adapters touch notification-service /
+// session-service and are built in Wave C (integration) to avoid an
+// infra↔services import cycle. The use-case itself + its fakes live under
+// application/use-cases/profile and are unit-tested there.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Grouped container access (Phase 3)
