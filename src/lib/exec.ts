@@ -47,7 +47,10 @@ export async function execFile(
   args: string[] = [],
   options?: {
     cwd?: string;
-    env?: NodeJS.ProcessEnv;
+    // Partial: merged as an OVERRIDE over a clean copy of process.env (see
+    // getCleanProcessEnv), so callers pass only the vars they want to set and
+    // need not re-supply required keys like NODE_ENV.
+    env?: Partial<NodeJS.ProcessEnv>;
     timeout?: number;
   }
 ): Promise<ExecResult> {
@@ -100,7 +103,10 @@ export async function execFileNoThrow(
   args: string[] = [],
   options?: {
     cwd?: string;
-    env?: NodeJS.ProcessEnv;
+    // Partial: merged as an OVERRIDE over a clean copy of process.env (see
+    // getCleanProcessEnv), so callers pass only the vars they want to set and
+    // need not re-supply required keys like NODE_ENV.
+    env?: Partial<NodeJS.ProcessEnv>;
     timeout?: number;
   }
 ): Promise<ExecResult> {
@@ -140,7 +146,10 @@ export function execFileCapped(
   args: string[] = [],
   options?: {
     cwd?: string;
-    env?: NodeJS.ProcessEnv;
+    // Partial: merged as an OVERRIDE over a clean copy of process.env (see
+    // getCleanProcessEnv), so callers pass only the vars they want to set and
+    // need not re-supply required keys like NODE_ENV.
+    env?: Partial<NodeJS.ProcessEnv>;
     timeout?: number;
     maxBytes?: number;
   }
@@ -222,7 +231,9 @@ export function spawnProcess(
   args: string[],
   options?: {
     cwd?: string;
-    env?: NodeJS.ProcessEnv;
+    // Partial: merged as an OVERRIDE over a clean copy of process.env (see
+    // getCleanProcessEnv), so callers pass only the vars they want to set.
+    env?: Partial<NodeJS.ProcessEnv>;
     onStdout?: (data: string) => void;
     onStderr?: (data: string) => void;
   }

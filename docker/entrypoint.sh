@@ -37,6 +37,28 @@ export TMUX_TMPDIR="${RDV_DATA_DIR}/tmux"
 mkdir -p "$TMUX_TMPDIR"
 
 # ──────────────────────────────────────────────────────────────────────────
+# Persistent HOME (remote-dev-u6p3)
+#
+# $HOME (/home/rdv) is the EPHEMERAL container layer: agent CLIs keep their
+# config + credentials (~/.claude, ~/.claude.json, ~/.codex, ~/.gemini,
+# ~/.config/opencode) and Claude resume history (~/.claude/projects) under
+# $HOME, so every pod roll wipes agent logins. Relocate HOME onto the PVC so
+# it survives restarts. Seed it ONCE from the image's baked /home/rdv skeleton
+# (.bashrc/.profile + any baked defaults); thereafter the PVC copy is
+# authoritative (an existing dir is left untouched, preserving accumulated
+# agent state). Exported BEFORE the servers start, so both servers and every
+# child PTY (agent session) inherit it — see getCleanEnvironment() in
+# src/server/terminal.ts; the agent-profile env never overrides HOME. This
+# keeps node os.homedir(), the migration's agentSettingsDirs(), and the agent
+# CLIs all resolving to the same persistent location.
+export HOME="${RDV_DATA_DIR}/home"
+if [ ! -d "$HOME" ]; then
+    mkdir -p "$HOME"
+    # Best-effort skeleton seed; never fail the boot if the source is sparse.
+    cp -a /home/rdv/. "$HOME/" 2>/dev/null || true
+fi
+
+# ──────────────────────────────────────────────────────────────────────────
 # Persistent package prefixes (remote-dev-uobt)
 #
 # Anything an agent installs at runtime normally lands on the EPHEMERAL container
