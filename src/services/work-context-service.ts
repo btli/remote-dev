@@ -24,8 +24,7 @@
 import { db } from "@/db";
 import { terminalSessions, agentWorkContext, agentPeerMessages } from "@/db/schema";
 import { eq, and, like, desc, inArray } from "drizzle-orm";
-import { beadsQuery, isBeadsAvailable } from "@/lib/beads-db";
-import type { RowDataPacket } from "mysql2/promise";
+import { runBdExportCached, parseJsonl } from "@/lib/beads-cli";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("WorkContext");
@@ -35,11 +34,13 @@ const log = createLogger("WorkContext");
 // take the first token that looks like an id.
 const ISSUE_ID_IN_BRANCH = /([a-z0-9]+(?:-[a-z0-9]+)+(?:\.[0-9]+)?|[a-z0-9]+\.[0-9]+)/i;
 
-interface ClaimRow extends RowDataPacket {
-  id: string;
-  title: string;
-  assignee: string | null;
-  status: string;
+/** Minimal shape of a `bd export` issue record we need for the claim join. */
+interface ClaimRecord {
+  id?: string;
+  title?: string;
+  assignee?: string;
+  status?: string;
+  updated_at?: string;
 }
 
 export type JoinConfidence = "branch" | "project" | "none";
@@ -71,6 +72,17 @@ export function extractIssueIdFromBranch(branch: string | null | undefined): str
   return m ? m[1] : null;
 }
 
+/** Parse `bd export` JSONL into the minimal claim records, ignoring non-issues. */
+function parseClaimRecords(stdout: string): ClaimRecord[] {
+  const out: ClaimRecord[] = [];
+  for (const record of parseJsonl(stdout)) {
+    if (typeof record === "object" && record !== null && typeof (record as { id?: unknown }).id === "string") {
+      out.push(record as ClaimRecord);
+    }
+  }
+  return out;
+}
+
 /**
  * Compute (and cache) the work-context for a session, including the READ-ONLY
  * bd-issue join. Persists a snapshot to `agent_work_context` so the chat UI and
@@ -94,38 +106,33 @@ export async function computeWorkContext(sessionId: string): Promise<WorkContext
   let joinConfidence: JoinConfidence = "none";
 
   const path = s.projectPath ?? null;
-  // bd Dolt schema can drift across bd versions (see beads_dolt_schema_coupling);
-  // wrap every bd query so a column rename degrades to joinConfidence:"none"
-  // instead of throwing.
+  // bd reads embedded/server mode transparently via the CLI, but any failure
+  // (bd missing, no .beads, malformed output) must degrade the join to
+  // joinConfidence:"none" rather than throw (see beads_dolt_schema_coupling).
   if (path) {
     try {
-      if (await isBeadsAvailable(path)) {
-        const branchIssue = extractIssueIdFromBranch(s.worktreeBranch);
-        if (branchIssue) {
-          const rows = await beadsQuery<ClaimRow>(
-            path,
-            "SELECT id, title, assignee, status FROM issues WHERE id = ? AND status = 'in_progress' LIMIT 1",
-            [branchIssue],
-          );
-          if (rows[0]) {
-            claimedIssueId = rows[0].id;
-            claimedIssueTitle = rows[0].title;
-            joinConfidence = "branch";
-          }
+      const records = parseClaimRecords(await runBdExportCached(path));
+      const inProgress = records.filter((r) => r.status === "in_progress" && r.id);
+
+      const branchIssue = extractIssueIdFromBranch(s.worktreeBranch);
+      if (branchIssue) {
+        const match = inProgress.find((r) => r.id === branchIssue);
+        if (match) {
+          claimedIssueId = match.id ?? null;
+          claimedIssueTitle = match.title ?? null;
+          joinConfidence = "branch";
         }
-        if (!claimedIssueId) {
-          // Fallback: any single in-progress issue in this project (loose).
-          const rows = await beadsQuery<ClaimRow>(
-            path,
-            "SELECT id, title, assignee, status FROM issues WHERE status = 'in_progress' ORDER BY updated_at DESC LIMIT 1",
-            [],
-          );
-          if (rows[0]) {
-            claimedIssueId = rows[0].id;
-            claimedIssueTitle = rows[0].title;
-            joinConfidence = "project";
-          }
-        }
+      }
+      if (!claimedIssueId && inProgress.length > 0) {
+        // Fallback: the most-recently-updated in-progress issue (loose).
+        const latest = inProgress.reduce((best, r) =>
+          new Date(r.updated_at ?? 0).getTime() > new Date(best.updated_at ?? 0).getTime()
+            ? r
+            : best
+        );
+        claimedIssueId = latest.id ?? null;
+        claimedIssueTitle = latest.title ?? null;
+        joinConfidence = "project";
       }
     } catch (err) {
       log.debug("bd join failed; degrading to joinConfidence:none", {

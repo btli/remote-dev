@@ -50,7 +50,7 @@ const nextConfig: NextConfig = {
   experimental: {
     proxyClientMaxBodySize: "96mb",
   },
-  serverExternalPackages: ["@libsql/client", "better-sqlite3", "pg", "mysql2"],
+  serverExternalPackages: ["@libsql/client", "better-sqlite3", "pg"],
   outputFileTracingExcludes: {
     "*": [".agents/**", ".claude/**", ".claude-plugin/**"],
   },

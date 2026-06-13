@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import { getIssues } from "@/services/beads-service";
 import { validateProjectPath } from "@/lib/beads-auth";
-import { isDoltUnavailable } from "@/lib/beads-db";
+import { isBeadsUnavailable } from "@/lib/beads-cli";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "@/lib/logger";
@@ -52,9 +52,9 @@ export const GET = withApiAuth(async (request, { userId }) => {
 
     return NextResponse.json({ initialized: true, issues });
   } catch (err) {
-    // Dolt server not running is expected — flag it rather than 500
-    if (isDoltUnavailable(err)) {
-      log.debug("Dolt server not reachable, returning unavailable", { error: String(err) });
+    // bd unable to produce data (missing / timeout / non-zero exit) is expected — flag it rather than 500
+    if (isBeadsUnavailable(err)) {
+      log.debug("bd unavailable, returning unavailable", { error: String(err) });
       return NextResponse.json({ initialized: true, unavailable: true, issues: [] });
     }
     log.error("getIssues failed", { error: String(err) });
