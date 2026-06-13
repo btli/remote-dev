@@ -16,6 +16,7 @@ import { GroupContextMenu } from "./project-tree/GroupContextMenu";
 import { ProjectContextMenu } from "./project-tree/ProjectContextMenu";
 import { RootContextMenu } from "./project-tree/RootContextMenu";
 import { SessionContextMenu } from "./project-tree/SessionContextMenu";
+import { MigrateProjectDialog } from "@/components/migration/MigrateProjectDialog";
 import {
   useTreeDragDrop,
   type DragState,
@@ -97,6 +98,9 @@ export const ProjectTreeSidebar = forwardRef<
   const tree = useProjectTree();
   const [editingNode, setEditingNode] = useState<{ id: string; type: "group" | "project" | "session" } | null>(null);
   const [creating, setCreating] = useState<{ parentGroupId: string | null; kind: "group" | "project" } | null>(null);
+  // Project targeted by the "Migrate to instance…" context-menu item. The
+  // dialog is self-contained (peer choice + options live inside it).
+  const [migrateTarget, setMigrateTarget] = useState<ProjectNode | null>(null);
   // Global section collapse state. Defaults to expanded so users can see
   // their singleton tabs (settings/recordings/profiles) at a glance. Local
   // UI state — not persisted since the section is small and cheap to render.
@@ -711,6 +715,7 @@ export const ProjectTreeSidebar = forwardRef<
         onMoveToGroup={(newGroupId) =>
           void tree.moveProject({ id: p.id, newGroupId })
         }
+        onMigrate={() => setMigrateTarget(p)}
         onNewTerminal={() => props.onProjectNewSession(p.id)}
         onNewAgent={() => props.onProjectNewAgent(p.id)}
         onNewAgentWithProvider={(provider) =>
@@ -1192,6 +1197,18 @@ export const ProjectTreeSidebar = forwardRef<
           aria-hidden
         />
       </RootContextMenu>
+      {migrateTarget && (
+        <MigrateProjectDialog
+          project={{ id: migrateTarget.id, name: migrateTarget.name }}
+          open
+          onOpenChange={(open) => {
+            if (!open) setMigrateTarget(null);
+          }}
+          // A completed migration may have removed the source project
+          // (removeSourceAfterVerify) — refresh the tree either way.
+          onCompleted={() => void tree.refresh()}
+        />
+      )}
     </div>
   );
 });
