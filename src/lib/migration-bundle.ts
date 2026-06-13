@@ -234,6 +234,13 @@ export interface BundleProfile {
   provider: string;
   /** Whether this was the source's default profile (informational). */
   isDefault: boolean;
+  /**
+   * The profile's configDir on the SOURCE host. Lets the destination rewrite
+   * paths that pointed inside it (e.g. gitIdentity.sshKeyPath) onto the new
+   * configDir, and keys the `profiles/<sourceProfileId>/…` archive layout.
+   * Optional for wire compatibility with early stage-1 bundles.
+   */
+  sourceConfigDir?: string | null;
   gitIdentity: BundleProfileGitIdentity | null;
   appearance: BundleProfileAppearance | null;
   jsonConfigs: BundleProfileJsonConfig[];
@@ -298,8 +305,26 @@ export interface DbBundle {
   agentSchedules: BundleAgentSchedule[];
 }
 
+/** The fixed set of archive names a migration may ship. */
+export const ARCHIVE_NAMES = [
+  "working-tree",
+  "essentials",
+  "profiles",
+  "agent-settings",
+] as const;
+export type ArchiveName = (typeof ARCHIVE_NAMES)[number];
+
+/** One file archive (a gzipped tar) shipped in CHUNK_SIZE_BYTES pieces. */
+export interface ArchiveManifestEntry {
+  name: ArchiveName;
+  sizeBytes: number;
+  /** sha256 (hex) of the WHOLE assembled archive. */
+  sha256: string;
+  chunkCount: number;
+}
+
 /**
- * Manifest describing a whole migration (DB bundle + stage-2 file chunks).
+ * Manifest describing a whole migration (DB bundle + file chunks).
  * Sent with the import init and persisted in the staging dir.
  */
 export interface BundleManifest {
@@ -310,14 +335,24 @@ export interface BundleManifest {
   /** ISO-8601 export time. */
   exportedAt: string;
   workingTreeMode: MigrationWorkingTreeMode;
-  /** File chunks to expect in stage 2 (0 in stage 1). */
+  /** Total file chunks across all archives (0 = DB-only migration). */
   totalChunks: number;
-  /** Total file bytes to expect in stage 2 (0 in stage 1). */
+  /** Total archive bytes across all archives. */
   totalBytes: number;
   agentSettingsIncluded: boolean;
   /** Source profile ids included in the bundle. */
   profileIds: string[];
   warnings: string[];
+  /** Archives the destination should expect (absent/empty = DB-only). */
+  archives?: ArchiveManifestEntry[];
+  /** git remote the destination clones in git_essentials mode. */
+  gitRemoteUrl?: string | null;
+  /** Branch checked out on the source working tree (git_essentials mode). */
+  gitBranch?: string | null;
+  /** True when the shipped archive carries a .beads/ directory. */
+  beadsIncluded?: boolean;
+  /** Human-readable inclusion notes (e.g. curated agent-settings files). */
+  info?: string[];
 }
 
 /** A single non-fatal conflict the import resolved (or deferred to the user). */
@@ -491,6 +526,7 @@ export const dbBundleSchema: z.ZodType<DbBundle> = z.object({
       description: z.string().nullable(),
       provider: z.string(),
       isDefault: z.boolean(),
+      sourceConfigDir: z.string().nullable().optional(),
       gitIdentity: z
         .object({
           userName: z.string(),
@@ -563,6 +599,14 @@ export const migrationOptionsSchema: z.ZodType<MigrationOptions> = z.object({
   removeSourceAfterVerify: z.boolean(),
 });
 
+/** Zod schema for one archive manifest entry. */
+export const archiveManifestEntrySchema: z.ZodType<ArchiveManifestEntry> = z.object({
+  name: z.enum(ARCHIVE_NAMES),
+  sizeBytes: z.number().int().min(0),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  chunkCount: z.number().int().min(1),
+});
+
 /** Zod schema for the bundle manifest (import init boundary). */
 export const bundleManifestSchema: z.ZodType<BundleManifest> = z.object({
   version: z.literal(BUNDLE_VERSION),
@@ -576,4 +620,9 @@ export const bundleManifestSchema: z.ZodType<BundleManifest> = z.object({
   agentSettingsIncluded: z.boolean(),
   profileIds: z.array(z.string()),
   warnings: z.array(z.string()),
+  archives: z.array(archiveManifestEntrySchema).optional(),
+  gitRemoteUrl: z.string().nullable().optional(),
+  gitBranch: z.string().nullable().optional(),
+  beadsIncluded: z.boolean().optional(),
+  info: z.array(z.string()).optional(),
 });

@@ -17,10 +17,21 @@
  * - working directories: rewritten to `~/projects/<basename>` on this host;
  *   the source→destination path map is recorded for stage-2 extraction.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { createWriteStream, existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename } from "node:path";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { basename, dirname } from "node:path";
+import {
+  appendFile,
+  copyFile,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { and, eq, inArray, ne } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -52,7 +63,10 @@ import { encrypt } from "@/lib/encryption";
 import { getMigrationStagingDir, getProfilesDir } from "@/lib/paths";
 import { runtimeJoin as join } from "@/lib/dynamic-fs";
 import {
+  ARCHIVE_NAMES,
   dbBundleSchema,
+  type ArchiveManifestEntry,
+  type ArchiveName,
   type BundleManifest,
   type ConflictReport,
   type DbBundle,
@@ -60,6 +74,8 @@ import {
   type MigrationOptions,
   type VerifyResult,
 } from "@/lib/migration-bundle";
+import { execFile, execFileNoThrow } from "@/lib/exec";
+import { agentSettingsDirs, copyTree, sha256File } from "@/services/migration-file-service";
 import type { ChannelType } from "@/types/channels";
 import type { TaskPriority, TaskSource, TaskStatus } from "@/types/task";
 import type { AgentProvider, AgentConfigType, MCPTransport } from "@/types/agent";
@@ -85,10 +101,36 @@ export interface ImportBookkeeping {
   expectedRowCounts?: Record<string, number>;
   /** Source profile id → destination profile id. */
   profileIdRemaps?: Record<string, string>;
+  /** Conflicts produced by the file-phase finalize (extraction). */
+  finalizeConflicts?: ConflictReport[];
+}
+
+/**
+ * Typed import error: routes map `status` straight onto the HTTP response
+ * (409 chunk-hash mismatch, 404 unknown, …) instead of string-matching.
+ */
+export class MigrationImportError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly code: string,
+  ) {
+    super(message);
+    this.name = "MigrationImportError";
+  }
 }
 
 /** Import ids come from a REMOTE instance and are used as a path component. */
 const IMPORT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+function parseManifest(row: MigrationImportRow): BundleManifest | null {
+  if (!row.manifestJson) return null;
+  try {
+    return JSON.parse(row.manifestJson) as BundleManifest;
+  } catch {
+    return null;
+  }
+}
 
 function parseBookkeeping(row: MigrationImportRow): ImportBookkeeping {
   try {
@@ -166,6 +208,182 @@ export async function initImport(
   return row;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// File-chunk intake (stage 2). Chunks land as
+// `<staging>/<archive>/chunk-00000.bin` — written to a .tmp then renamed
+// (atomic), sha256-verified per chunk, idempotent on re-PUT.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function chunkFileName(index: number): string {
+  return `chunk-${String(index).padStart(5, "0")}.bin`;
+}
+
+/** Find the manifest archive entry for a (validated) archive name. */
+function archiveEntry(
+  manifest: BundleManifest | null,
+  archiveName: string,
+): ArchiveManifestEntry {
+  const entry = manifest?.archives?.find((a) => a.name === archiveName);
+  if (!entry) {
+    throw new MigrationImportError(
+      `Archive "${archiveName}" is not declared in the migration manifest`,
+      400,
+      "UNKNOWN_ARCHIVE",
+    );
+  }
+  return entry;
+}
+
+export interface ReceiveChunkParams {
+  archiveName: string;
+  /** 0-based chunk index. */
+  chunkIndex: number;
+  /** sha256 (hex) of THIS chunk's bytes. */
+  sha256: string;
+  /** Per-archive chunk total the sender believes (validated vs manifest). */
+  totalChunks: number;
+  /** Raw chunk bytes — a Buffer or any async byte stream (web/node). */
+  body: Buffer | AsyncIterable<Uint8Array>;
+}
+
+/** Chunk files present on disk, per archive (derived from the staging dir). */
+export async function listReceivedChunks(
+  row: MigrationImportRow,
+): Promise<Record<string, number[]>> {
+  const received: Record<string, number[]> = {};
+  for (const name of ARCHIVE_NAMES) {
+    const dir = join(row.stagingDir, name);
+    if (!existsSync(dir)) continue;
+    const indices: number[] = [];
+    for (const file of await readdir(dir)) {
+      const match = /^chunk-(\d{5})\.bin$/.exec(file);
+      if (match) indices.push(Number.parseInt(match[1], 10));
+    }
+    if (indices.length > 0) received[name] = indices.sort((a, b) => a - b);
+  }
+  return received;
+}
+
+/**
+ * Receive one archive chunk. Validates the archive/index against the staged
+ * manifest, streams the body to a temp file while hashing, verifies the
+ * per-chunk sha256 (409 + tmp delete on mismatch), renames into place
+ * (atomic), and is idempotent when the same chunk arrives twice.
+ */
+export async function receiveChunk(
+  destUserId: string,
+  importId: string,
+  params: ReceiveChunkParams,
+): Promise<{ duplicate: boolean; chunksReceived: number }> {
+  const row = await getImport(destUserId, importId);
+  if (!row) throw new MigrationImportError("Import not found", 404, "NOT_FOUND");
+  if (row.status !== "importing" && row.status !== "receiving") {
+    throw new MigrationImportError(
+      `Import is not accepting chunks (status: ${row.status})`,
+      409,
+      "BAD_STATE",
+    );
+  }
+  if (!(ARCHIVE_NAMES as readonly string[]).includes(params.archiveName)) {
+    throw new MigrationImportError(
+      `Unknown archive name "${params.archiveName}"`,
+      400,
+      "UNKNOWN_ARCHIVE",
+    );
+  }
+  const entry = archiveEntry(parseManifest(row), params.archiveName);
+  if (params.totalChunks !== entry.chunkCount) {
+    throw new MigrationImportError(
+      `Chunk total mismatch for ${params.archiveName}: sender says ${params.totalChunks}, manifest says ${entry.chunkCount}`,
+      409,
+      "CHUNK_TOTAL_MISMATCH",
+    );
+  }
+  if (
+    !Number.isInteger(params.chunkIndex) ||
+    params.chunkIndex < 0 ||
+    params.chunkIndex >= entry.chunkCount
+  ) {
+    throw new MigrationImportError(
+      `Chunk index ${params.chunkIndex} out of range for ${params.archiveName} (0..${entry.chunkCount - 1})`,
+      400,
+      "CHUNK_INDEX_OUT_OF_RANGE",
+    );
+  }
+
+  const archiveDir = join(row.stagingDir, params.archiveName);
+  await mkdir(archiveDir, { recursive: true });
+  const finalPath = join(archiveDir, chunkFileName(params.chunkIndex));
+  const expectedSha = params.sha256.toLowerCase();
+
+  // Idempotent re-PUT: an existing chunk with the same hash is a no-op.
+  if (existsSync(finalPath)) {
+    if ((await sha256File(finalPath)) === expectedSha) {
+      const received = await listReceivedChunks(row);
+      const chunksReceived = Object.values(received).reduce((n, a) => n + a.length, 0);
+      return { duplicate: true, chunksReceived };
+    }
+    // Same index, different content: fall through and atomically replace.
+  }
+
+  // Stream to a temp file while hashing, then verify + rename into place.
+  const tmpPath = `${finalPath}.tmp-${randomUUID().slice(0, 8)}`;
+  const hash = createHash("sha256");
+  try {
+    const out = createWriteStream(tmpPath);
+    const chunks: AsyncIterable<Uint8Array> | Buffer[] = Buffer.isBuffer(params.body)
+      ? [params.body]
+      : params.body;
+    for await (const piece of chunks) {
+      const buf = Buffer.isBuffer(piece) ? piece : Buffer.from(piece);
+      hash.update(buf);
+      if (!out.write(buf)) {
+        await new Promise<void>((resolve, reject) => {
+          out.once("drain", resolve);
+          out.once("error", reject);
+        });
+      }
+    }
+    await new Promise<void>((resolve, reject) => {
+      out.end(() => resolve());
+      out.once("error", reject);
+    });
+  } catch (error) {
+    await rm(tmpPath, { force: true });
+    throw new MigrationImportError(
+      `Failed to write chunk: ${String(error)}`,
+      500,
+      "CHUNK_WRITE_FAILED",
+    );
+  }
+
+  const actualSha = hash.digest("hex");
+  if (actualSha !== expectedSha) {
+    await rm(tmpPath, { force: true });
+    throw new MigrationImportError(
+      `Chunk sha256 mismatch for ${params.archiveName}#${params.chunkIndex}`,
+      409,
+      "CHUNK_SHA_MISMATCH",
+    );
+  }
+  await rename(tmpPath, finalPath);
+
+  const received = await listReceivedChunks(row);
+  const chunksReceived = Object.values(received).reduce((n, a) => n + a.length, 0);
+  await db
+    .update(migrationImports)
+    .set({ status: "receiving", chunksReceived, updatedAt: new Date() })
+    .where(eq(migrationImports.id, importId));
+
+  log.debug("Chunk received", {
+    importId,
+    archive: params.archiveName,
+    index: params.chunkIndex,
+    chunksReceived,
+  });
+  return { duplicate: false, chunksReceived };
+}
+
 /**
  * Rewrite a source working-directory path to this host:
  * `~/projects/<basename>`, suffixing `-2`/`-3`/… when another project's
@@ -232,6 +450,8 @@ export async function importDb(
     throw new Error(message);
   }
   const data = parsed.data;
+  // Options staged at initImport (gates e.g. the sshKeyPath rewrite below).
+  const importOptions = parseBookkeeping(importRow).options;
 
   await db
     .update(migrationImports)
@@ -306,14 +526,15 @@ export async function importDb(
         const newProfileId = randomUUID();
         idRemaps[profile.id] = newProfileId;
         profileIdRemaps[profile.id] = newProfileId;
+        const newConfigDir = join(getProfilesDir(), newProfileId);
         await tx.insert(agentProfiles).values({
           id: newProfileId,
           userId: destUserId,
           name: profile.name,
           description: profile.description,
           provider: profile.provider as AgentProvider,
-          // The directory itself is materialized by the stage-2 file transfer.
-          configDir: join(getProfilesDir(), newProfileId),
+          // The directory itself is materialized by the file-phase finalize.
+          configDir: newConfigDir,
           isDefault: false,
         });
         rowCounts.profiles++;
@@ -324,11 +545,32 @@ export async function importDb(
           });
         }
         if (profile.gitIdentity) {
+          // sshKeyPath is a SOURCE-host path. When the key travels (it lived
+          // inside the profile dir + includeSshKeys), rewrite it onto the new
+          // configDir; otherwise drop it (a dangling path is worse than none).
+          let sshKeyPath: string | null = null;
+          const sourceKeyPath = profile.gitIdentity.sshKeyPath;
+          if (sourceKeyPath) {
+            const srcDir = profile.sourceConfigDir?.replace(/\/+$/, "");
+            if (
+              importOptions.includeSshKeys &&
+              srcDir &&
+              sourceKeyPath.startsWith(`${srcDir}/`)
+            ) {
+              sshKeyPath = join(newConfigDir, sourceKeyPath.slice(srcDir.length + 1));
+            } else {
+              conflicts.push({
+                type: "ssh_key_path_dropped",
+                message: `Profile "${profile.name}" git identity pointed at an SSH key that does not travel — cleared`,
+                detail: sourceKeyPath,
+              });
+            }
+          }
           await tx.insert(profileGitIdentities).values({
             profileId: newProfileId,
             userName: profile.gitIdentity.userName,
             userEmail: profile.gitIdentity.userEmail,
-            sshKeyPath: profile.gitIdentity.sshKeyPath,
+            sshKeyPath,
             gpgKeyId: profile.gitIdentity.gpgKeyId,
             githubUsername: profile.gitIdentity.githubUsername,
           });
@@ -777,29 +1019,386 @@ export async function importDb(
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Finalize: assemble chunked archives, verify whole-archive hashes, extract.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** True when a directory exists and contains at least one entry. */
+async function isNonEmptyDir(path: string): Promise<boolean> {
+  if (!existsSync(path)) return false;
+  try {
+    return (await readdir(path)).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Concatenate an archive's chunks (index order) into one file; verify sha. */
+async function assembleArchive(
+  row: MigrationImportRow,
+  entry: ArchiveManifestEntry,
+): Promise<string> {
+  const archiveDir = join(row.stagingDir, entry.name);
+  const outPath = join(row.stagingDir, `${entry.name}.tar.gz`);
+  await rm(outPath, { force: true });
+  for (let index = 0; index < entry.chunkCount; index++) {
+    const chunkPath = join(archiveDir, chunkFileName(index));
+    if (!existsSync(chunkPath)) {
+      throw new MigrationImportError(
+        `Archive ${entry.name} is missing chunk ${index}/${entry.chunkCount}`,
+        409,
+        "CHUNKS_INCOMPLETE",
+      );
+    }
+    await appendFile(outPath, await readFile(chunkPath));
+  }
+  const actual = await sha256File(outPath);
+  if (actual !== entry.sha256.toLowerCase()) {
+    throw new MigrationImportError(
+      `Assembled archive ${entry.name} failed sha256 verification`,
+      409,
+      "ARCHIVE_SHA_MISMATCH",
+    );
+  }
+  const { size } = await stat(outPath);
+  if (size !== entry.sizeBytes) {
+    throw new MigrationImportError(
+      `Assembled archive ${entry.name} is ${size} bytes, manifest says ${entry.sizeBytes}`,
+      409,
+      "ARCHIVE_SIZE_MISMATCH",
+    );
+  }
+  return outPath;
+}
+
+/** The destination working directory recorded by importDb's pref rewrite. */
+async function importedWorkingDir(
+  destUserId: string,
+  importedProjectId: string,
+): Promise<string | null> {
+  const pref = await db.query.nodePreferences.findFirst({
+    where: and(
+      eq(nodePreferences.ownerId, importedProjectId),
+      eq(nodePreferences.ownerType, "project"),
+      eq(nodePreferences.userId, destUserId),
+    ),
+  });
+  return pref?.defaultWorkingDirectory ?? null;
+}
+
 /**
- * Mark a (db-imported) staging import completed. Stage 2 will run the file
- * phases between importDb and finalize; in stage 1 this is called right after
- * the DB bundle lands.
+ * Resolve + prepare the working-tree destination dir: parent created, and the
+ * dir itself must be absent or empty — extracting over existing user files is
+ * REFUSED (conflict + clean failure) rather than risked.
+ */
+async function prepareWorkingTreeDest(
+  destUserId: string,
+  importedProjectId: string,
+  conflicts: ConflictReport[],
+): Promise<string> {
+  const destDir = await importedWorkingDir(destUserId, importedProjectId);
+  if (!destDir) {
+    throw new MigrationImportError(
+      "No destination working directory was recorded for this import",
+      409,
+      "NO_WORKING_DIR",
+    );
+  }
+  if (await isNonEmptyDir(destDir)) {
+    conflicts.push({
+      type: "dest_dir_not_empty",
+      message: `Destination directory ${destDir} already exists and is not empty — refusing to extract over it`,
+      detail: destDir,
+    });
+    throw new MigrationImportError(
+      `Destination directory ${destDir} is not empty`,
+      409,
+      "DEST_DIR_NOT_EMPTY",
+    );
+  }
+  await mkdir(destDir, { recursive: true });
+  return destDir;
+}
+
+/** Extract the full working-tree archive into the mapped destination dir. */
+async function extractWorkingTree(
+  archivePath: string,
+  destUserId: string,
+  importedProjectId: string,
+  conflicts: ConflictReport[],
+): Promise<void> {
+  const destDir = await prepareWorkingTreeDest(destUserId, importedProjectId, conflicts);
+  await execFile("tar", ["-xzf", archivePath, "-C", destDir], {
+    timeout: 10 * 60 * 1000,
+  });
+}
+
+/**
+ * git_essentials extraction: clone the recorded remote, check out the
+ * recorded branch (best-effort), lay the essentials archive over the clone,
+ * then apply the uncommitted diff (best-effort).
+ */
+async function extractEssentials(
+  archivePath: string,
+  destUserId: string,
+  importedProjectId: string,
+  manifest: BundleManifest,
+  conflicts: ConflictReport[],
+): Promise<void> {
+  const remoteUrl = manifest.gitRemoteUrl;
+  if (!remoteUrl) {
+    conflicts.push({
+      type: "clone_failed",
+      message: "Manifest carries no git remote URL — cannot reconstruct the working tree",
+    });
+    throw new MigrationImportError(
+      "git_essentials import requires manifest.gitRemoteUrl",
+      409,
+      "NO_GIT_REMOTE",
+    );
+  }
+  const destDir = await prepareWorkingTreeDest(destUserId, importedProjectId, conflicts);
+
+  const clone = await execFileNoThrow("git", ["clone", remoteUrl, destDir], {
+    timeout: 10 * 60 * 1000,
+  });
+  if (clone.exitCode !== 0) {
+    conflicts.push({
+      type: "clone_failed",
+      message: `git clone of ${remoteUrl} failed — check the destination's git credentials/network`,
+      detail: clone.stderr.slice(0, 500),
+    });
+    throw new MigrationImportError(
+      `git clone failed: ${clone.stderr.slice(0, 200)}`,
+      502,
+      "CLONE_FAILED",
+    );
+  }
+
+  if (manifest.gitBranch && manifest.gitBranch !== "HEAD") {
+    const checkout = await execFileNoThrow(
+      "git",
+      ["-C", destDir, "checkout", manifest.gitBranch],
+      { timeout: 60_000 },
+    );
+    if (checkout.exitCode !== 0) {
+      conflicts.push({
+        type: "branch_checkout_failed",
+        message: `Could not check out branch "${manifest.gitBranch}" after clone — left on the default branch`,
+        detail: checkout.stderr.slice(0, 300),
+      });
+    }
+  }
+
+  // Lay the shipped essentials (beads, env files, untracked) over the clone.
+  await execFile("tar", ["-xzf", archivePath, "-C", destDir], { timeout: 5 * 60 * 1000 });
+
+  // Re-apply uncommitted changes to tracked files; a conflict is survivable.
+  const diffPath = join(destDir, "migration.diff");
+  if (existsSync(diffPath)) {
+    const apply = await execFileNoThrow(
+      "git",
+      ["-C", destDir, "apply", "--whitespace=nowarn", "migration.diff"],
+      { timeout: 60_000 },
+    );
+    if (apply.exitCode !== 0) {
+      conflicts.push({
+        type: "diff_apply_failed",
+        message:
+          "Uncommitted changes could not be re-applied to the fresh clone — review migration.diff manually",
+        detail: apply.stderr.slice(0, 300),
+      });
+    } else {
+      await rm(diffPath, { force: true });
+    }
+  }
+}
+
+/** Materialize each shipped profile dir at its REMAPPED destination id. */
+async function extractProfiles(
+  archivePath: string,
+  row: MigrationImportRow,
+  profileIdRemaps: Record<string, string>,
+  conflicts: ConflictReport[],
+): Promise<void> {
+  const extractRoot = join(row.stagingDir, "profiles-extract");
+  await rm(extractRoot, { recursive: true, force: true });
+  await mkdir(extractRoot, { recursive: true });
+  await execFile("tar", ["-xzf", archivePath, "-C", extractRoot], { timeout: 5 * 60 * 1000 });
+
+  for (const [sourceId, newId] of Object.entries(profileIdRemaps)) {
+    const from = join(extractRoot, "profiles", sourceId);
+    if (!existsSync(from)) {
+      conflicts.push({
+        type: "profile_files_missing",
+        message: `Profiles archive carries no files for source profile ${sourceId}`,
+      });
+      continue;
+    }
+    await copyTree(from, join(getProfilesDir(), newId));
+  }
+  await rm(extractRoot, { recursive: true, force: true });
+}
+
+/** Map an agent-settings provider segment to its destination base dir. */
+function agentSettingsDest(provider: string): string | null {
+  const dirs = agentSettingsDirs();
+  return (dirs as Record<string, string>)[provider] ?? null;
+}
+
+/** Every file under `root`, as paths relative to it. */
+async function walkFiles(root: string, relBase = ""): Promise<string[]> {
+  const out: string[] = [];
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      out.push(...(await walkFiles(join(root, entry.name), rel)));
+    } else if (entry.isFile()) {
+      out.push(rel);
+    }
+  }
+  return out;
+}
+
+const OVERWRITE_LIST_CAP = 100;
+
+/**
+ * Copy curated agent settings into the real HOME equivalents, overwriting and
+ * RECORDING every overwritten path (capped list + total count).
+ */
+async function extractAgentSettings(
+  archivePath: string,
+  row: MigrationImportRow,
+  conflicts: ConflictReport[],
+): Promise<void> {
+  const extractRoot = join(row.stagingDir, "agent-settings-extract");
+  await rm(extractRoot, { recursive: true, force: true });
+  await mkdir(extractRoot, { recursive: true });
+  await execFile("tar", ["-xzf", archivePath, "-C", extractRoot], { timeout: 5 * 60 * 1000 });
+
+  const settingsRoot = join(extractRoot, "agent-settings");
+  if (!existsSync(settingsRoot)) {
+    await rm(extractRoot, { recursive: true, force: true });
+    return;
+  }
+
+  const overwritten: string[] = [];
+  let overwrittenTotal = 0;
+  for (const provider of await readdir(settingsRoot)) {
+    const destBase = agentSettingsDest(provider);
+    const providerRoot = join(settingsRoot, provider);
+    if (!destBase || !(await isNonEmptyDir(providerRoot))) continue;
+    for (const rel of await walkFiles(providerRoot)) {
+      const destPath = join(destBase, rel);
+      if (existsSync(destPath)) {
+        overwrittenTotal++;
+        if (overwritten.length < OVERWRITE_LIST_CAP) overwritten.push(destPath);
+      }
+      await mkdir(dirname(destPath), { recursive: true });
+      await copyFile(join(providerRoot, rel), destPath);
+    }
+  }
+  for (const path of overwritten) {
+    conflicts.push({
+      type: "file_overwritten",
+      message: `Agent settings overwrote ${path}`,
+      detail: path,
+    });
+  }
+  if (overwrittenTotal > overwritten.length) {
+    conflicts.push({
+      type: "file_overwritten",
+      message: `Agent settings overwrote ${overwrittenTotal} files in total (${overwrittenTotal - overwritten.length} not listed)`,
+    });
+  }
+  await rm(extractRoot, { recursive: true, force: true });
+}
+
+/**
+ * Finalize an import. DB-only migrations (no archives in the manifest) just
+ * flip importing → completed. File migrations require EVERY chunk, then per
+ * archive: concatenate → verify the whole-archive sha256 → extract
+ * (working-tree/essentials → the mapped working dir, profiles → the remapped
+ * configDirs, agent-settings → curated HOME paths with overwrite recording).
+ * Returns the updated row + the file-phase conflicts (also persisted in the
+ * bookkeeping for later inspection).
  */
 export async function finalizeImport(
   destUserId: string,
   importId: string,
-): Promise<MigrationImportRow> {
+): Promise<{ import: MigrationImportRow; conflicts: ConflictReport[] }> {
   const row = await getImport(destUserId, importId);
-  if (!row) throw new Error("Import not found");
-  if (row.status !== "importing" || !row.importedProjectId) {
-    throw new Error(
+  if (!row) throw new MigrationImportError("Import not found", 404, "NOT_FOUND");
+  const manifest = parseManifest(row);
+  const archives = manifest?.archives ?? [];
+
+  if (!row.importedProjectId || (row.status !== "importing" && row.status !== "receiving")) {
+    throw new MigrationImportError(
       `Import cannot be finalized (status: ${row.status}, project: ${row.importedProjectId ?? "none"})`,
+      409,
+      "FINALIZE_REJECTED",
     );
   }
+
+  const conflicts: ConflictReport[] = [];
+  const bookkeeping = parseBookkeeping(row);
+
+  try {
+    for (const entry of archives) {
+      const archivePath = await assembleArchive(row, entry);
+      if (entry.name === "working-tree") {
+        await extractWorkingTree(archivePath, destUserId, row.importedProjectId, conflicts);
+      } else if (entry.name === "essentials") {
+        if (!manifest) {
+          throw new MigrationImportError("Import has no manifest", 409, "NO_MANIFEST");
+        }
+        await extractEssentials(
+          archivePath,
+          destUserId,
+          row.importedProjectId,
+          manifest,
+          conflicts,
+        );
+      } else if (entry.name === "profiles") {
+        await extractProfiles(archivePath, row, bookkeeping.profileIdRemaps ?? {}, conflicts);
+      } else if (entry.name === "agent-settings") {
+        await extractAgentSettings(archivePath, row, conflicts);
+      }
+      await rm(archivePath, { force: true });
+    }
+  } catch (error) {
+    // Persist whatever conflicts were gathered before the failure.
+    bookkeeping.finalizeConflicts = conflicts;
+    await db
+      .update(migrationImports)
+      .set({
+        status: "failed",
+        errorMessage: String(error instanceof Error ? error.message : error),
+        optionsJson: JSON.stringify(bookkeeping),
+        updatedAt: new Date(),
+      })
+      .where(eq(migrationImports.id, importId));
+    log.error("Import finalize failed", { importId, error: String(error) });
+    throw error;
+  }
+
+  bookkeeping.finalizeConflicts = conflicts;
   const [updated] = await db
     .update(migrationImports)
-    .set({ status: "completed", updatedAt: new Date() })
+    .set({
+      status: "completed",
+      optionsJson: JSON.stringify(bookkeeping),
+      updatedAt: new Date(),
+    })
     .where(eq(migrationImports.id, importId))
     .returning();
-  log.info("Import finalized", { importId, projectId: row.importedProjectId });
-  return updated;
+  log.info("Import finalized", {
+    importId,
+    projectId: row.importedProjectId,
+    archives: archives.length,
+    conflicts: conflicts.length,
+  });
+  return { import: updated, conflicts };
 }
 
 /** Tables recounted by verifyImport, keyed like ImportResult.rowCounts. */
@@ -971,7 +1570,28 @@ export async function verifyImport(
     }
   }
 
-  return { ok, rowCounts: actual, missingPaths: [] };
+  // Filesystem checks: every path the file phase promised must exist.
+  const missingPaths: string[] = [];
+  const manifest = parseManifest(row);
+  const archives = manifest?.archives ?? [];
+  const hasTree = archives.some((a) => a.name === "working-tree" || a.name === "essentials");
+  if (hasTree) {
+    const workingDir = await importedWorkingDir(destUserId, row.importedProjectId);
+    if (!workingDir || !existsSync(workingDir)) {
+      missingPaths.push(workingDir ?? "(no working directory recorded)");
+    } else if (manifest?.beadsIncluded && !existsSync(join(workingDir, ".beads"))) {
+      missingPaths.push(join(workingDir, ".beads"));
+    }
+  }
+  if (archives.some((a) => a.name === "profiles")) {
+    for (const newId of profileIds) {
+      const dir = join(getProfilesDir(), newId);
+      if (!existsSync(dir)) missingPaths.push(dir);
+    }
+  }
+  if (missingPaths.length > 0) ok = false;
+
+  return { ok, rowCounts: actual, missingPaths };
 }
 
 /**

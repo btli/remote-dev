@@ -1,20 +1,22 @@
 /**
  * MigrationService — SOURCE-side orchestrator for server-to-server project
- * migration (stage 1: DB rows).
+ * migration (stages 1+2: DB rows + chunked file transfer).
  *
- * State machine: pending → running → db_done → verifying → completed, with
- * failed/aborted terminal escapes. `files_done` is reserved for the stage-2
- * file phases (tar/chunk upload), which slot in between db_done and
- * verifying.
+ * State machine: pending → running → db_done → files_done → verifying →
+ * completed, with failed/aborted terminal escapes. DB-only migrations (no
+ * archives) skip files_done.
  *
  * Every transition is a CONDITIONAL update (`WHERE status IN (…)`), so an
- * abort that lands mid-run wins the race: the runner's next transition
- * matches 0 rows and it stops quietly.
+ * abort that lands mid-run wins the race: the runner's next transition (the
+ * per-chunk progress update during uploads) matches 0 rows and it stops
+ * quietly with a best-effort destination rollback.
  *
- * Testability: DB ops, bundle building, peer HTTP, and project deletion are
- * injected via {@link MigrationServiceDeps} (defaulting to the real
- * implementations), mirroring agent-run-service.
+ * Testability: DB ops, bundle/archive building, chunk reads, peer HTTP, and
+ * project deletion are injected via {@link MigrationServiceDeps} (defaulting
+ * to the real implementations), mirroring agent-run-service.
  */
+import { createHash } from "node:crypto";
+import { rm } from "node:fs/promises";
 import { and, eq, inArray, lt } from "drizzle-orm";
 import { db } from "@/db";
 import { migrationJobs, projects } from "@/db/schema";
@@ -22,7 +24,9 @@ import { createLogger } from "@/lib/logger";
 import { peerFetch } from "@/lib/peer-fetch";
 import {
   BUNDLE_VERSION,
+  CHUNK_SIZE_BYTES,
   type BundleManifest,
+  type ConflictReport,
   type DbBundle,
   type ImportResult,
   type MigrationOptions,
@@ -30,6 +34,8 @@ import {
 } from "@/lib/migration-bundle";
 import type { MigrationJobStatus } from "@/types/migration";
 import * as MigrationExportService from "./migration-export-service";
+import * as MigrationFileService from "./migration-file-service";
+import type { BuildArchivesInput, BuiltArchives } from "./migration-file-service";
 import * as PeerInstanceService from "./peer-instance-service";
 import { ProjectService } from "./project-service";
 
@@ -86,6 +92,12 @@ export interface MigrationServiceDeps {
     path: string,
     init?: RequestInit,
   ): Promise<Response>;
+  /** Build the file archives (working tree/essentials, profiles, settings). */
+  buildArchives(input: BuildArchivesInput): Promise<BuiltArchives>;
+  /** Read one CHUNK_SIZE_BYTES piece of a built archive. */
+  readChunk(archivePath: string, index: number): Promise<Buffer>;
+  /** Remove the source-side staging dir when the job ends (best-effort). */
+  removeDir(path: string): Promise<void>;
   deleteProject(projectId: string): Promise<void>;
   now(): Date;
 }
@@ -110,6 +122,10 @@ function defaultDeps(): MigrationServiceDeps {
     buildBundle: (userId, projectId, options) =>
       MigrationExportService.buildDbBundle(userId, projectId, options),
     peerFetch: (peer, path, init) => peerFetch(peer, path, init),
+    buildArchives: (input) => MigrationFileService.buildArchives(input),
+    readChunk: (archivePath, index) =>
+      MigrationFileService.readArchiveChunk(archivePath, index),
+    removeDir: (path) => rm(path, { recursive: true, force: true }),
     // The existing project deletion path: kills owned tmux sessions, then
     // deletes the row (FK cascade). It does NOT touch working-tree files.
     deleteProject: (projectId) => ProjectService.delete(projectId),
@@ -199,6 +215,57 @@ async function expectOk(response: Response, step: string): Promise<Response> {
   throw new Error(`${step} failed: HTTP ${response.status}${detail ? ` — ${detail}` : ""}`);
 }
 
+/** Retried per-chunk PUT (3 attempts, linear backoff). Throws after the last. */
+async function putChunkWithRetry(
+  deps: MigrationServiceDeps,
+  peer: PeerInstanceService.PeerInstanceRow,
+  jobId: string,
+  archiveName: string,
+  chunkIndex: number,
+  totalChunks: number,
+  sha256: string,
+  data: Buffer,
+  attempts = 3,
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const response = await deps.peerFetch(
+        peer,
+        `/api/migration/imports/${jobId}/chunks`,
+        {
+          method: "PUT",
+          headers: {
+            "content-type": "application/octet-stream",
+            "x-archive-name": archiveName,
+            "x-chunk-index": String(chunkIndex),
+            "x-chunk-sha256": sha256,
+            "x-total-chunks": String(totalChunks),
+          },
+          body: new Uint8Array(data),
+        },
+      );
+      if (response.ok) return;
+      lastError = new Error(
+        `Chunk ${archiveName}#${chunkIndex} rejected: HTTP ${response.status}`,
+      );
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt < attempts) {
+      log.warn("Chunk upload attempt failed — retrying", {
+        jobId,
+        archive: archiveName,
+        index: chunkIndex,
+        attempt,
+        error: String(lastError),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 /**
  * Run a pending migration job to completion. NEVER throws to the caller —
  * all failures land on the job row (status failed + errorMessage), with a
@@ -238,6 +305,7 @@ export async function startJob(
   };
 
   let peer: PeerInstanceService.PeerInstanceRow | null = null;
+  let built: BuiltArchives | null = null;
   try {
     const running = await deps.transition(jobId, ["pending"], {
       status: "running",
@@ -261,6 +329,19 @@ export async function startJob(
       options,
     );
 
+    // ── Build the file archives BEFORE the import init so the manifest the
+    // destination stages already declares every archive + chunk count. ──
+    built = await deps.buildArchives({
+      jobId,
+      workingDir: bundle.nodePreferences[0]?.defaultWorkingDirectory ?? null,
+      options,
+      profiles: bundle.profiles
+        .filter((p) => !!p.sourceConfigDir)
+        .map((p) => ({ id: p.id, configDir: p.sourceConfigDir as string })),
+    });
+    const totalBytes = built.archives.reduce((n, a) => n + a.sizeBytes, 0);
+    const totalChunks = built.archives.reduce((n, a) => n + a.chunkCount, 0);
+
     const manifest: BundleManifest = {
       version: BUNDLE_VERSION,
       sourceInstanceUrl: getSourceInstanceUrl(),
@@ -268,12 +349,16 @@ export async function startJob(
       sourceProjectName: bundle.project.name,
       exportedAt: deps.now().toISOString(),
       workingTreeMode: options.workingTreeMode,
-      // Stage 1 ships no file chunks; stage 2 fills these in.
-      totalChunks: 0,
-      totalBytes: 0,
+      totalChunks,
+      totalBytes,
       agentSettingsIncluded: options.includeAgentSettings,
       profileIds: bundle.profiles.map((p) => p.id),
-      warnings,
+      warnings: [...warnings, ...built.warnings],
+      archives: built.archives,
+      gitRemoteUrl: built.gitRemoteUrl,
+      gitBranch: built.gitBranch,
+      beadsIncluded: built.beadsIncluded,
+      info: built.info,
     };
 
     // ── DB phase: push the bundle (init + import happen destination-side) ──
@@ -297,30 +382,99 @@ export async function startJob(
       result: ImportResult;
     };
 
+    let bytesTransferred = Buffer.byteLength(JSON.stringify(bundle), "utf8");
     const dbDone = await deps.transition(jobId, ["running"], {
       status: "db_done",
       destProjectId: importBody.result?.importedProjectId ?? null,
       bundleManifestJson: JSON.stringify(manifest),
-      bytesTransferred: Buffer.byteLength(JSON.stringify(bundle), "utf8"),
+      sizeEstimateBytes: totalBytes,
+      bytesTransferred,
     });
     if (!dbDone) return; // aborted mid-flight
 
-    // ── File phase: stage 2. The chunk upload + files_done transition will
-    // slot in here; for now record that it was intentionally skipped. ──
-    if (options.workingTreeMode !== "none") {
-      log.info("File transfer is stage 2 — skipping working-tree upload", {
+    // ── File phase: chunked archive upload (resume-aware, abort-aware) ──
+    if (built.archives.length > 0) {
+      // Resume: skip chunks the destination already holds.
+      let received: Record<string, number[]> = {};
+      try {
+        const statusResponse = await deps.peerFetch(
+          peer,
+          `/api/migration/imports/${jobId}`,
+          { method: "GET" },
+        );
+        if (statusResponse.ok) {
+          const body = (await statusResponse.json()) as {
+            receivedChunks?: Record<string, number[]>;
+          };
+          received = body.receivedChunks ?? {};
+        }
+      } catch {
+        // Fresh upload — resume info is an optimization only.
+      }
+
+      for (const entry of built.archives) {
+        const archivePath = built.archivePaths[entry.name];
+        if (!archivePath) {
+          throw new Error(`Built archive path missing for ${entry.name}`);
+        }
+        const have = new Set(received[entry.name] ?? []);
+        for (let index = 0; index < entry.chunkCount; index++) {
+          const chunkSize = Math.min(
+            CHUNK_SIZE_BYTES,
+            entry.sizeBytes - index * CHUNK_SIZE_BYTES,
+          );
+          if (!have.has(index)) {
+            const data = await deps.readChunk(archivePath, index);
+            const sha = createHash("sha256").update(data).digest("hex");
+            await putChunkWithRetry(deps, peer, jobId, entry.name, index, entry.chunkCount, sha, data);
+          }
+          // Progress update doubles as the between-chunks abort check: a
+          // status no longer db_done (aborted) matches nothing → stop.
+          bytesTransferred += Math.max(0, chunkSize);
+          const progressed = await deps.transition(jobId, ["db_done"], {
+            bytesTransferred,
+          });
+          if (!progressed) {
+            log.warn("Upload interrupted (job left db_done) — stopping", { jobId });
+            try {
+              await deps.peerFetch(peer, `/api/migration/imports/${jobId}`, {
+                method: "DELETE",
+              });
+            } catch {
+              // Best-effort.
+            }
+            return;
+          }
+        }
+      }
+
+      const filesDone = await deps.transition(jobId, ["db_done"], {
+        status: "files_done",
+      });
+      if (!filesDone) return; // aborted mid-flight
+    } else if (options.workingTreeMode !== "none") {
+      log.info("No file archives produced (missing working dir?) — DB-only migration", {
         jobId,
         workingTreeMode: options.workingTreeMode,
       });
     }
 
     // ── Finalize + verify on the destination ──
-    await expectOk(
+    const finalizeResponse = await expectOk(
       await deps.peerFetch(peer, `/api/migration/imports/${jobId}/finalize`, {
         method: "POST",
       }),
       "Import finalize",
     );
+    let finalizeConflicts: ConflictReport[] = [];
+    try {
+      const finalizeBody = (await finalizeResponse.json()) as {
+        conflicts?: ConflictReport[];
+      };
+      finalizeConflicts = finalizeBody.conflicts ?? [];
+    } catch {
+      // Older destinations return no body — fine.
+    }
 
     const verifying = await deps.transition(jobId, ["db_done", "files_done"], {
       status: "verifying",
@@ -336,7 +490,7 @@ export async function startJob(
     const verify = (await verifyResponse.json()) as VerifyResult;
 
     const conflictReport = {
-      conflicts: importBody.result?.conflicts ?? [],
+      conflicts: [...(importBody.result?.conflicts ?? []), ...finalizeConflicts],
       rowCounts: importBody.result?.rowCounts ?? {},
       verify,
     };
@@ -371,6 +525,19 @@ export async function startJob(
     });
   } catch (error) {
     await fail(error, peer ?? undefined);
+  } finally {
+    // The built tars are job-scoped scratch — always reclaim the disk.
+    if (built) {
+      try {
+        await deps.removeDir(built.stagingDir);
+      } catch (cleanupError) {
+        log.warn("Failed to remove source staging dir", {
+          jobId,
+          stagingDir: built.stagingDir,
+          error: String(cleanupError),
+        });
+      }
+    }
   }
 }
 

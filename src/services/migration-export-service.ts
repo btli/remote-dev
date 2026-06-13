@@ -292,6 +292,9 @@ export async function buildDbBundle(
         description: profile.description ?? null,
         provider: profile.provider,
         isDefault: profile.isDefault,
+        // Lets the destination rewrite profile-relative paths (sshKeyPath)
+        // and locate this profile inside the profiles archive.
+        sourceConfigDir: profile.configDir,
         gitIdentity: gitIdentity
           ? {
               userName: gitIdentity.userName,

@@ -550,7 +550,8 @@ describe("MigrationImportService", () => {
 
     await importDb(DEST_USER, JOB_ID, makeBundle());
     const finalized = await finalizeImport(DEST_USER, JOB_ID);
-    expect(finalized.status).toBe("completed");
+    expect(finalized.import.status).toBe("completed");
+    expect(finalized.conflicts).toEqual([]);
   });
 
   it("rolls back everything the import created", async () => {

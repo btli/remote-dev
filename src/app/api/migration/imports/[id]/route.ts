@@ -1,6 +1,7 @@
 /**
  * /api/migration/imports/[id] — DESTINATION-side import record.
- *   GET    — status poll.
+ *   GET    — status poll, incl. `receivedChunks` per archive (derived from
+ *            the staging dir) so an interrupted source can resume uploads.
  *   DELETE — roll back: remove the imported project/profiles + staging dir.
  */
 import { NextResponse } from "next/server";
@@ -15,7 +16,8 @@ export const GET = withApiAuth(async (_request, { userId, params }) => {
   if (!id) return errorResponse("Missing id", 400, "MISSING_ID");
   const row = await MigrationImportService.getImport(userId, id);
   if (!row) return errorResponse("Import not found", 404, "NOT_FOUND");
-  return NextResponse.json({ import: row });
+  const receivedChunks = await MigrationImportService.listReceivedChunks(row);
+  return NextResponse.json({ import: row, receivedChunks });
 });
 
 export const DELETE = withApiAuth(async (_request, { userId, params }) => {
