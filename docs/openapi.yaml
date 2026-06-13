@@ -77,6 +77,8 @@ tags:
     description: API keys for programmatic access
   - name: Profiles
     description: Agent profiles and per-profile config
+  - name: ClaudeLimits
+    description: Claude profile usage-limit state and fallback pools
   - name: AgentCLI
     description: Agent CLI installation status
   - name: AgentProviders
@@ -1142,6 +1144,156 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [profileId], properties: { profileId: { type: string } } } } } }
       responses: { '200': { $ref: '#/components/responses/Success' } }
     delete: { tags: [Profiles], summary: Unlink folder from profile, responses: { '200': { $ref: '#/components/responses/Success' } } }
+  /api/profiles/{id}/limit-state:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [ClaudeLimits]
+      summary: Get a profile's serialized Claude usage-limit state
+      responses:
+        '200': { description: Limit state (available/unknown default when none recorded), content: { application/json: { schema: { $ref: '#/components/schemas/LimitState' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [ClaudeLimits]
+      summary: Manual override — mark a profile available (clears a limit)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [available], description: Only "available" is accepted (a user action is authoritative; bypasses the staleness guard) }
+      responses:
+        '200': { description: Updated limit state, content: { application/json: { schema: { $ref: '#/components/schemas/LimitState' } } } }
+        '400': { description: Status other than "available", content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/profiles/select:
+    get:
+      tags: [ClaudeLimits]
+      summary: Recommended profile for a project (read-only wizard pre-fill)
+      description: >-
+        Runs the primary→fallback-pool selection (with rotation) for the
+        project and returns the recommended profile. Creates nothing. The same
+        resolution runs server-side at session creation for claude sessions
+        with no explicit profile.
+      parameters:
+        - { name: projectId, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Recommendation (profileId null when nothing is configured)
+          content: { application/json: { schema: { type: object, properties: { profileId: { type: string, nullable: true }, wasAutoSelected: { type: boolean } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/claude/usage:
+    get:
+      tags: [ClaudeLimits]
+      summary: Claude Accounts dashboard payload
+      description: >-
+        Every Claude-capable profile the caller owns with its account kind +
+        display identity, serialized limit state, and the ids of the caller's
+        pools it belongs to.
+      responses:
+        '200':
+          description: Dashboard payload
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profiles:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        accountKind: { type: string, enum: [subscription, api_key] }
+                        emailAddress: { type: string, nullable: true }
+                        organizationName: { type: string, nullable: true }
+                        limitState: { $ref: '#/components/schemas/LimitState' }
+                        pools: { type: array, items: { type: string } }
+  /api/claude-pools:
+    get:
+      tags: [ClaudeLimits]
+      summary: List the caller's fallback pools (with member counts)
+      responses:
+        '200':
+          description: Pools
+          content: { application/json: { schema: { type: object, properties: { pools: { type: array, items: { type: object, properties: { id: { type: string }, name: { type: string }, memberCount: { type: integer } } } } } } } }
+    post:
+      tags: [ClaudeLimits]
+      summary: Create a fallback pool
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string } } } } } }
+      responses:
+        '201': { description: Created pool, content: { application/json: { schema: { type: object, properties: { id: { type: string }, name: { type: string }, memberCount: { type: integer } } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/claude-pools/{poolId}:
+    parameters: [{ name: poolId, in: path, required: true, schema: { type: string } }]
+    get:
+      tags: [ClaudeLimits]
+      summary: Get a pool plus its members (name + limit state)
+      responses:
+        '200':
+          description: Pool with members
+          content: { application/json: { schema: { type: object, properties: { id: { type: string }, name: { type: string }, members: { type: array, items: { type: object, properties: { profileId: { type: string }, name: { type: string, nullable: true }, priority: { type: integer }, limitState: { $ref: '#/components/schemas/LimitState' } } } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [ClaudeLimits]
+      summary: Rename a pool
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string } } } } } }
+      responses:
+        '200': { description: Renamed, content: { application/json: { schema: { type: object, properties: { id: { type: string }, name: { type: string } } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [ClaudeLimits]
+      summary: Delete a pool (members cascade)
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/claude-pools/{poolId}/members:
+    parameters: [{ name: poolId, in: path, required: true, schema: { type: string } }]
+    get:
+      tags: [ClaudeLimits]
+      summary: List pool members ordered by ascending priority
+      responses:
+        '200': { description: Members, content: { application/json: { schema: { type: object, properties: { members: { type: array, items: { type: object, properties: { profileId: { type: string }, priority: { type: integer } } } } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [ClaudeLimits]
+      summary: Add or upsert a pool member (re-POST updates priority)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [profileId]
+              properties:
+                profileId: { type: string }
+                priority: { type: integer, description: "Lower = higher priority / earlier in rotation (default 0)" }
+      responses:
+        '201': { description: Added/updated, content: { application/json: { schema: { type: object, properties: { poolId: { type: string }, profileId: { type: string }, priority: { type: integer } } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { description: Pool or profile not owned by the caller, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    delete:
+      tags: [ClaudeLimits]
+      summary: Remove a pool member
+      parameters: [{ name: profileId, in: query, schema: { type: string }, description: profileId (may also be supplied in a JSON body) }]
+      responses:
+        '204': { description: Removed }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/claude-pools/{poolId}/status:
+    parameters: [{ name: poolId, in: path, required: true, schema: { type: string } }]
+    get:
+      tags: [ClaudeLimits]
+      summary: Pool availability snapshot (per-member limit state)
+      responses:
+        '200':
+          description: Member availability
+          content: { application/json: { schema: { type: object, properties: { poolId: { type: string }, name: { type: string }, members: { type: array, items: { type: object, properties: { profileId: { type: string }, name: { type: string, nullable: true }, priority: { type: integer }, limitState: { $ref: '#/components/schemas/LimitState' } } } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
   /api/agent-profiles/{id}/configs:
     parameters: [{ $ref: '#/components/parameters/IdPath' }]
     get: { tags: [Profiles], summary: Get all JSON configs for a profile, responses: { '200': { description: Configs, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, '404': { $ref: '#/components/responses/NotFound' } } }
@@ -2380,6 +2532,20 @@ components:
       properties:
         ids: { type: array, items: { type: string } }
         all: { type: boolean }
+    LimitState:
+      type: object
+      description: >-
+        Serialized Claude usage-limit block shared by the profile/pool routes.
+        A profile with no recorded state serializes as the available/unknown
+        default (all numeric/timestamp fields null, status "unknown").
+        Timestamps are epoch-ms numbers matching the DB timestampMs columns.
+      properties:
+        limitStatus: { type: string, enum: [available, limited, unknown] }
+        window5hPct: { type: integer, nullable: true, description: "0-100 utilization of the rolling 5h window, or null if unobserved" }
+        window7dPct: { type: integer, nullable: true, description: "0-100 utilization of the rolling 7d window, or null if unobserved" }
+        resetAt5h: { type: integer, nullable: true, description: Epoch-ms when the 5h window resets }
+        resetAt7d: { type: integer, nullable: true, description: Epoch-ms when the 7d window resets }
+        effectiveResetAt: { type: integer, nullable: true, description: "min(resetAt5h, resetAt7d): soonest the account is available again" }
     Session:
       type: object
       properties:
