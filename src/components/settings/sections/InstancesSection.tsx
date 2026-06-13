@@ -120,6 +120,8 @@ export function InstancesSection() {
           </Button>
         </div>
 
+        <MigrationRequirements />
+
         {error && (
           <div className="flex items-start gap-2 p-3 rounded-md border border-destructive/40 bg-destructive/10 text-destructive text-sm">
             <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
@@ -243,6 +245,57 @@ export function InstancesSection() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+// ============================================================================
+// Requirements explainer — what a migration destination needs
+// ============================================================================
+
+/**
+ * A collapsible checklist of the prerequisites a migration destination must
+ * satisfy. Surfaced both here and in the Migrate dialog so the most common
+ * "it doesn't work" causes (no key, wrong key owner, missing slug, CF Access)
+ * are visible before the user hits an error.
+ */
+export function MigrationRequirements({
+  defaultOpen = false,
+}: {
+  defaultOpen?: boolean;
+}) {
+  return (
+    <details
+      open={defaultOpen}
+      className="rounded-md border border-border bg-card/30"
+    >
+      <summary className="cursor-pointer text-sm font-medium p-3 text-foreground">
+        Requirements for a migration destination
+      </summary>
+      <ul className="px-3 pb-3 space-y-1.5 text-xs text-muted-foreground list-disc pl-7">
+        <li>
+          The destination instance already <strong>exists and is reachable</strong>{" "}
+          at its Base URL.
+        </li>
+        <li>
+          <strong>Your account exists on the destination</strong>, and you have
+          created an <strong>API key there</strong> (its Settings → Mobile → “New
+          API Key”) for the user who will own the migrated project.
+        </li>
+        <li>
+          If the destination is reached <strong>off-LAN through Cloudflare
+          Access</strong>, add a <strong>CF Access service token</strong> below
+          (Client ID + Secret) so server-to-server calls clear the edge.
+        </li>
+        <li>
+          For a Shape B instance behind the supervisor router, the Base URL must
+          include the <strong>instance slug</strong>, e.g.{" "}
+          <code>https://rdv.joyful.house/homelab</code>.
+        </li>
+      </ul>
+      <p className="px-3 pb-3 text-xs text-muted-foreground">
+        See <code>docs/MIGRATION.md</code> for the full walkthrough.
+      </p>
+    </details>
   );
 }
 
@@ -405,8 +458,10 @@ function PeerEditDialog({
             {existing ? "Edit peer instance" : "Add peer instance"}
           </DialogTitle>
           <DialogDescription>
-            The API key is created on the destination instance (Settings →
-            Mobile → API keys) and stored encrypted here.
+            Create the API key <strong>on the destination instance</strong>,
+            for the account that will own the migrated project: open its
+            Settings → Mobile and click “New API Key”. Paste it below — it is
+            stored encrypted here and never shown again.
           </DialogDescription>
         </DialogHeader>
 

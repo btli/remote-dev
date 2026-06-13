@@ -48,6 +48,8 @@ const KNOWN_SECTIONS: SettingsSection[] = [
   "ssh",
   "secrets",
   "beads",
+  "triggers",
+  "instances",
   "system",
   "logs",
   "mobile",
