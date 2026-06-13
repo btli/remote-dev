@@ -11,7 +11,10 @@
  */
 
 import { InvalidValueError } from "../errors/DomainError";
-import type { UsageDetectionSource } from "@/types/claude-limits";
+import type {
+  ClaudeLimitStatus,
+  UsageDetectionSource,
+} from "@/types/claude-limits";
 import { UsageWindow } from "./UsageWindow";
 
 export interface LimitStateProps {
@@ -20,9 +23,26 @@ export interface LimitStateProps {
   windows: UsageWindow[];
   /** How this state was observed; null if never observed. */
   source: UsageDetectionSource | null;
-  /** When the profile first became limited (only set while limited). */
-  limitedSince: Date | null;
   /** When the state was last checked; null if never. */
+  lastCheckedAt: Date | null;
+}
+
+/**
+ * The common derived projection of a LimitState, shared by every consumer that
+ * needs to render it (DB columns, API wire shape). Timestamps are Dates; the
+ * API consumer converts them to epoch-ms. Deriving this once keeps the
+ * `limitStatus` rule and the 5h/7d window lookup in a single place.
+ */
+export interface LimitStateSnapshot {
+  limitStatus: ClaudeLimitStatus;
+  /** 0-100, or null if that window has not been observed. */
+  window5hPct: number | null;
+  window7dPct: number | null;
+  resetAt5h: Date | null;
+  resetAt7d: Date | null;
+  /** min(resetAt5h, resetAt7d): soonest the account is available again. */
+  effectiveResetAt: Date | null;
+  detectionSource: UsageDetectionSource | null;
   lastCheckedAt: Date | null;
 }
 
@@ -31,7 +51,6 @@ export class LimitState {
   private readonly limited: boolean;
   private readonly windows: readonly UsageWindow[];
   private readonly source: UsageDetectionSource | null;
-  private readonly limitedSince: Date | null;
   private readonly lastCheckedAt: Date | null;
 
   private constructor(props: LimitStateProps) {
@@ -40,8 +59,7 @@ export class LimitState {
     // Freeze a copy so external mutation of the input array can't leak in.
     this.windows = Object.freeze([...props.windows]);
     this.source = props.source;
-    // Defensive copies so later mutation of the caller's Dates cannot leak in.
-    this.limitedSince = props.limitedSince ? new Date(props.limitedSince.getTime()) : null;
+    // Defensive copy so later mutation of the caller's Date cannot leak in.
     this.lastCheckedAt = props.lastCheckedAt ? new Date(props.lastCheckedAt.getTime()) : null;
   }
 
@@ -74,29 +92,25 @@ export class LimitState {
       isLimited: false,
       windows: opts?.windows ?? [],
       source: opts?.source ?? null,
-      limitedSince: null,
       lastCheckedAt: opts?.lastCheckedAt ?? null,
     });
   }
 
-  /** A limited state. `limitedSince` defaults to `lastCheckedAt` when omitted. */
+  /** A limited state. */
   static limited(
     profileId: string,
     opts?: {
       windows?: UsageWindow[];
       source?: UsageDetectionSource | null;
-      limitedSince?: Date | null;
       lastCheckedAt?: Date | null;
     }
   ): LimitState {
-    const lastCheckedAt = opts?.lastCheckedAt ?? null;
     return LimitState.create({
       profileId,
       isLimited: true,
       windows: opts?.windows ?? [],
       source: opts?.source ?? null,
-      limitedSince: opts?.limitedSince ?? lastCheckedAt,
-      lastCheckedAt,
+      lastCheckedAt: opts?.lastCheckedAt ?? null,
     });
   }
 
@@ -115,10 +129,6 @@ export class LimitState {
 
   getSource(): UsageDetectionSource | null {
     return this.source;
-  }
-
-  getLimitedSince(): Date | null {
-    return this.limitedSince ? new Date(this.limitedSince.getTime()) : null;
   }
 
   getLastCheckedAt(): Date | null {
@@ -156,12 +166,41 @@ export class LimitState {
     return reset.getTime() <= now.getTime();
   }
 
+  /**
+   * Derive the common projection used by every renderer (DB write, API wire).
+   * Centralizes the `limitStatus` rule (limited → "limited"; not limited with
+   * no source observed → "unknown"; else "available") and the 5h/7d window
+   * lookup so the two consumers can't drift. Timestamps stay as Dates (the API
+   * consumer converts to epoch-ms).
+   */
+  toSnapshot(): LimitStateSnapshot {
+    const windows = this.getWindows();
+    const w5h = windows.find((w) => w.getDuration() === "5h");
+    const w7d = windows.find((w) => w.getDuration() === "7d");
+
+    const limitStatus: ClaudeLimitStatus = this.limited
+      ? "limited"
+      : this.source === null
+        ? "unknown"
+        : "available";
+
+    return {
+      limitStatus,
+      window5hPct: w5h?.getUtilizationPct() ?? null,
+      window7dPct: w7d?.getUtilizationPct() ?? null,
+      resetAt5h: w5h?.getResetAt() ?? null,
+      resetAt7d: w7d?.getResetAt() ?? null,
+      effectiveResetAt: this.earliestResetAt(),
+      detectionSource: this.source,
+      lastCheckedAt: this.getLastCheckedAt(),
+    };
+  }
+
   equals(other: LimitState): boolean {
     if (
       this.profileId !== other.profileId ||
       this.limited !== other.limited ||
       this.source !== other.source ||
-      timeOrNull(this.limitedSince) !== timeOrNull(other.limitedSince) ||
       timeOrNull(this.lastCheckedAt) !== timeOrNull(other.lastCheckedAt) ||
       this.windows.length !== other.windows.length
     ) {

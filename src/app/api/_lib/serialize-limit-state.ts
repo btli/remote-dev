@@ -33,10 +33,12 @@ export interface SerializedLimitState {
 /**
  * Serialize a domain `LimitState` (or null) into the wire shape.
  *
- * `null` → available/unknown default. Otherwise the windows are projected back
- * onto the 5h/7d dimensions, and `limitStatus` follows the domain:
- * limited → "limited"; not limited with no source observed → "unknown"; else
- * "available".
+ * `null` → available/unknown default. Otherwise the shared
+ * {@link LimitState.toSnapshot} projection is mapped onto the wire shape, with
+ * its Date timestamps converted to epoch-ms. The wire shape intentionally omits
+ * the snapshot's `detectionSource` / `lastCheckedAt` (the client doesn't need
+ * them); `limitStatus` follows the domain (limited → "limited"; not limited
+ * with no source observed → "unknown"; else "available").
  */
 export function serializeLimitState(
   state: LimitState | null
@@ -52,23 +54,14 @@ export function serializeLimitState(
     };
   }
 
-  const windows = state.getWindows();
-  const w5h = windows.find((w) => w.getDuration() === "5h");
-  const w7d = windows.find((w) => w.getDuration() === "7d");
-
-  const limitStatus: ClaudeLimitStatus = state.isLimited()
-    ? "limited"
-    : state.getSource() === null
-      ? "unknown"
-      : "available";
-
+  const snap = state.toSnapshot();
   return {
-    limitStatus,
-    window5hPct: w5h?.getUtilizationPct() ?? null,
-    window7dPct: w7d?.getUtilizationPct() ?? null,
-    resetAt5h: toEpochMs(w5h?.getResetAt() ?? null),
-    resetAt7d: toEpochMs(w7d?.getResetAt() ?? null),
-    effectiveResetAt: toEpochMs(state.earliestResetAt()),
+    limitStatus: snap.limitStatus,
+    window5hPct: snap.window5hPct,
+    window7dPct: snap.window7dPct,
+    resetAt5h: toEpochMs(snap.resetAt5h),
+    resetAt7d: toEpochMs(snap.resetAt7d),
+    effectiveResetAt: toEpochMs(snap.effectiveResetAt),
   };
 }
 

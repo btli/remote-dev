@@ -63,7 +63,7 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
   }
 
   // Manual source bypasses the staleness guard in the use-case.
-  const state = await trackUsageLimitUseCase.execute({
+  const { state } = await trackUsageLimitUseCase.execute({
     profileId,
     userId,
     source: "manual",

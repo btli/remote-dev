@@ -27,26 +27,22 @@ import {
   fetchClaudeUsage,
   type ClaudeUsageSnapshot,
 } from "@/infrastructure/external/anthropic-usage-adapter";
+import { isUsagePollEnabled } from "./poll-config";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("UsageEndpointPoller");
-
-/** Whether proactive polling is enabled (default OFF). */
-function pollEnabled(): boolean {
-  return process.env.RDV_CLAUDE_USAGE_POLL_ENABLED === "1";
-}
 
 export class UsageEndpointPoller implements UsageLimitGateway {
   supports(kind: ClaudeAccountKind): boolean {
     // Only subscription accounts expose the rolling-window usage endpoint, and
     // only when the feature flag is enabled.
-    return pollEnabled() && kind === "subscription";
+    return isUsagePollEnabled() && kind === "subscription";
   }
 
   async fetchLimitState(
     profileId: string
   ): Promise<LimitDetectionResult | null> {
-    if (!pollEnabled()) return null;
+    if (!isUsagePollEnabled()) return null;
 
     try {
       const token = await this.loadOAuthToken(profileId);

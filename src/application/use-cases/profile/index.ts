@@ -6,6 +6,7 @@
 export {
   TrackUsageLimitUseCase,
   type TrackUsageLimitInput,
+  type TrackUsageLimitResult,
 } from "./TrackUsageLimitUseCase";
 
 export {

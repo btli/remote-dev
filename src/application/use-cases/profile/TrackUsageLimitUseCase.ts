@@ -4,7 +4,10 @@
  * Builds a domain `LimitState` from a raw detection input and upserts it via
  * the repository with a staleness guard: a slower/older source must not
  * clobber a strictly-newer observation (the repo compares `lastCheckedAt`).
- * Returns the state that was built (the caller can broadcast it).
+ * Returns the built state plus `wasNewlyLimited` — true only when this
+ * observation flips the profile from not-limited (or never-observed) into
+ * limited. Callers use that flag to fire relaunch handling exactly once per
+ * limit episode (a repeat "still limited" observation must not re-relaunch).
  *
  * Depends only on ports + value objects — unit-tested with an in-memory fake.
  */
@@ -31,14 +34,30 @@ export interface TrackUsageLimitInput {
   observedAt?: Date;
 }
 
+/** The outcome of recording an observation. */
+export interface TrackUsageLimitResult {
+  /** The state built from this observation (the caller broadcasts it). */
+  state: LimitState;
+  /**
+   * True when this observation transitions the profile INTO limited (the prior
+   * stored state was absent or not-limited). Used to gate one-shot relaunch.
+   */
+  wasNewlyLimited: boolean;
+}
+
 export class TrackUsageLimitUseCase {
   constructor(
     private readonly stateRepository: UsageLimitStateRepository
   ) {}
 
-  async execute(input: TrackUsageLimitInput): Promise<LimitState> {
+  async execute(input: TrackUsageLimitInput): Promise<TrackUsageLimitResult> {
     const observedAt = input.observedAt ?? new Date();
     const isLimited = input.isLimited ?? false;
+
+    // Read the prior state up front so we can tell whether this observation is
+    // a NEW limit (off→on transition) vs. a repeat of an already-limited state.
+    const prior = await this.stateRepository.findByProfileId(input.profileId);
+    const wasNewlyLimited = isLimited && (!prior || !prior.isLimited());
 
     // Build usage windows only for the dimensions we actually observed. A
     // window with neither a percentage nor a reset carries no information, so
@@ -72,10 +91,11 @@ export class TrackUsageLimitUseCase {
       profileId: input.profileId,
       source: input.source,
       isLimited,
+      wasNewlyLimited,
       observedAt: observedAt.toISOString(),
     });
 
-    return state;
+    return { state, wasNewlyLimited };
   }
 }
 

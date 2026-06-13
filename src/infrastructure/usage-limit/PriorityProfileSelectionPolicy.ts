@@ -13,10 +13,12 @@
  *     primary pinned to the most-preferred slot (priority < every member).
  *
  * Semantics:
- *   - `selectForProject`: the selected AVAILABLE candidate by priority. If a
- *     pool exists but ALL candidates are limited, return a best-effort
- *     candidate (primary, else lowest-priority member) — never block a launch,
- *     never throw. Nothing configured (no primary, no pool) → null.
+ *   - `selectForProject`: the selected AVAILABLE candidate by priority. When
+ *     NOTHING is currently available — whether that's a limited primary with no
+ *     pool, or every pool member limited — fall through to a best-effort
+ *     candidate (the primary if set, else the lowest-priority member) so a
+ *     launch is never blocked and nothing is thrown. `null` is returned ONLY
+ *     when nothing is configured (no primary AND no pool).
  *   - `selectNextAvailable`: same gathering but EXCLUDING `currentProfileId`;
  *     first AVAILABLE by priority, else null ("all limited").
  *
@@ -74,18 +76,17 @@ export class PriorityProfileSelectionPolicy implements ProfileSelectionPolicy {
     userId: string,
     now: Date
   ): Promise<string | null> {
-    const { candidates, hasPool } = await this.gatherCandidates(
-      projectId,
-      userId
-    );
+    const candidates = await this.gatherCandidates(projectId, userId);
     if (candidates.length === 0) return null; // nothing configured
 
     const selected = RotationPolicy.select(candidates, now);
     if (selected) return selected;
 
-    // Everything is limited. Don't block the launch: fall back to a best-effort
-    // candidate (the primary, else the lowest-priority member).
-    if (!hasPool && candidates.length === 0) return null;
+    // Nothing is available right now (e.g. the primary is limited and there is
+    // no pool, or every pool member is limited). Don't block the launch: fall
+    // through to a best-effort candidate (the primary if set, else the
+    // lowest-priority member). `null` is only returned above, when nothing is
+    // configured at all.
     return bestEffort(candidates);
   }
 
@@ -95,7 +96,7 @@ export class PriorityProfileSelectionPolicy implements ProfileSelectionPolicy {
     userId: string,
     now: Date
   ): Promise<string | null> {
-    const { candidates } = await this.gatherCandidates(projectId, userId);
+    const candidates = await this.gatherCandidates(projectId, userId);
     const alternates = candidates.filter(
       (c) => c.profileId !== currentProfileId
     );
@@ -111,7 +112,7 @@ export class PriorityProfileSelectionPolicy implements ProfileSelectionPolicy {
   private async gatherCandidates(
     projectId: string,
     userId: string
-  ): Promise<{ candidates: RotationCandidate[]; hasPool: boolean }> {
+  ): Promise<RotationCandidate[]> {
     const link = await this.readProjectLink(projectId);
     const primaryId = link?.profileId ?? null;
 
@@ -137,7 +138,7 @@ export class PriorityProfileSelectionPolicy implements ProfileSelectionPolicy {
 
     const profileIds = [...byProfile.keys()];
     if (profileIds.length === 0) {
-      return { candidates: [], hasPool: poolId !== null };
+      return [];
     }
 
     const states = await this.stateRepository.findManyByProfileIds(profileIds);
@@ -152,7 +153,7 @@ export class PriorityProfileSelectionPolicy implements ProfileSelectionPolicy {
     // Sort by priority so best-effort + selection are order-stable.
     candidates.sort((a, b) => a.priority - b.priority);
 
-    return { candidates, hasPool: poolId !== null };
+    return candidates;
   }
 }
 

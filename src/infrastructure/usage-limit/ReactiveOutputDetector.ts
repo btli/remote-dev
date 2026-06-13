@@ -19,38 +19,46 @@ import type {
 } from "@/application/ports/UsageLimitGateway";
 import type { ClaudeAccountKind } from "@/types/claude-limits";
 
-/** Result of parsing a chunk of agent output for a usage-limit signal. */
+/**
+ * Result of parsing a chunk of agent output for a usage-limit signal.
+ * The 5h and 7d resets are reported independently — a chunk may disclose one,
+ * both, or neither (each null when its epoch header is absent).
+ */
 export interface ReactiveParseResult {
   isLimited: boolean;
-  /** The reset time when the output disclosed one; null otherwise. */
-  resetAt: Date | null;
+  /** The 5h reset epoch, when the output disclosed one; null otherwise. */
+  resetAt5h: Date | null;
+  /** The 7d reset epoch, when the output disclosed one; null otherwise. */
+  resetAt7d: Date | null;
 }
 
 /**
- * The specific phrase Claude Code prints when a subscription account taps out.
- * We require this phrase (not just the word "limit") to avoid false positives
- * on unrelated text like "rate limit your requests" or "character limit".
+ * The Claude-anchored phrase Claude Code prints when a subscription account
+ * taps out. Because it names Claude itself, matching it is a strong signal — no
+ * extra context check is needed.
  */
-const LIMIT_PHRASE =
-  /claude\s+(?:ai\s+)?usage\s+limit\s+reached|usage\s+limit\s+reached|you'?ve\s+(?:hit|reached)\s+your\s+usage\s+limit/i;
+const CLAUDE_LIMIT_PHRASE = /claude\s+(?:ai\s+)?usage\s+limit\s+reached/i;
 
 /**
- * Header line some responses carry:
+ * Generic limit phrases that other tools also emit (npm, GitHub quota text,
+ * etc.). On their own these are too weak — we only treat them as a Claude limit
+ * when the surrounding text ALSO mentions "claude" (see {@link parse}).
+ */
+const GENERIC_LIMIT_PHRASE =
+  /usage\s+limit\s+reached|you'?ve\s+(?:hit|reached)\s+your\s+usage\s+limit/i;
+
+/** Whether the text mentions Claude at all (the disambiguating context). */
+const MENTIONS_CLAUDE = /claude/i;
+
+/**
+ * The two unified rate-limit reset headers, each carrying a unix epoch
+ * (seconds), e.g.
  *   anthropic-ratelimit-unified-5h-reset: 1749826800
- * The value is a unix epoch (seconds). We accept the 5h or 7d unified header.
+ *   anthropic-ratelimit-unified-7d-reset: 1750000000
+ * Parsed independently so a chunk can disclose either window's reset.
  */
-const HEADER_RESET =
-  /anthropic-ratelimit-unified-(?:5h|7d)-reset:\s*(\d{9,})/i;
-
-/**
- * Human "resets at <time>" disclosure, e.g.
- *   "Your limit will reset at 3pm."
- *   "resets at 11:30pm (America/Los_Angeles)"
- *   "resets at 15:00"
- * Captures the clock time; we resolve it to the next occurrence from `now`.
- */
-const RESET_AT_CLOCK =
-  /resets?\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i;
+const HEADER_RESET_5H = /anthropic-ratelimit-unified-5h-reset:\s*(\d{9,})/i;
+const HEADER_RESET_7D = /anthropic-ratelimit-unified-7d-reset:\s*(\d{9,})/i;
 
 export class ReactiveOutputDetector implements UsageLimitGateway {
   supports(kind: ClaudeAccountKind): boolean {
@@ -65,75 +73,49 @@ export class ReactiveOutputDetector implements UsageLimitGateway {
   /**
    * Parse a block of agent output for a usage-limit signal.
    *
-   * Liberal but specific: the limit is only flagged when the recognizable
-   * phrase appears. A reset time is extracted when present (epoch header
-   * preferred, then a "resets at <clock>" disclosure) but is always optional.
+   * Liberal but specific. The limit is flagged only when:
+   *   - the Claude-anchored phrase appears (strong, self-disambiguating), OR
+   *   - a generic "usage limit reached" phrase appears AND the text mentions
+   *     "claude" (so unrelated tool output like "npm usage limit reached" or a
+   *     GitHub quota message never trips it).
+   *
+   * Reset times are extracted ONLY from the authoritative epoch headers (UTC).
+   * A bare human clock disclosure ("resets at 3pm") is deliberately ignored —
+   * resolving it against the server's local timezone produced wrong guesses, so
+   * we prefer leaving the reset null (the profile stays limited until the next
+   * idle scan re-evaluates or a manual clear). The 5h and 7d resets are
+   * reported separately. Both are always optional.
    *
    * @param output Raw output / scrollback text.
-   * @param now Reference time for resolving a bare clock time (defaults to now).
    */
-  static parse(output: string, now: Date = new Date()): ReactiveParseResult {
+  static parse(output: string): ReactiveParseResult {
     if (typeof output !== "string" || output.length === 0) {
-      return { isLimited: false, resetAt: null };
+      return { isLimited: false, resetAt5h: null, resetAt7d: null };
     }
 
-    const isLimited = LIMIT_PHRASE.test(output);
-
-    // A reset epoch header is authoritative when present (even alongside the
-    // phrase). We still only report a reset for a limited signal to avoid
-    // surfacing resets from unrelated log noise.
-    const resetAt = parseReset(output, now);
+    const isLimited =
+      CLAUDE_LIMIT_PHRASE.test(output) ||
+      (GENERIC_LIMIT_PHRASE.test(output) && MENTIONS_CLAUDE.test(output));
 
     if (!isLimited) {
-      return { isLimited: false, resetAt: null };
+      return { isLimited: false, resetAt5h: null, resetAt7d: null };
     }
-    return { isLimited: true, resetAt };
+
+    // Epoch headers are authoritative; report a reset only for a limited signal
+    // to avoid surfacing resets from unrelated log noise.
+    return {
+      isLimited: true,
+      resetAt5h: parseEpochHeader(output, HEADER_RESET_5H),
+      resetAt7d: parseEpochHeader(output, HEADER_RESET_7D),
+    };
   }
 }
 
-/** Extract a reset time: epoch header first, then a "resets at <clock>". */
-function parseReset(output: string, now: Date): Date | null {
-  const header = output.match(HEADER_RESET);
-  if (header) {
-    const epochSec = Number.parseInt(header[1], 10);
-    if (Number.isFinite(epochSec) && epochSec > 0) {
-      return new Date(epochSec * 1000);
-    }
-  }
-
-  const clock = output.match(RESET_AT_CLOCK);
-  if (clock) {
-    return resolveClockTime(clock, now);
-  }
-
-  return null;
-}
-
-/**
- * Resolve a captured clock time ("3", "3pm", "15:00", "11:30pm") to the next
- * occurrence at/after `now`. Bare 24h times are taken literally; am/pm applies
- * 12-hour conversion. If the resolved time is already in the past today, roll
- * to tomorrow.
- */
-function resolveClockTime(
-  match: RegExpMatchArray,
-  now: Date
-): Date | null {
-  let hour = Number.parseInt(match[1], 10);
-  const minute = match[2] ? Number.parseInt(match[2], 10) : 0;
-  const meridiem = match[3]?.toLowerCase();
-
-  if (!Number.isFinite(hour) || hour < 0 || hour > 23) return null;
-  if (minute < 0 || minute > 59) return null;
-
-  if (meridiem === "pm" && hour < 12) hour += 12;
-  if (meridiem === "am" && hour === 12) hour = 0;
-
-  const candidate = new Date(now.getTime());
-  candidate.setHours(hour, minute, 0, 0);
-  // Already past → next day.
-  if (candidate.getTime() <= now.getTime()) {
-    candidate.setDate(candidate.getDate() + 1);
-  }
-  return candidate;
+/** Extract a unix-epoch (seconds) reset from a single header pattern. */
+function parseEpochHeader(output: string, pattern: RegExp): Date | null {
+  const match = output.match(pattern);
+  if (!match) return null;
+  const epochSec = Number.parseInt(match[1], 10);
+  if (!Number.isFinite(epochSec) || epochSec <= 0) return null;
+  return new Date(epochSec * 1000);
 }

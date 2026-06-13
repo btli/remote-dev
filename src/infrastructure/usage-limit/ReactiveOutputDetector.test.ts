@@ -11,13 +11,17 @@ describe("ReactiveOutputDetector.parse", () => {
       expect(r.isLimited).toBe(true);
     });
 
-    it("detects 'usage limit reached' without the Claude prefix", () => {
-      const r = ReactiveOutputDetector.parse("Error: usage limit reached");
+    it("detects a generic 'usage limit reached' when the text mentions Claude", () => {
+      const r = ReactiveOutputDetector.parse(
+        "Error from Claude: usage limit reached"
+      );
       expect(r.isLimited).toBe(true);
     });
 
-    it("detects \"you've hit your usage limit\"", () => {
-      const r = ReactiveOutputDetector.parse("You've hit your usage limit for now.");
+    it("detects \"you've hit your usage limit\" when Claude is mentioned", () => {
+      const r = ReactiveOutputDetector.parse(
+        "Claude: You've hit your usage limit for now."
+      );
       expect(r.isLimited).toBe(true);
     });
 
@@ -25,15 +29,39 @@ describe("ReactiveOutputDetector.parse", () => {
       const r = ReactiveOutputDetector.parse("CLAUDE USAGE LIMIT REACHED");
       expect(r.isLimited).toBe(true);
     });
+
+    it("detects 'Claude usage limit reached. Your limit will reset at 3pm.'", () => {
+      const r = ReactiveOutputDetector.parse(
+        "Claude usage limit reached. Your limit will reset at 3pm."
+      );
+      expect(r.isLimited).toBe(true);
+      // Bare clock disclosure with no epoch header → no reset extracted.
+      expect(r.resetAt5h).toBeNull();
+      expect(r.resetAt7d).toBeNull();
+    });
   });
 
-  describe("no false positives on unrelated 'limit' text", () => {
+  describe("requires Claude context for generic phrases (no false positives)", () => {
+    it("does NOT flag 'npm usage limit reached' (no Claude context)", () => {
+      const r = ReactiveOutputDetector.parse("npm usage limit reached");
+      expect(r.isLimited).toBe(false);
+      expect(r.resetAt5h).toBeNull();
+      expect(r.resetAt7d).toBeNull();
+    });
+
+    it("does NOT flag a GitHub-style quota message", () => {
+      const r = ReactiveOutputDetector.parse(
+        "GitHub API: you've reached your usage limit for this hour."
+      );
+      expect(r.isLimited).toBe(false);
+    });
+
     it("does not flag a generic 'rate limit' mention", () => {
       const r = ReactiveOutputDetector.parse(
         "Tip: rate limit your requests to avoid throttling."
       );
       expect(r.isLimited).toBe(false);
-      expect(r.resetAt).toBeNull();
+      expect(r.resetAt5h).toBeNull();
     });
 
     it("does not flag 'character limit' / 'limit your'", () => {
@@ -44,89 +72,75 @@ describe("ReactiveOutputDetector.parse", () => {
     it("does not flag a reset-time line on its own (no limit phrase)", () => {
       const r = ReactiveOutputDetector.parse("Your quota resets at 3pm.");
       expect(r.isLimited).toBe(false);
-      expect(r.resetAt).toBeNull();
+      expect(r.resetAt5h).toBeNull();
+      expect(r.resetAt7d).toBeNull();
     });
 
     it("handles empty / non-string input", () => {
       expect(ReactiveOutputDetector.parse("").isLimited).toBe(false);
-      // @ts-expect-error intentional: defends against runtime non-string
-      expect(ReactiveOutputDetector.parse(null).isLimited).toBe(false);
+      // Defends against runtime non-string input (the type says string).
+      expect(
+        ReactiveOutputDetector.parse(null as unknown as string).isLimited
+      ).toBe(false);
     });
   });
 
-  describe("reset extraction (optional)", () => {
-    it("reports limited with no reset when none is disclosed", () => {
+  describe("reset extraction (epoch headers only)", () => {
+    it("reports limited with no reset when no epoch header is disclosed", () => {
       const r = ReactiveOutputDetector.parse("Claude usage limit reached.");
       expect(r.isLimited).toBe(true);
-      expect(r.resetAt).toBeNull();
+      expect(r.resetAt5h).toBeNull();
+      expect(r.resetAt7d).toBeNull();
     });
 
-    it("parses the unified-5h-reset epoch header", () => {
+    it("parses the unified-5h-reset epoch header into resetAt5h only", () => {
       const epoch = 1749826800; // 2025-06-13T15:00:00Z
       const r = ReactiveOutputDetector.parse(
         `Claude usage limit reached\nanthropic-ratelimit-unified-5h-reset: ${epoch}`
       );
       expect(r.isLimited).toBe(true);
-      expect(r.resetAt?.getTime()).toBe(epoch * 1000);
+      expect(r.resetAt5h?.getTime()).toBe(epoch * 1000);
+      expect(r.resetAt7d).toBeNull();
     });
 
-    it("parses the unified-7d-reset epoch header", () => {
+    it("parses the unified-7d-reset epoch header into resetAt7d only", () => {
       const epoch = 1750000000;
       const r = ReactiveOutputDetector.parse(
-        `usage limit reached\nanthropic-ratelimit-unified-7d-reset: ${epoch}`
+        `Claude usage limit reached\nanthropic-ratelimit-unified-7d-reset: ${epoch}`
       );
-      expect(r.resetAt?.getTime()).toBe(epoch * 1000);
+      expect(r.resetAt7d?.getTime()).toBe(epoch * 1000);
+      expect(r.resetAt5h).toBeNull();
     });
 
-    it("parses 'resets at 3pm' relative to now", () => {
-      const now = new Date("2026-06-13T10:00:00");
+    it("parses BOTH headers independently when both are present", () => {
+      const epoch5h = 1749826800;
+      const epoch7d = 1750000000;
       const r = ReactiveOutputDetector.parse(
-        "Claude usage limit reached. Resets at 3pm.",
-        now
+        [
+          "Claude usage limit reached",
+          `anthropic-ratelimit-unified-5h-reset: ${epoch5h}`,
+          `anthropic-ratelimit-unified-7d-reset: ${epoch7d}`,
+        ].join("\n")
+      );
+      expect(r.resetAt5h?.getTime()).toBe(epoch5h * 1000);
+      expect(r.resetAt7d?.getTime()).toBe(epoch7d * 1000);
+    });
+
+    it("ignores a bare clock disclosure (no local-timezone guess)", () => {
+      const r = ReactiveOutputDetector.parse(
+        "Claude usage limit reached. Resets at 11:30pm."
       );
       expect(r.isLimited).toBe(true);
-      expect(r.resetAt?.getHours()).toBe(15);
-      expect(r.resetAt?.getMinutes()).toBe(0);
-      // Same day since 3pm is after 10am.
-      expect(r.resetAt?.getDate()).toBe(13);
+      expect(r.resetAt5h).toBeNull();
+      expect(r.resetAt7d).toBeNull();
     });
 
-    it("parses 'resets at 11:30pm' with minutes", () => {
-      const now = new Date("2026-06-13T10:00:00");
-      const r = ReactiveOutputDetector.parse(
-        "Claude usage limit reached. Your limit resets at 11:30pm.",
-        now
-      );
-      expect(r.resetAt?.getHours()).toBe(23);
-      expect(r.resetAt?.getMinutes()).toBe(30);
-    });
-
-    it("parses a bare 24h 'resets at 15:00'", () => {
-      const now = new Date("2026-06-13T10:00:00");
-      const r = ReactiveOutputDetector.parse(
-        "usage limit reached — resets at 15:00",
-        now
-      );
-      expect(r.resetAt?.getHours()).toBe(15);
-    });
-
-    it("rolls a past clock time to the next day", () => {
-      const now = new Date("2026-06-13T20:00:00");
-      const r = ReactiveOutputDetector.parse(
-        "Claude usage limit reached. Resets at 9am.",
-        now
-      );
-      expect(r.resetAt?.getHours()).toBe(9);
-      expect(r.resetAt?.getDate()).toBe(14); // next day
-    });
-
-    it("prefers the epoch header over a clock disclosure when both present", () => {
+    it("uses the epoch header even when a clock disclosure is also present", () => {
       const epoch = 1749826800;
       const r = ReactiveOutputDetector.parse(
-        `Claude usage limit reached. Resets at 9am.\nanthropic-ratelimit-unified-5h-reset: ${epoch}`,
-        new Date("2026-06-13T20:00:00")
+        `Claude usage limit reached. Resets at 9am.\nanthropic-ratelimit-unified-5h-reset: ${epoch}`
       );
-      expect(r.resetAt?.getTime()).toBe(epoch * 1000);
+      expect(r.resetAt5h?.getTime()).toBe(epoch * 1000);
     });
   });
 

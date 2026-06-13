@@ -23,21 +23,17 @@ import {
   usageLimitGateway,
   trackUsageLimitUseCase,
 } from "@/infrastructure/container";
+import { isUsagePollEnabled } from "./poll-config";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("UsagePollSweep");
-
-/** Whether the proactive poller is enabled (default OFF). */
-function pollEnabled(): boolean {
-  return process.env.RDV_CLAUDE_USAGE_POLL_ENABLED === "1";
-}
 
 /**
  * Run one proactive poll sweep over all Claude-capable profiles. Best-effort:
  * never throws; logs a per-sweep summary at debug. No-op when the flag is off.
  */
 export async function runUsagePollSweep(): Promise<void> {
-  if (!pollEnabled()) return;
+  if (!isUsagePollEnabled()) return;
 
   let polled = 0;
   let recorded = 0;

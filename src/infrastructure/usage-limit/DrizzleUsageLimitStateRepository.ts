@@ -154,7 +154,12 @@ function makeWindow(
   );
 }
 
-/** The mutable column set shared by insert + update (excludes the keys). */
+/**
+ * The mutable column set shared by insert + update (excludes the keys).
+ * Maps directly from the shared {@link LimitState.toSnapshot} projection so the
+ * `limitStatus` rule + 5h/7d lookup live in one place (the column names already
+ * match the snapshot field names).
+ */
 function limitStateToColumns(state: LimitState): {
   limitStatus: ClaudeLimitStatus;
   window5hPct: number | null;
@@ -165,24 +170,15 @@ function limitStateToColumns(state: LimitState): {
   detectionSource: UsageDetectionSource | null;
   lastCheckedAt: Date | null;
 } {
-  const windows = state.getWindows();
-  const w5h = windows.find((w) => w.getDuration() === "5h");
-  const w7d = windows.find((w) => w.getDuration() === "7d");
-
-  const limitStatus: ClaudeLimitStatus = state.isLimited()
-    ? "limited"
-    : state.getSource() === null
-      ? "unknown"
-      : "available";
-
+  const snap = state.toSnapshot();
   return {
-    limitStatus,
-    window5hPct: w5h?.getUtilizationPct() ?? null,
-    window7dPct: w7d?.getUtilizationPct() ?? null,
-    resetAt5h: w5h?.getResetAt() ?? null,
-    resetAt7d: w7d?.getResetAt() ?? null,
-    effectiveResetAt: state.earliestResetAt() ?? null,
-    detectionSource: state.getSource(),
-    lastCheckedAt: state.getLastCheckedAt() ?? null,
+    limitStatus: snap.limitStatus,
+    window5hPct: snap.window5hPct,
+    window7dPct: snap.window7dPct,
+    resetAt5h: snap.resetAt5h,
+    resetAt7d: snap.resetAt7d,
+    effectiveResetAt: snap.effectiveResetAt,
+    detectionSource: snap.detectionSource,
+    lastCheckedAt: snap.lastCheckedAt,
   };
 }

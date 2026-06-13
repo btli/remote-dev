@@ -384,7 +384,7 @@ async function trackAndBroadcastLimit(input: {
 }): Promise<void> {
   try {
     const { trackUsageLimitUseCase } = await import("@/infrastructure/container");
-    const state = await trackUsageLimitUseCase.execute({
+    const { state, wasNewlyLimited } = await trackUsageLimitUseCase.execute({
       profileId: input.profileId,
       userId: input.userId,
       source: input.source,
@@ -396,11 +396,15 @@ async function trackAndBroadcastLimit(input: {
       observedAt: input.observedAt,
     });
 
+    // Always broadcast the new state (the UI reflects every observation).
     broadcastProfileLimitChanged(state);
 
-    // Only a freshly-limited profile triggers relaunch handling, and only when
-    // we know which project + session to act on. Fire-and-forget.
-    if (input.isLimited && input.projectId && input.sessionId) {
+    // Relaunch handling fires only on a NEW limit (off→on transition), so a
+    // repeat "still limited" observation doesn't double-relaunch — and only
+    // when we know which project + session to act on. Fire-and-forget. The
+    // use-case computes `wasNewlyLimited` from the prior stored state, which
+    // centralizes the dedup for every path that funnels through here.
+    if (wasNewlyLimited && input.projectId && input.sessionId) {
       const { handleSessionLimit } = await import(
         "@/infrastructure/usage-limit/relaunch-orchestration"
       );
@@ -439,8 +443,10 @@ async function scanSessionScrollbackForLimit(
   if (session.agentProvider !== "claude") return;
 
   try {
-    // Cheap guard: if the profile is already recorded limited and not yet past
-    // its reset, there's nothing new to detect — skip the capture+parse.
+    // Cheap performance guard (NOT the relaunch dedup — that now lives in the
+    // use-case via `wasNewlyLimited`): if the profile is already recorded
+    // limited and not yet past its reset, there's nothing new to detect, so
+    // skip the expensive scrollback capture + parse on this idle transition.
     const { usageLimitStateRepository } = await import(
       "@/infrastructure/container"
     );
@@ -468,13 +474,13 @@ async function scanSessionScrollbackForLimit(
     const { ReactiveOutputDetector } = await import(
       "@/infrastructure/usage-limit/ReactiveOutputDetector"
     );
-    const parsed = ReactiveOutputDetector.parse(output, now);
+    const parsed = ReactiveOutputDetector.parse(output);
     if (!parsed.isLimited) return;
 
     usageLog.info("Reactive usage-limit detected on idle", {
       sessionId: session.id,
       profileId: session.profileId,
-      hasReset: parsed.resetAt !== null,
+      hasReset: parsed.resetAt5h !== null || parsed.resetAt7d !== null,
     });
 
     await trackAndBroadcastLimit({
@@ -482,7 +488,8 @@ async function scanSessionScrollbackForLimit(
       userId: session.userId,
       source: "reactive",
       isLimited: true,
-      resetAt5h: parsed.resetAt ?? undefined,
+      resetAt5h: parsed.resetAt5h ?? undefined,
+      resetAt7d: parsed.resetAt7d ?? undefined,
       observedAt: now,
       projectId: session.projectId,
       sessionId: session.id,

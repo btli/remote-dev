@@ -51,7 +51,7 @@ describe("TrackUsageLimitUseCase", () => {
   });
 
   it("records an available state with no windows", async () => {
-    const state = await useCase.execute({
+    const { state } = await useCase.execute({
       profileId: "p1",
       userId: "u1",
       source: "reactive",
@@ -66,7 +66,7 @@ describe("TrackUsageLimitUseCase", () => {
 
   it("builds a limited state with a 5h reset window", async () => {
     const reset = new Date("2026-06-13T15:00:00Z");
-    const state = await useCase.execute({
+    const { state } = await useCase.execute({
       profileId: "p1",
       userId: "u1",
       source: "reactive",
@@ -84,7 +84,7 @@ describe("TrackUsageLimitUseCase", () => {
   });
 
   it("builds both 5h and 7d windows from percentages", async () => {
-    const state = await useCase.execute({
+    const { state } = await useCase.execute({
       profileId: "p1",
       userId: "u1",
       source: "poller",
@@ -100,7 +100,7 @@ describe("TrackUsageLimitUseCase", () => {
   });
 
   it("clamps out-of-range percentages into 0-100", async () => {
-    const state = await useCase.execute({
+    const { state } = await useCase.execute({
       profileId: "p1",
       userId: "u1",
       source: "poller",
@@ -110,6 +110,65 @@ describe("TrackUsageLimitUseCase", () => {
     const windows = state.getWindows();
     expect(windows.find((w) => w.getDuration() === "5h")?.getUtilizationPct()).toBe(100);
     expect(windows.find((w) => w.getDuration() === "7d")?.getUtilizationPct()).toBe(0);
+  });
+
+  describe("wasNewlyLimited", () => {
+    it("is true on the first limited observation (no prior state)", async () => {
+      const { wasNewlyLimited } = await useCase.execute({
+        profileId: "p1",
+        userId: "u1",
+        source: "reactive",
+        isLimited: true,
+        resetAt5h: new Date("2026-06-13T17:00:00Z"),
+      });
+      expect(wasNewlyLimited).toBe(true);
+    });
+
+    it("is true when transitioning available → limited", async () => {
+      await useCase.execute({
+        profileId: "p1",
+        userId: "u1",
+        source: "poller",
+        isLimited: false,
+        observedAt: new Date("2026-06-13T10:00:00Z"),
+      });
+      const { wasNewlyLimited } = await useCase.execute({
+        profileId: "p1",
+        userId: "u1",
+        source: "reactive",
+        isLimited: true,
+        observedAt: new Date("2026-06-13T11:00:00Z"),
+      });
+      expect(wasNewlyLimited).toBe(true);
+    });
+
+    it("is FALSE on a repeat 'still limited' observation (no double-relaunch)", async () => {
+      await useCase.execute({
+        profileId: "p1",
+        userId: "u1",
+        source: "reactive",
+        isLimited: true,
+        observedAt: new Date("2026-06-13T10:00:00Z"),
+      });
+      const { wasNewlyLimited } = await useCase.execute({
+        profileId: "p1",
+        userId: "u1",
+        source: "reactive",
+        isLimited: true,
+        observedAt: new Date("2026-06-13T11:00:00Z"),
+      });
+      expect(wasNewlyLimited).toBe(false);
+    });
+
+    it("is FALSE for an available observation", async () => {
+      const { wasNewlyLimited } = await useCase.execute({
+        profileId: "p1",
+        userId: "u1",
+        source: "manual",
+        isLimited: false,
+      });
+      expect(wasNewlyLimited).toBe(false);
+    });
   });
 
   it("does NOT clobber a strictly-newer stored observation (staleness guard)", async () => {
@@ -154,7 +213,7 @@ describe("TrackUsageLimitUseCase", () => {
     });
 
     // Manual "mark available" with an older timestamp must still take effect.
-    const result = await useCase.execute({
+    const { state: result } = await useCase.execute({
       profileId: "p1",
       userId: "u1",
       source: "manual",

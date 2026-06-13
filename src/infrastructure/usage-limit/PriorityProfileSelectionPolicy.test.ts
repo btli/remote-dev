@@ -104,6 +104,16 @@ describe("PriorityProfileSelectionPolicy.selectForProject", () => {
     expect(await policy.selectForProject("proj", "u1", NOW)).toBe("primary");
   });
 
+  it("returns the (limited) primary when it is set, has NO pool, and is limited (best-effort, never null)", async () => {
+    const policy = makePolicy({
+      link: { profileId: "primary", poolId: null },
+      states: new Map([["primary", limited("primary")]]),
+    });
+    // No pool + the only candidate is limited → fall through to best-effort
+    // (the primary) rather than dropping the project to no-profile.
+    expect(await policy.selectForProject("proj", "u1", NOW)).toBe("primary");
+  });
+
   it("prefers the primary over pool members when the primary is available", async () => {
     const policy = makePolicy({
       link: { profileId: "primary", poolId: "pool-1" },

@@ -9,8 +9,7 @@
  * Semantics are deliberately non-throwing for the "launch now" path: a missing
  * configuration returns null (caller proceeds with no profile = legacy
  * behavior); an all-limited pool returns a best-effort profile rather than
- * blocking a launch. `ProfileAllLimitedError` is provided for callers that
- * DO want to treat "everything is limited" as exceptional.
+ * blocking a launch.
  */
 
 export interface ProfileSelectionPolicy {
@@ -38,19 +37,4 @@ export interface ProfileSelectionPolicy {
     userId: string,
     now: Date
   ): Promise<string | null>;
-}
-
-/**
- * Raised when every candidate profile for a project is currently limited.
- * The "launch now" path does NOT throw this (it returns best-effort); it is
- * available for callers that want to surface an all-limited condition.
- */
-export class ProfileAllLimitedError extends Error {
-  constructor(
-    readonly projectId: string,
-    readonly earliestResetAt: Date | null
-  ) {
-    super("All pool profiles limited");
-    this.name = "ProfileAllLimitedError";
-  }
 }

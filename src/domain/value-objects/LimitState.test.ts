@@ -11,14 +11,13 @@ describe("LimitState", () => {
       const s = LimitState.available("p1");
       expect(s.getProfileId()).toBe("p1");
       expect(s.isLimited()).toBe(false);
-      expect(s.getLimitedSince()).toBeNull();
     });
 
-    it("limited() builds a limited state and defaults limitedSince to lastCheckedAt", () => {
+    it("limited() builds a limited state", () => {
       const s = LimitState.limited("p1", { lastCheckedAt: NOW, source: "reactive" });
       expect(s.isLimited()).toBe(true);
       expect(s.getSource()).toBe("reactive");
-      expect(s.getLimitedSince()?.getTime()).toBe(NOW.getTime());
+      expect(s.getLastCheckedAt()?.getTime()).toBe(NOW.getTime());
     });
 
     it("throws on empty profileId", () => {
@@ -28,7 +27,6 @@ describe("LimitState", () => {
           isLimited: false,
           windows: [],
           source: null,
-          limitedSince: null,
           lastCheckedAt: null,
         })
       ).toThrow(InvalidValueError);
@@ -98,6 +96,54 @@ describe("LimitState", () => {
     });
   });
 
+  describe("toSnapshot", () => {
+    it("projects a never-observed available state as 'unknown' with null fields", () => {
+      const snap = LimitState.available("p1").toSnapshot();
+      expect(snap.limitStatus).toBe("unknown");
+      expect(snap.window5hPct).toBeNull();
+      expect(snap.window7dPct).toBeNull();
+      expect(snap.resetAt5h).toBeNull();
+      expect(snap.resetAt7d).toBeNull();
+      expect(snap.effectiveResetAt).toBeNull();
+      expect(snap.detectionSource).toBeNull();
+      expect(snap.lastCheckedAt).toBeNull();
+    });
+
+    it("projects an observed-but-available state as 'available'", () => {
+      const snap = LimitState.available("p1", {
+        source: "poller",
+        lastCheckedAt: NOW,
+        windows: [UsageWindow.create("7d", 30, null)],
+      }).toSnapshot();
+      expect(snap.limitStatus).toBe("available");
+      expect(snap.detectionSource).toBe("poller");
+      expect(snap.window7dPct).toBe(30);
+      expect(snap.lastCheckedAt?.getTime()).toBe(NOW.getTime());
+    });
+
+    it("projects a limited state with 5h/7d windows + effective reset (Dates)", () => {
+      const r5 = new Date("2026-06-13T17:00:00Z");
+      const r7 = new Date("2026-06-20T12:00:00Z");
+      const snap = LimitState.limited("p1", {
+        source: "reactive",
+        lastCheckedAt: NOW,
+        windows: [
+          UsageWindow.create("5h", 100, r5),
+          UsageWindow.create("7d", 88, r7),
+        ],
+      }).toSnapshot();
+      expect(snap.limitStatus).toBe("limited");
+      expect(snap.window5hPct).toBe(100);
+      expect(snap.window7dPct).toBe(88);
+      expect(snap.resetAt5h).toBeInstanceOf(Date);
+      expect(snap.resetAt5h?.getTime()).toBe(r5.getTime());
+      expect(snap.resetAt7d?.getTime()).toBe(r7.getTime());
+      // Effective = the earliest of the two windows.
+      expect(snap.effectiveResetAt?.getTime()).toBe(r5.getTime());
+      expect(snap.detectionSource).toBe("reactive");
+    });
+  });
+
   describe("immutability", () => {
     it("getWindows returns a copy; pushing to it does not grow the state", () => {
       const s = LimitState.available("p1", { windows: [UsageWindow.create("5h", 1, null)] });
@@ -113,11 +159,11 @@ describe("LimitState", () => {
       expect(s.getWindows()).toHaveLength(1);
     });
 
-    it("getLimitedSince returns a defensive copy", () => {
-      const s = LimitState.limited("p1", { limitedSince: new Date(NOW.getTime()) });
-      const got = s.getLimitedSince();
+    it("getLastCheckedAt returns a defensive copy", () => {
+      const s = LimitState.limited("p1", { lastCheckedAt: new Date(NOW.getTime()) });
+      const got = s.getLastCheckedAt();
       got!.setFullYear(2000);
-      expect(s.getLimitedSince()!.getUTCFullYear()).toBe(2026);
+      expect(s.getLastCheckedAt()!.getUTCFullYear()).toBe(2026);
     });
   });
 
@@ -126,13 +172,11 @@ describe("LimitState", () => {
       const a = LimitState.limited("p1", {
         windows: [UsageWindow.create("5h", 100, new Date(NOW.getTime()))],
         source: "poller",
-        limitedSince: new Date(NOW.getTime()),
         lastCheckedAt: new Date(NOW.getTime()),
       });
       const b = LimitState.limited("p1", {
         windows: [UsageWindow.create("5h", 100, new Date(NOW.getTime()))],
         source: "poller",
-        limitedSince: new Date(NOW.getTime()),
         lastCheckedAt: new Date(NOW.getTime()),
       });
       expect(a.equals(b)).toBe(true);
@@ -145,6 +189,12 @@ describe("LimitState", () => {
     it("equals false when windows differ", () => {
       const a = LimitState.available("p1", { windows: [UsageWindow.create("5h", 1, null)] });
       const b = LimitState.available("p1", { windows: [UsageWindow.create("5h", 2, null)] });
+      expect(a.equals(b)).toBe(false);
+    });
+
+    it("equals false when lastCheckedAt differs", () => {
+      const a = LimitState.limited("p1", { lastCheckedAt: new Date(NOW.getTime()) });
+      const b = LimitState.limited("p1", { lastCheckedAt: new Date(NOW.getTime() + 1000) });
       expect(a.equals(b)).toBe(false);
     });
   });

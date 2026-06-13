@@ -63,7 +63,6 @@ export type {
 } from "./ProfilePoolRepository";
 
 export type { ProfileSelectionPolicy } from "./ProfileSelectionPolicy";
-export { ProfileAllLimitedError } from "./ProfileSelectionPolicy";
 
 export type {
   NotificationPort,
