@@ -30,6 +30,20 @@ export const STRUCTURAL_DEP_TYPES: ReadonlySet<string> = new Set([
 
 export type DependencyClass = "blocking" | "structural" | "other";
 
+// ----- Viewable issue types -----
+
+/** Issue types the sidebar renders. `--include-infra` also returns agent/rig/role
+ *  beads (created by the automation features) — those are filtered out here so only
+ *  real issues + inter-agent messages reach the UI. Mirrors the route's VALID_TYPES. */
+export const VIEWABLE_ISSUE_TYPES: ReadonlySet<string> = new Set([
+  "task",
+  "bug",
+  "feature",
+  "epic",
+  "chore",
+  "message",
+]);
+
 export function classifyDependency(type: string): DependencyClass {
   if (BLOCKING_DEP_TYPES.has(type)) return "blocking";
   if (STRUCTURAL_DEP_TYPES.has(type)) return "structural";
@@ -164,17 +178,25 @@ function isRawIssue(value: unknown): value is RawBdIssue {
   );
 }
 
-/** Load and parse the full `bd export` (every non-infra issue) for a project. */
+/**
+ * Load and parse the `bd export --include-infra` output for a project, keeping
+ * only records whose `issue_type` is in {@link VIEWABLE_ISSUE_TYPES}. That
+ * admits real issues plus inter-agent message beads while dropping the
+ * agent/rig/role infra beads `--include-infra` also returns. Records that fail
+ * the type allowlist are skipped silently (their bodies may be noisy/sensitive);
+ * only genuinely non-issue records are debug-logged.
+ */
 async function loadExport(projectPath: string): Promise<RawBdIssue[]> {
   const stdout = await runBdExportCached(projectPath);
   const records = parseJsonl(stdout);
   const issues: RawBdIssue[] = [];
   for (const record of records) {
-    if (isRawIssue(record)) {
-      issues.push(record);
-    } else {
+    if (!isRawIssue(record)) {
       log.debug("Skipping non-issue export record", { record: JSON.stringify(record).slice(0, 200) });
+      continue;
     }
+    if (!VIEWABLE_ISSUE_TYPES.has(record.issue_type ?? "")) continue;
+    issues.push(record);
   }
   return issues;
 }

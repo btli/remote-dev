@@ -129,7 +129,14 @@ export function parseJsonl(stdout: string): unknown[] {
 const EXPORT_CACHE_TTL_MS = 2000;
 const exportCache = new Map<string, { stdout: string; at: number }>();
 
-/** Run `bd export` (JSONL of all issues) with a short-TTL stdout cache. */
+/**
+ * Run `bd export` (JSONL of issues) with a short-TTL stdout cache. The
+ * `--include-infra` flag makes bd also emit message-type beads (inter-agent
+ * messages) alongside real issues; it does NOT emit `bd remember` memories
+ * (those need `--all`/`--include-memories`, which we deliberately avoid). The
+ * service layer filters the result to a viewable-type allowlist so the extra
+ * agent/rig/role infra beads `--include-infra` also returns are dropped.
+ */
 export async function runBdExportCached(
   projectPath: string,
   opts?: RunBdOptions
@@ -139,7 +146,7 @@ export async function runBdExportCached(
   if (cached && now - cached.at < EXPORT_CACHE_TTL_MS) {
     return cached.stdout;
   }
-  const stdout = await runBd(projectPath, ["export"], opts);
+  const stdout = await runBd(projectPath, ["export", "--include-infra"], opts);
   if (exportCache.size > 256) exportCache.clear();
   exportCache.set(projectPath, { stdout, at: now });
   return stdout;

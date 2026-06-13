@@ -9,6 +9,7 @@ import {
   getStats,
   BLOCKING_DEP_TYPES,
   STRUCTURAL_DEP_TYPES,
+  VIEWABLE_ISSUE_TYPES,
 } from "../beads-service";
 import { isBeadsUnavailable } from "@/lib/beads-cli";
 import { hasActiveBlockers, type BeadsDependency } from "@/types/beads";
@@ -139,6 +140,15 @@ describe("BLOCKING_DEP_TYPES and STRUCTURAL_DEP_TYPES", () => {
     expect(STRUCTURAL_DEP_TYPES.has("parent-child")).toBe(true);
     expect(STRUCTURAL_DEP_TYPES.has("child-of")).toBe(true);
     expect(STRUCTURAL_DEP_TYPES.size).toBe(2);
+  });
+});
+
+describe("VIEWABLE_ISSUE_TYPES", () => {
+  it("includes message but not agent/rig/role infra types", () => {
+    expect(VIEWABLE_ISSUE_TYPES.has("message")).toBe(true);
+    expect(VIEWABLE_ISSUE_TYPES.has("agent")).toBe(false);
+    expect(VIEWABLE_ISSUE_TYPES.has("rig")).toBe(false);
+    expect(VIEWABLE_ISSUE_TYPES.has("role")).toBe(false);
   });
 });
 
@@ -342,6 +352,24 @@ describe("getIssues", () => {
 
     const issues = await getIssues("/proj");
     expect(issues.map((i) => i.id).sort()).toEqual(["child-1", "epic-1"]);
+  });
+
+  it("includes message-type beads but excludes agent/rig/role infra beads", async () => {
+    exportJsonl = toJsonl([
+      exportRecord({ id: "task-1", issue_type: "task" }),
+      exportRecord({ id: "msg-1", issue_type: "message" }),
+      exportRecord({ id: "agent-1", issue_type: "agent" }),
+    ]);
+
+    const issues = await getIssues("/proj");
+    const ids = issues.map((i) => i.id);
+
+    // The message bead is shown; the agent infra bead is filtered out.
+    expect(ids).toContain("msg-1");
+    expect(ids).toContain("task-1");
+    expect(ids).not.toContain("agent-1");
+    // Confirm the message issue keeps its type through mapping.
+    expect(issues.find((i) => i.id === "msg-1")!.issueType).toBe("message");
   });
 
   it("filters by explicit status when provided", async () => {
