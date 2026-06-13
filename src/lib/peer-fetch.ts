@@ -14,11 +14,111 @@
  * choke on `<!doctype html>` ("Unexpected token '<'"). With manual redirect
  * the 3xx stays a real, inspectable Response so {@link readPeerJson} can turn
  * it into an actionable error ("destination behind Cloudflare Access…").
+ *
+ * Public DNS for CF-fronted peers — why: when the source host sits on the SAME
+ * LAN as a Cloudflare-fronted peer (e.g. dev.bryanli.net beside
+ * rdv.joyful.house), the host's split-horizon DNS resolves the peer hostname to
+ * a PRIVATE LAN IP. A launchd-detached daemon on macOS Sequoia is then silently
+ * denied local-subnet access (Local Network privacy) → `fetch failed` /
+ * PEER_UNREACHABLE — even though the daemon can reach the public internet fine.
+ * Because we already attach CF Access service-token headers for such peers, the
+ * fix is to resolve the hostname via a PUBLIC resolver (1.1.1.1 by default,
+ * overridable with `RDV_PEER_DNS_SERVERS`), bypassing split-horizon so the
+ * daemon connects to Cloudflare's public edge over the internet. Peers WITHOUT
+ * a CF token keep default system DNS (they are genuinely same-network targets).
  */
+import { Resolver } from "node:dns";
+import type { LookupFunction } from "node:net";
+
+import { Agent, type Dispatcher } from "undici";
+
 import { decrypt } from "@/lib/encryption";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("PeerFetch");
+
+/**
+ * A resolver pinned to a PUBLIC nameserver (not the host's split-horizon DNS),
+ * built once and reused. Servers default to Cloudflare's 1.1.1.1/1.0.0.1 and
+ * are overridable via `RDV_PEER_DNS_SERVERS` (comma-separated).
+ */
+let publicResolver: Resolver | undefined;
+function getPublicResolver(): Resolver {
+  if (!publicResolver) {
+    const servers = (process.env.RDV_PEER_DNS_SERVERS ?? "1.1.1.1,1.0.0.1")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const r = new Resolver();
+    r.setServers(servers.length > 0 ? servers : ["1.1.1.1", "1.0.0.1"]);
+    publicResolver = r;
+  }
+  return publicResolver;
+}
+
+/**
+ * A {@link LookupFunction} that resolves via the public resolver. Honors
+ * `options.all` (array of `{address, family}` vs a single address) and
+ * `options.family` (0=any, 4, 6). Prefers A (IPv4) records, falling back to
+ * AAAA (IPv6); on total failure it calls back with the error.
+ */
+const publicLookup: LookupFunction = (hostname, options, callback) => {
+  const r = getPublicResolver();
+  const family = typeof options === "number" ? options : (options.family ?? 0);
+  const all = typeof options === "number" ? false : (options.all ?? false);
+
+  const respond = (records: string[], fam: 4 | 6): void => {
+    if (all) {
+      callback(
+        null,
+        records.map((address) => ({ address, family: fam })),
+      );
+    } else {
+      callback(null, records[0], fam);
+    }
+  };
+
+  const tryV6 = (firstError?: NodeJS.ErrnoException | null): void => {
+    if (family === 4) {
+      callback(firstError ?? new Error(`No A record for ${hostname}`), [], 4);
+      return;
+    }
+    r.resolve6(hostname, (err6, addrs6) => {
+      if (err6 || !addrs6 || addrs6.length === 0) {
+        callback(err6 ?? firstError ?? new Error(`No AAAA record for ${hostname}`), [], 6);
+        return;
+      }
+      respond(addrs6, 6);
+    });
+  };
+
+  if (family === 6) {
+    tryV6();
+    return;
+  }
+  r.resolve4(hostname, (err4, addrs4) => {
+    if (err4 || !addrs4 || addrs4.length === 0) {
+      tryV6(err4);
+      return;
+    }
+    respond(addrs4, 4);
+  });
+};
+
+/**
+ * An undici Agent whose connections resolve hostnames via {@link publicLookup}.
+ * Built lazily and reused across calls. SNI / cert validation is unaffected:
+ * undici derives the TLS servername from the request URL host (not the resolved
+ * IP), so the original hostname is presented automatically — never hardcode a
+ * servername here.
+ */
+let publicDnsAgent: Agent | undefined;
+function getPublicDnsAgent(): Agent {
+  if (!publicDnsAgent) {
+    publicDnsAgent = new Agent({ connect: { lookup: publicLookup } });
+  }
+  return publicDnsAgent;
+}
 
 /** The subset of a peer_instance row peerFetch needs. */
 export interface PeerTarget {
@@ -84,6 +184,10 @@ export async function peerFetch(
         "re-save the peer with both, or neither",
     );
   }
+  // For CF-fronted peers, resolve via the public resolver so the daemon
+  // connects to Cloudflare's public edge over the internet rather than a
+  // split-horizon LAN IP it may be blocked from reaching (see module header).
+  let dispatcher: Dispatcher | undefined;
   if (hasCfId && hasCfSecret) {
     try {
       headers.set("CF-Access-Client-Id", peer.cfAccessClientId as string);
@@ -97,12 +201,20 @@ export async function peerFetch(
         "Stored peer CF Access secret cannot be decrypted — re-register the peer",
       );
     }
+    dispatcher = getPublicDnsAgent();
   }
 
-  log.debug("fetching peer endpoint", { peerId: peer.id, path });
+  log.debug("fetching peer endpoint", { peerId: peer.id, path, publicDns: !!dispatcher });
   // `redirect: "manual"` keeps a CF-Access/OIDC 302 as an opaque-redirect
-  // Response instead of chasing it into an HTML login page.
-  return fetchImpl(url, { ...init, redirect: "manual", headers });
+  // Response instead of chasing it into an HTML login page. `dispatcher` is not
+  // on the DOM RequestInit, so widen the type rather than cast it away.
+  const requestInit: RequestInit & { dispatcher?: Dispatcher } = {
+    ...init,
+    redirect: "manual",
+    headers,
+  };
+  if (dispatcher) requestInit.dispatcher = dispatcher;
+  return fetchImpl(url, requestInit);
 }
 
 /**
