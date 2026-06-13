@@ -491,6 +491,83 @@ describe("MigrationImportService file phase", () => {
     expect(verify.ok).toBe(false);
   });
 
+  it("rolls back the extracted working tree when a LATER finalize step fails, so the SAME import can be retried without a 409", async () => {
+    // Run #1: a valid working-tree archive, followed by an agent-settings
+    // archive whose manifest hash is a LIE. The working tree assembles +
+    // extracts cleanly, then agent-settings fails its whole-archive sha check
+    // — exactly the shape of the 6n4u/2qqt E2E (extract then later-step fail).
+    write("wt1/keep.txt", "from run 1");
+    const tree1 = await makeArchive("working-tree", join(fixtureRoot, "wt1"), 1);
+    write("as1/agent-settings/claude/settings.json", '{"x":1}');
+    const settings1 = await makeArchive("agent-settings", join(fixtureRoot, "as1"), 1);
+    const badSettings1 = { ...settings1.entry, sha256: "a".repeat(64) };
+
+    await initWithArchives([tree1.entry, badSettings1]);
+    await pushChunks(tree1);
+    await pushChunks(settings1);
+
+    const destDir = join(getProjectsDir(), "filesapp");
+
+    await expect(finalizeImport(DEST_USER, JOB_ID)).rejects.toMatchObject({
+      code: "ARCHIVE_SHA_MISMATCH",
+    });
+    expect((await getImport(DEST_USER, JOB_ID))?.status).toBe("failed");
+    // The orphaned working tree was rolled back — the dir must NOT be left
+    // behind to block the retry.
+    expect(existsSync(destDir)).toBe(false);
+
+    // Run #2: retry the SAME import id with a sound agent-settings archive.
+    // initImport's failed-retry path cleans the prior attempt; finalize must
+    // now succeed (no DEST_DIR_NOT_EMPTY).
+    write("wt2/keep.txt", "from run 2");
+    const tree2 = await makeArchive("working-tree", join(fixtureRoot, "wt2"), 1);
+    write("as2/agent-settings/claude/settings.json", '{"x":2}');
+    const settings2 = await makeArchive("agent-settings", join(fixtureRoot, "as2"), 1);
+
+    await initImport(
+      DEST_USER,
+      JOB_ID,
+      "https://src",
+      makeManifest([tree2.entry, settings2.entry]),
+      OPTIONS,
+    );
+    await importDb(DEST_USER, JOB_ID, makeBundle());
+    await pushChunks(tree2);
+    await pushChunks(settings2);
+
+    const { import: finalized } = await finalizeImport(DEST_USER, JOB_ID);
+    expect(finalized.status).toBe("completed");
+    expect(readFileSync(join(destDir, "keep.txt"), "utf8")).toBe("from run 2");
+
+    const verify = await verifyImport(DEST_USER, JOB_ID);
+    expect(verify.ok).toBe(true);
+    expect(verify.missingPaths).toEqual([]);
+  });
+
+  it("does NOT remove a genuine pre-existing user dir when finalize fails before any extraction (guard refusal)", async () => {
+    // The non-empty-dest guard throws BEFORE the working tree is ever claimed,
+    // so the rollback cleanup must never run against user data.
+    write("wt_guard/file.txt", "incoming");
+    const tree = await makeArchive("working-tree", join(fixtureRoot, "wt_guard"), 1);
+    write("as_guard/agent-settings/claude/settings.json", '{"x":1}');
+    const settings = await makeArchive("agent-settings", join(fixtureRoot, "as_guard"), 1);
+    await initWithArchives([tree.entry, settings.entry]);
+    await pushChunks(tree);
+    await pushChunks(settings);
+
+    // Pre-existing user files at the destination working dir.
+    const destDir = join(getProjectsDir(), "filesapp");
+    mkdirSync(destDir, { recursive: true });
+    writeFileSync(join(destDir, "precious.txt"), "do not clobber");
+
+    await expect(finalizeImport(DEST_USER, JOB_ID)).rejects.toMatchObject({
+      code: "DEST_DIR_NOT_EMPTY",
+    });
+    // The pre-existing dir AND its contents survive — cleanup never touched it.
+    expect(existsSync(destDir)).toBe(true);
+    expect(readFileSync(join(destDir, "precious.txt"), "utf8")).toBe("do not clobber");
+  });
+
   it("fails finalize when the assembled archive hash does not match the manifest", async () => {
     write("content7/file.txt", "data");
     const tree = await makeArchive("working-tree", join(fixtureRoot, "content7"), 1);
