@@ -127,6 +127,7 @@ export function ClaudeAccountsDashboard() {
               now={now}
               pools={pools}
               onMarkAvailable={markProfileAvailable}
+              onLoginSynced={() => void load()}
             />
           ))}
         </div>
