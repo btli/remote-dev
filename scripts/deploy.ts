@@ -897,6 +897,30 @@ function runMigration(): boolean {
     return false;
   }
 
+  // Pre-push FK reconcile (remote-dev-3b3l P0 unblock). Phase 1 added table-level
+  // FOREIGN KEY columns to four PRE-EXISTING SQLite tables (project_profile_link,
+  // agent_run, agent_schedule, trigger_config). SQLite can't ALTER a FK in place,
+  // so drizzle-kit's `db:push` re-plans a full table rebuild for them on every
+  // run — and its SQLite rebuild path emits the same `CREATE INDEX` TWICE, dying
+  // with `index <name> already exists` and HARD-ABORTING the deploy for everyone.
+  // The schema is now FK-free for those columns (set-null is enforced in the
+  // app), so a FRESH push is clean; but the live DB still carries the legacy FKs,
+  // so we drop them HERE — a correct single-index rebuild — making the db:push
+  // below a clean no-op. Idempotent (skips tables whose FK is already gone) and
+  // SQLite-only (PG drops the same constraints via drizzle/pg migrate-on-boot).
+  // Must run BEFORE db:push. A failure ABORTS rather than letting the push crash.
+  if (shouldRunSqlitePush(process.env.DATABASE_URL) && !runCommand(
+    ["bun", "run", "db:reconcile-fk-drop"],
+    DEPLOY_SRC,
+    "legacy FK reconcile (pre-push)",
+  )) {
+    logError(
+      "Legacy FK reconcile FAILED — refusing to run db:push (it would crash on the " +
+        "table rebuild). Aborting deploy.",
+    );
+    return false;
+  }
+
   // db:push is `drizzle-kit push --dialect sqlite`, whose getDatabasePath()
   // returns DATABASE_URL verbatim. The webhook now forwards DATABASE_URL
   // (remote-dev-6lf3), so on a Postgres host a `postgresql://…` URL would be fed

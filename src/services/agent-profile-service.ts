@@ -12,10 +12,13 @@ import { db } from "@/db";
 import { affectedRows } from "@/db/sql-helpers";
 import {
   agentProfiles,
+  agentRuns,
+  agentSchedules,
   projectProfileLinks,
   profileGitIdentities,
   profileSecretsConfig,
   terminalSessions,
+  triggerConfigs,
 } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import { mkdir, writeFile, readFile, access } from "node:fs/promises";
@@ -334,6 +337,23 @@ export async function deleteProfile(
     .update(terminalSessions)
     .set({ profileId: null, updatedAt: new Date() })
     .where(eq(terminalSessions.profileId, profileId));
+
+  // Null the profile pin on automation rows. These columns are no longer
+  // DB-level FKs with `ON DELETE SET NULL` (a table-level FK on these
+  // pre-existing tables breaks drizzle-kit db:push idempotency — see
+  // schema.def.ts), so we enforce the set-null semantics in the app.
+  await db
+    .update(agentSchedules)
+    .set({ profileId: null, updatedAt: new Date() })
+    .where(eq(agentSchedules.profileId, profileId));
+  await db
+    .update(triggerConfigs)
+    .set({ profileId: null, updatedAt: new Date() })
+    .where(eq(triggerConfigs.profileId, profileId));
+  await db
+    .update(agentRuns)
+    .set({ profileId: null })
+    .where(eq(agentRuns.profileId, profileId));
 
   // Delete the profile (folder links cascade automatically)
   const result = await db

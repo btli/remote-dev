@@ -1407,9 +1407,13 @@ export const schema: SchemaDefinition = [
     columns: [
       { field: "projectId", dbName: "project_id", kind: "text", primaryKey: true, references: { table: "projects", column: "id", onDelete: "cascade" } },
       { field: "profileId", dbName: "profile_id", kind: "text", notNull: true, references: { table: "agentProfiles", column: "id", onDelete: "cascade" } },
-      // Fallback pool for auto-rotation (primary profileId above stays primary;
-      // set null on pool delete). [remote-dev-3b3l]
-      { field: "poolId", dbName: "pool_id", kind: "text", references: { table: "claudeProfilePools", column: "id", onDelete: "set null" } },
+      // Fallback pool for auto-rotation (primary profileId above stays primary).
+      // App-level set-null on pool delete (DrizzleProfilePoolRepository.deletePool);
+      // intentionally NOT a DB-level FK — a table-level FOREIGN KEY added to this
+      // PRE-EXISTING table breaks drizzle-kit `db:push` idempotency on libsql/SQLite
+      // (it re-plans a full table rebuild every push and dies with
+      // "index … already exists"). [remote-dev-3b3l]
+      { field: "poolId", dbName: "pool_id", kind: "text" },
       { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
     ],
     indexes: [
@@ -1484,8 +1488,10 @@ export const schema: SchemaDefinition = [
       { field: "promptTemplate", dbName: "prompt_template", kind: "text", notNull: true },
       { field: "worktreeType", dbName: "worktree_type", kind: "text" },
       // Pinned Claude profile for triggered runs (schema only in P1; wiring is
-      // P2 / remote-dev-vk1z). Set null on profile delete. [remote-dev-3b3l]
-      { field: "profileId", dbName: "profile_id", kind: "text", references: { table: "agentProfiles", column: "id", onDelete: "set null" } },
+      // P2 / remote-dev-vk1z). App-level set-null on profile delete
+      // (agent-profile-service deleteProfile); intentionally NOT a DB-level FK —
+      // see projectProfileLinks.poolId for why (db:push idempotency). [remote-dev-3b3l]
+      { field: "profileId", dbName: "profile_id", kind: "text" },
       { field: "enabled", dbName: "enabled", kind: "boolean", notNull: true, default: { kind: "value", value: "true" } },
       { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
       { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
@@ -1512,8 +1518,10 @@ export const schema: SchemaDefinition = [
       { field: "worktreeType", dbName: "worktree_type", kind: "text" },
       { field: "baseBranch", dbName: "base_branch", kind: "text" },
       // Pinned Claude profile for scheduled runs (schema only in P1; wiring is
-      // P2 / remote-dev-vk1z). Set null on profile delete. [remote-dev-3b3l]
-      { field: "profileId", dbName: "profile_id", kind: "text", references: { table: "agentProfiles", column: "id", onDelete: "set null" } },
+      // P2 / remote-dev-vk1z). App-level set-null on profile delete
+      // (agent-profile-service deleteProfile); intentionally NOT a DB-level FK —
+      // see projectProfileLinks.poolId for why (db:push idempotency). [remote-dev-3b3l]
+      { field: "profileId", dbName: "profile_id", kind: "text" },
       // Cron (mirrors sessionSchedules).
       { field: "scheduleType", dbName: "schedule_type", kind: "text", notNull: true, typeBrand: "ScheduleType", default: { kind: "value", value: "\"recurring\"" } },
       { field: "cronExpression", dbName: "cron_expression", kind: "text" },
@@ -1550,8 +1558,10 @@ export const schema: SchemaDefinition = [
       { field: "agentProvider", dbName: "agent_provider", kind: "text", notNull: true },
       { field: "agentFlags", dbName: "agent_flags", kind: "text", notNull: true, default: { kind: "value", value: "\"[]\"" } },
       // Claude profile this run launched under (schema only in P1; wiring is
-      // P2 / remote-dev-vk1z). Set null on profile delete. [remote-dev-3b3l]
-      { field: "profileId", dbName: "profile_id", kind: "text", references: { table: "agentProfiles", column: "id", onDelete: "set null" } },
+      // P2 / remote-dev-vk1z). App-level set-null on profile delete
+      // (agent-profile-service deleteProfile); intentionally NOT a DB-level FK —
+      // see projectProfileLinks.poolId for why (db:push idempotency). [remote-dev-3b3l]
+      { field: "profileId", dbName: "profile_id", kind: "text" },
       { field: "prompt", dbName: "prompt", kind: "text", notNull: true },
       // The session this run created (null until launched).
       { field: "sessionId", dbName: "session_id", kind: "text", references: { table: "terminalSessions", column: "id", onDelete: "set null" } },
