@@ -1,5 +1,6 @@
 import {
   runBdExportCached,
+  runBdInfraListCached,
   runBdJson,
   parseJsonl,
   isValidIssueId,
@@ -32,9 +33,10 @@ export type DependencyClass = "blocking" | "structural" | "other";
 
 // ----- Viewable issue types -----
 
-/** Issue types the sidebar renders. `--include-infra` also returns agent/rig/role
- *  beads (created by the automation features) — those are filtered out here so only
- *  real issues + inter-agent messages reach the UI. Mirrors the route's VALID_TYPES. */
+/** Issue types the sidebar renders. The export is filtered to this allowlist;
+ *  `message` is here because the inter-agent message wisps (fetched separately
+ *  via `bd list --include-infra` — `bd export` can't see them) are mapped into
+ *  the same viewable set. Mirrors the route's VALID_TYPES. */
 export const VIEWABLE_ISSUE_TYPES: ReadonlySet<string> = new Set([
   "task",
   "bug",
@@ -140,6 +142,26 @@ interface RawBdIssue {
   comments?: RawBdComment[];
 }
 
+/**
+ * A lean issue record from `bd list --include-infra -n 0 --json` (one element of
+ * a single JSON array — NOT JSONL). Unlike `bd export` records these carry no
+ * `design`/`acceptance_criteria`/`notes`/`closed_at`/`close_reason`/`labels`/
+ * `dependencies`/`comments`; they're used only to surface message-type wisps,
+ * which `bd export` can't read. All fields optional (defensive parse).
+ */
+interface RawBdListIssue {
+  id?: string;
+  title?: string;
+  description?: string;
+  status?: string;
+  priority?: number;
+  issue_type?: string;
+  owner?: string;
+  created_at?: string;
+  created_by?: string;
+  updated_at?: string;
+}
+
 /** `bd status --json` payload. */
 interface RawBdStatus {
   schema_version?: number;
@@ -199,6 +221,38 @@ async function loadExport(projectPath: string): Promise<RawBdIssue[]> {
     issues.push(record);
   }
   return issues;
+}
+
+/**
+ * Load message-type beads via `bd list --include-infra` (a single JSON array,
+ * NOT JSONL). Inter-agent messages are ephemeral wisps in
+ * `.beads/ephemeral.sqlite3` that `bd export` can't read, so they only surface
+ * here. The list returns every issue (bd has no positive `--type` filter), so
+ * we keep only `issue_type === "message"`. A list failure is non-fatal — it's
+ * swallowed to `[]` so regular issues still render — though in practice a
+ * genuinely unavailable bd would already have thrown on the earlier export call.
+ */
+async function loadMessages(projectPath: string): Promise<RawBdListIssue[]> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await runBdInfraListCached(projectPath));
+  } catch (err) {
+    log.debug("bd list --include-infra failed; no messages", { error: String(err) });
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const messages: RawBdListIssue[] = [];
+  for (const record of parsed) {
+    if (
+      typeof record === "object" &&
+      record !== null &&
+      typeof (record as { id?: unknown }).id === "string" &&
+      (record as { issue_type?: unknown }).issue_type === "message"
+    ) {
+      messages.push(record as RawBdListIssue);
+    }
+  }
+  return messages;
 }
 
 /** Map every export record's id to its status (defaulting to "open"). */
@@ -277,6 +331,38 @@ function mapIssue(
     dependents: grouped.dependents.get(id) ?? [],
     parents: grouped.parents.get(id) ?? [],
     children: grouped.children.get(id) ?? [],
+  };
+}
+
+/**
+ * Map a lean `bd list` message record to a `BeadsIssue`. Messages carry no
+ * design/criteria/notes/labels/deps/comments, so those are filled with empty
+ * defaults; `issueType` is pinned to `"message"`.
+ */
+function mapMessage(record: RawBdListIssue): BeadsIssue {
+  return {
+    id: record.id ?? "",
+    title: record.title ?? "",
+    description: record.description ?? "",
+    design: "",
+    acceptanceCriteria: "",
+    notes: "",
+    status: (record.status ?? "open") as BeadsStatus,
+    priority: record.priority ?? 0,
+    issueType: "message",
+    assignee: null,
+    owner: record.owner ?? null,
+    createdAt: toDate(record.created_at),
+    createdBy: record.created_by ?? null,
+    updatedAt: toDate(record.updated_at),
+    closedAt: null,
+    closeReason: null,
+    metadata: {},
+    labels: [],
+    dependencies: [],
+    dependents: [],
+    parents: [],
+    children: [],
   };
 }
 
@@ -360,17 +446,29 @@ export async function getIssues(
     }
   }
 
-  if (included.size === 0) return [];
-
   // Group edges from the FULL export so incoming (dependents/children) links
   // resolve even when the other endpoint isn't in the visible set.
   const grouped = groupExportDependencies(records);
+  const exportIssues = [...included.values()].map((record) => mapIssue(record, grouped));
 
-  // Sort by created_at DESC to match the former `ORDER BY created_at DESC`.
-  const result = [...included.values()].sort(
-    (a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime()
+  // Message-type beads live outside the export (ephemeral wisps), so fetch them
+  // separately and run them through the SAME visibility filter — an explicit
+  // status/issueType filter and the closed-retention default apply to messages
+  // too (message records expose `status` and no `closed_at`, both of which
+  // `passesFilter` already handles).
+  const messageIssues = (await loadMessages(projectPath))
+    .filter((record) => passesFilter(record, opts, cutoffMs))
+    .map(mapMessage);
+
+  // Dedupe by id (defensive — the export never contains messages, so no real
+  // overlap), then re-sort the COMBINED list by created_at DESC.
+  const byId = new Map<string, BeadsIssue>();
+  for (const issue of [...exportIssues, ...messageIssues]) {
+    if (!byId.has(issue.id)) byId.set(issue.id, issue);
+  }
+  return [...byId.values()].sort(
+    (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
   );
-  return result.map((record) => mapIssue(record, grouped));
 }
 
 export async function getIssue(
@@ -379,9 +477,11 @@ export async function getIssue(
 ): Promise<BeadsIssue | null> {
   const records = await loadExport(projectPath);
   const record = records.find((r) => r.id === issueId);
-  if (!record) return null;
+  if (record) return mapIssue(record, groupExportDependencies(records));
 
-  return mapIssue(record, groupExportDependencies(records));
+  // Not in the export — it may be a message wisp (clickable in the detail pane).
+  const message = (await loadMessages(projectPath)).find((m) => m.id === issueId);
+  return message ? mapMessage(message) : null;
 }
 
 export async function getIssueComments(
@@ -458,6 +558,8 @@ export async function getIssueEvents(
 }
 
 export async function getStats(projectPath: string): Promise<BeadsStats> {
+  // `bd status` counts only real (dolt) issues, not ephemeral message wisps —
+  // acceptable: the stats chips are about tracked work, not inter-agent chatter.
   const status = await runBdJson<RawBdStatus>(projectPath, ["status", "--json"]);
   const s = status.summary ?? {};
   return {

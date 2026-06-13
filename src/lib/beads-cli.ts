@@ -130,12 +130,14 @@ const EXPORT_CACHE_TTL_MS = 2000;
 const exportCache = new Map<string, { stdout: string; at: number }>();
 
 /**
- * Run `bd export` (JSONL of issues) with a short-TTL stdout cache. The
- * `--include-infra` flag makes bd also emit message-type beads (inter-agent
- * messages) alongside real issues; it does NOT emit `bd remember` memories
- * (those need `--all`/`--include-memories`, which we deliberately avoid). The
- * service layer filters the result to a viewable-type allowlist so the extra
- * agent/rig/role infra beads `--include-infra` also returns are dropped.
+ * Run `bd export` (JSONL of issues) with a short-TTL stdout cache. Plain
+ * `bd export` carries full-fidelity regular issues — each record embeds its
+ * dependency edges and comments, which `bd list` does NOT. It does not (and
+ * cannot) emit message-type beads: those are ephemeral wisps stored in
+ * `.beads/ephemeral.sqlite3`, not the dolt `issues` table, so `bd export`
+ * never sees them even with `--include-infra`. Messages are fetched separately
+ * via {@link runBdInfraListCached}. The service layer still filters the export
+ * to a viewable-type allowlist.
  */
 export async function runBdExportCached(
   projectPath: string,
@@ -146,9 +148,48 @@ export async function runBdExportCached(
   if (cached && now - cached.at < EXPORT_CACHE_TTL_MS) {
     return cached.stdout;
   }
-  const stdout = await runBd(projectPath, ["export", "--include-infra"], opts);
+  const stdout = await runBd(projectPath, ["export"], opts);
   if (exportCache.size > 256) exportCache.clear();
   exportCache.set(projectPath, { stdout, at: now });
+  return stdout;
+}
+
+/**
+ * In-memory cache of `bd list --include-infra` stdout per projectPath, mirroring
+ * {@link exportCache}. Kept separate so the two polls (export + infra list)
+ * cache independently. Same ~2s staleness tradeoff: a message bead created in
+ * the last ~2s may not appear until the TTL lapses — acceptable for a read-only
+ * viewer that already polls on an interval.
+ */
+const INFRA_LIST_CACHE_TTL_MS = 2000;
+const infraListCache = new Map<string, { stdout: string; at: number }>();
+
+/**
+ * Run `bd list --include-infra -n 0 --json` (a single JSON array) with a
+ * short-TTL stdout cache. This is the ONLY way to surface message-type beads —
+ * inter-agent message wisps live in `.beads/ephemeral.sqlite3`, which `bd
+ * export` can't read. `--include-infra` admits ephemeral/infra beads, `-n 0`
+ * lifts the default 50-row cap (so messages aren't truncated), and the service
+ * layer filters the result down to `issue_type === "message"`. Note `bd list`
+ * records are lean (no embedded dependencies/comments), so it's used only for
+ * messages, not as a replacement for the full export.
+ */
+export async function runBdInfraListCached(
+  projectPath: string,
+  opts?: RunBdOptions
+): Promise<string> {
+  const cached = infraListCache.get(projectPath);
+  const now = Date.now();
+  if (cached && now - cached.at < INFRA_LIST_CACHE_TTL_MS) {
+    return cached.stdout;
+  }
+  const stdout = await runBd(
+    projectPath,
+    ["list", "--include-infra", "-n", "0", "--json"],
+    opts
+  );
+  if (infraListCache.size > 256) infraListCache.clear();
+  infraListCache.set(projectPath, { stdout, at: now });
   return stdout;
 }
 
