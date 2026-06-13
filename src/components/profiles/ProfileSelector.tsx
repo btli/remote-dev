@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/select";
 import { Fingerprint, Star, Clock } from "lucide-react";
 import { useProfileContext } from "@/contexts/ProfileContext";
-import { PROVIDER_DISPLAY_NAMES } from "@/types/agent";
+import { PROVIDER_DISPLAY_NAMES, isClaudeCapableProvider } from "@/types/agent";
 import type { AgentProvider } from "@/types/agent";
 import { formatLimitedBadgeLabel, isLimitedNow } from "@/components/claude-limits/limit-format";
 import { cn } from "@/lib/utils";
@@ -23,6 +23,14 @@ interface ProfileSelectorProps {
   disabled?: boolean;
   className?: string;
   showProviderBadge?: boolean;
+  /**
+   * Restrict the list to Claude-capable profiles (provider "claude" or "all").
+   * Use when the selection drives a Claude-only launch so a non-Claude profile
+   * can't be pinned (it would launch with the wrong configDir).
+   */
+  claudeCapableOnly?: boolean;
+  /** Label for the null ("no selection") option. Defaults to "No profile". */
+  noneLabel?: string;
 }
 
 const PROVIDER_COLORS: Record<AgentProvider, string> = {
@@ -41,6 +49,8 @@ export function ProfileSelector({
   disabled = false,
   className,
   showProviderBadge = true,
+  claudeCapableOnly = false,
+  noneLabel = "No profile",
 }: ProfileSelectorProps) {
   const { profiles, loading, getLimitState } = useProfileContext();
 
@@ -54,14 +64,17 @@ export function ProfileSelector({
     ? isLimitedNow(getLimitState(selectedProfile.id))
     : false;
 
-  // Sort profiles: default first, then alphabetically
+  // Filter (optional Claude-capable gate) then sort: default first, then alpha.
   const sortedProfiles = useMemo(() => {
-    return [...profiles].sort((a, b) => {
+    const visible = claudeCapableOnly
+      ? profiles.filter((p) => isClaudeCapableProvider(p.provider))
+      : profiles;
+    return [...visible].sort((a, b) => {
       if (a.isDefault && !b.isDefault) return -1;
       if (!a.isDefault && b.isDefault) return 1;
       return a.name.localeCompare(b.name);
     });
-  }, [profiles]);
+  }, [profiles, claudeCapableOnly]);
 
   return (
     <Select
@@ -113,7 +126,7 @@ export function ProfileSelector({
         {/* None option */}
         <SelectItem value="none" className="text-muted-foreground focus:bg-primary/20">
           <span className="flex items-center gap-2">
-            <span className="text-muted-foreground/70">No profile</span>
+            <span className="text-muted-foreground/70">{noneLabel}</span>
           </span>
         </SelectItem>
 
@@ -154,10 +167,12 @@ export function ProfileSelector({
           </SelectItem>
         ))}
 
-        {/* Empty state */}
-        {profiles.length === 0 && (
+        {/* Empty state (reflects the filtered list, not the raw count). */}
+        {sortedProfiles.length === 0 && (
           <div className="px-2 py-4 text-center text-sm text-muted-foreground">
-            No profiles created yet
+            {claudeCapableOnly
+              ? "No Claude-capable profiles yet"
+              : "No profiles created yet"}
           </div>
         )}
       </SelectContent>

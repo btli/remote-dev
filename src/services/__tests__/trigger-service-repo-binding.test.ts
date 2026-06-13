@@ -22,6 +22,7 @@ const CONFIG_A = {
   agentFlags: "[]",
   promptTemplate: "fix {{repo}} #{{prNumber}}",
   worktreeType: "fix",
+  profileId: null,
   enabled: true,
 };
 
