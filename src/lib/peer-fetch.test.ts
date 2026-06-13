@@ -39,10 +39,15 @@ function makePeer(overrides: Partial<PeerTarget> = {}): PeerTarget {
   };
 }
 
-/** A fetch double that records its args and returns a canned Response. */
+/**
+ * A fetch double that records its args and returns a canned Response. The
+ * recorded init is widened to expose the optional `dispatcher` (undici-only,
+ * not on the DOM RequestInit) — the mock simply ignores it, like real tests do.
+ */
+type RecordedInit = (RequestInit & { dispatcher?: unknown }) | undefined;
 function fakeFetch(response = new Response("{}", { status: 200 })) {
-  const calls: { url: string; init?: RequestInit }[] = [];
-  const impl = (async (url: string | URL | Request, init?: RequestInit) => {
+  const calls: { url: string; init?: RecordedInit }[] = [];
+  const impl = (async (url: string | URL | Request, init?: RecordedInit) => {
     calls.push({ url: String(url), init });
     return response;
   }) as unknown as typeof fetch;
@@ -82,7 +87,7 @@ describe("peerFetch", () => {
     expect(calls[0].init?.redirect).toBe("manual");
   });
 
-  it("attaches both CF Access headers when the full pair is present", async () => {
+  it("attaches both CF Access headers and a public-DNS dispatcher when the full pair is present", async () => {
     const { impl, calls } = fakeFetch();
     await peerFetch(
       makePeer({
@@ -96,6 +101,15 @@ describe("peerFetch", () => {
     const headers = new Headers(calls[0].init?.headers);
     expect(headers.get("CF-Access-Client-Id")).toBe("client.access");
     expect(headers.get("CF-Access-Client-Secret")).toBe("cf-secret");
+    // CF-fronted peers resolve via a public resolver to dodge split-horizon
+    // DNS + the macOS Local Network block, so a dispatcher must be attached.
+    expect(calls[0].init?.dispatcher).toBeDefined();
+  });
+
+  it("passes NO dispatcher (default system DNS) when the peer has no CF token", async () => {
+    const { impl, calls } = fakeFetch();
+    await peerFetch(makePeer(), "/api/migration/capabilities", {}, impl);
+    expect(calls[0].init?.dispatcher).toBeUndefined();
   });
 
   it("throws when only the CF Client ID is set (missing secret)", async () => {
