@@ -342,6 +342,10 @@ export async function startJob(
     };
 
     if (!verify.ok) {
+      // Keep the report visible on the failed row before bailing out.
+      await deps.transition(jobId, ["verifying"], {
+        conflictReportJson: JSON.stringify(conflictReport),
+      });
       throw new Error(
         `Destination verification failed: ${JSON.stringify(verify.rowCounts)}`,
       );
