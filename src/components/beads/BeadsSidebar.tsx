@@ -772,15 +772,16 @@ export function BeadsSidebar({
                 </p>
               </div>
             ) : initialized && unavailable ? (
-              /* Dolt server unreachable */
+              /* bd returned no data for this project */
               <div className="flex flex-col items-center justify-center px-4 py-8 gap-2">
                 <ServerOff className="w-5 h-5 text-muted-foreground" />
                 <p className="text-xs text-muted-foreground text-center">
-                  bd&apos;s dolt server isn&apos;t reachable
+                  Couldn&apos;t load beads
                 </p>
                 <p className="text-[11px] text-muted-foreground text-center">
-                  Issues can&apos;t be loaded right now. Start bd in this
-                  project, then retry.
+                  bd didn&apos;t return data for this project. Make sure bd is
+                  installed and the project&apos;s beads are initialized, then
+                  retry.
                 </p>
                 <Button
                   variant="outline"

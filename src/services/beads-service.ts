@@ -1,6 +1,11 @@
-import type { RowDataPacket } from "mysql2/promise";
-import { beadsQuery } from "@/lib/beads-db";
-import { safeJsonParse } from "@/lib/utils";
+import {
+  runBdExportCached,
+  runBdJson,
+  parseJsonl,
+  isValidIssueId,
+  isBeadsUnavailable,
+} from "@/lib/beads-cli";
+import { createLogger } from "@/lib/logger";
 import type {
   BeadsIssue,
   BeadsComment,
@@ -10,6 +15,8 @@ import type {
   BeadsStatus,
   BeadsIssueType,
 } from "@/types/beads";
+
+const log = createLogger("BeadsService");
 
 // ----- Dependency classification -----
 
@@ -75,181 +82,189 @@ export function groupDependencies(deps: BeadsDependency[]): GroupedDependencies 
   return grouped;
 }
 
-// ----- Row types for DB results -----
+// ----- Raw bd JSON shapes (parsed from `bd export` / `bd history`) -----
 
-interface IssueRow extends RowDataPacket {
-  id: string;
-  title: string;
-  description: string | null;
-  design: string | null;
-  acceptance_criteria: string | null;
-  notes: string | null;
-  status: string;
-  priority: number;
-  issue_type: string;
-  assignee: string | null;
-  owner: string | null;
-  created_at: Date;
-  created_by: string | null;
-  updated_at: Date;
-  closed_at: Date | null;
-  close_reason: string | null;
-  metadata: string | null;
+/** A `dependencies[]` element from `bd export`. Note bd uses `depends_on_id`. */
+interface RawBdDependency {
+  issue_id?: string;
+  depends_on_id?: string;
+  type?: string;
+  created_at?: string;
+  created_by?: string;
+  metadata?: string;
 }
 
-interface LabelRow extends RowDataPacket {
-  issue_id: string;
-  label: string;
+/** A `comments[]` element from `bd export`. */
+interface RawBdComment {
+  id?: string;
+  issue_id?: string;
+  author?: string;
+  text?: string;
+  created_at?: string;
 }
 
-interface DependencyRow extends RowDataPacket {
-  issue_id: string;
-  depends_on_issue_id: string | null;
-  type: string;
-  created_at: Date;
-  created_by: string | null;
+/** A single issue record from `bd export` (one JSON object per JSONL line). */
+interface RawBdIssue {
+  id?: string;
+  title?: string;
+  description?: string;
+  design?: string;
+  acceptance_criteria?: string;
+  notes?: string;
+  status?: string;
+  priority?: number;
+  issue_type?: string;
+  assignee?: string;
+  owner?: string;
+  created_at?: string;
+  created_by?: string;
+  updated_at?: string;
+  closed_at?: string;
+  close_reason?: string;
+  labels?: string[];
+  dependencies?: RawBdDependency[];
+  comments?: RawBdComment[];
 }
 
-interface CommentRow extends RowDataPacket {
-  id: string;
-  issue_id: string;
-  author: string | null;
-  text: string | null;
-  created_at: Date;
-}
-
-interface EventRow extends RowDataPacket {
-  id: string;
-  issue_id: string;
-  event_type: string;
-  actor: string | null;
-  old_value: string | null;
-  new_value: string | null;
-  comment: string | null;
-  created_at: Date;
-}
-
-interface CountRow extends RowDataPacket {
-  cnt: number;
-}
-
-interface StatusCountRow extends RowDataPacket {
-  status: string;
-  cnt: number;
-}
-
-interface IssueStatusRow extends RowDataPacket {
-  id: string;
-  status: string;
-}
-
-/** Max placeholders per IN (...) clause — dolt chokes on very large prepared statements. */
-const CHUNK_SIZE = 50;
-
-// ----- Mappers -----
-
-function mapIssue(
-  row: IssueRow,
-  labels: string[],
-  dependencies: BeadsDependency[],
-  dependents: BeadsDependency[],
-  parents: BeadsDependency[],
-  children: BeadsDependency[]
-): BeadsIssue {
-  const metadata = typeof row.metadata === "object" && row.metadata !== null
-    ? (row.metadata as Record<string, unknown>)
-    : safeJsonParse<Record<string, unknown>>(row.metadata, {});
-
-  return {
-    id: row.id,
-    title: row.title,
-    description: row.description ?? "",
-    design: row.design ?? "",
-    acceptanceCriteria: row.acceptance_criteria ?? "",
-    notes: row.notes ?? "",
-    status: row.status as BeadsStatus,
-    priority: row.priority,
-    issueType: row.issue_type as BeadsIssueType,
-    assignee: row.assignee,
-    owner: row.owner,
-    createdAt: row.created_at,
-    createdBy: row.created_by,
-    updatedAt: row.updated_at,
-    closedAt: row.closed_at,
-    closeReason: row.close_reason,
-    metadata,
-    labels,
-    dependencies,
-    dependents,
-    parents,
-    children,
+/** `bd status --json` payload. */
+interface RawBdStatus {
+  schema_version?: number;
+  summary?: {
+    total_issues?: number;
+    open_issues?: number;
+    in_progress_issues?: number;
+    closed_issues?: number;
+    blocked_issues?: number;
+    deferred_issues?: number;
+    ready_issues?: number;
   };
 }
 
-function mapDependency(
-  row: DependencyRow,
-  statusById: Map<string, BeadsStatus>
-): BeadsDependency {
-  return {
-    issueId: row.issue_id,
-    // Callers exclude null-target (wisp/external) rows before mapping, so depends_on_issue_id is effectively set here; ?? "" only satisfies the string type.
-    dependsOnId: row.depends_on_issue_id ?? "",
-    type: row.type,
-    createdAt: row.created_at,
-    createdBy: row.created_by ?? "",
-    dependsOnStatus: statusById.get(row.depends_on_issue_id ?? "") ?? null,
-  };
+/** One entry from `bd history <id> --json` (ordered newest-first). */
+interface RawBdHistoryEntry {
+  CommitHash?: string;
+  Committer?: string;
+  CommitDate?: string;
+  Issue?: RawBdIssue;
+}
+
+// ----- Raw -> domain helpers -----
+
+/** Parse an RFC3339 date string into a Date; missing/empty -> epoch (defensive). */
+function toDate(value: string | undefined): Date {
+  return value ? new Date(value) : new Date(0);
+}
+
+/** Validate that a parsed JSONL record looks like an issue with an id. */
+function isRawIssue(value: unknown): value is RawBdIssue {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { id?: unknown }).id === "string"
+  );
+}
+
+/** Load and parse the full `bd export` (every non-infra issue) for a project. */
+async function loadExport(projectPath: string): Promise<RawBdIssue[]> {
+  const stdout = await runBdExportCached(projectPath);
+  const records = parseJsonl(stdout);
+  const issues: RawBdIssue[] = [];
+  for (const record of records) {
+    if (isRawIssue(record)) {
+      issues.push(record);
+    } else {
+      log.debug("Skipping non-issue export record", { record: JSON.stringify(record).slice(0, 200) });
+    }
+  }
+  return issues;
+}
+
+/** Map every export record's id to its status (defaulting to "open"). */
+function buildStatusMap(records: RawBdIssue[]): Map<string, BeadsStatus> {
+  const statusById = new Map<string, BeadsStatus>();
+  for (const r of records) {
+    if (r.id) statusById.set(r.id, (r.status ?? "open") as BeadsStatus);
+  }
+  return statusById;
 }
 
 /**
- * Fill `known` with the statuses of every dependency target not already in the
- * map (e.g. blockers closed long enough ago to fall outside the fetched set),
- * so active-blocker semantics can distinguish live blockers from closed ones.
+ * Flatten the `dependencies[]` arrays of every export record into the flat
+ * `BeadsDependency` edge list the mapper/grouper expect, normalizing bd's
+ * `depends_on_id` to `dependsOnId` and resolving each blocker's status from the
+ * full export's id->status map. Edges with no target are dropped (wisp/external).
  */
-async function resolveDependsOnStatuses(
-  projectPath: string,
-  deps: DependencyRow[],
-  known: Map<string, BeadsStatus>
-): Promise<void> {
-  const missing = [
-    ...new Set(
-      deps
-        .map((d) => d.depends_on_issue_id)
-        .filter((id): id is string => id !== null && id !== "" && !known.has(id))
-    ),
-  ];
-  for (let i = 0; i < missing.length; i += CHUNK_SIZE) {
-    const chunk = missing.slice(i, i + CHUNK_SIZE);
-    const ph = chunk.map(() => "?").join(",");
-    const rows = await beadsQuery<IssueStatusRow>(
-      projectPath,
-      `SELECT id, status FROM issues WHERE id IN (${ph})`,
-      chunk
-    );
-    for (const r of rows) known.set(r.id, r.status as BeadsStatus);
+function buildEdges(
+  records: RawBdIssue[],
+  statusById: Map<string, BeadsStatus>
+): BeadsDependency[] {
+  const edges: BeadsDependency[] = [];
+  for (const record of records) {
+    for (const dep of record.dependencies ?? []) {
+      const dependsOnId = dep.depends_on_id;
+      if (!dependsOnId) continue; // skip wisp / external (no resolvable target)
+      edges.push({
+        issueId: dep.issue_id ?? record.id ?? "",
+        dependsOnId,
+        type: dep.type ?? "",
+        createdAt: toDate(dep.created_at),
+        createdBy: dep.created_by ?? "",
+        dependsOnStatus: statusById.get(dependsOnId) ?? null,
+      });
+    }
   }
+  return edges;
 }
 
-function mapComment(row: CommentRow): BeadsComment {
+/**
+ * Build the grouped dependency view over the FULL export: status map -> flat
+ * edges -> semantic buckets. Computed from every record (not just the visible
+ * set) so incoming dependents/children and blocker statuses always resolve.
+ */
+function groupExportDependencies(records: RawBdIssue[]): GroupedDependencies {
+  const edges = buildEdges(records, buildStatusMap(records));
+  return groupDependencies(edges);
+}
+
+function mapIssue(
+  record: RawBdIssue,
+  grouped: GroupedDependencies
+): BeadsIssue {
+  const id = record.id ?? "";
   return {
-    id: row.id,
-    issueId: row.issue_id,
-    author: row.author ?? "",
-    text: row.text ?? "",
-    createdAt: row.created_at,
+    id,
+    title: record.title ?? "",
+    description: record.description ?? "",
+    design: record.design ?? "",
+    acceptanceCriteria: record.acceptance_criteria ?? "",
+    notes: record.notes ?? "",
+    status: (record.status ?? "open") as BeadsStatus,
+    priority: record.priority ?? 0,
+    issueType: (record.issue_type ?? "task") as BeadsIssueType,
+    assignee: record.assignee ?? null,
+    owner: record.owner ?? null,
+    createdAt: toDate(record.created_at),
+    createdBy: record.created_by ?? null,
+    updatedAt: toDate(record.updated_at),
+    closedAt: record.closed_at ? new Date(record.closed_at) : null,
+    closeReason: record.close_reason ?? null,
+    // bd export has no per-issue metadata field — map to {}.
+    metadata: {},
+    labels: record.labels ?? [],
+    dependencies: grouped.dependencies.get(id) ?? [],
+    dependents: grouped.dependents.get(id) ?? [],
+    parents: grouped.parents.get(id) ?? [],
+    children: grouped.children.get(id) ?? [],
   };
 }
 
-function mapEvent(row: EventRow): BeadsEvent {
+function mapComment(raw: RawBdComment): BeadsComment {
   return {
-    id: row.id,
-    issueId: row.issue_id,
-    eventType: row.event_type,
-    actor: row.actor ?? "",
-    oldValue: row.old_value,
-    newValue: row.new_value,
-    comment: row.comment,
-    createdAt: row.created_at,
+    id: raw.id ?? "",
+    issueId: raw.issue_id ?? "",
+    author: raw.author ?? "",
+    text: raw.text ?? "",
+    createdAt: toDate(raw.created_at),
   };
 }
 
@@ -261,275 +276,175 @@ export interface GetIssuesOptions {
   closedRetentionDays?: number;
 }
 
+/**
+ * Does a record pass the visibility filter? Mirrors the former SQL predicate:
+ * either an explicit status filter, or the default of non-closed OR
+ * recently-closed (within retention) OR an epic (always shown). An optional
+ * issueType filter applies on top.
+ */
+function passesFilter(
+  record: RawBdIssue,
+  opts: GetIssuesOptions | undefined,
+  cutoffMs: number
+): boolean {
+  const status = record.status ?? "open";
+  if (opts?.status) {
+    if (status !== opts.status) return false;
+  } else {
+    const closedAtMs = record.closed_at ? new Date(record.closed_at).getTime() : null;
+    const visible =
+      status !== "closed" ||
+      (closedAtMs !== null && closedAtMs >= cutoffMs) ||
+      record.issue_type === "epic";
+    if (!visible) return false;
+  }
+  if (opts?.issueType && record.issue_type !== opts.issueType) return false;
+  return true;
+}
+
 export async function getIssues(
   projectPath: string,
   opts?: GetIssuesOptions
 ): Promise<BeadsIssue[]> {
   const retentionDays = opts?.closedRetentionDays ?? 7;
-  const cutoff = new Date(Date.now() - retentionDays * 86400_000)
-    .toISOString()
-    .replace("T", " ")
-    .replace("Z", "");
-  const params: (string | number | null)[] = [];
+  const cutoffMs = Date.now() - retentionDays * 86400_000;
 
-  // When an explicit status filter is provided, skip the retention cutoff —
-  // the caller wants exactly that status set (e.g. all closed issues).
-  let sql: string;
-  if (opts?.status) {
-    sql = `SELECT * FROM issues WHERE status = ?`;
-    params.push(opts.status);
-  } else {
-    // Default: non-closed + recently closed + epics (always shown)
-    sql = `SELECT * FROM issues WHERE (
-      status != 'closed'
-      OR (status = 'closed' AND closed_at >= ?)
-      OR issue_type = 'epic'
-    )`;
-    params.push(cutoff);
-  }
-  if (opts?.issueType) {
-    sql += ` AND issue_type = ?`;
-    params.push(opts.issueType);
+  const records = await loadExport(projectPath);
+
+  // Primary visible set.
+  const included = new Map<string, RawBdIssue>();
+  for (const r of records) {
+    if (r.id && passesFilter(r, opts, cutoffMs)) included.set(r.id, r);
   }
 
-  sql += ` ORDER BY created_at DESC`;
-
-  let issues = await beadsQuery<IssueRow>(projectPath, sql, params);
-
-  // Include children of any epics in the result set
-  const epicIds = issues
-    .filter((i) => i.issue_type === "epic")
-    .map((i) => i.id);
-  if (epicIds.length > 0) {
-    const issueIdSet = new Set(issues.map((i) => i.id));
-    const ph = epicIds.map(() => "?").join(",");
-    const childDeps = await beadsQuery<DependencyRow>(
-      projectPath,
-      `SELECT * FROM dependencies WHERE type IN ('child-of', 'parent-child') AND depends_on_issue_id IN (${ph})`,
-      epicIds
-    );
-    const missingChildIds = childDeps
-      .map((d) => d.issue_id)
-      .filter((id) => !issueIdSet.has(id));
-
-    if (missingChildIds.length > 0) {
-      const childPh = missingChildIds.map(() => "?").join(",");
-      // Apply the same filters the caller specified so we don't
-      // reintroduce issues that were intentionally excluded.
-      let childSql = `SELECT * FROM issues WHERE id IN (${childPh})`;
-      const childParams: (string | number | null)[] = [...missingChildIds];
-      if (opts?.status) {
-        childSql += ` AND status = ?`;
-        childParams.push(opts.status);
-      } else {
-        // Same retention predicate as the default query above — without it,
-        // closed children outside the retention window reappear forever.
-        childSql += ` AND (status != 'closed' OR closed_at >= ? OR issue_type = 'epic')`;
-        childParams.push(cutoff);
-      }
-      if (opts?.issueType) {
-        childSql += ` AND issue_type = ?`;
-        childParams.push(opts.issueType);
-      }
-      const childIssues = await beadsQuery<IssueRow>(
-        projectPath,
-        childSql,
-        childParams
+  // Also include children of any included epic (same filter), mirroring the
+  // former epic-children fetch. Children are linked via structural edges whose
+  // target (depends_on_id) is the epic.
+  const epicIds = new Set(
+    [...included.values()].filter((r) => r.issue_type === "epic").map((r) => r.id!)
+  );
+  if (epicIds.size > 0) {
+    for (const r of records) {
+      if (!r.id || included.has(r.id)) continue;
+      const isEpicChild = (r.dependencies ?? []).some(
+        (d) =>
+          STRUCTURAL_DEP_TYPES.has(d.type ?? "") &&
+          d.depends_on_id !== undefined &&
+          epicIds.has(d.depends_on_id)
       );
-      issues = [...issues, ...childIssues];
-    }
-  }
-
-  if (issues.length === 0) return [];
-
-  const issueIds = issues.map((i) => i.id);
-
-  // Batch-load labels and dependencies in chunks to avoid dolt choking on
-  // large IN (...) clauses with hundreds of prepared-statement placeholders.
-  const labels: LabelRow[] = [];
-  const deps: DependencyRow[] = [];
-  const seenDepKeys = new Set<string>();
-
-  for (let i = 0; i < issueIds.length; i += CHUNK_SIZE) {
-    const chunk = issueIds.slice(i, i + CHUNK_SIZE);
-    const ph = chunk.map(() => "?").join(",");
-    const [labelChunk, depChunk] = await Promise.all([
-      beadsQuery<LabelRow>(
-        projectPath,
-        `SELECT issue_id, label FROM labels WHERE issue_id IN (${ph})`,
-        chunk
-      ),
-      beadsQuery<DependencyRow>(
-        projectPath,
-        `SELECT * FROM dependencies WHERE issue_id IN (${ph}) OR depends_on_issue_id IN (${ph})`,
-        [...chunk, ...chunk]
-      ),
-    ]);
-    labels.push(...labelChunk);
-    // Deduplicate dependency rows that span chunk boundaries
-    for (const d of depChunk) {
-      const key = `${d.issue_id}:${d.depends_on_issue_id}:${d.type}`;
-      if (!seenDepKeys.has(key)) {
-        seenDepKeys.add(key);
-        deps.push(d);
+      if (isEpicChild && passesFilter(r, opts, cutoffMs)) {
+        included.set(r.id, r);
       }
     }
   }
 
-  // Group labels by issue
-  const labelMap = new Map<string, string[]>();
-  for (const l of labels) {
-    const arr = labelMap.get(l.issue_id) ?? [];
-    arr.push(l.label);
-    labelMap.set(l.issue_id, arr);
-  }
+  if (included.size === 0) return [];
 
-  // Resolve blocker statuses: issues already in the fetched set are known;
-  // any dependency target outside the set (e.g. long-closed blockers) is
-  // looked up so active-blocker semantics stay correct.
-  const statusById = new Map<string, BeadsStatus>(
-    issues.map((i) => [i.id, i.status as BeadsStatus])
+  // Group edges from the FULL export so incoming (dependents/children) links
+  // resolve even when the other endpoint isn't in the visible set.
+  const grouped = groupExportDependencies(records);
+
+  // Sort by created_at DESC to match the former `ORDER BY created_at DESC`.
+  const result = [...included.values()].sort(
+    (a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime()
   );
-  await resolveDependsOnStatuses(projectPath, deps, statusById);
-
-  // Group dependencies by semantic class
-  const mappedDeps = deps
-    .filter((d) => d.depends_on_issue_id)
-    .map((d) => mapDependency(d, statusById));
-  const { dependencies, dependents, parents, children } = groupDependencies(mappedDeps);
-
-  return issues.map((row) =>
-    mapIssue(
-      row,
-      labelMap.get(row.id) ?? [],
-      dependencies.get(row.id) ?? [],
-      dependents.get(row.id) ?? [],
-      parents.get(row.id) ?? [],
-      children.get(row.id) ?? []
-    )
-  );
+  return result.map((record) => mapIssue(record, grouped));
 }
 
 export async function getIssue(
   projectPath: string,
   issueId: string
 ): Promise<BeadsIssue | null> {
-  const issues = await beadsQuery<IssueRow>(
-    projectPath,
-    `SELECT * FROM issues WHERE id = ?`,
-    [issueId]
-  );
-  if (issues.length === 0) return null;
+  const records = await loadExport(projectPath);
+  const record = records.find((r) => r.id === issueId);
+  if (!record) return null;
 
-  const row = issues[0];
-
-  const [labels, deps] = await Promise.all([
-    beadsQuery<LabelRow>(
-      projectPath,
-      `SELECT issue_id, label FROM labels WHERE issue_id = ?`,
-      [issueId]
-    ),
-    beadsQuery<DependencyRow>(
-      projectPath,
-      `SELECT * FROM dependencies WHERE issue_id = ? OR depends_on_issue_id = ?`,
-      [issueId, issueId]
-    ),
-  ]);
-
-  const statusById = new Map<string, BeadsStatus>([
-    [row.id, row.status as BeadsStatus],
-  ]);
-  await resolveDependsOnStatuses(projectPath, deps, statusById);
-
-  const mappedDeps = deps
-    .filter((d) => d.depends_on_issue_id)
-    .map((d) => mapDependency(d, statusById));
-  const grouped = groupDependencies(mappedDeps);
-
-  return mapIssue(
-    row,
-    labels.map((l) => l.label),
-    grouped.dependencies.get(issueId) ?? [],
-    grouped.dependents.get(issueId) ?? [],
-    grouped.parents.get(issueId) ?? [],
-    grouped.children.get(issueId) ?? []
-  );
+  return mapIssue(record, groupExportDependencies(records));
 }
 
 export async function getIssueComments(
   projectPath: string,
   issueId: string
 ): Promise<BeadsComment[]> {
-  const rows = await beadsQuery<CommentRow>(
-    projectPath,
-    `SELECT * FROM comments WHERE issue_id = ? ORDER BY created_at ASC`,
-    [issueId]
-  );
-  return rows.map(mapComment);
+  const records = await loadExport(projectPath);
+  const record = records.find((r) => r.id === issueId);
+  if (!record) return [];
+  return (record.comments ?? [])
+    .map(mapComment)
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 }
+
+/** Fields whose change between two snapshots becomes a timeline event. */
+const EVENT_FIELDS = [
+  { field: "status" as const, eventType: "status_change" },
+  { field: "assignee" as const, eventType: "assignee_change" },
+  { field: "priority" as const, eventType: "priority_change" },
+] as const;
 
 export async function getIssueEvents(
   projectPath: string,
   issueId: string
 ): Promise<BeadsEvent[]> {
-  const rows = await beadsQuery<EventRow>(
-    projectPath,
-    `SELECT * FROM events WHERE issue_id = ? ORDER BY created_at ASC`,
-    [issueId]
-  );
-  return rows.map(mapEvent);
+  if (!isValidIssueId(issueId)) return [];
+  let history: RawBdHistoryEntry[];
+  try {
+    history = await runBdJson<RawBdHistoryEntry[]>(projectPath, [
+      "history",
+      issueId,
+      "--json",
+    ]);
+  } catch (err) {
+    if (isBeadsUnavailable(err)) throw err; // let the route degrade to { unavailable: true }
+    log.warn("bd history failed; returning no events", { issueId, error: String(err) });
+    return [];
+  }
+  if (!Array.isArray(history) || history.length < 2) return [];
+
+  // bd returns history newest-first; diff oldest -> newest so we report the
+  // transition into each new value.
+  const ordered = [...history].reverse();
+  const events: BeadsEvent[] = [];
+  for (let i = 1; i < ordered.length; i++) {
+    const prev = ordered[i - 1]?.Issue;
+    const curr = ordered[i]?.Issue;
+    const entry = ordered[i];
+    if (!prev || !curr) continue;
+
+    let perCommit = 0;
+    for (const { field, eventType } of EVENT_FIELDS) {
+      const oldRaw = prev[field];
+      const newRaw = curr[field];
+      const oldValue = oldRaw === undefined || oldRaw === null ? null : String(oldRaw);
+      const newValue = newRaw === undefined || newRaw === null ? null : String(newRaw);
+      if (oldValue === newValue) continue;
+
+      const commitHash = entry.CommitHash ?? `${issueId}-${i}`;
+      events.push({
+        id: perCommit === 0 ? commitHash : `${commitHash}-${perCommit}`,
+        issueId,
+        eventType,
+        actor: entry.Committer ?? "",
+        oldValue,
+        newValue,
+        comment: null,
+        createdAt: toDate(entry.CommitDate),
+      });
+      perCommit++;
+    }
+  }
+  return events;
 }
 
 export async function getStats(projectPath: string): Promise<BeadsStats> {
-  const blockingTypesPh = [...BLOCKING_DEP_TYPES].map(() => "?").join(",");
-  // Subquery: does issue `i` have a blocking dep whose blocker is still active?
-  const activeBlockerExists = `EXISTS (
-    SELECT 1 FROM dependencies d
-    JOIN issues b ON b.id = d.depends_on_issue_id
-    WHERE d.issue_id = i.id
-      AND d.type IN (${blockingTypesPh})
-      AND b.status != 'closed'
-  )`;
-
-  const [statusCounts, blockedCount, readyCount] = await Promise.all([
-    beadsQuery<StatusCountRow>(
-      projectPath,
-      `SELECT status, COUNT(*) as cnt FROM issues GROUP BY status`
-    ),
-    // blocked = non-closed AND (stored 'blocked' status OR active blocking dep)
-    beadsQuery<CountRow>(
-      projectPath,
-      `SELECT COUNT(DISTINCT i.id) as cnt
-       FROM issues i
-       WHERE i.status != 'closed'
-         AND (i.status = 'blocked' OR ${activeBlockerExists})`,
-      [...BLOCKING_DEP_TYPES]
-    ),
-    // ready = open AND no active blocking dep (computed directly, not by subtraction)
-    beadsQuery<CountRow>(
-      projectPath,
-      `SELECT COUNT(*) as cnt
-       FROM issues i
-       WHERE i.status = 'open'
-         AND NOT ${activeBlockerExists}`,
-      [...BLOCKING_DEP_TYPES]
-    ),
-  ]);
-
-  const counts: Record<string, number> = {};
-  let total = 0;
-  for (const row of statusCounts) {
-    counts[row.status] = row.cnt;
-    total += row.cnt;
-  }
-
+  const status = await runBdJson<RawBdStatus>(projectPath, ["status", "--json"]);
+  const s = status.summary ?? {};
   return {
-    total,
-    open: counts["open"] ?? 0,
-    inProgress: counts["in_progress"] ?? 0,
-    closed: counts["closed"] ?? 0,
-    blocked: blockedCount[0]?.cnt ?? 0,
-    ready: readyCount[0]?.cnt ?? 0,
-    deferred: counts["deferred"] ?? 0,
+    total: s.total_issues ?? 0,
+    open: s.open_issues ?? 0,
+    inProgress: s.in_progress_issues ?? 0,
+    closed: s.closed_issues ?? 0,
+    blocked: s.blocked_issues ?? 0,
+    ready: s.ready_issues ?? 0,
+    deferred: s.deferred_issues ?? 0,
   };
 }

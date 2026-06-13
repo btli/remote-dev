@@ -17,23 +17,30 @@ vi.mock("@/db", () => ({
   },
 }));
 
-// Mock the bd layer so the loose join is deterministic.
+// Mock the bd CLI export so the loose join is deterministic. `parseJsonl` is the
+// real implementation (only `runBdExportCached` is mocked), so the export
+// fixtures are plain JSONL strings of issue records.
+type ExportIssue = { id: string; title: string; assignee: string | null; status: string; updated_at?: string };
 const beadsAvailable = { value: true };
-const beadsRows: Record<string, Array<{ id: string; title: string; assignee: string | null; status: string }>> = {};
+let exportIssues: ExportIssue[] = [];
 let beadsThrows = false;
 
-vi.mock("@/lib/beads-db", () => ({
-  isBeadsAvailable: vi.fn(async () => beadsAvailable.value),
-  beadsQuery: vi.fn(async (_path: string, sql: string, params: unknown[]) => {
-    if (beadsThrows) throw new Error("dolt schema drift: unknown column");
-    // Branch-id query carries a param; project-fallback has none.
-    if (params.length > 0) {
-      const key = `id:${String(params[0])}`;
-      return beadsRows[key] ?? [];
-    }
-    return beadsRows["project"] ?? [];
-  }),
-}));
+function toJsonl(issues: ExportIssue[]): string {
+  return issues.map((i) => JSON.stringify(i)).join("\n");
+}
+
+vi.mock("@/lib/beads-cli", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/beads-cli")>();
+  return {
+    ...actual,
+    runBdExportCached: vi.fn(async () => {
+      if (beadsThrows) throw new Error("bd export failed: malformed");
+      // bd unavailable (e.g. not installed / no .beads) surfaces as a throw too.
+      if (!beadsAvailable.value) throw Object.assign(new Error("spawn bd ENOENT"), { code: "ENOENT" });
+      return toJsonl(exportIssues);
+    }),
+  };
+});
 
 const DDL = [
   `CREATE TABLE terminal_session (
@@ -115,7 +122,7 @@ describe("WorkContextService (x386.11)", () => {
     await resetDb();
     beadsAvailable.value = true;
     beadsThrows = false;
-    for (const k of Object.keys(beadsRows)) delete beadsRows[k];
+    exportIssues = [];
   });
   afterEach(() => {
     cleanupDb();
@@ -142,7 +149,7 @@ describe("WorkContextService (x386.11)", () => {
       // branch feat/x386 → extract "x386" wouldn't match the dotted regex; use a
       // hyphenated id so the extractor returns it, and seed that id.
       await insertSession({ id: "s1", branch: "feat/x386-foo", path: "/wt/s1" });
-      beadsRows["id:x386-foo"] = [{ id: "x386-foo", title: "Chat epic", assignee: "alice", status: "in_progress" }];
+      exportIssues = [{ id: "x386-foo", title: "Chat epic", assignee: "alice", status: "in_progress" }];
       const ctx = await computeWorkContext("s1");
       expect(ctx).toMatchObject({
         claimedIssueId: "x386-foo",
@@ -156,7 +163,7 @@ describe("WorkContextService (x386.11)", () => {
 
     it("project: no branch id but one in-progress issue → joinConfidence 'project'", async () => {
       await insertSession({ id: "s1", branch: "master", path: "/wt/s1" });
-      beadsRows["project"] = [{ id: "abc-9", title: "Loose match", assignee: null, status: "in_progress" }];
+      exportIssues = [{ id: "abc-9", title: "Loose match", assignee: null, status: "in_progress" }];
       const ctx = await computeWorkContext("s1");
       expect(ctx).toMatchObject({ claimedIssueId: "abc-9", joinConfidence: "project" });
     });
@@ -174,7 +181,7 @@ describe("WorkContextService (x386.11)", () => {
       expect(ctx?.joinConfidence).toBe("none");
     });
 
-    it("degrades to 'none' when a bd query throws (schema drift)", async () => {
+    it("degrades to 'none' when bd export throws (malformed / drift)", async () => {
       beadsThrows = true;
       await insertSession({ id: "s1", branch: "feat/x386-foo", path: "/wt/s1" });
       const ctx = await computeWorkContext("s1");

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import { getIssueComments, getIssueEvents } from "@/services/beads-service";
 import { validateProjectPath } from "@/lib/beads-auth";
-import { isDoltUnavailable } from "@/lib/beads-db";
+import { isBeadsUnavailable, isValidIssueId } from "@/lib/beads-cli";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "@/lib/logger";
@@ -12,6 +12,7 @@ const log = createLogger("api/beads/[id]/comments");
 export const GET = withApiAuth(async (request, { userId, params }) => {
   const id = params?.id;
   if (!id) return errorResponse("Issue ID is required", 400);
+  if (!isValidIssueId(id)) return errorResponse("Invalid issue ID", 400);
 
   const url = new URL(request.url);
   const projectPath = url.searchParams.get("projectPath");
@@ -39,9 +40,9 @@ export const GET = withApiAuth(async (request, { userId, params }) => {
     const comments = await getIssueComments(resolved, id);
     return NextResponse.json(comments);
   } catch (err) {
-    // Dolt server not running is expected — return empty rather than 500
-    if (isDoltUnavailable(err)) {
-      log.debug("Dolt server not reachable, returning empty comments", { error: String(err) });
+    // bd unable to produce data is expected — return empty rather than 500
+    if (isBeadsUnavailable(err)) {
+      log.debug("bd unavailable, returning empty comments", { error: String(err) });
       return NextResponse.json(
         includeEvents ? { comments: [], events: [], unavailable: true } : []
       );
