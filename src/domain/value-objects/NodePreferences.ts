@@ -16,6 +16,15 @@ export interface NodePreferencesFields {
    * domain layer.
    */
   agentProviderSettings?: Record<string, { extraFlags: string[]; allowDangerous: boolean }> | null;
+  /**
+   * Claude fallback-pool id + auto-relaunch override (null = inherit).
+   * [remote-dev-3b3l] These are project/group-inherited node preferences; the
+   * selection policy reads `claudeProfilePoolId` (project→group chain) to find
+   * the rotation pool when a project's primary profile is limited. Kept loose
+   * (string) so the domain layer doesn't depend on `@/types/claude-limits`.
+   */
+  claudeProfilePoolId?: string | null;
+  claudeAutoRelaunchMode?: string | null;
   environmentVars?: Record<string, string> | null;
   pinnedFiles?: string[] | null;
   gitIdentityName?: string | null;

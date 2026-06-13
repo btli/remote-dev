@@ -24,6 +24,7 @@ import {
   PreferencesProvider,
   usePreferencesContext,
 } from "@/contexts/PreferencesContext";
+import { ProfileProvider } from "@/contexts/ProfileContext";
 import { ProjectPreferencesView } from "@/components/preferences/ProjectPreferencesView";
 
 const PROJECT_ID = "proj-prefs";
@@ -59,6 +60,13 @@ function routeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respo
   if (url.includes(`/api/node-preferences/project/${PROJECT_ID}`) && method === "PUT") {
     return Promise.resolve(jsonResponse({ ok: true }));
   }
+  // ProfileProvider mount fetches (the embedded PoolAssignmentPanel needs it).
+  if (url.includes("/api/profiles") && method === "GET") {
+    return Promise.resolve(jsonResponse({ profiles: [], folderLinks: [] }));
+  }
+  if (url.includes("/api/claude-pools") && method === "GET") {
+    return Promise.resolve(jsonResponse({ pools: [] }));
+  }
   return Promise.resolve(jsonResponse({ ok: true }));
 }
 
@@ -82,8 +90,10 @@ describe("ProjectPreferencesView save updates the preferences cache (remote-dev-
   it("Save routes through the context so the project's working dir resolves without reload", async () => {
     render(
       <PreferencesProvider>
-        <ResolvedProbe />
-        <ProjectPreferencesView projectId={PROJECT_ID} />
+        <ProfileProvider>
+          <ResolvedProbe />
+          <ProjectPreferencesView projectId={PROJECT_ID} />
+        </ProfileProvider>
       </PreferencesProvider>
     );
 

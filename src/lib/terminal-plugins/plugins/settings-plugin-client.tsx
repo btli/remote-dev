@@ -45,6 +45,7 @@ const KNOWN_SECTIONS: SettingsSection[] = [
   "agents",
   "proxy",
   "profiles",
+  "claude-accounts",
   "ssh",
   "secrets",
   "beads",
