@@ -36,6 +36,20 @@ const nextConfig: NextConfig = {
   // `RDV_BASE_PATH=""` (single-server) it inlines `""`, byte-identical behavior.
   env: { RDV_BASE_PATH: basePath },
   output: "standalone",
+  // Next 16 buffers request bodies that pass through the Node proxy
+  // (`src/proxy.ts`) and truncates them at a 10MB default. The
+  // server-to-server migration uploads archives in 64 MiB chunks
+  // (CHUNK_SIZE_BYTES in src/lib/migration-bundle.ts), so the default cap
+  // aborted every working-tree/profile/agent-settings chunk mid-stream
+  // (CHUNK_WRITE_FAILED "aborted" → HTTP 400 at chunk #0). Raise the proxy
+  // body cap to 96mb: above one 64 MiB chunk (~67MB) with headroom, yet
+  // under the Cloudflare tunnel's ~100MB request-body ceiling for off-LAN
+  // peers. If CHUNK_SIZE_BYTES is ever increased, raise this in lockstep
+  // (and mind the CF ceiling). `proxyClientMaxBodySize` is the Next 16 name
+  // (the older `middlewareClientMaxBodySize` is its deprecated alias).
+  experimental: {
+    proxyClientMaxBodySize: "96mb",
+  },
   serverExternalPackages: ["@libsql/client", "better-sqlite3", "pg", "mysql2"],
   outputFileTracingExcludes: {
     "*": [".agents/**", ".claude/**", ".claude-plugin/**"],
