@@ -31,10 +31,26 @@ vi.mock("./migration-file-service", () => ({
   buildArchives: vi.fn(),
   readArchiveChunk: vi.fn(),
 }));
-vi.mock("./peer-instance-service", () => ({ getPeerRow: vi.fn() }));
+vi.mock("./peer-instance-service", () => ({
+  getPeerRow: vi.fn(),
+  // The real, pure parser — resumeJob/startJob read peer capabilities through it.
+  parseCapabilities: (raw: string | null) => {
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  },
+}));
 vi.mock("./project-service", () => ({ ProjectService: { delete: vi.fn() } }));
 
-import { startJob, type MigrationJobRow, type MigrationServiceDeps } from "./migration-service";
+import {
+  resumeJob,
+  startJob,
+  type MigrationJobRow,
+  type MigrationServiceDeps,
+} from "./migration-service";
 import type { BuiltArchives } from "./migration-file-service";
 import type { DbBundle, ImportResult, VerifyResult } from "@/lib/migration-bundle";
 
@@ -118,6 +134,7 @@ interface PeerCall {
   path: string;
   method: string | undefined;
   headers?: Record<string, string>;
+  body?: unknown;
 }
 
 interface Harness {
@@ -128,6 +145,15 @@ interface Harness {
   events: string[];
   deleteProject: ReturnType<typeof vi.fn>;
   removeDir: ReturnType<typeof vi.fn>;
+  gzipJson: ReturnType<typeof vi.fn>;
+}
+
+/** Destination GET /imports/:id state used by resume tests. */
+interface DestState {
+  status: string;
+  importedProjectId?: string | null;
+  receivedChunks?: Record<string, number[]>;
+  httpStatus?: number; // override (e.g. 404 = no record on the destination)
 }
 
 function makeHarness(opts: {
@@ -138,6 +164,10 @@ function makeHarness(opts: {
   failTransitionAt?: string; // status whose transition should report a lost race
   failProgressAfter?: number; // Nth status-less progress update returns null
   failDeleteProject?: boolean; // deleteProject rejects
+  /** Capabilities the destination peer advertises (drives gzip negotiation). */
+  peerCapabilities?: { version: number; maxChunkBytes: number; appVersion: string; acceptsGzipBundle?: boolean };
+  /** Destination's view of the import for GET /imports/:id (resume tests). */
+  destState?: DestState;
   peerResponses?: (path: string, init?: RequestInit) => Response;
 }): Harness {
   const transitions: Harness["transitions"] = [];
@@ -148,8 +178,18 @@ function makeHarness(opts: {
     if (opts.failDeleteProject) throw new Error("delete exploded");
   });
   const removeDir = vi.fn(async () => {});
+  const gzipJson = vi.fn(async (value: unknown) =>
+    Buffer.from(`GZIP:${JSON.stringify(value)}`),
+  );
   let status = opts.job.status as string;
   let progressUpdates = 0;
+
+  const peerRow = {
+    id: "peer-1",
+    baseUrl: "https://dest",
+    encryptedApiKey: "x",
+    capabilities: opts.peerCapabilities ? JSON.stringify(opts.peerCapabilities) : null,
+  };
 
   const deps: MigrationServiceDeps = {
     getJob: async () => opts.job,
@@ -169,17 +209,17 @@ function makeHarness(opts: {
       status = patch.status as string;
       return { ...opts.job, ...patch, status } as MigrationJobRow;
     },
-    getPeer: async () =>
-      ({ id: "peer-1", baseUrl: "https://dest", encryptedApiKey: "x" }) as never,
+    getPeer: async () => peerRow as never,
     buildBundle: async () => ({ bundle: BUNDLE, warnings: ["w1"] }),
     buildArchives: async () => opts.built ?? NO_ARCHIVES,
     readChunk: async (_path, index) => Buffer.from(`chunk-${index}-data`),
     removeDir,
+    gzipJson,
     peerFetch: async (_peer, path, init) => {
       const headers = Object.fromEntries(
         new Headers(init?.headers).entries(),
       ) as Record<string, string>;
-      peerCalls.push({ path, method: init?.method, headers });
+      peerCalls.push({ path, method: init?.method, headers, body: init?.body });
       if (opts.peerResponses) return opts.peerResponses(path, init);
       if (path === "/api/migration/imports" && init?.method === "POST") {
         return Response.json(
@@ -188,6 +228,18 @@ function makeHarness(opts: {
         );
       }
       if (path === "/api/migration/imports/job-1" && init?.method === "GET") {
+        if (opts.destState) {
+          const http = opts.destState.httpStatus ?? 200;
+          if (http !== 200) return new Response("nope", { status: http });
+          return Response.json({
+            import: {
+              id: "job-1",
+              status: opts.destState.status,
+              importedProjectId: opts.destState.importedProjectId ?? null,
+            },
+            receivedChunks: opts.destState.receivedChunks ?? {},
+          });
+        }
         return Response.json({
           import: { id: "job-1" },
           receivedChunks: opts.receivedChunks ?? {},
@@ -203,7 +255,7 @@ function makeHarness(opts: {
     deleteProject,
     now: () => NOW,
   };
-  return { deps, transitions, peerCalls, events, deleteProject, removeDir };
+  return { deps, transitions, peerCalls, events, deleteProject, removeDir, gzipJson };
 }
 
 describe("MigrationService.startJob", () => {
@@ -467,5 +519,155 @@ describe("MigrationService.startJob", () => {
     expect(h.peerCalls).toEqual([]);
     // Only the (refused) running transition was attempted.
     expect(h.transitions.map((t) => t.patch.status)).toEqual(["running"]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// qla1: gzip the DB-bundle POST when the destination advertises support.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("MigrationService DB-bundle gzip negotiation", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const GZIP_CAPS = {
+    version: 1,
+    maxChunkBytes: 64 * 1024 * 1024,
+    appVersion: "0.3.18",
+    acceptsGzipBundle: true,
+  };
+
+  it("gzips the POST body + sets Content-Encoding when the peer accepts it", async () => {
+    const h = makeHarness({ job: makeJob(), peerCapabilities: GZIP_CAPS });
+    await startJob("job-1", h.deps);
+
+    const post = h.peerCalls.find((c) => c.path === "/api/migration/imports" && c.method === "POST")!;
+    expect(post.headers?.["content-encoding"]).toBe("gzip");
+    expect(post.headers?.["content-type"]).toBe("application/json");
+    // The body is the gzip mock's output (a Uint8Array), not a JSON string.
+    expect(h.gzipJson).toHaveBeenCalledTimes(1);
+    expect(post.body).toBeInstanceOf(Uint8Array);
+    // The job still completes normally over the compressed body.
+    expect(h.transitions.at(-1)?.patch.status).toBe("completed");
+  });
+
+  it("sends plain JSON (no Content-Encoding) to a peer without gzip support", async () => {
+    const h = makeHarness({
+      job: makeJob(),
+      peerCapabilities: { version: 1, maxChunkBytes: 64 * 1024 * 1024, appVersion: "0.3.0" },
+    });
+    await startJob("job-1", h.deps);
+
+    const post = h.peerCalls.find((c) => c.path === "/api/migration/imports" && c.method === "POST")!;
+    expect(post.headers?.["content-encoding"]).toBeUndefined();
+    expect(typeof post.body).toBe("string"); // JSON.stringify, not gzip
+    expect(h.gzipJson).not.toHaveBeenCalled();
+    expect(h.transitions.at(-1)?.patch.status).toBe("completed");
+  });
+
+  it("falls back to plain JSON when gzip throws (compression is best-effort)", async () => {
+    const h = makeHarness({ job: makeJob(), peerCapabilities: GZIP_CAPS });
+    h.gzipJson.mockRejectedValueOnce(new Error("zlib boom"));
+    await startJob("job-1", h.deps);
+
+    const post = h.peerCalls.find((c) => c.path === "/api/migration/imports" && c.method === "POST")!;
+    expect(post.headers?.["content-encoding"]).toBeUndefined();
+    expect(typeof post.body).toBe("string");
+    // The migration still succeeds — gzip failure must never fail the job.
+    expect(h.transitions.at(-1)?.patch.status).toBe("completed");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// fx45: resume an interrupted job across a source-process restart.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("MigrationService.resumeJob", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("ignores a job that is not in a resumable state (e.g. pending or terminal)", async () => {
+    for (const status of ["pending", "completed", "failed", "aborted", "verifying"] as const) {
+      const h = makeHarness({ job: makeJob({ status }) });
+      await resumeJob("job-1", h.deps);
+      expect(h.peerCalls).toEqual([]);
+      expect(h.transitions).toEqual([]);
+    }
+  });
+
+  it("restarts from scratch when the destination has no record of the import (404)", async () => {
+    const h = makeHarness({
+      job: makeJob({ status: "running" }),
+      destState: { status: "none", httpStatus: 404 },
+    });
+    await resumeJob("job-1", h.deps);
+
+    // Reset to pending, then startJob re-POSTs the bundle and runs to completion.
+    expect(h.transitions[0].patch.status).toBe("pending");
+    expect(h.peerCalls.some((c) => c.path === "/api/migration/imports" && c.method === "POST")).toBe(
+      true,
+    );
+    expect(h.transitions.at(-1)?.patch.status).toBe("completed");
+  });
+
+  it("fails the source job when the destination import is already failed", async () => {
+    const h = makeHarness({
+      job: makeJob({ status: "db_done" }),
+      destState: { status: "failed" },
+    });
+    await resumeJob("job-1", h.deps);
+
+    const last = h.transitions.at(-1)!;
+    expect(last.patch.status).toBe("failed");
+    expect(String(last.patch.errorMessage)).toContain("failed state");
+    // Never re-POSTs the bundle to a failed destination.
+    expect(h.peerCalls.some((c) => c.method === "POST")).toBe(false);
+  });
+
+  it("verifies + completes (no finalize, no re-POST) when the destination already completed", async () => {
+    const h = makeHarness({
+      job: makeJob({ status: "files_done", removeSourceAfterVerify: true }),
+      destState: { status: "completed", importedProjectId: "dest-proj" },
+    });
+    await resumeJob("job-1", h.deps);
+
+    const paths = h.peerCalls.map((c) => `${c.method} ${c.path}`);
+    // Only a status GET + a verify GET — no POST, no finalize.
+    expect(paths).toContain("GET /api/migration/imports/job-1");
+    expect(paths).toContain("GET /api/migration/imports/job-1/verify");
+    expect(paths.some((p) => p.includes("finalize"))).toBe(false);
+    expect(paths.some((p) => p.startsWith("POST /api/migration/imports"))).toBe(false);
+    expect(h.transitions.at(-1)?.patch.status).toBe("completed");
+    expect(h.deleteProject).toHaveBeenCalledWith("proj-1");
+  });
+
+  it("re-drives a mid-flight import: rebuilds archives, pushes only missing chunks, finalizes", async () => {
+    const h = makeHarness({
+      job: makeJob({ status: "db_done" }),
+      built: TWO_CHUNK_ARCHIVES,
+      destState: {
+        status: "receiving",
+        importedProjectId: "dest-proj",
+        receivedChunks: { "working-tree": [0] }, // chunk 0 already on the destination
+      },
+    });
+    await resumeJob("job-1", h.deps);
+
+    // The DB bundle is NOT re-pushed (the destination already imported it).
+    expect(h.peerCalls.some((c) => c.path === "/api/migration/imports" && c.method === "POST")).toBe(
+      false,
+    );
+    // Only the missing chunk (index 1) is uploaded.
+    const puts = h.peerCalls.filter((c) => c.method === "PUT");
+    expect(puts).toHaveLength(1);
+    expect(puts[0].headers?.["x-chunk-index"]).toBe("1");
+    // Finalize + verify ran and the job completed.
+    expect(h.peerCalls.some((c) => c.path.endsWith("/finalize"))).toBe(true);
+    expect(h.transitions.map((t) => t.patch.status).filter(Boolean)).toContain("files_done");
+    expect(h.transitions.at(-1)?.patch.status).toBe("completed");
+  });
+
+  it("is idempotent: a second resume after completion makes no destructive calls", async () => {
+    // Job already completed (terminal) — resume must no-op.
+    const h = makeHarness({ job: makeJob({ status: "completed" }) });
+    await resumeJob("job-1", h.deps);
+    expect(h.peerCalls).toEqual([]);
+    expect(h.deleteProject).not.toHaveBeenCalled();
   });
 });

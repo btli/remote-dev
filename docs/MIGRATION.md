@@ -125,6 +125,26 @@ on the destination, the import remaps it (directories get `-2`/`-3`
 suffixes) and records a note in the job's **conflict report**, visible in the
 result step and in Settings → Instances → Recent migrations.
 
+## Reliability
+
+You don't need to babysit a migration:
+
+- **Large projects.** The project's DB rows travel as one request. When the
+  destination supports it (advertised in its capability check), the source
+  **gzip-compresses** that request, so even a big project — lots of
+  sessions/channels/messages, or **channel history** enabled — stays well
+  within the size limits of the network path between the two instances. No
+  setting to flip; an older destination simply receives the uncompressed
+  request as before. File contents always travel as resumable 64 MiB chunks,
+  independent of the DB request.
+- **Resume after a restart.** If the **source** instance restarts (deploy,
+  crash, reboot) while a migration is in flight, the job is **picked up
+  automatically at the next startup** and finished where it left off — already
+  transferred file chunks are not re-sent, and it can't double-import. You only
+  need to re-initiate manually if the job has been stalled for over 2 hours
+  (the point at which it's treated as genuinely dead — e.g. the destination is
+  gone), or if the destination itself failed the import.
+
 ## Troubleshooting
 
 Test connection and migration jobs now surface specific, actionable messages.
@@ -137,11 +157,14 @@ Map the message to the fix:
 | **unexpected redirect … Cloudflare Access** / **expected JSON but got text/html … login page** | The request hit a Cloudflare Access / OIDC login wall instead of the API | Add a **CF Access service token** (Client ID + Secret) to the peer (off-LAN destinations), or verify the base URL points at the instance and not a login page. |
 | **Client ID is set but the Client Secret is missing** (or vice-versa) | Only one half of the CF service token was saved | Re-save the peer with **both** the Client ID and Secret, or clear both. |
 | **API key cannot be decrypted** | `AUTH_SECRET` on the source changed since the peer was registered | Re-register the peer (re-enter its API key). |
+| **PEER_UNREACHABLE / fetch failed** to a Cloudflare-fronted destination, while internet egress otherwise works | The source host shares a LAN with the destination, so split-horizon DNS resolves the peer hostname to a **private LAN IP**, and a launchd-parented daemon (macOS Sequoia Local Network privacy) is denied local-subnet access | For CF-fronted peers the source now resolves the hostname via a **public resolver** (1.1.1.1 by default) and connects over Cloudflare's public edge — no action needed. Override the resolvers with `RDV_PEER_DNS_SERVERS` (comma-separated) if 1.1.1.1 is blocked on your network. |
 
 Other notes:
 
 - **Job failed mid-flight** — the destination rolls back its partial import;
   the source project is untouched. Fix the cause (the job's error message is
   shown in the dialog and job list) and run it again.
-- **Stuck job** — jobs with no progress for 2 hours are automatically marked
-  failed at server startup; you can also Abort any non-terminal job.
+- **Stuck job** — an in-flight job interrupted by a source restart is
+  **re-driven automatically** at the next server startup (see *Reliability*).
+  Only jobs with no progress for 2 hours are then treated as dead and marked
+  failed at startup; you can also Abort any non-terminal job.

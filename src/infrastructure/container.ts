@@ -133,7 +133,10 @@ import { PortRegistryAdapterImpl } from "./adapters/PortRegistryAdapterImpl";
 import { SessionAdapterImpl } from "./adapters/SessionAdapterImpl";
 import { TmuxAdapterImpl } from "./adapters/TmuxAdapterImpl";
 import { pruneExpiredClaims } from "@/services/port-claims-service";
-import { pruneStaleMigrations } from "@/services/migration-service";
+import {
+  pruneStaleMigrations,
+  resumeInterruptedMigrations,
+} from "@/services/migration-service";
 import { pruneStaleImports } from "@/services/migration-import-service";
 import { createLogger } from "@/lib/logger";
 
@@ -466,19 +469,36 @@ void pruneExpiredClaims()
     });
   });
 
-// Same pattern for server-to-server migration jobs: a runner that died
-// mid-migration leaves a non-terminal row behind; mark anything that has not
-// progressed in 2h as failed so the UI/API never shows immortal "running" jobs.
-void pruneStaleMigrations()
-  .then((failed) => {
-    if (failed > 0) {
-      log.info("Pruned stale migration jobs on startup", { failed });
+// Server-to-server migration jobs left in flight by a SOURCE-process restart:
+// FIRST try to re-drive anything younger than the 2h stale window (picks up
+// where it left off using the destination's receivedChunks / import state),
+// THEN prune anything older as genuinely dead so the UI/API never shows
+// immortal "running" jobs. Order matters — the prune must not fail a job the
+// re-drive could still finish, so it runs only after the re-drive has claimed
+// the fresh ones (resumeJob transitions each row out of the resumable set).
+void resumeInterruptedMigrations()
+  .then((count) => {
+    if (count > 0) {
+      log.info("Re-driving interrupted migration jobs on startup", { count });
     }
   })
   .catch((error) => {
-    log.error("Failed to prune stale migration jobs on startup", {
+    log.error("Failed to re-drive interrupted migration jobs on startup", {
       error: String(error),
     });
+  })
+  .finally(() => {
+    void pruneStaleMigrations()
+      .then((failed) => {
+        if (failed > 0) {
+          log.info("Pruned stale migration jobs on startup", { failed });
+        }
+      })
+      .catch((error) => {
+        log.error("Failed to prune stale migration jobs on startup", {
+          error: String(error),
+        });
+      });
   });
 
 // Destination-side counterpart: an inbound migration whose source died

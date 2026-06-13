@@ -4,17 +4,24 @@
  *          (the DB phase is a single JSON document — fast). Stage 2 moves
  *          file chunks through separate requests between init and finalize.
  *
+ * The body may arrive gzip-compressed (`Content-Encoding: gzip`): the whole
+ * bundle travels as one POST and the wire path caps the on-wire request size at
+ * ~100 MB, so a gzip-aware source compresses it (advertised via
+ * `acceptsGzipBundle` in the capabilities document). {@link readMaybeGzippedJson}
+ * decodes both gzip and plain bodies — Next.js does NOT auto-gunzip requests.
+ *
  * Auth: withApiAuth — the SOURCE instance calls with this instance's API key
  * (Bearer), resolved to the destination user who owns the key.
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
+import { withApiAuth, errorResponse } from "@/lib/api";
 import {
   bundleManifestSchema,
   migrationOptionsSchema,
 } from "@/lib/migration-bundle";
 import type { DbBundle } from "@/lib/migration-bundle";
+import { readMaybeGzippedJson } from "@/lib/migration-gzip";
 import * as MigrationImportService from "@/services/migration-import-service";
 import { MigrationImportError } from "@/services/migration-import-service";
 import { createLogger } from "@/lib/logger";
@@ -32,9 +39,18 @@ const initSchema = z.object({
 });
 
 export const POST = withApiAuth(async (request, { userId }) => {
-  const result = await parseJsonBody<unknown>(request);
-  if ("error" in result) return result.error;
-  const parsed = initSchema.safeParse(result.data);
+  let rawBody: unknown;
+  try {
+    rawBody = await readMaybeGzippedJson<unknown>(request);
+  } catch (error) {
+    log.warn("Import body could not be read", { error: String(error) });
+    return errorResponse(
+      "Invalid request body (malformed JSON or gzip)",
+      400,
+      "INVALID_BODY",
+    );
+  }
+  const parsed = initSchema.safeParse(rawBody);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
   }
