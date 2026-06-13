@@ -7,8 +7,8 @@ See also: [Architecture](./ARCHITECTURE.md) · [Setup](./SETUP.md) · [OpenAPI s
 For a machine-readable contract, see [openapi.yaml](./openapi.yaml) (OpenAPI 3.1).
 
 > **Scope.** Every endpoint documented here is served by the **Next.js** app
-> (default port **6001**) under `/api/*`. The codebase exposes **42 route
-> groups** / **246 method×path operations** as of this writing.
+> (default port **6001**) under `/api/*`. The codebase exposes **51 route
+> groups** / **296 method×path operations** as of this writing.
 >
 > The **terminal server** (default port **6002**) additionally exposes
 > `/internal/*` routes (`/internal/peers/*`, `/internal/channels/*`,
@@ -94,6 +94,7 @@ by session/key auth:
 | Channels | `/api/channels` | [Channels](#channels) |
 | Notifications | `/api/notifications` | [Notifications](#notifications) |
 | Peers | `/api/peers` | [Peers](#peers) |
+| Project migration | `/api/peers` (registry), `/api/migrations`, `/api/migration` | [Project migration](#project-migration) |
 | GitHub | `/api/github` | [GitHub](#github) |
 | GitHub accounts | `/api/github/accounts`, `/api/github/account` | [GitHub accounts](#github-accounts) |
 | API keys | `/api/keys` | [API keys](#api-keys) |
@@ -622,6 +623,65 @@ POST /api/peers/messages                          # send a broadcast user messag
 > The terminal-server `/internal/peers/*` routes (send/poll/summary/cleanup,
 > with MCP socket push) are **not** part of this API — see the scope note at the
 > top of this document.
+>
+> The peer-**instance** registry (migration destinations) also lives under
+> `/api/peers` — see [Project migration](#project-migration) below.
+
+---
+
+## Project migration
+
+Server-to-server project migration (see [`MIGRATION.md`](./MIGRATION.md)): a
+**source** instance pushes a project's DB rows + files to a **destination**
+instance over HTTPS, authenticating with the destination's API key held in the
+source's peer registry. All **[session | key]**; the `/api/migration/*`
+destination routes are called by the source instance with Bearer auth.
+
+### Peer registry (source side)
+
+```http
+GET    /api/peers                       # list registered peer instances (API keys masked)
+POST   /api/peers                       # register { name, baseUrl, apiKey, cfAccessClientId?, cfAccessSecret? } (encrypted at rest)
+GET    /api/peers/:id                   # get one peer (masked)
+PATCH  /api/peers/:id                   # update; new apiKey resets cached capabilities
+DELETE /api/peers/:id                   # delete (cascades the peer's migration jobs)
+GET    /api/peers/:id/capabilities      # live-verify: probe the peer + cache { version, maxChunkBytes, appVersion }
+```
+
+### Migration jobs (source side)
+
+```http
+GET  /api/migrations?projectId=&status=  # list jobs
+POST /api/migrations                     # create + start async → 202 { jobId, status } ({ projectId, peerInstanceId, options? })
+GET  /api/migrations/:id                 # poll: status (pending|running|db_done|files_done|verifying|completed|failed|aborted),
+                                         #   bytesTransferred, sizeEstimateBytes, bundleManifestJson, conflictReportJson, destProjectId
+POST /api/migrations/:id/abort           # abort a non-terminal job (best-effort destination rollback)
+POST /api/migrations/size-preview        # { projectId, workingTreeMode } → du-based estimate (bounded ~2s; zeros + warning on failure)
+```
+
+`options`: `workingTreeMode` (`full_tar` | `git_essentials` | `none`) plus the
+`includeDotEnv` / `includeAgentCreds` / `includeSshKeys` /
+`includeAgentSettings` / `includeChannelHistory` / `removeSourceAfterVerify`
+toggles. `removeSourceAfterVerify` deletes the source project only **after**
+the job is marked completed and the destination verifies clean.
+
+### Import wire (destination side — called by the source instance)
+
+```http
+GET    /api/migration/capabilities          # { version, maxChunkBytes, appVersion } (peer pre-flight)
+POST   /api/migration/imports               # stage + apply the DB bundle → 201 { importId, status, result }
+GET    /api/migration/imports/:id           # status + receivedChunks (per-archive resume info)
+PUT    /api/migration/imports/:id/chunks    # one archive chunk; headers X-Archive-Name / X-Chunk-Index / X-Chunk-Sha256 / X-Total-Chunks
+DELETE /api/migration/imports/:id           # roll back (imported project cascade + profiles + staging dir)
+POST   /api/migration/imports/:id/finalize  # assemble + sha256-verify + extract all archives (atomic claim), then complete
+GET    /api/migration/imports/:id/verify    # { ok, rowCounts, missingPaths }
+```
+
+Chunk intake streams to a temp file, verifies the per-chunk sha256 (409 on
+mismatch), renames atomically, and is idempotent on re-PUT. Finalize requires
+every chunk, claims the import atomically (`finalizing` status — a concurrent
+finalize 409s), refuses to extract into a non-empty destination directory, and
+reports overwrites/clone issues as conflicts.
 
 ---
 

@@ -133,6 +133,10 @@ tags:
       GitHub-triggered REAL agent runs. See docs/AUTOMATION.md.
   - name: Crown
     description: Crown best-of-N — fan out N agent runs, judge, and auto-PR the winner
+  - name: Migration
+    description: >-
+      Server-to-server project migration: peer registry + source-side jobs +
+      the destination-side import wire (Bearer peer auth). See docs/MIGRATION.md.
   - name: Supervisor
     description: >-
       Multi-instance Supervisor control plane (separate Next.js app, NOT served
@@ -2088,6 +2092,217 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { description: Target instance not found (and provisionIfMissing not set), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '409': { description: Slug already in use, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  # ===================== Project migration (server-to-server) =====================
+  /api/peers:
+    get:
+      tags: [Migration]
+      summary: List registered peer instances (API keys masked)
+      responses:
+        '200':
+          description: Peers
+          content: { application/json: { schema: { type: object, properties: { peers: { type: array, items: { type: object, additionalProperties: true } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Migration]
+      summary: Register a peer instance
+      description: API key + optional Cloudflare Access service-token secret are encrypted at rest and never returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, baseUrl, apiKey]
+              properties:
+                name: { type: string }
+                baseUrl: { type: string }
+                apiKey: { type: string }
+                cfAccessClientId: { type: string, nullable: true }
+                cfAccessSecret: { type: string, nullable: true }
+      responses:
+        '201': { description: Created peer (masked), content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: Duplicate peer name, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /api/peers/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [Migration]
+      summary: Get a peer instance (masked)
+      responses:
+        '200': { description: Peer, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Migration]
+      summary: Update a peer instance
+      description: Secret fields are re-encrypted when provided; a new apiKey resets the cached capabilities.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses:
+        '200': { description: Updated peer (masked), content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Migration]
+      summary: Delete a peer instance (cascades its migration jobs)
+      responses:
+        '200': { description: Deleted, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/peers/{id}/capabilities:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [Migration]
+      summary: Live-verify a peer (probe + cache its capabilities)
+      responses:
+        '200': { description: Peer capabilities, content: { application/json: { schema: { type: object, properties: { capabilities: { type: object, additionalProperties: true } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '502': { description: Peer unreachable or rejected the stored credential, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /api/migrations:
+    get:
+      tags: [Migration]
+      summary: List the caller's migration jobs
+      parameters:
+        - { name: projectId, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [pending, running, db_done, files_done, verifying, completed, failed, aborted] } }
+      responses:
+        '200':
+          description: Jobs
+          content: { application/json: { schema: { type: object, properties: { jobs: { type: array, items: { type: object, additionalProperties: true } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Migration]
+      summary: Create a migration job and start it asynchronously
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectId, peerInstanceId]
+              properties:
+                projectId: { type: string }
+                peerInstanceId: { type: string }
+                options:
+                  type: object
+                  properties:
+                    workingTreeMode: { type: string, enum: [full_tar, git_essentials, none] }
+                    includeDotEnv: { type: boolean }
+                    includeAgentCreds: { type: boolean }
+                    includeSshKeys: { type: boolean }
+                    includeAgentSettings: { type: boolean }
+                    includeChannelHistory: { type: boolean }
+                    removeSourceAfterVerify: { type: boolean }
+      responses:
+        '202': { description: Job accepted, content: { application/json: { schema: { type: object, properties: { jobId: { type: string }, status: { type: string } } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/migrations/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [Migration]
+      summary: Poll a migration job (status, bytesTransferred, conflict report)
+      responses:
+        '200': { description: Job, content: { application/json: { schema: { type: object, properties: { job: { type: object, additionalProperties: true } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/migrations/{id}/abort:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [Migration]
+      summary: Abort a non-terminal migration job (best-effort destination rollback)
+      responses:
+        '200': { description: Job (aborted or already terminal), content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/migrations/size-preview:
+    post:
+      tags: [Migration]
+      summary: Estimate the transfer size for a project (bounded ~2s, du-based)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectId, workingTreeMode]
+              properties:
+                projectId: { type: string }
+                workingTreeMode: { type: string, enum: [full_tar, git_essentials, none] }
+                includeDotEnv: { type: boolean }
+      responses:
+        '200':
+          description: Uncompressed-size estimates (zeros + warning when unavailable)
+          content: { application/json: { schema: { type: object, properties: { workingTreeBytes: { type: integer }, profilesBytes: { type: integer }, agentSettingsBytes: { type: integer }, totalBytes: { type: integer }, warning: { type: string } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/migration/capabilities:
+    get:
+      tags: [Migration]
+      summary: 'Destination: advertise bundle version + chunk size (peer pre-flight)'
+      responses:
+        '200': { description: Capabilities, content: { application/json: { schema: { type: object, properties: { version: { type: integer }, maxChunkBytes: { type: integer }, appVersion: { type: string } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/migration/imports:
+    post:
+      tags: [Migration]
+      summary: 'Destination: stage an inbound migration and apply its DB bundle'
+      description: >-
+        Called by the SOURCE instance (Bearer = this instance's API key) with
+        { jobId, sourceInstanceUrl, manifest, options, dbBundle }. Applies the
+        DB rows in one FK-ordered transaction with id remaps.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses:
+        '201': { description: 'Import staged + DB rows applied ({ importId, status, result })', content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: Import id already exists, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { description: DB bundle failed validation/import (row marked failed), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /api/migration/imports/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [Migration]
+      summary: 'Destination: import status + receivedChunks (per-archive resume info)'
+      responses:
+        '200': { description: 'Import row + receivedChunks map', content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Migration]
+      summary: 'Destination: roll back an import (project cascade + profiles + staging dir)'
+      responses:
+        '200': { description: Rolled back, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/migration/imports/{id}/chunks:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    put:
+      tags: [Migration]
+      summary: 'Destination: receive one archive chunk (streamed body)'
+      description: >-
+        Raw chunk bytes addressed by headers X-Archive-Name
+        (working-tree|essentials|profiles|agent-settings), X-Chunk-Index
+        (0-based), X-Chunk-Sha256, X-Total-Chunks (per-archive count, validated
+        against the staged manifest). Atomic tmp+rename; idempotent re-PUT; 409
+        on sha mismatch.
+      requestBody: { required: true, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+      responses:
+        '200': { description: 'Chunk accepted ({ ok, duplicate, chunksReceived })', content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Sha mismatch / wrong totals / not accepting chunks, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /api/migration/imports/{id}/finalize:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    post:
+      tags: [Migration]
+      summary: 'Destination: assemble + verify + extract all archives, then complete'
+      description: >-
+        Requires every chunk. Claims the import atomically (status
+        "finalizing") so concurrent finalize calls cannot double-extract.
+        Returns the file-phase conflicts (overwrites, clone/diff issues).
+      responses:
+        '200': { description: 'Finalized ({ import, conflicts })', content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Missing chunks / already finalizing / bad state, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /api/migration/imports/{id}/verify:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [Migration]
+      summary: 'Destination: verify an import (row recounts + filesystem checks)'
+      responses:
+        '200': { description: 'VerifyResult ({ ok, rowCounts, missingPaths })', content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
 
 components:
   securitySchemes:

@@ -14,6 +14,7 @@ import {
   ScrollText,
   Smartphone,
   Zap,
+  Globe,
   X,
   Loader2,
 } from "lucide-react";
@@ -63,6 +64,10 @@ const BeadsSection = lazy(() =>
 const TriggersSection = lazy(() =>
   import("./sections/TriggersSection").then((m) => ({ default: m.TriggersSection }))
 );
+// Peer-instance registry + migration job history (server-to-server migration).
+const InstancesSection = lazy(() =>
+  import("./sections/InstancesSection").then((m) => ({ default: m.InstancesSection }))
+);
 
 export type SettingsSection =
   | "terminal"
@@ -75,6 +80,7 @@ export type SettingsSection =
   | "secrets"
   | "beads"
   | "triggers"
+  | "instances"
   | "system"
   | "logs"
   | "mobile";
@@ -97,6 +103,7 @@ const NAV_ITEMS: (NavItem | "divider")[] = [
   { id: "secrets", label: "Secrets", icon: KeyRound },
   { id: "beads", label: "Beads", icon: Circle },
   { id: "triggers", label: "Triggers", icon: Zap },
+  { id: "instances", label: "Instances", icon: Globe },
   "divider",
   { id: "system", label: "System", icon: Server },
   { id: "logs", label: "Logs", icon: ScrollText },
@@ -174,6 +181,8 @@ export function SettingsView({
         return <BeadsSection />;
       case "triggers":
         return <TriggersSection />;
+      case "instances":
+        return <InstancesSection />;
       case "mobile":
         return <MobileSection />;
     }

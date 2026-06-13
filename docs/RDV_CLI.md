@@ -72,6 +72,7 @@ Top-level commands from `main.rs`:
 | [`teams`](#teams) | Multi-agent team orchestration |
 | [`crown`](#crown) | Best-of-N run-and-compare (fan-out → judge → auto-PR) |
 | [`delegate`](#delegate) | Delegate an agent run to another instance via the supervisor |
+| [`migrate`](#migrate) | Migrate a project to another Remote Dev instance |
 | [`tmux`](#tmux) | tmux compatibility layer |
 
 ---
@@ -309,6 +310,36 @@ supervisor base URL + operator token come from `RDV_SUPERVISOR_URL` /
 rdv delegate --to <slug> --project-id <id> --prompt "<text>" \
   [--provider <claude|codex|gemini|opencode>] [--provision-if-missing]
 ```
+
+## migrate
+
+Server-to-server project migration: push a project (DB rows + working tree +
+profile/agent settings) to another Remote Dev instance registered in the peer
+registry. See [`MIGRATION.md`](./MIGRATION.md) for what travels and the
+destination-side import lifecycle.
+
+| Subcommand | Purpose |
+|------------|---------|
+| `rdv migrate peers` | List registered peer instances (migration destinations, API keys masked) |
+| `rdv migrate preview --project-id <id> [--mode <full_tar\|git_essentials\|none>]` | Estimate the transfer size (du-based, default mode `full_tar`) |
+| `rdv migrate run --project-id <id> --peer <name-or-id> [flags]` | Start a migration job; watches it to a terminal state by default |
+| `rdv migrate status <job-id>` | Show one migration job (phase, bytes transferred, conflicts) |
+
+`rdv migrate run` flags:
+
+| Flag | Effect |
+|------|--------|
+| `--mode <full_tar\|git_essentials\|none>` | Working-tree transfer mode (server default `full_tar`) |
+| `--remove-source` | Delete the source project after the destination verifies clean |
+| `--no-env` | Exclude `.env*` files from the transfer |
+| `--no-agent-creds` | Exclude agent credentials (stored provider API keys) |
+| `--ssh-keys` | Include SSH keys (excluded by default) |
+| `--no-agent-settings` | Exclude agent settings (MCP servers, agent configs, profile JSON) |
+| `--channel-history` | Include channel/peer message history (excluded by default) |
+| `--watch[=true\|false]` | Poll until the job is terminal (default `true`) |
+
+Peers are registered via the web UI (Settings → Instances) or
+`POST /api/peers` — see [`API.md`](./API.md#project-migration).
 
 ## tmux
 

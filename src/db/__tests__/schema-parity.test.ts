@@ -269,14 +269,15 @@ void _parityHolds;
 
 // Trivial runtime test so vitest treats this file as a (passing) suite. The
 // real guarantee is the compile-time tuple above, enforced by `tsc`.
-it("schema.sqlite and schema.pg expose the same 74 table exports", () => {
+it("schema.sqlite and schema.pg expose the same 77 table exports", () => {
   const sqliteTables = Object.keys(sqliteSchema).sort();
   const pgTables = Object.keys(pgSchema).sort();
   expect(sqliteTables).toEqual(pgTables);
   // 61 base + 1 (y5ch: notification_preferences) + 2 (aehq: model_proxy_token,
   // model_usage_event) + 6 (oyej: agentSchedules, agentRuns, triggerConfigs,
   // triggerEvents, crownRuns, crownCandidates) + 3 (x386: messageDelivery,
-  // channelSubscription, agentWorkContext) + 1 (oyej.14: webhookDeliveries) =
-  // 74. (x386.16 dropped the unused message_replay_cursor table.)
-  expect(sqliteTables).toHaveLength(74);
+  // channelSubscription, agentWorkContext) + 1 (oyej.14: webhookDeliveries) +
+  // 3 (server-to-server migration: peerInstances, migrationJobs,
+  // migrationImports) = 77. (x386.16 dropped message_replay_cursor.)
+  expect(sqliteTables).toHaveLength(77);
 });

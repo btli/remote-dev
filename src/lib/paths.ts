@@ -249,6 +249,15 @@ export function getSshConnectionsDir(): string {
 }
 
 /**
+ * Get the migration staging directory path.
+ * Inbound server-to-server project migrations stage their manifest and
+ * (stage 2) file chunks here, one subdirectory per import id.
+ */
+export function getMigrationStagingDir(): string {
+  return join(getDataDir(), "migration-staging");
+}
+
+/**
  * Get the analytics database file path.
  * Stored separately from the main application database (high-volume writes).
  */
@@ -335,6 +344,7 @@ export function ensureDataDirectories(): void {
     getLiteLLMDir(),
     getAnalyticsDir(),
     getSshConnectionsDir(),
+    getMigrationStagingDir(),
   ];
 
   for (const dir of dirs) {
@@ -417,6 +427,9 @@ export const AppPaths = {
   },
   get sshConnectionsDir() {
     return getSshConnectionsDir();
+  },
+  get migrationStagingDir() {
+    return getMigrationStagingDir();
   },
   get provisionDir() {
     return getProvisionDir();

@@ -133,6 +133,8 @@ import { PortRegistryAdapterImpl } from "./adapters/PortRegistryAdapterImpl";
 import { SessionAdapterImpl } from "./adapters/SessionAdapterImpl";
 import { TmuxAdapterImpl } from "./adapters/TmuxAdapterImpl";
 import { pruneExpiredClaims } from "@/services/port-claims-service";
+import { pruneStaleMigrations } from "@/services/migration-service";
+import { pruneStaleImports } from "@/services/migration-import-service";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("Container");
@@ -440,6 +442,36 @@ void pruneExpiredClaims()
   })
   .catch((error) => {
     log.error("Failed to prune expired port claims on startup", {
+      error: String(error),
+    });
+  });
+
+// Same pattern for server-to-server migration jobs: a runner that died
+// mid-migration leaves a non-terminal row behind; mark anything that has not
+// progressed in 2h as failed so the UI/API never shows immortal "running" jobs.
+void pruneStaleMigrations()
+  .then((failed) => {
+    if (failed > 0) {
+      log.info("Pruned stale migration jobs on startup", { failed });
+    }
+  })
+  .catch((error) => {
+    log.error("Failed to prune stale migration jobs on startup", {
+      error: String(error),
+    });
+  });
+
+// Destination-side counterpart: an inbound migration whose source died
+// mid-push leaves an import row stuck non-terminal (+ a staging dir). Fail
+// anything older than 2h and reclaim its staging directory.
+void pruneStaleImports()
+  .then((failed) => {
+    if (failed > 0) {
+      log.info("Pruned stale destination imports on startup", { failed });
+    }
+  })
+  .catch((error) => {
+    log.error("Failed to prune stale destination imports on startup", {
       error: String(error),
     });
   });
