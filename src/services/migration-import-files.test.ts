@@ -14,7 +14,6 @@ import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 
@@ -54,6 +53,7 @@ import {
   type ImportBookkeeping,
 } from "./migration-import-service";
 import { users, profileGitIdentities, agentProfiles, migrationImports } from "@/db/schema";
+import { getProjectsDir } from "@/lib/paths";
 import type {
   ArchiveManifestEntry,
   BundleManifest,
@@ -282,8 +282,9 @@ describe("MigrationImportService file phase", () => {
     const { import: finalized, conflicts } = await finalizeImport(DEST_USER, JOB_ID);
     expect(finalized.status).toBe("completed");
 
-    // Working tree extracted to the REWRITTEN destination (~/projects/filesapp).
-    const destDir = join(homedir(), "projects", "filesapp");
+    // Working tree extracted to the REWRITTEN destination: the persistent
+    // projects root, getProjectsDir() = <RDV_DATA_DIR>/projects/filesapp.
+    const destDir = join(getProjectsDir(), "filesapp");
     expect(readFileSync(join(destDir, "hello.txt"), "utf8")).toBe(
       "hello from the source\n",
     );
@@ -434,7 +435,7 @@ describe("MigrationImportService file phase", () => {
     await pushChunks(tree);
 
     // The destination working dir already has user files in it.
-    const destDir = join(homedir(), "projects", "filesapp");
+    const destDir = join(getProjectsDir(), "filesapp");
     mkdirSync(destDir, { recursive: true });
     writeFileSync(join(destDir, "precious.txt"), "do not clobber");
 

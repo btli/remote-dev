@@ -10,10 +10,11 @@
  * dialect module — see migration-test-db.ts), `@/db` mocked to point at it.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
+import { getProjectsDir } from "@/lib/paths";
 
 // Deterministic encryption key for the re-encryption round-trip assertions.
 process.env.AUTH_SECRET = "migration-import-test-secret";
@@ -387,14 +388,15 @@ describe("MigrationImportService", () => {
       .where(eq(triggerConfigs.projectId, SRC_PROJECT));
     expect(trigger.enabled).toBe(false);
 
-    // Working directory rewritten to this host's ~/projects/<basename>.
+    // Working directory rewritten to this host's persistent projects root
+    // (getProjectsDir() = <RDV_DATA_DIR>/projects/<basename>), NOT ephemeral $HOME.
     const [pref] = await handle.db
       .select()
       .from(nodePreferences)
       .where(
         and(eq(nodePreferences.ownerId, SRC_PROJECT), eq(nodePreferences.userId, DEST_USER)),
       );
-    const expectedDir = join(homedir(), "projects", "myapp");
+    const expectedDir = join(getProjectsDir(), "myapp");
     expect(pref.defaultWorkingDirectory).toBe(expectedDir);
     expect(pref.localRepoPath).toBe(expectedDir);
 
@@ -477,7 +479,7 @@ describe("MigrationImportService", () => {
   });
 
   it("suffixes the working directory when another project already uses it", async () => {
-    const contested = join(homedir(), "projects", "myapp");
+    const contested = join(getProjectsDir(), "myapp");
     await handle.db.insert(nodePreferences).values({
       id: "other-pref",
       ownerId: "other-project",
@@ -499,7 +501,48 @@ describe("MigrationImportService", () => {
           eq(nodePreferences.userId, DEST_USER),
         ),
       );
-    expect(pref.defaultWorkingDirectory).toBe(join(homedir(), "projects", "myapp-2"));
+    expect(pref.defaultWorkingDirectory).toBe(join(getProjectsDir(), "myapp-2"));
+  });
+
+  it("lands the working dir under the persistent RDV_DATA_DIR projects root, not $HOME", async () => {
+    // On a Shape-B (k8s) instance homedir()=/home/rdv is EPHEMERAL overlay
+    // storage wiped on every pod roll, while the persistent PVC is RDV_DATA_DIR.
+    // Point RDV_DATA_DIR at a dir OUTSIDE $HOME so the two roots can't coincide.
+    const persistentDir = mkdtempSync(join(tmpdir(), "rdv-persistent-"));
+    process.env.RDV_DATA_DIR = persistentDir;
+    try {
+      const result = await initAndImport();
+
+      const [pref] = await handle.db
+        .select()
+        .from(nodePreferences)
+        .where(
+          and(
+            eq(nodePreferences.ownerId, result.importedProjectId),
+            eq(nodePreferences.userId, DEST_USER),
+          ),
+        );
+      const projectsRoot = join(persistentDir, "projects");
+      expect(getProjectsDir()).toBe(projectsRoot);
+      expect(pref.defaultWorkingDirectory).toBe(join(projectsRoot, "myapp"));
+      expect(pref.defaultWorkingDirectory?.startsWith(`${projectsRoot}/`)).toBe(true);
+      expect(pref.localRepoPath).toBe(join(projectsRoot, "myapp"));
+      // Crucially: NOT rooted on ephemeral $HOME.
+      expect(pref.defaultWorkingDirectory?.startsWith(join(homedir(), "projects"))).toBe(
+        false,
+      );
+
+      // The stage-2 path map points at the persistent root too.
+      const row = await getImport(DEST_USER, JOB_ID);
+      const bookkeeping = JSON.parse(row!.optionsJson) as ImportBookkeeping;
+      expect(bookkeeping.pathMap?.["/Users/alice/dev/myapp"]).toBe(
+        join(projectsRoot, "myapp"),
+      );
+    } finally {
+      // Restore the per-test data dir (afterEach deletes RDV_DATA_DIR anyway).
+      process.env.RDV_DATA_DIR = handle.dir;
+      rmSync(persistentDir, { recursive: true, force: true });
+    }
   });
 
   it("upserts node preferences on (ownerId, ownerType, userId)", async () => {
