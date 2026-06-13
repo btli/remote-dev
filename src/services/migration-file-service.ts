@@ -34,7 +34,10 @@ import {
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname } from "node:path";
+// runtimeJoin: bypasses Turbopack's static fs tracing — `output: standalone`
+// over-traces user-path joins into the build otherwise (deploy-breaking).
+import { runtimeJoin as join } from "@/lib/dynamic-fs";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -53,6 +56,7 @@ import {
   type MigrationOptions,
 } from "@/lib/migration-bundle";
 import type { MigrationWorkingTreeMode } from "@/types/migration";
+import { MigrationServiceError } from "./migration-errors";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("MigrationFiles");
@@ -184,6 +188,25 @@ export async function copyTree(
   return copied;
 }
 
+/**
+ * Every regular FILE under `root`, as paths relative to it. Symlinks and
+ * special files are deliberately NOT returned (the `isFile()` dirent check is
+ * load-bearing: the agent-settings extractor copies these paths into $HOME,
+ * and following attacker-controlled symlinks there would be an escape).
+ */
+export async function walkFiles(root: string, relBase = ""): Promise<string[]> {
+  const out: string[] = [];
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      out.push(...(await walkFiles(join(root, entry.name), rel)));
+    } else if (entry.isFile()) {
+      out.push(rel);
+    }
+  }
+  return out;
+}
+
 /** Copy one file preserving its relative path under `destRoot`. */
 async function copyRelative(srcRoot: string, rel: string, destRoot: string): Promise<void> {
   const to = join(destRoot, rel);
@@ -197,17 +220,25 @@ function isExcludedPath(relPath: string): boolean {
   return segments.some((s) => (EXCLUDE_PATTERNS as readonly string[]).includes(s));
 }
 
+/**
+ * `find` argument group matching the EXCLUDE_PATTERNS dirs, for `-prune`
+ * expressions: `( -name a -o -name b … )`.
+ */
+function pruneArgs(): string[] {
+  const group: string[] = ["("];
+  EXCLUDE_PATTERNS.forEach((p, i) => {
+    if (i > 0) group.push("-o");
+    group.push("-name", p);
+  });
+  group.push(")");
+  return group;
+}
+
 /** Find every `.env*` FILE under `workingDir`, pruning excluded dirs. */
 async function findDotEnvFiles(workingDir: string): Promise<string[]> {
-  const pruneGroup: string[] = ["("];
-  EXCLUDE_PATTERNS.forEach((p, i) => {
-    if (i > 0) pruneGroup.push("-o");
-    pruneGroup.push("-name", p);
-  });
-  pruneGroup.push(")");
   const result = await execFileNoThrow(
     "find",
-    [".", "-type", "d", ...pruneGroup, "-prune", "-o", "-type", "f", "-name", ".env*", "-print"],
+    [".", "-type", "d", ...pruneArgs(), "-prune", "-o", "-type", "f", "-name", ".env*", "-print"],
     { cwd: workingDir, timeout: 30_000 },
   );
   if (result.exitCode !== 0) return [];
@@ -291,10 +322,7 @@ async function stageAgentSettings(
 
   // claude — curated allowlist only.
   for (const item of CLAUDE_ITEMS) {
-    await copyItem("claude", dirs.claude, item, (rel, isDir) => {
-      void isDir;
-      return !isExcludedPath(rel);
-    });
+    await copyItem("claude", dirs.claude, item, (rel, _isDir) => !isExcludedPath(rel));
   }
 
   // codex — config + docs, auth only with creds.
@@ -507,11 +535,10 @@ export async function buildArchives(input: BuildArchivesInput): Promise<BuiltArc
       await copyTree(
         profile.configDir,
         join(stage, "profiles", profile.id),
-        (rel, isDir) => {
+        (rel, _isDir) => {
           const top = rel.split("/")[0];
           if (top === ".cache") return false;
           if (top === ".ssh" && !input.options.includeSshKeys) return false;
-          void isDir;
           return true;
         },
       );
@@ -568,15 +595,9 @@ async function duBytes(path: string, timeoutMs = 1500): Promise<number> {
 
 /** Sum of `du` over the EXCLUDE_PATTERNS dirs found in `root` (pruned find). */
 async function excludedBytes(root: string): Promise<number> {
-  const group: string[] = ["("];
-  EXCLUDE_PATTERNS.forEach((p, i) => {
-    if (i > 0) group.push("-o");
-    group.push("-name", p);
-  });
-  group.push(")");
   const found = await execFileNoThrow(
     "find",
-    [root, "-type", "d", ...group, "-prune", "-print"],
+    [root, "-type", "d", ...pruneArgs(), "-prune", "-print"],
     { timeout: 1500 },
   );
   if (found.exitCode !== 0 && !found.stdout) return 0;
@@ -620,7 +641,9 @@ export async function sizePreview(
     const project = await db.query.projects.findFirst({
       where: and(eq(projects.id, projectId), eq(projects.userId, userId)),
     });
-    if (!project) throw new Error("Project not found");
+    if (!project) {
+      throw new MigrationServiceError("Project not found", 404, "PROJECT_NOT_FOUND");
+    }
 
     const pref = await db.query.nodePreferences.findFirst({
       where: and(
@@ -694,7 +717,7 @@ export async function sizePreview(
     const result = await Promise.race([compute(), timeout]);
     return result;
   } catch (error) {
-    if (String(error).includes("Project not found")) throw error;
+    if (error instanceof MigrationServiceError) throw error;
     log.warn("Size preview failed", { projectId, error: String(error) });
     return {
       workingTreeBytes: 0,

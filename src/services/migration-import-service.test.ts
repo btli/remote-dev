@@ -49,6 +49,7 @@ import {
 } from "./migration-import-service";
 import { decrypt } from "@/lib/encryption";
 import {
+  migrationImports,
   users,
   projects,
   nodePreferences,
@@ -584,5 +585,36 @@ describe("MigrationImportService", () => {
     const broken = { ...makeBundle(), project: undefined } as unknown as DbBundle;
     await expect(importDb(DEST_USER, JOB_ID, broken)).rejects.toThrow(/Invalid DB bundle/);
     expect((await getImport(DEST_USER, JOB_ID))?.status).toBe("failed");
+  });
+
+  it("allows retrying a FAILED import via a conditional claim, and 409s duplicates", async () => {
+    await initImport(DEST_USER, JOB_ID, "https://src", makeManifest(), OPTIONS);
+
+    // Same id while the first attempt is live → clean 409, never a PK crash.
+    await expect(
+      initImport(DEST_USER, JOB_ID, "https://src", makeManifest(), OPTIONS),
+    ).rejects.toMatchObject({ status: 409, code: "ALREADY_EXISTS" });
+
+    // Another user can never reclaim someone else's import id.
+    await handle.db
+      .update(migrationImports)
+      .set({ status: "failed" })
+      .where(eq(migrationImports.id, JOB_ID));
+    await expect(
+      initImport("someone-else", JOB_ID, "https://src", makeManifest(), OPTIONS),
+    ).rejects.toMatchObject({ status: 409, code: "ALREADY_EXISTS" });
+
+    // The owner CAN retry once the prior attempt failed: the failed row is
+    // rolled back + conditionally deleted, and a fresh staged row replaces it.
+    const retried = await initImport(
+      DEST_USER,
+      JOB_ID,
+      "https://src",
+      makeManifest(),
+      OPTIONS,
+    );
+    expect(retried.status).toBe("staged");
+    const result = await importDb(DEST_USER, JOB_ID, makeBundle());
+    expect(result.importedProjectId).toBe(SRC_PROJECT);
   });
 });

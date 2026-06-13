@@ -33,6 +33,7 @@ import {
   type VerifyResult,
 } from "@/lib/migration-bundle";
 import type { MigrationJobStatus } from "@/types/migration";
+import { MigrationServiceError } from "./migration-errors";
 import * as MigrationExportService from "./migration-export-service";
 import * as MigrationFileService from "./migration-file-service";
 import type { BuildArchivesInput, BuiltArchives } from "./migration-file-service";
@@ -175,10 +176,14 @@ export async function createJob(
   const project = await db.query.projects.findFirst({
     where: and(eq(projects.id, input.projectId), eq(projects.userId, userId)),
   });
-  if (!project) throw new Error("Project not found");
+  if (!project) {
+    throw new MigrationServiceError("Project not found", 404, "PROJECT_NOT_FOUND");
+  }
 
   const peer = await PeerInstanceService.getPeerRow(userId, input.peerInstanceId);
-  if (!peer) throw new Error("Peer instance not found");
+  if (!peer) {
+    throw new MigrationServiceError("Peer instance not found", 404, "PEER_NOT_FOUND");
+  }
 
   const options: MigrationOptions = { ...DEFAULT_OPTIONS, ...input.options };
   const values: MigrationJobInsert = {
@@ -505,20 +510,46 @@ export async function startJob(
       );
     }
 
-    // ── Optional source removal (existing deletion path; never rm -rf) ──
+    // ── Complete FIRST, then (optionally) remove the source project ──
+    // The job row must record success (report + destProjectId) before any
+    // destructive step: a crash between "delete" and "mark completed" would
+    // otherwise destroy the user's project while the job looks unfinished.
+    const completed = await deps.transition(jobId, ["verifying"], {
+      status: "completed",
+      conflictReportJson: JSON.stringify(conflictReport),
+      completedAt: deps.now(),
+    });
+    if (!completed) return; // aborted mid-flight
+
     if (job.removeSourceAfterVerify) {
       log.info("Removing source project after verified migration", {
         jobId,
         projectId: job.projectId,
       });
-      await deps.deleteProject(job.projectId);
+      try {
+        // Existing deletion path (kills tmux, cascades rows); never rm -rf.
+        await deps.deleteProject(job.projectId);
+      } catch (deleteError) {
+        // Fail-safe: the migration stays completed (the copy is verified on
+        // the destination) and the source copy survives; record the miss in
+        // the already-persisted report so the UI can surface it.
+        log.error("Source project deletion failed after completed migration", {
+          jobId,
+          projectId: job.projectId,
+          error: String(deleteError),
+        });
+        conflictReport.conflicts.push({
+          type: "source_delete_failed",
+          message:
+            "Migration completed but the source project could not be deleted — remove it manually",
+          detail: String(deleteError),
+        });
+        await deps.transition(jobId, ["completed"], {
+          conflictReportJson: JSON.stringify(conflictReport),
+        });
+      }
     }
 
-    await deps.transition(jobId, ["verifying"], {
-      status: "completed",
-      conflictReportJson: JSON.stringify(conflictReport),
-      completedAt: deps.now(),
-    });
     log.info("Migration job completed", {
       jobId,
       destProjectId: importBody.result?.importedProjectId,

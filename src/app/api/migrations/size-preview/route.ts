@@ -11,6 +11,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as MigrationFileService from "@/services/migration-file-service";
+import { MigrationServiceError } from "@/services/migration-errors";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("api/migrations");
@@ -37,11 +38,10 @@ export const POST = withApiAuth(async (request, { userId }) => {
     );
     return NextResponse.json(preview);
   } catch (error) {
-    const message = String(error instanceof Error ? error.message : error);
-    if (message.includes("not found")) {
-      return errorResponse("Project not found", 404, "NOT_FOUND");
+    if (error instanceof MigrationServiceError) {
+      return errorResponse(error.message, error.status, error.code);
     }
-    log.error("Size preview failed", { error: message });
+    log.error("Size preview failed", { error: String(error) });
     return errorResponse("Failed to estimate migration size", 500);
   }
 });

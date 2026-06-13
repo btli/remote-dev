@@ -16,6 +16,7 @@ import {
 } from "@/lib/migration-bundle";
 import type { DbBundle } from "@/lib/migration-bundle";
 import * as MigrationImportService from "@/services/migration-import-service";
+import { MigrationImportError } from "@/services/migration-import-service";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("api/migration");
@@ -49,9 +50,11 @@ export const POST = withApiAuth(async (request, { userId }) => {
     );
   } catch (error) {
     const message = String(error instanceof Error ? error.message : error);
-    const status = message.includes("already exists") ? 409 : 400;
     log.warn("Import init rejected", { jobId, error: message });
-    return errorResponse(message, status, "INIT_FAILED");
+    if (error instanceof MigrationImportError) {
+      return errorResponse(error.message, error.status, error.code);
+    }
+    return errorResponse(message, 400, "INIT_FAILED");
   }
 
   try {

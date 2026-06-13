@@ -13,6 +13,7 @@ import { db } from "@/db";
 import { peerInstances } from "@/db/schema";
 import { encrypt } from "@/lib/encryption";
 import { peerFetch } from "@/lib/peer-fetch";
+import { MigrationServiceError } from "./migration-errors";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("PeerInstanceService");
@@ -231,7 +232,7 @@ export async function verifyPeer(
   id: string,
 ): Promise<PeerCapabilities> {
   const peer = await getPeerRow(userId, id);
-  if (!peer) throw new Error("Peer not found");
+  if (!peer) throw new MigrationServiceError("Peer not found", 404, "NOT_FOUND");
 
   let response: Response;
   try {

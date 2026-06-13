@@ -18,15 +18,14 @@
  *   the source→destination path map is recorded for stage-2 extraction.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { createWriteStream, existsSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync } from "node:fs";
+import { pipeline } from "node:stream/promises";
 import { homedir } from "node:os";
 import { basename, dirname } from "node:path";
 import {
-  appendFile,
   copyFile,
   mkdir,
   readdir,
-  readFile,
   rename,
   rm,
   stat,
@@ -74,7 +73,12 @@ import {
   type VerifyResult,
 } from "@/lib/migration-bundle";
 import { execFile, execFileNoThrow } from "@/lib/exec";
-import { agentSettingsDirs, copyTree, sha256File } from "@/services/migration-file-service";
+import {
+  agentSettingsDirs,
+  copyTree,
+  sha256File,
+  walkFiles,
+} from "@/services/migration-file-service";
 import type { ChannelType } from "@/types/channels";
 import type { TaskPriority, TaskSource, TaskStatus } from "@/types/task";
 import type { AgentProvider, AgentConfigType, MCPTransport } from "@/types/agent";
@@ -164,19 +168,46 @@ export async function initImport(
   options: MigrationOptions,
 ): Promise<MigrationImportRow> {
   if (!IMPORT_ID_PATTERN.test(jobId)) {
-    throw new Error("Invalid import id (must be a uuid-like token)");
+    throw new MigrationImportError(
+      "Invalid import id (must be a uuid-like token)",
+      400,
+      "INVALID_IMPORT_ID",
+    );
   }
 
   const existing = await db.query.migrationImports.findFirst({
     where: eq(migrationImports.id, jobId),
   });
   if (existing) {
-    if (existing.userId === destUserId && existing.status === "failed") {
-      // A failed prior attempt may be retried: clear it first.
-      await rollbackImport(destUserId, jobId);
-      await db.delete(migrationImports).where(eq(migrationImports.id, jobId));
-    } else {
-      throw new Error(`Import ${jobId} already exists (status: ${existing.status})`);
+    const retryable = existing.userId === destUserId && existing.status === "failed";
+    if (!retryable) {
+      throw new MigrationImportError(
+        `Import ${jobId} already exists (status: ${existing.status})`,
+        409,
+        "ALREADY_EXISTS",
+      );
+    }
+    // A failed prior attempt may be retried. Clean its artifacts (idempotent),
+    // then CLAIM the retry with a conditional delete: only the caller whose
+    // delete actually removed the failed row proceeds to re-insert, so a
+    // concurrent duplicate POST gets a clean 409 instead of a PK crash.
+    await rollbackImport(destUserId, jobId);
+    const deleted = await db
+      .delete(migrationImports)
+      .where(
+        and(
+          eq(migrationImports.id, jobId),
+          eq(migrationImports.userId, destUserId),
+          eq(migrationImports.status, "failed"),
+        ),
+      )
+      .returning({ id: migrationImports.id });
+    if (deleted.length === 0) {
+      throw new MigrationImportError(
+        `Import ${jobId} already exists (a concurrent retry claimed it)`,
+        409,
+        "ALREADY_EXISTS",
+      );
     }
   }
 
@@ -189,19 +220,33 @@ export async function initImport(
   );
 
   const bookkeeping: ImportBookkeeping = { options };
-  const [row] = await db
-    .insert(migrationImports)
-    .values({
-      id: jobId,
-      userId: destUserId,
-      sourceInstanceUrl,
-      status: "staged",
-      stagingDir,
-      totalChunks: manifest.totalChunks,
-      manifestJson: JSON.stringify(manifest),
-      optionsJson: JSON.stringify(bookkeeping),
-    })
-    .returning();
+  let row: MigrationImportRow;
+  try {
+    [row] = await db
+      .insert(migrationImports)
+      .values({
+        id: jobId,
+        userId: destUserId,
+        sourceInstanceUrl,
+        status: "staged",
+        stagingDir,
+        totalChunks: manifest.totalChunks,
+        manifestJson: JSON.stringify(manifest),
+        optionsJson: JSON.stringify(bookkeeping),
+      })
+      .returning();
+  } catch (error) {
+    // A concurrent POST winning the gap between the existence check and this
+    // insert surfaces as a primary-key violation — report it as a duplicate.
+    if (/UNIQUE|PRIMARY KEY|duplicate key/i.test(String(error))) {
+      throw new MigrationImportError(
+        `Import ${jobId} already exists (concurrent init)`,
+        409,
+        "ALREADY_EXISTS",
+      );
+    }
+    throw error;
+  }
 
   log.info("Import staged", { importId: jobId, userId: destUserId, sourceInstanceUrl });
   return row;
@@ -276,6 +321,11 @@ export async function receiveChunk(
 ): Promise<{ duplicate: boolean; chunksReceived: number }> {
   const row = await getImport(destUserId, importId);
   if (!row) throw new MigrationImportError("Import not found", 404, "NOT_FOUND");
+  // "staged" is deliberately rejected: the DB bundle must import FIRST so the
+  // bookkeeping chunks are extracted against (pathMap, profileIdRemaps, the
+  // imported preference rows) exists. Chunks accepted before importDb would
+  // finalize into nothing. Terminal/finalizing states reject for the same
+  // reason finalize claims atomically — the file set must stop changing.
   if (row.status !== "importing" && row.status !== "receiving") {
     throw new MigrationImportError(
       `Import is not accepting chunks (status: ${row.status})`,
@@ -434,7 +484,7 @@ export async function importDb(
   bundle: DbBundle,
 ): Promise<ImportResult> {
   const importRow = await getImport(destUserId, importId);
-  if (!importRow) throw new Error("Import not found");
+  if (!importRow) throw new MigrationImportError("Import not found", 404, "NOT_FOUND");
   if (importRow.status !== "staged" && importRow.status !== "receiving") {
     throw new Error(`Import is not awaiting a DB bundle (status: ${importRow.status})`);
   }
@@ -1040,17 +1090,35 @@ async function assembleArchive(
   const archiveDir = join(row.stagingDir, entry.name);
   const outPath = join(row.stagingDir, `${entry.name}.tar.gz`);
   await rm(outPath, { force: true });
+
+  // Check completeness up-front so a missing chunk never leaves a partial file.
   for (let index = 0; index < entry.chunkCount; index++) {
-    const chunkPath = join(archiveDir, chunkFileName(index));
-    if (!existsSync(chunkPath)) {
+    if (!existsSync(join(archiveDir, chunkFileName(index)))) {
       throw new MigrationImportError(
         `Archive ${entry.name} is missing chunk ${index}/${entry.chunkCount}`,
         409,
         "CHUNKS_INCOMPLETE",
       );
     }
-    await appendFile(outPath, await readFile(chunkPath));
   }
+
+  // STREAM each chunk into one append-order write stream — chunks are up to
+  // 64 MiB, so buffering them (readFile + appendFile) would allocate 2× the
+  // chunk per iteration and stall the event loop under concurrent finalizes.
+  const out = createWriteStream(outPath);
+  try {
+    for (let index = 0; index < entry.chunkCount; index++) {
+      await pipeline(createReadStream(join(archiveDir, chunkFileName(index))), out, {
+        end: false,
+      });
+    }
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      out.end(() => resolve());
+      out.once("error", reject);
+    });
+  }
+
   const actual = await sha256File(outPath);
   if (actual !== entry.sha256.toLowerCase()) {
     throw new MigrationImportError(
@@ -1245,20 +1313,6 @@ function agentSettingsDest(provider: string): string | null {
   return (dirs as Record<string, string>)[provider] ?? null;
 }
 
-/** Every file under `root`, as paths relative to it. */
-async function walkFiles(root: string, relBase = ""): Promise<string[]> {
-  const out: string[] = [];
-  for (const entry of await readdir(root, { withFileTypes: true })) {
-    const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) {
-      out.push(...(await walkFiles(join(root, entry.name), rel)));
-    } else if (entry.isFile()) {
-      out.push(rel);
-    }
-  }
-  return out;
-}
-
 const OVERWRITE_LIST_CAP = 100;
 
 /**
@@ -1339,6 +1393,28 @@ export async function finalizeImport(
     );
   }
 
+  // ATOMIC claim: exactly one finalize may run. Two concurrent calls would
+  // otherwise both delete/append the same assembled-archive path and race the
+  // extraction; the conditional update lets one win and 409s the other.
+  const [claimed] = await db
+    .update(migrationImports)
+    .set({ status: "finalizing", updatedAt: new Date() })
+    .where(
+      and(
+        eq(migrationImports.id, importId),
+        eq(migrationImports.userId, destUserId),
+        inArray(migrationImports.status, ["importing", "receiving"]),
+      ),
+    )
+    .returning();
+  if (!claimed) {
+    throw new MigrationImportError(
+      `Import ${importId} is already finalizing/finalized`,
+      409,
+      "BAD_STATE",
+    );
+  }
+
   const conflicts: ConflictReport[] = [];
   const bookkeeping = parseBookkeeping(row);
 
@@ -1389,8 +1465,17 @@ export async function finalizeImport(
       optionsJson: JSON.stringify(bookkeeping),
       updatedAt: new Date(),
     })
-    .where(eq(migrationImports.id, importId))
+    // Conditional on the claim this call holds — a rollback that raced the
+    // extraction (marking the row failed) must not be flipped to completed.
+    .where(and(eq(migrationImports.id, importId), eq(migrationImports.status, "finalizing")))
     .returning();
+  if (!updated) {
+    throw new MigrationImportError(
+      `Import ${importId} lost its finalize claim (rolled back concurrently?)`,
+      409,
+      "BAD_STATE",
+    );
+  }
   log.info("Import finalized", {
     importId,
     projectId: row.importedProjectId,
@@ -1544,7 +1629,7 @@ export async function verifyImport(
   importId: string,
 ): Promise<VerifyResult> {
   const row = await getImport(destUserId, importId);
-  if (!row) throw new Error("Import not found");
+  if (!row) throw new MigrationImportError("Import not found", 404, "NOT_FOUND");
   if (!row.importedProjectId) {
     return { ok: false, rowCounts: {}, missingPaths: [] };
   }
@@ -1610,7 +1695,7 @@ export async function rollbackImport(
   importId: string,
 ): Promise<void> {
   const row = await getImport(destUserId, importId);
-  if (!row) throw new Error("Import not found");
+  if (!row) throw new MigrationImportError("Import not found", 404, "NOT_FOUND");
 
   if (row.importedProjectId) {
     await db

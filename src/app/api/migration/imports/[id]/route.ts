@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import * as MigrationImportService from "@/services/migration-import-service";
+import { MigrationImportError } from "@/services/migration-import-service";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("api/migration");
@@ -27,11 +28,10 @@ export const DELETE = withApiAuth(async (_request, { userId, params }) => {
     await MigrationImportService.rollbackImport(userId, id);
     return NextResponse.json({ ok: true });
   } catch (error) {
-    const message = String(error instanceof Error ? error.message : error);
-    if (message.includes("not found")) {
-      return errorResponse("Import not found", 404, "NOT_FOUND");
+    if (error instanceof MigrationImportError) {
+      return errorResponse(error.message, error.status, error.code);
     }
-    log.error("Import rollback failed", { importId: id, error: message });
+    log.error("Import rollback failed", { importId: id, error: String(error) });
     return errorResponse("Failed to roll back import", 500);
   }
 });

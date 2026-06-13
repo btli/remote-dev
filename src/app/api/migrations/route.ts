@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as MigrationService from "@/services/migration-service";
+import { MigrationServiceError } from "@/services/migration-errors";
 import type { MigrationJobStatus } from "@/types/migration";
 import { createLogger } from "@/lib/logger";
 
@@ -55,9 +56,8 @@ export const POST = withApiAuth(async (request, { userId }) => {
     void MigrationService.startJob(job.id);
     return NextResponse.json({ jobId: job.id, status: job.status }, { status: 202 });
   } catch (error) {
-    const message = String(error instanceof Error ? error.message : error);
-    if (message.includes("not found")) {
-      return errorResponse(message, 404, "NOT_FOUND");
+    if (error instanceof MigrationServiceError) {
+      return errorResponse(error.message, error.status, error.code);
     }
     log.error("Error creating migration job", { error: String(error) });
     return errorResponse("Failed to create migration job", 500);

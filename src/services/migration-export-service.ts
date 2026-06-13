@@ -82,6 +82,9 @@ function decryptProviderConfig(
     if (raw && typeof raw === "object") {
       return raw as Record<string, string>;
     }
+    warnings.push(
+      `Secrets config for ${context} has empty provider config — exported as empty`,
+    );
     return {};
   } catch (error) {
     warnings.push(

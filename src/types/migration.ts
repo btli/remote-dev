@@ -30,14 +30,17 @@ export type MigrationJobStatus =
 /**
  * Lifecycle of an import on the DESTINATION instance.
  *
- * staged → receiving → importing → completed (failed terminal escape).
- * `receiving` is the stage-2 chunk-upload phase; stage 1 goes
- * staged → importing → completed.
+ * staged → importing (DB bundle applied) → receiving (file chunks) →
+ * finalizing (assemble + extract; an ATOMIC claim so two concurrent
+ * finalize calls cannot both run extraction) → completed, with failed as
+ * the terminal escape. DB-only migrations skip `receiving` and go
+ * importing → finalizing → completed.
  */
 export type MigrationImportStatus =
   | "staged"
   | "receiving"
   | "importing"
+  | "finalizing"
   | "completed"
   | "failed";
 

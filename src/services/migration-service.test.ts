@@ -119,6 +119,8 @@ interface Harness {
   deps: MigrationServiceDeps;
   transitions: Array<{ expect: string[]; patch: Record<string, unknown> }>;
   peerCalls: PeerCall[];
+  /** Ordered trace of meaningful events (status transitions + project delete). */
+  events: string[];
   deleteProject: ReturnType<typeof vi.fn>;
   removeDir: ReturnType<typeof vi.fn>;
 }
@@ -130,11 +132,16 @@ function makeHarness(opts: {
   receivedChunks?: Record<string, number[]>;
   failTransitionAt?: string; // status whose transition should report a lost race
   failProgressAfter?: number; // Nth status-less progress update returns null
+  failDeleteProject?: boolean; // deleteProject rejects
   peerResponses?: (path: string, init?: RequestInit) => Response;
 }): Harness {
   const transitions: Harness["transitions"] = [];
   const peerCalls: PeerCall[] = [];
-  const deleteProject = vi.fn(async () => {});
+  const events: string[] = [];
+  const deleteProject = vi.fn(async () => {
+    events.push("deleteProject");
+    if (opts.failDeleteProject) throw new Error("delete exploded");
+  });
   const removeDir = vi.fn(async () => {});
   let status = opts.job.status as string;
   let progressUpdates = 0;
@@ -143,6 +150,7 @@ function makeHarness(opts: {
     getJob: async () => opts.job,
     transition: async (_id, expect, patch) => {
       transitions.push({ expect: expect as string[], patch });
+      if (patch.status) events.push(`transition:${String(patch.status)}`);
       if (!patch.status) {
         progressUpdates++;
         if (opts.failProgressAfter && progressUpdates >= opts.failProgressAfter) {
@@ -190,7 +198,7 @@ function makeHarness(opts: {
     deleteProject,
     now: () => NOW,
   };
-  return { deps, transitions, peerCalls, deleteProject, removeDir };
+  return { deps, transitions, peerCalls, events, deleteProject, removeDir };
 }
 
 describe("MigrationService.startJob", () => {
@@ -342,11 +350,38 @@ describe("MigrationService.startJob", () => {
     expect(h.removeDir).toHaveBeenCalled();
   });
 
-  it("deletes the source project only with removeSourceAfterVerify + clean verify", async () => {
+  it("deletes the source project only with removeSourceAfterVerify + clean verify, AFTER completing", async () => {
     const h = makeHarness({ job: makeJob({ removeSourceAfterVerify: true }) });
     await startJob("job-1", h.deps);
     expect(h.deleteProject).toHaveBeenCalledWith("proj-1");
-    expect(h.transitions.at(-1)?.patch.status).toBe("completed");
+    // FAIL-SAFE ORDER: the job records success BEFORE the destructive step —
+    // a crash in between must leave the source intact and the job completed,
+    // never a deleted project on a job that looks unfinished.
+    expect(h.events.indexOf("transition:completed")).toBeGreaterThanOrEqual(0);
+    expect(h.events.indexOf("transition:completed")).toBeLessThan(
+      h.events.indexOf("deleteProject"),
+    );
+  });
+
+  it("keeps the job completed and records a conflict when the source delete fails", async () => {
+    const h = makeHarness({
+      job: makeJob({ removeSourceAfterVerify: true }),
+      failDeleteProject: true,
+    });
+    await startJob("job-1", h.deps); // must not throw
+
+    // The job completed BEFORE the delete attempt and is never failed after.
+    expect(h.events).toContain("transition:completed");
+    expect(h.events).not.toContain("transition:failed");
+    // The miss is appended to the already-persisted report (best-effort).
+    const reportPatch = h.transitions.find(
+      (t) =>
+        !t.patch.status &&
+        typeof t.patch.conflictReportJson === "string" &&
+        (t.patch.conflictReportJson as string).includes("source_delete_failed"),
+    );
+    expect(reportPatch).toBeDefined();
+    expect(reportPatch!.expect).toEqual(["completed"]);
   });
 
   it("fails the job and rolls back the destination when the import POST errors", async () => {

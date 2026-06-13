@@ -52,7 +52,7 @@ import {
   MigrationImportError,
   type ImportBookkeeping,
 } from "./migration-import-service";
-import { users, profileGitIdentities, agentProfiles } from "@/db/schema";
+import { users, profileGitIdentities, agentProfiles, migrationImports } from "@/db/schema";
 import type {
   ArchiveManifestEntry,
   BundleManifest,
@@ -494,5 +494,57 @@ describe("MigrationImportService file phase", () => {
     const { import: finalized } = await finalizeImport(DEST_USER, JOB_ID);
     expect(finalized.status).toBe("completed");
     expect(MigrationImportError).toBeDefined();
+  });
+
+  it("lets exactly ONE of two concurrent finalize calls run (atomic claim)", async () => {
+    write("content9/file.txt", "claimed");
+    const tree = await makeArchive("working-tree", join(fixtureRoot, "content9"), 1);
+    await initWithArchives([tree.entry]);
+    await pushChunks(tree);
+
+    const [a, b] = await Promise.allSettled([
+      finalizeImport(DEST_USER, JOB_ID),
+      finalizeImport(DEST_USER, JOB_ID),
+    ]);
+    const outcomes = [a, b];
+    const fulfilled = outcomes.filter((o) => o.status === "fulfilled");
+    const rejected = outcomes.filter((o) => o.status === "rejected");
+    // One winner extracts; the loser gets a clean 409 (claim or precheck,
+    // depending on interleaving) — never a double extraction or a crash.
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    const error = (rejected[0] as PromiseRejectedResult).reason as MigrationImportError;
+    expect(error).toBeInstanceOf(MigrationImportError);
+    expect(error.status).toBe(409);
+    expect((await getImport(DEST_USER, JOB_ID))?.status).toBe("completed");
+  });
+
+  it("rejects finalize while another finalize holds the claim", async () => {
+    write("content10/file.txt", "in-flight");
+    const tree = await makeArchive("working-tree", join(fixtureRoot, "content10"), 1);
+    await initWithArchives([tree.entry]);
+    await pushChunks(tree);
+
+    // Simulate an in-flight finalize holding the claim.
+    await handle.db
+      .update(migrationImports)
+      .set({ status: "finalizing" })
+      .where(eq(migrationImports.id, JOB_ID));
+
+    await expect(finalizeImport(DEST_USER, JOB_ID)).rejects.toMatchObject({ status: 409 });
+    // The in-flight claim is untouched (not flipped to failed by the loser).
+    expect((await getImport(DEST_USER, JOB_ID))?.status).toBe("finalizing");
+
+    // And a chunk arriving mid-finalize is rejected too: the file set must
+    // stop changing once assembly starts.
+    await expect(
+      receiveChunk(DEST_USER, JOB_ID, {
+        archiveName: "working-tree",
+        chunkIndex: 0,
+        sha256: "0".repeat(64),
+        totalChunks: 1,
+        body: Buffer.from("late"),
+      }),
+    ).rejects.toMatchObject({ code: "BAD_STATE" });
   });
 });
