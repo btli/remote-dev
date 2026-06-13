@@ -24,6 +24,12 @@ interface ManualRunBody {
   agentFlags?: string[];
   worktreeType?: string | null;
   baseBranch?: string | null;
+  /**
+   * Explicit Claude profile to pin. Omit / null → auto-select (session-service
+   * picks the project's primary + fallback pool). An unusable profile is
+   * ignored downstream rather than rejected here.
+   */
+  profileId?: string | null;
   source?: string;
 }
 
@@ -63,6 +69,17 @@ export const POST = withApiAuth(async (request, { userId }) => {
       );
     }
 
+    // profileId is optional: a string pins the profile, null/absent auto-selects.
+    // Reject only a clearly malformed (non-string, non-null) value; ownership /
+    // usability of a real id is enforced by session-service at launch time.
+    if (
+      body.profileId !== undefined &&
+      body.profileId !== null &&
+      typeof body.profileId !== "string"
+    ) {
+      return errorResponse("profileId must be a string or null", 400, "INVALID_PROFILE_ID");
+    }
+
     const run = await AgentRunService.launchAgentRun({
       userId,
       projectId: body.projectId,
@@ -72,6 +89,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       prompt: body.prompt,
       worktreeType: body.worktreeType ?? null,
       baseBranch: body.baseBranch ?? null,
+      profileId: body.profileId ?? null,
     });
 
     return NextResponse.json(run, { status: 202 });

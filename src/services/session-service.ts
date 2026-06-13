@@ -14,6 +14,7 @@ import type {
   WorktreeType,
 } from "@/types/session";
 import { AGENT_PROVIDERS } from "@/types/session";
+import type { AgentProfile } from "@/types/agent";
 import type { TerminalType } from "@/types/terminal-type";
 import * as TmuxService from "./tmux-service";
 import * as WorktreeService from "./worktree-service";
@@ -293,19 +294,44 @@ export async function createSessionWithDedupFlag(
     }
   }
 
-  // [remote-dev-3b3l] Auto-apply a Claude profile when the caller didn't pick
-  // one. The project→profile link (+ inherited fallback pool) already exists in
-  // the data model but was never resolved at session creation — this closes
-  // that gap. Only kicks in for an unspecified profile on a Claude session with
-  // a project: explicit selections, non-Claude providers, and projectless
-  // sessions are untouched. On any failure we proceed with NO profile (today's
-  // behavior); selection never blocks a launch. `effectiveProfileId` threads the
-  // resolved id through every downstream use of `input.profileId` (plugin stub,
-  // profile-env overlay, RDV_PROFILE_ID, DB insert) so the auto-selected profile
-  // actually launches and is recorded.
-  let effectiveProfileId: string | undefined = input.profileId;
+  // [remote-dev-3b3l] Resolve the profile this session launches with, recording
+  // it ONCE so the resolved object can be reused for the env overlay below
+  // (no double-fetch). Two paths:
+  //
+  //   1. EXPLICIT pin (`input.profileId`): must resolve to a profile THIS user
+  //      owns. A foreign / stale / garbage id is NOT launched-with and NOT
+  //      persisted — we drop it and fall through to auto-select (so a Claude
+  //      project still gets its primary+pool) rather than launching with the
+  //      wrong configDir or writing an unowned id to the session row.
+  //   2. AUTO-SELECT (no usable pin): for a Claude session with a project, pick
+  //      the project's primary profile + inherited fallback pool (skipping
+  //      limited accounts). Best-effort — selection never blocks a launch.
+  //
+  // `effectiveProfileId` + `effectiveProfile` thread the resolved id/object
+  // through every downstream use (plugin stub, profile-env overlay,
+  // RDV_PROFILE_ID, DB insert).
+  let effectiveProfileId: string | undefined;
+  let effectiveProfile: AgentProfile | null = null;
+
+  if (input.profileId) {
+    effectiveProfile = await AgentProfileService.getProfile(
+      input.profileId,
+      userId,
+    );
+    if (effectiveProfile) {
+      effectiveProfileId = effectiveProfile.id;
+    } else {
+      // Unowned / unresolvable pin: ignore it (do NOT persist or launch with
+      // it) and let the auto-select path below take over.
+      log.warn(
+        "Ignoring unresolvable profileId pin; falling back to auto-select",
+        { profileId: input.profileId, userId },
+      );
+    }
+  }
+
   if (
-    !input.profileId &&
+    !effectiveProfileId &&
     mergedAgentProvider === "claude" &&
     input.projectId
   ) {
@@ -570,15 +596,19 @@ export async function createSessionWithDedupFlag(
     }
   }
 
-  // Fetch profile and its environment overlay if profile is specified.
-  // Uses `effectiveProfileId` so an auto-selected Claude profile contributes
-  // its CLAUDE_CONFIG_DIR / env overlay just like an explicitly chosen one.
+  // Fetch the profile's environment overlay if a profile is resolved. Uses
+  // `effectiveProfileId` so an auto-selected Claude profile contributes its
+  // CLAUDE_CONFIG_DIR / env overlay just like an explicitly chosen one. The
+  // explicit-pin path already resolved `effectiveProfile` above (reused here,
+  // no double-fetch); the auto-select path only set the id, so fetch it once.
   let profileEnv: Record<string, string> | undefined;
-  const profile = effectiveProfileId
-    ? await AgentProfileService.getProfile(effectiveProfileId, userId)
-    : undefined;
-  if (profile) {
-    const env = await AgentProfileService.getProfileEnvironment(effectiveProfileId!, userId, profile);
+  const profile =
+    effectiveProfile ??
+    (effectiveProfileId
+      ? await AgentProfileService.getProfile(effectiveProfileId, userId)
+      : null);
+  if (effectiveProfileId && profile) {
+    const env = await AgentProfileService.getProfileEnvironment(effectiveProfileId, userId, profile);
     if (env) {
       profileEnv = Object.fromEntries(
         Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)

@@ -37,6 +37,15 @@ export const POST = withApiAuth(async (request, { userId }) => {
     if (!input.projectId) {
       return errorResponse("projectId is required", 400, "PROJECT_ID_REQUIRED");
     }
+    // profileId is optional: a string pins the Claude profile, null/absent
+    // auto-selects. Reject only a clearly malformed value (matches /api/agent-runs).
+    if (
+      input.profileId !== undefined &&
+      input.profileId !== null &&
+      typeof input.profileId !== "string"
+    ) {
+      return errorResponse("profileId must be a string or null", 400, "INVALID_PROFILE_ID");
+    }
 
     const schedule = await AgentScheduleService.createAgentSchedule(
       userId,

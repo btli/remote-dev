@@ -182,6 +182,7 @@ class AgentSchedulerOrchestrator {
         prompt: schedule.prompt,
         worktreeType: schedule.worktreeType,
         baseBranch: schedule.baseBranch,
+        profileId: schedule.profileId,
       });
       await AgentScheduleService.markScheduleFired(scheduleId);
     } catch (error) {
