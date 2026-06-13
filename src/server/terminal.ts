@@ -82,6 +82,38 @@ function validateSessionName(name: string): boolean {
 }
 
 /**
+ * [remote-dev-yk42] Decide whether a WS token may attach to a requested tmux
+ * session, given the DB session row that owns that tmux name.
+ *
+ * The session WS token is HMAC-bound to exactly one `{ sessionId, userId }`
+ * (see ws-token.ts). The `?tmuxSession` query override is FORMAT-validated by
+ * `validateSessionName`, but format alone does not prove ownership: a user
+ * holding a valid token for their own session could otherwise point
+ * `?tmuxSession` at another user's `rdv-<uuid>` and attach to it. This is the
+ * defense-in-depth check that re-binds the token to the requested tmux session
+ * at connect time.
+ *
+ * Authorization holds iff the DB row whose `tmuxSessionName` equals the
+ * requested name exists AND both:
+ *   - `row.userId === token.userId` (same owner), and
+ *   - `row.id === token.sessionId`  (the token was minted for THIS session).
+ *
+ * The second clause is the tight binding: tmux names are deterministically
+ * `rdv-${sessionId}` (TmuxService.generateSessionName), so the only legitimate
+ * target for a token is the session it was minted for. A `null`/missing row
+ * (no such session) is unauthorized — we never attach to an unknown tmux name.
+ *
+ * Pure + side-effect free so it can be unit-tested without a DB.
+ */
+export function isTmuxSessionAuthorized(
+  row: { id: string; userId: string } | null | undefined,
+  token: { sessionId: string; userId: string },
+): boolean {
+  if (!row) return false;
+  return row.userId === token.userId && row.id === token.sessionId;
+}
+
+/**
  * Validate a working directory for a new terminal session.
  *
  * Canonicalizes the path (neutralizing .., ., duplicate slashes) and verifies
@@ -2488,6 +2520,53 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       ws.send(JSON.stringify({ type: "error", message: "Invalid session name" }));
       ws.close(4003, "Invalid session name");
       return;
+    }
+
+    // SECURITY [remote-dev-yk42]: Ownership check on the ?tmuxSession override.
+    // The token is HMAC-bound to { sessionId, userId }, but `tmuxSessionName`
+    // comes from an attacker-controllable query param that has so far only been
+    // FORMAT-validated. Re-bind it to the token at connect: look up the session
+    // row that owns the requested tmux name and require it to belong to the
+    // token's user AND be the exact session the token was minted for. Without
+    // this, any authenticated user could attach to another user's tmux session
+    // (matters for multi-instance / multi-user; single-user is unaffected in
+    // practice). Runs BEFORE any tmux create/attach so we never touch a tmux
+    // session the caller does not own.
+    {
+      let owningRow: { id: string; userId: string } | null = null;
+      try {
+        const { db } = await import("@/db");
+        const { terminalSessions } = await import("@/db/schema");
+        const { eq } = await import("drizzle-orm");
+        owningRow =
+          (await db.query.terminalSessions.findFirst({
+            where: eq(terminalSessions.tmuxSessionName, tmuxSessionName),
+            columns: { id: true, userId: true },
+          })) ?? null;
+      } catch (error) {
+        // Fail CLOSED: if we cannot verify ownership, do not attach.
+        log.error("tmuxSession ownership lookup failed", {
+          tmuxSessionName,
+          sessionId,
+          error: String(error),
+        });
+        ws.send(JSON.stringify({ type: "error", message: "Authorization check failed" }));
+        ws.close(4002, "Authorization check failed");
+        return;
+      }
+
+      if (!isTmuxSessionAuthorized(owningRow, { sessionId, userId })) {
+        log.warn("Rejected WS connect: tmuxSession not owned by token", {
+          tmuxSessionName,
+          tokenSessionId: sessionId,
+          tokenUserId: userId,
+          ownerUserId: owningRow?.userId ?? null,
+          ownerSessionId: owningRow?.id ?? null,
+        });
+        ws.send(JSON.stringify({ type: "error", message: "Not authorized for this session" }));
+        ws.close(4002, "Not authorized for this session");
+        return;
+      }
     }
 
     // SECURITY: Validate cwd to prevent path traversal
