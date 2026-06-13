@@ -9,10 +9,12 @@
 
 - **Peer instance** — a destination registered on the source under
   **Settings → Instances**: a name, a base URL, and an API key created on the
-  destination (Settings → Mobile → API keys). Credentials are encrypted at
-  rest and never shown again after saving (reads only see a masked preview).
-  If the destination sits behind Cloudflare Access, add its **service token**
-  (Client ID + Secret) in the collapsible section of the same dialog.
+  destination (open the destination's **Settings → Mobile** and click **New
+  API Key**, for the user who will own the migrated project). Credentials are
+  encrypted at rest and never shown again after saving (reads only see a
+  masked preview). If the destination sits behind Cloudflare Access, add its
+  **service token** (Client ID + Secret) in the collapsible section of the
+  same dialog.
 - **Migration job** — one push of one project. Lifecycle:
   `pending → running → db_done → files_done → verifying → completed`
   (with `failed` / `aborted` as terminal escapes). The destination imports
@@ -20,6 +22,31 @@
   job is declared complete; on failure or abort it rolls the import back.
 - Jobs run **server-side**: closing the dialog does not stop one. Watch or
   abort from Settings → Instances → *Recent migrations*, or with the CLI.
+
+## Prerequisites
+
+Before a migration can succeed, the **destination** must be set up first —
+most "I can't migrate" problems are a missing one of these:
+
+1. **The destination instance already exists and is reachable** at its base
+   URL from the source machine.
+2. **Your account exists on the destination**, and you have **created an API
+   key there** (its **Settings → Mobile → New API Key**) for the user who will
+   own the migrated project. Paste that key into the source's **Settings →
+   Instances → Add instance**. The key is created on the *destination*, not
+   the source.
+3. **Cloudflare Access service token (off-LAN only).** If the destination is
+   reached through Cloudflare Access (e.g. over the public internet), the
+   server-to-server call needs a **CF Access service token** (Client ID +
+   Secret) saved on the peer, otherwise the edge bounces the request to a
+   login page. On-LAN destinations that bypass Access don't need one.
+4. **Shape B base URL includes the instance slug.** For an instance hosted
+   behind the supervisor router, the base URL must include its path prefix,
+   e.g. `https://rdv.joyful.house/homelab` (not just `https://rdv.joyful.house`).
+
+Use **Test** (Settings → Instances, or the Migrate dialog) to confirm all of
+the above before starting a transfer — it runs a live capability check with
+the stored credential and reports exactly what's wrong.
 
 ## Starting a migration
 
@@ -100,9 +127,19 @@ result step and in Settings → Instances → Recent migrations.
 
 ## Troubleshooting
 
-- **"Peer unreachable" / HTTP 401 on Test** — re-check the base URL and the
-  API key (create a fresh one on the destination); behind Cloudflare Access,
-  set the service token fields.
+Test connection and migration jobs now surface specific, actionable messages.
+Map the message to the fix:
+
+| Message contains… | Cause | Fix |
+|-------------------|-------|-----|
+| **rejected the API key (401)** | The destination didn't accept the key | Create an API key **on the destination** (its Settings → Mobile → New API Key) for **your** user and paste it exactly — no stray whitespace. |
+| **not found (404) … instance path prefix** | Base URL is missing the Shape B slug | Set the base URL to include the instance prefix, e.g. `https://rdv.joyful.house/homelab`. |
+| **unexpected redirect … Cloudflare Access** / **expected JSON but got text/html … login page** | The request hit a Cloudflare Access / OIDC login wall instead of the API | Add a **CF Access service token** (Client ID + Secret) to the peer (off-LAN destinations), or verify the base URL points at the instance and not a login page. |
+| **Client ID is set but the Client Secret is missing** (or vice-versa) | Only one half of the CF service token was saved | Re-save the peer with **both** the Client ID and Secret, or clear both. |
+| **API key cannot be decrypted** | `AUTH_SECRET` on the source changed since the peer was registered | Re-register the peer (re-enter its API key). |
+
+Other notes:
+
 - **Job failed mid-flight** — the destination rolls back its partial import;
   the source project is untouched. Fix the cause (the job's error message is
   shown in the dialog and job list) and run it again.

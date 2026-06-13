@@ -20,7 +20,12 @@ vi.mock("@/lib/logger", () => ({
     trace: vi.fn(),
   }),
 }));
-vi.mock("@/lib/peer-fetch", () => ({ peerFetch: vi.fn() }));
+// peerFetch is injected via deps in these tests; readPeerJson (used directly
+// by startJob to map peer responses) must be the real implementation.
+vi.mock("@/lib/peer-fetch", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/peer-fetch")>();
+  return { ...actual, peerFetch: vi.fn() };
+});
 vi.mock("./migration-export-service", () => ({ buildDbBundle: vi.fn() }));
 vi.mock("./migration-file-service", () => ({
   buildArchives: vi.fn(),

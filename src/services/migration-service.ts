@@ -21,7 +21,7 @@ import { and, eq, inArray, lt } from "drizzle-orm";
 import { db } from "@/db";
 import { migrationJobs, projects } from "@/db/schema";
 import { createLogger } from "@/lib/logger";
-import { peerFetch } from "@/lib/peer-fetch";
+import { peerFetch, readPeerJson } from "@/lib/peer-fetch";
 import {
   BUNDLE_VERSION,
   CHUNK_SIZE_BYTES,
@@ -136,10 +136,15 @@ function defaultDeps(): MigrationServiceDeps {
 
 /**
  * This instance's public URL, for the manifest + import provenance.
- * Informational only — falls back to "unknown".
+ * Informational only — falls back to "unknown". Prefer an explicit public
+ * URL over a localhost AUTH_URL so the recorded provenance isn't
+ * "http://localhost:6001" on a deployed instance.
  */
 export function getSourceInstanceUrl(): string {
-  return process.env.AUTH_URL || process.env.NEXTAUTH_URL || "unknown";
+  const authUrl = process.env.AUTH_URL || process.env.NEXTAUTH_URL || "";
+  const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)\b/i.test(authUrl);
+  if (isLocal && process.env.RDV_PUBLIC_URL) return process.env.RDV_PUBLIC_URL;
+  return authUrl || process.env.RDV_PUBLIC_URL || "unknown";
 }
 
 const DEFAULT_OPTIONS: MigrationOptions = {
@@ -206,18 +211,6 @@ export async function createJob(
     peerInstanceId: input.peerInstanceId,
   });
   return row;
-}
-
-/** Throw a descriptive error for a non-2xx peer response. */
-async function expectOk(response: Response, step: string): Promise<Response> {
-  if (response.ok) return response;
-  let detail = "";
-  try {
-    detail = (await response.text()).slice(0, 500);
-  } catch {
-    // Body unavailable — status alone will have to do.
-  }
-  throw new Error(`${step} failed: HTTP ${response.status}${detail ? ` — ${detail}` : ""}`);
 }
 
 /** Retried per-chunk PUT (3 attempts, linear backoff). Throws after the last. */
@@ -367,25 +360,22 @@ export async function startJob(
     };
 
     // ── DB phase: push the bundle (init + import happen destination-side) ──
-    const importResponse = await expectOk(
-      await deps.peerFetch(peer, "/api/migration/imports", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          jobId,
-          sourceInstanceUrl: manifest.sourceInstanceUrl,
-          manifest,
-          options,
-          dbBundle: bundle,
-        }),
+    const importResponse = await deps.peerFetch(peer, "/api/migration/imports", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jobId,
+        sourceInstanceUrl: manifest.sourceInstanceUrl,
+        manifest,
+        options,
+        dbBundle: bundle,
       }),
-      "DB bundle import",
-    );
-    const importBody = (await importResponse.json()) as {
+    });
+    const importBody = await readPeerJson<{
       importId: string;
       status: string;
       result: ImportResult;
-    };
+    }>(importResponse, "DB bundle import");
 
     // `bytesTransferred` tracks ARCHIVE bytes confirmed on the destination,
     // measured against `sizeEstimateBytes` (= totalBytes, archive bytes only),
@@ -478,34 +468,25 @@ export async function startJob(
     }
 
     // ── Finalize + verify on the destination ──
-    const finalizeResponse = await expectOk(
+    const finalizeBody = await readPeerJson<{ conflicts?: ConflictReport[] }>(
       await deps.peerFetch(peer, `/api/migration/imports/${jobId}/finalize`, {
         method: "POST",
       }),
       "Import finalize",
     );
-    let finalizeConflicts: ConflictReport[] = [];
-    try {
-      const finalizeBody = (await finalizeResponse.json()) as {
-        conflicts?: ConflictReport[];
-      };
-      finalizeConflicts = finalizeBody.conflicts ?? [];
-    } catch {
-      // Older destinations return no body — fine.
-    }
+    const finalizeConflicts: ConflictReport[] = finalizeBody.conflicts ?? [];
 
     const verifying = await deps.transition(jobId, ["db_done", "files_done"], {
       status: "verifying",
     });
     if (!verifying) return; // aborted mid-flight
 
-    const verifyResponse = await expectOk(
+    const verify = await readPeerJson<VerifyResult>(
       await deps.peerFetch(peer, `/api/migration/imports/${jobId}/verify`, {
         method: "GET",
       }),
       "Import verify",
     );
-    const verify = (await verifyResponse.json()) as VerifyResult;
 
     const conflictReport = {
       conflicts: [...(importBody.result?.conflicts ?? []), ...finalizeConflicts],

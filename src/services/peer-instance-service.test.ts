@@ -27,9 +27,12 @@ vi.mock("@/lib/logger", () => ({
     trace: vi.fn(),
   }),
 }));
-vi.mock("@/lib/peer-fetch", () => ({
-  peerFetch: vi.fn(),
-}));
+// Only peerFetch is stubbed; readPeerJson (the response→error mapper) is the
+// real implementation so verifyPeer's error messages are exercised end-to-end.
+vi.mock("@/lib/peer-fetch", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/peer-fetch")>();
+  return { ...actual, peerFetch: vi.fn() };
+});
 
 import {
   createPeer,
@@ -181,10 +184,30 @@ describe("PeerInstanceService", () => {
     });
     mockedPeerFetch.mockResolvedValue(new Response("nope", { status: 401 }));
 
-    await expect(verifyPeer(USER, created.id)).rejects.toThrow(/HTTP 401/);
+    // readPeerJson maps 401 to an actionable "rejected the API key" message.
+    await expect(verifyPeer(USER, created.id)).rejects.toThrow(
+      /rejected the API key \(401\)/,
+    );
     const row = await getPeerRow(USER, created.id);
     expect(row!.capabilities).toBeNull();
     expect(row!.lastSeenAt).toBeNull();
+  });
+
+  it("verifyPeer maps a Cloudflare-Access redirect to a service-token hint", async () => {
+    const created = await createPeer(USER, {
+      name: "homelab",
+      baseUrl: "https://rdv.example.com",
+      apiKey: API_KEY,
+    });
+    mockedPeerFetch.mockResolvedValue(
+      new Response(null, { status: 302, headers: { location: "/cdn-cgi/access/login" } }),
+    );
+
+    await expect(verifyPeer(USER, created.id)).rejects.toThrow(
+      /unexpected redirect.*Cloudflare Access/,
+    );
+    const row = await getPeerRow(USER, created.id);
+    expect(row!.capabilities).toBeNull();
   });
 
   it("rejects non-http base URLs", async () => {

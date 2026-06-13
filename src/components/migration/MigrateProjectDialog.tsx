@@ -23,6 +23,7 @@ import {
   Check,
   CheckCircle2,
   Loader2,
+  Plus,
   XCircle,
 } from "lucide-react";
 import {
@@ -46,6 +47,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api-fetch";
+import { MigrationRequirements } from "@/components/settings/sections/InstancesSection";
 import type { MigrationWorkingTreeMode } from "@/types/migration";
 import {
   formatBytes,
@@ -61,6 +63,18 @@ import {
 
 const POLL_INTERVAL_MS = 2000;
 const PREVIEW_DEBOUNCE_MS = 400;
+
+/**
+ * Open the global Settings session on the Instances section. SessionManager
+ * listens for this event (Header gear + Sidebar dispatch it too) and seeds
+ * the requested section into the Settings tab. This is the canonical way for
+ * an arbitrary client component to deep-link into a Settings section.
+ */
+function openInstancesSettings(): void {
+  window.dispatchEvent(
+    new CustomEvent("open-settings", { detail: { section: "instances" } }),
+  );
+}
 
 type Step = "configure" | "progress" | "result";
 
@@ -416,10 +430,35 @@ export function MigrateProjectDialog({
                 </p>
               )}
               {!peersLoading && peers.length === 0 && (
-                <p className="text-xs text-muted-foreground">
-                  No peer instances registered. Add one in Settings → Instances.
-                </p>
+                <div className="rounded-md border border-dashed border-border p-4 text-center space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    No peer instances registered yet.
+                  </p>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      onOpenChange(false);
+                      openInstancesSettings();
+                    }}
+                  >
+                    <Plus className="w-4 h-4 mr-1" /> Add a peer instance
+                  </Button>
+                </div>
               )}
+              {/* Selected a peer that has never passed a live verify — nudge
+                  the user to Test before starting a long transfer. */}
+              {selectedPeer &&
+                !selectedPeer.lastSeenAt &&
+                testState.state === "idle" && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 flex items-start gap-1">
+                    <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                    <span>
+                      This instance hasn’t been verified. Click{" "}
+                      <span className="font-medium">Test</span> first to confirm
+                      it’s reachable and the API key is accepted.
+                    </span>
+                  </p>
+                )}
             </div>
 
             {/* Working-tree mode */}
@@ -543,6 +582,9 @@ export function MigrateProjectDialog({
                 </p>
               )}
             </div>
+
+            {/* Prerequisites — shared with Settings → Instances. */}
+            <MigrationRequirements />
 
             {error && (
               <div className="flex items-start gap-2 p-3 rounded-md border border-destructive/40 bg-destructive/10 text-destructive text-sm">
