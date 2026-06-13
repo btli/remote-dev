@@ -26,6 +26,12 @@ export interface PeerCapabilities {
   version: number;
   maxChunkBytes: number;
   appVersion: string;
+  /**
+   * Whether the peer can decode a gzip-compressed DB-bundle POST. Optional:
+   * absent on peers older than the gzip rollout — treat absent as `false` so a
+   * gzip-aware source falls back to plain JSON for them.
+   */
+  acceptsGzipBundle?: boolean;
 }
 
 /** The API-safe view of a peer — never contains decryptable secrets. */
@@ -78,7 +84,8 @@ function normalizeBaseUrl(baseUrl: string): string {
   return trimmed;
 }
 
-function parseCapabilities(raw: string | null): PeerCapabilities | null {
+/** Parse the cached `capabilities` JSON column into the typed view (or null). */
+export function parseCapabilities(raw: string | null): PeerCapabilities | null {
   if (!raw) return null;
   try {
     return JSON.parse(raw) as PeerCapabilities;

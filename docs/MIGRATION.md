@@ -125,6 +125,26 @@ on the destination, the import remaps it (directories get `-2`/`-3`
 suffixes) and records a note in the job's **conflict report**, visible in the
 result step and in Settings → Instances → Recent migrations.
 
+## Reliability
+
+You don't need to babysit a migration:
+
+- **Large projects.** The project's DB rows travel as one request. When the
+  destination supports it (advertised in its capability check), the source
+  **gzip-compresses** that request, so even a big project — lots of
+  sessions/channels/messages, or **channel history** enabled — stays well
+  within the size limits of the network path between the two instances. No
+  setting to flip; an older destination simply receives the uncompressed
+  request as before. File contents always travel as resumable 64 MiB chunks,
+  independent of the DB request.
+- **Resume after a restart.** If the **source** instance restarts (deploy,
+  crash, reboot) while a migration is in flight, the job is **picked up
+  automatically at the next startup** and finished where it left off — already
+  transferred file chunks are not re-sent, and it can't double-import. You only
+  need to re-initiate manually if the job has been stalled for over 2 hours
+  (the point at which it's treated as genuinely dead — e.g. the destination is
+  gone), or if the destination itself failed the import.
+
 ## Troubleshooting
 
 Test connection and migration jobs now surface specific, actionable messages.
@@ -143,5 +163,7 @@ Other notes:
 - **Job failed mid-flight** — the destination rolls back its partial import;
   the source project is untouched. Fix the cause (the job's error message is
   shown in the dialog and job list) and run it again.
-- **Stuck job** — jobs with no progress for 2 hours are automatically marked
-  failed at server startup; you can also Abort any non-terminal job.
+- **Stuck job** — an in-flight job interrupted by a source restart is
+  **re-driven automatically** at the next server startup (see *Reliability*).
+  Only jobs with no progress for 2 hours are then treated as dead and marked
+  failed at startup; you can also Abort any non-terminal job.

@@ -17,11 +17,12 @@
  */
 import { createHash } from "node:crypto";
 import { rm } from "node:fs/promises";
-import { and, eq, inArray, lt } from "drizzle-orm";
+import { and, eq, gte, inArray, lt } from "drizzle-orm";
 import { db } from "@/db";
 import { migrationJobs, projects } from "@/db/schema";
 import { createLogger } from "@/lib/logger";
 import { peerFetch, readPeerJson } from "@/lib/peer-fetch";
+import { GZIP_CONTENT_ENCODING, gzipJson } from "@/lib/migration-gzip";
 import {
   BUNDLE_VERSION,
   CHUNK_SIZE_BYTES,
@@ -32,7 +33,7 @@ import {
   type MigrationOptions,
   type VerifyResult,
 } from "@/lib/migration-bundle";
-import type { MigrationJobStatus } from "@/types/migration";
+import type { MigrationImportStatus, MigrationJobStatus } from "@/types/migration";
 import { MigrationServiceError } from "./migration-errors";
 import * as MigrationExportService from "./migration-export-service";
 import * as MigrationFileService from "./migration-file-service";
@@ -100,6 +101,8 @@ export interface MigrationServiceDeps {
   /** Remove the source-side staging dir when the job ends (best-effort). */
   removeDir(path: string): Promise<void>;
   deleteProject(projectId: string): Promise<void>;
+  /** Gzip a value's JSON serialization (DB-bundle POST compression). */
+  gzipJson(value: unknown): Promise<Buffer>;
   now(): Date;
 }
 
@@ -130,7 +133,44 @@ function defaultDeps(): MigrationServiceDeps {
     // The existing project deletion path: kills owned tmux sessions, then
     // deletes the row (FK cascade). It does NOT touch working-tree files.
     deleteProject: (projectId) => ProjectService.delete(projectId),
+    gzipJson: (value) => gzipJson(value),
     now: () => new Date(),
+  };
+}
+
+/**
+ * Build the body for the DB-bundle POST. When the destination peer advertised
+ * `acceptsGzipBundle` (cached capabilities), gzip the JSON so the single POST
+ * stays well under the wire path's ~100 MB on-wire request cap — a DbBundle is
+ * repetitive JSON and shrinks 5–15×. Older destinations (no/false flag) get the
+ * raw JSON document they understand. Returns the body + the headers to send.
+ */
+async function buildImportPostBody(
+  deps: MigrationServiceDeps,
+  peer: PeerInstanceService.PeerInstanceRow,
+  payload: unknown,
+): Promise<{ body: BodyInit; headers: Record<string, string> }> {
+  const caps = PeerInstanceService.parseCapabilities(peer.capabilities);
+  if (caps?.acceptsGzipBundle) {
+    try {
+      const compressed = await deps.gzipJson(payload);
+      return {
+        body: new Uint8Array(compressed),
+        headers: {
+          "content-type": "application/json",
+          "content-encoding": GZIP_CONTENT_ENCODING,
+        },
+      };
+    } catch (error) {
+      // Compression is an optimization — never fail the migration over it.
+      log.warn("DB-bundle gzip failed — falling back to plain JSON", {
+        error: String(error),
+      });
+    }
+  }
+  return {
+    body: JSON.stringify(payload),
+    headers: { "content-type": "application/json" },
   };
 }
 
@@ -265,6 +305,193 @@ async function putChunkWithRetry(
 }
 
 /**
+ * Upload an archive's chunks, skipping any the destination already holds, with
+ * a between-chunks abort check (a status no longer `db_done` matches nothing →
+ * roll the destination back and stop). Returns the running `bytesTransferred`
+ * total, or `null` when the job was aborted mid-upload (the caller must stop).
+ *
+ * Shared by the fresh-push (`startJob`) and the source-restart resume
+ * (`resumeJob`) paths — both stream from the SAME rebuilt archives and rely on
+ * the destination's idempotent, sha-checked chunk intake.
+ */
+async function uploadArchiveChunks(
+  deps: MigrationServiceDeps,
+  peer: PeerInstanceService.PeerInstanceRow,
+  jobId: string,
+  built: BuiltArchives,
+  received: Record<string, number[]>,
+  startBytes: number,
+): Promise<number | null> {
+  let bytesTransferred = startBytes;
+  for (const entry of built.archives) {
+    const archivePath = built.archivePaths[entry.name];
+    if (!archivePath) {
+      throw new Error(`Built archive path missing for ${entry.name}`);
+    }
+    const have = new Set(received[entry.name] ?? []);
+    // Byte size of chunk `index` (the last chunk is short); clamped to 0.
+    const chunkBytes = (index: number): number =>
+      Math.max(0, Math.min(CHUNK_SIZE_BYTES, entry.sizeBytes - index * CHUNK_SIZE_BYTES));
+    // Count chunks the destination ALREADY holds once, up front — they are part
+    // of the transferred total but are never re-uploaded.
+    for (const index of have) {
+      if (index >= 0 && index < entry.chunkCount) {
+        bytesTransferred += chunkBytes(index);
+      }
+    }
+    for (let index = 0; index < entry.chunkCount; index++) {
+      const chunkSize = chunkBytes(index);
+      if (!have.has(index)) {
+        const data = await deps.readChunk(archivePath, index);
+        const sha = createHash("sha256").update(data).digest("hex");
+        await putChunkWithRetry(deps, peer, jobId, entry.name, index, entry.chunkCount, sha, data);
+        // Only newly-uploaded chunks add to the total here (already-held chunks
+        // were counted above) — so a resumed push can't overshoot.
+        bytesTransferred += chunkSize;
+      }
+      // The progress update runs EVERY iteration and doubles as the
+      // between-chunks abort check: a status no longer db_done (the job was
+      // aborted) matches nothing → stop and roll the destination back.
+      const progressed = await deps.transition(jobId, ["db_done"], {
+        bytesTransferred,
+      });
+      if (!progressed) {
+        log.warn("Upload interrupted (job left db_done) — stopping", { jobId });
+        try {
+          await deps.peerFetch(peer, `/api/migration/imports/${jobId}`, {
+            method: "DELETE",
+          });
+        } catch {
+          // Best-effort.
+        }
+        return null;
+      }
+    }
+  }
+  return bytesTransferred;
+}
+
+/** Read the destination's per-archive `receivedChunks` (best-effort, {} on error). */
+async function fetchReceivedChunks(
+  deps: MigrationServiceDeps,
+  peer: PeerInstanceService.PeerInstanceRow,
+  jobId: string,
+): Promise<Record<string, number[]>> {
+  try {
+    const statusResponse = await deps.peerFetch(peer, `/api/migration/imports/${jobId}`, {
+      method: "GET",
+    });
+    if (statusResponse.ok) {
+      const body = (await statusResponse.json()) as {
+        receivedChunks?: Record<string, number[]>;
+      };
+      return body.receivedChunks ?? {};
+    }
+  } catch {
+    // Fresh upload — resume info is an optimization only.
+  }
+  return {};
+}
+
+/**
+ * Finalize + verify on the destination, then complete the source job (and,
+ * when opted in, delete the source project — completion is recorded FIRST so a
+ * crash can never destroy the source while the job still looks unfinished).
+ *
+ * `baseConflicts`/`baseRowCounts` carry the DB-phase import result so the
+ * persisted report is complete. Shared by `startJob` and `resumeJob`. Every
+ * destination call here is idempotent (finalize is claim-guarded, verify is a
+ * read), so re-driving after a restart is safe.
+ */
+async function finalizeVerifyAndComplete(
+  deps: MigrationServiceDeps,
+  peer: PeerInstanceService.PeerInstanceRow,
+  job: MigrationJobRow,
+  baseConflicts: ConflictReport[],
+  baseRowCounts: Record<string, number>,
+): Promise<void> {
+  const jobId = job.id;
+
+  const finalizeBody = await readPeerJson<{ conflicts?: ConflictReport[] }>(
+    await deps.peerFetch(peer, `/api/migration/imports/${jobId}/finalize`, {
+      method: "POST",
+    }),
+    "Import finalize",
+  );
+  const finalizeConflicts: ConflictReport[] = finalizeBody.conflicts ?? [];
+
+  const verifying = await deps.transition(jobId, ["db_done", "files_done"], {
+    status: "verifying",
+  });
+  if (!verifying) return; // aborted mid-flight
+
+  const verify = await readPeerJson<VerifyResult>(
+    await deps.peerFetch(peer, `/api/migration/imports/${jobId}/verify`, {
+      method: "GET",
+    }),
+    "Import verify",
+  );
+
+  const conflictReport = {
+    conflicts: [...baseConflicts, ...finalizeConflicts],
+    rowCounts: baseRowCounts,
+    verify,
+  };
+
+  if (!verify.ok) {
+    // Keep the report visible on the failed row before bailing out.
+    await deps.transition(jobId, ["verifying"], {
+      conflictReportJson: JSON.stringify(conflictReport),
+    });
+    throw new Error(
+      `Destination verification failed: ${JSON.stringify(verify.rowCounts)}`,
+    );
+  }
+
+  // ── Complete FIRST, then (optionally) remove the source project ──
+  // The job row must record success (report + destProjectId) before any
+  // destructive step: a crash between "delete" and "mark completed" would
+  // otherwise destroy the user's project while the job looks unfinished.
+  const completed = await deps.transition(jobId, ["verifying"], {
+    status: "completed",
+    conflictReportJson: JSON.stringify(conflictReport),
+    completedAt: deps.now(),
+  });
+  if (!completed) return; // aborted mid-flight
+
+  if (job.removeSourceAfterVerify) {
+    log.info("Removing source project after verified migration", {
+      jobId,
+      projectId: job.projectId,
+    });
+    try {
+      // Existing deletion path (kills tmux, cascades rows); never rm -rf.
+      await deps.deleteProject(job.projectId);
+    } catch (deleteError) {
+      // Fail-safe: the migration stays completed (the copy is verified on the
+      // destination) and the source copy survives; record the miss in the
+      // already-persisted report so the UI can surface it.
+      log.error("Source project deletion failed after completed migration", {
+        jobId,
+        projectId: job.projectId,
+        error: String(deleteError),
+      });
+      conflictReport.conflicts.push({
+        type: "source_delete_failed",
+        message:
+          "Migration completed but the source project could not be deleted — remove it manually",
+        detail: String(deleteError),
+      });
+      await deps.transition(jobId, ["completed"], {
+        conflictReportJson: JSON.stringify(conflictReport),
+      });
+    }
+  }
+
+  log.info("Migration job completed", { jobId, destProjectId: job.destProjectId });
+}
+
+/**
  * Run a pending migration job to completion. NEVER throws to the caller —
  * all failures land on the job row (status failed + errorMessage), with a
  * best-effort destination-side rollback.
@@ -360,16 +587,20 @@ export async function startJob(
     };
 
     // ── DB phase: push the bundle (init + import happen destination-side) ──
-    const importResponse = await deps.peerFetch(peer, "/api/migration/imports", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    // gzip the body when the destination advertised support — the bundle is one
+    // POST and the wire path caps the on-wire request size at ~100 MB.
+    const { body: importPostBody, headers: importPostHeaders } =
+      await buildImportPostBody(deps, peer, {
         jobId,
         sourceInstanceUrl: manifest.sourceInstanceUrl,
         manifest,
         options,
         dbBundle: bundle,
-      }),
+      });
+    const importResponse = await deps.peerFetch(peer, "/api/migration/imports", {
+      method: "POST",
+      headers: importPostHeaders,
+      body: importPostBody,
     });
     const importBody = await readPeerJson<{
       importId: string;
@@ -393,68 +624,10 @@ export async function startJob(
     // ── File phase: chunked archive upload (resume-aware, abort-aware) ──
     if (built.archives.length > 0) {
       // Resume: skip chunks the destination already holds.
-      let received: Record<string, number[]> = {};
-      try {
-        const statusResponse = await deps.peerFetch(
-          peer,
-          `/api/migration/imports/${jobId}`,
-          { method: "GET" },
-        );
-        if (statusResponse.ok) {
-          const body = (await statusResponse.json()) as {
-            receivedChunks?: Record<string, number[]>;
-          };
-          received = body.receivedChunks ?? {};
-        }
-      } catch {
-        // Fresh upload — resume info is an optimization only.
-      }
-
-      for (const entry of built.archives) {
-        const archivePath = built.archivePaths[entry.name];
-        if (!archivePath) {
-          throw new Error(`Built archive path missing for ${entry.name}`);
-        }
-        const have = new Set(received[entry.name] ?? []);
-        // Byte size of chunk `index` (the last chunk is short); clamped to 0.
-        const chunkBytes = (index: number): number =>
-          Math.max(0, Math.min(CHUNK_SIZE_BYTES, entry.sizeBytes - index * CHUNK_SIZE_BYTES));
-        // Count chunks the destination ALREADY holds once, up front — they
-        // are part of the transferred total but are never re-uploaded.
-        for (const index of have) {
-          if (index >= 0 && index < entry.chunkCount) {
-            bytesTransferred += chunkBytes(index);
-          }
-        }
-        for (let index = 0; index < entry.chunkCount; index++) {
-          const chunkSize = chunkBytes(index);
-          if (!have.has(index)) {
-            const data = await deps.readChunk(archivePath, index);
-            const sha = createHash("sha256").update(data).digest("hex");
-            await putChunkWithRetry(deps, peer, jobId, entry.name, index, entry.chunkCount, sha, data);
-            // Only newly-uploaded chunks add to the total here (already-held
-            // chunks were counted above) — so a resumed push can't overshoot.
-            bytesTransferred += chunkSize;
-          }
-          // The progress update runs EVERY iteration and doubles as the
-          // between-chunks abort check: a status no longer db_done (the job
-          // was aborted) matches nothing → stop and roll the destination back.
-          const progressed = await deps.transition(jobId, ["db_done"], {
-            bytesTransferred,
-          });
-          if (!progressed) {
-            log.warn("Upload interrupted (job left db_done) — stopping", { jobId });
-            try {
-              await deps.peerFetch(peer, `/api/migration/imports/${jobId}`, {
-                method: "DELETE",
-              });
-            } catch {
-              // Best-effort.
-            }
-            return;
-          }
-        }
-      }
+      const received = await fetchReceivedChunks(deps, peer, jobId);
+      const total = await uploadArchiveChunks(deps, peer, jobId, built, received, bytesTransferred);
+      if (total === null) return; // aborted mid-upload (destination rolled back)
+      bytesTransferred = total;
 
       const filesDone = await deps.transition(jobId, ["db_done"], {
         status: "files_done",
@@ -467,87 +640,13 @@ export async function startJob(
       });
     }
 
-    // ── Finalize + verify on the destination ──
-    const finalizeBody = await readPeerJson<{ conflicts?: ConflictReport[] }>(
-      await deps.peerFetch(peer, `/api/migration/imports/${jobId}/finalize`, {
-        method: "POST",
-      }),
-      "Import finalize",
+    await finalizeVerifyAndComplete(
+      deps,
+      peer,
+      { ...job, destProjectId: importBody.result?.importedProjectId ?? null },
+      importBody.result?.conflicts ?? [],
+      importBody.result?.rowCounts ?? {},
     );
-    const finalizeConflicts: ConflictReport[] = finalizeBody.conflicts ?? [];
-
-    const verifying = await deps.transition(jobId, ["db_done", "files_done"], {
-      status: "verifying",
-    });
-    if (!verifying) return; // aborted mid-flight
-
-    const verify = await readPeerJson<VerifyResult>(
-      await deps.peerFetch(peer, `/api/migration/imports/${jobId}/verify`, {
-        method: "GET",
-      }),
-      "Import verify",
-    );
-
-    const conflictReport = {
-      conflicts: [...(importBody.result?.conflicts ?? []), ...finalizeConflicts],
-      rowCounts: importBody.result?.rowCounts ?? {},
-      verify,
-    };
-
-    if (!verify.ok) {
-      // Keep the report visible on the failed row before bailing out.
-      await deps.transition(jobId, ["verifying"], {
-        conflictReportJson: JSON.stringify(conflictReport),
-      });
-      throw new Error(
-        `Destination verification failed: ${JSON.stringify(verify.rowCounts)}`,
-      );
-    }
-
-    // ── Complete FIRST, then (optionally) remove the source project ──
-    // The job row must record success (report + destProjectId) before any
-    // destructive step: a crash between "delete" and "mark completed" would
-    // otherwise destroy the user's project while the job looks unfinished.
-    const completed = await deps.transition(jobId, ["verifying"], {
-      status: "completed",
-      conflictReportJson: JSON.stringify(conflictReport),
-      completedAt: deps.now(),
-    });
-    if (!completed) return; // aborted mid-flight
-
-    if (job.removeSourceAfterVerify) {
-      log.info("Removing source project after verified migration", {
-        jobId,
-        projectId: job.projectId,
-      });
-      try {
-        // Existing deletion path (kills tmux, cascades rows); never rm -rf.
-        await deps.deleteProject(job.projectId);
-      } catch (deleteError) {
-        // Fail-safe: the migration stays completed (the copy is verified on
-        // the destination) and the source copy survives; record the miss in
-        // the already-persisted report so the UI can surface it.
-        log.error("Source project deletion failed after completed migration", {
-          jobId,
-          projectId: job.projectId,
-          error: String(deleteError),
-        });
-        conflictReport.conflicts.push({
-          type: "source_delete_failed",
-          message:
-            "Migration completed but the source project could not be deleted — remove it manually",
-          detail: String(deleteError),
-        });
-        await deps.transition(jobId, ["completed"], {
-          conflictReportJson: JSON.stringify(conflictReport),
-        });
-      }
-    }
-
-    log.info("Migration job completed", {
-      jobId,
-      destProjectId: importBody.result?.importedProjectId,
-    });
   } catch (error) {
     await fail(error, peer ?? undefined);
   } finally {
@@ -630,6 +729,267 @@ export async function abortJob(
 
   log.info("Migration job aborted", { jobId, userId });
   return aborted;
+}
+
+/** The in-flight source statuses a restart can resume (vs. pending/terminal). */
+const RESUMABLE_STATUSES: MigrationJobStatus[] = ["running", "db_done", "files_done"];
+
+/**
+ * What the destination knows about an import (subset of its row we consume).
+ * `null` means the destination has no record of this import (404).
+ */
+interface DestImportState {
+  status: MigrationImportStatus;
+  importedProjectId: string | null;
+  receivedChunks: Record<string, number[]>;
+}
+
+/** Fetch the destination's view of an import (null on 404 / unreadable). */
+async function fetchDestImportState(
+  deps: MigrationServiceDeps,
+  peer: PeerInstanceService.PeerInstanceRow,
+  jobId: string,
+): Promise<DestImportState | null> {
+  let response: Response;
+  try {
+    response = await deps.peerFetch(peer, `/api/migration/imports/${jobId}`, {
+      method: "GET",
+    });
+  } catch {
+    return null;
+  }
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new Error(`Destination import status check failed: HTTP ${response.status}`);
+  }
+  const body = (await response.json()) as {
+    import?: { status?: MigrationImportStatus; importedProjectId?: string | null };
+    receivedChunks?: Record<string, number[]>;
+  };
+  if (!body.import?.status) return null;
+  return {
+    status: body.import.status,
+    importedProjectId: body.import.importedProjectId ?? null,
+    receivedChunks: body.receivedChunks ?? {},
+  };
+}
+
+/**
+ * Resume a migration job whose SOURCE process restarted mid-run (status was
+ * left at running/db_done/files_done). NEVER throws — failures land on the row.
+ *
+ * The destination's endpoints are all idempotent (chunk intake is sha-checked
+ * and skips duplicates, finalize is claim-guarded, verify is a read), so the
+ * re-drive is driven by the DESTINATION's current import state:
+ *   - no record (404)  → the DB push never landed: reset to pending + restart.
+ *   - failed           → destination gave up: fail the source job to match.
+ *   - completed        → already done: verify + complete the source job.
+ *   - in-flight        → rebuild the archives, push any missing chunks from the
+ *                        destination's receivedChunks, then finalize + verify.
+ */
+export async function resumeJob(
+  jobId: string,
+  injectedDeps?: MigrationServiceDeps,
+): Promise<void> {
+  const deps = injectedDeps ?? defaultDeps();
+  const job = await deps.getJob(jobId);
+  if (!job) {
+    log.warn("resumeJob: job not found", { jobId });
+    return;
+  }
+  if (!RESUMABLE_STATUSES.includes(job.status)) {
+    log.debug("resumeJob: job not in a resumable state, skipping", {
+      jobId,
+      status: job.status,
+    });
+    return;
+  }
+
+  let peer: PeerInstanceService.PeerInstanceRow | null = null;
+  let built: BuiltArchives | null = null;
+  const fail = async (error: unknown) => {
+    log.error("Migration resume failed", { jobId, error: String(error) });
+    await deps.transition(jobId, NON_TERMINAL_STATUSES, {
+      status: "failed",
+      errorMessage: String(error),
+      completedAt: deps.now(),
+    });
+  };
+
+  try {
+    if (!job.peerInstanceId) throw new Error("Job has no peer instance");
+    peer = await deps.getPeer(job.userId, job.peerInstanceId);
+    if (!peer) throw new Error("Peer instance not found");
+
+    const dest = await fetchDestImportState(deps, peer, jobId);
+
+    // (a) Destination never received the DB push (404), or the DB bundle never
+    // finished importing (still `staged`): restart cleanly from scratch. A
+    // `staged` row would reject chunks (importDb must run first) and a fresh
+    // init would 409, so roll the partial destination back to a clean slate
+    // first — the source then re-POSTs the whole bundle.
+    if (!dest || dest.status === "staged") {
+      log.info("Resuming migration: destination has no usable import — restarting", {
+        jobId,
+        destStatus: dest?.status ?? "none",
+      });
+      if (dest) {
+        try {
+          await deps.peerFetch(peer, `/api/migration/imports/${jobId}`, { method: "DELETE" });
+        } catch {
+          // Best-effort: a leftover staged row is retried by initImport anyway.
+        }
+      }
+      const reset = await deps.transition(jobId, RESUMABLE_STATUSES, {
+        status: "pending",
+        startedAt: null,
+        bytesTransferred: 0,
+      });
+      if (!reset) return; // raced (aborted/completed concurrently)
+      await startJob(jobId, deps);
+      return;
+    }
+
+    // (b) Destination gave up — mirror the failure on the source row.
+    if (dest.status === "failed") {
+      throw new Error("Destination import is in a failed state — re-initiate the migration");
+    }
+
+    const options = jobOptions(job);
+
+    // (c) Destination already completed the import: skip straight to verify +
+    // complete (finalize would 409 — it is already finalized).
+    if (dest.status === "completed") {
+      log.info("Resuming migration: destination already completed — verifying", { jobId });
+      await deps.transition(jobId, RESUMABLE_STATUSES, {
+        status: "db_done",
+        destProjectId: dest.importedProjectId,
+      });
+      const verify = await readPeerJson<VerifyResult>(
+        await deps.peerFetch(peer, `/api/migration/imports/${jobId}/verify`, {
+          method: "GET",
+        }),
+        "Import verify",
+      );
+      const report = { conflicts: [], rowCounts: verify.rowCounts, verify };
+      if (!verify.ok) {
+        await deps.transition(jobId, RESUMABLE_STATUSES, {
+          conflictReportJson: JSON.stringify(report),
+        });
+        throw new Error(`Destination verification failed: ${JSON.stringify(verify.rowCounts)}`);
+      }
+      const completed = await deps.transition(jobId, RESUMABLE_STATUSES, {
+        status: "completed",
+        conflictReportJson: JSON.stringify(report),
+        completedAt: deps.now(),
+      });
+      if (completed && job.removeSourceAfterVerify) {
+        try {
+          await deps.deleteProject(job.projectId);
+        } catch (deleteError) {
+          log.error("Source project deletion failed after resumed migration", {
+            jobId,
+            error: String(deleteError),
+          });
+        }
+      }
+      log.info("Migration job completed (resumed)", { jobId });
+      return;
+    }
+
+    // (d) Destination is mid-flight (staged/importing/receiving/finalizing):
+    // rebuild the source archives and push any chunks it is still missing, then
+    // finalize + verify. Normalize the source row to db_done so the upload
+    // abort-guard and the files_done/verifying transitions all match.
+    //
+    // buildArchives needs the working dir + profiles, which live on the DB
+    // bundle — rebuild the bundle to read them (cheap relative to the file
+    // transfer). The DB bundle itself is NOT re-pushed: the destination already
+    // imported it (status is past `staged`), and re-POSTing would 409.
+    const { bundle } = await deps.buildBundle(job.userId, job.projectId, options);
+    built = await deps.buildArchives({
+      jobId,
+      workingDir: bundle.nodePreferences[0]?.defaultWorkingDirectory ?? null,
+      options,
+      profiles: bundle.profiles
+        .filter((p) => !!p.sourceConfigDir)
+        .map((p) => ({ id: p.id, configDir: p.sourceConfigDir as string })),
+    });
+    const totalBytes = built.archives.reduce((n, a) => n + a.sizeBytes, 0);
+
+    const normalized = await deps.transition(jobId, RESUMABLE_STATUSES, {
+      status: "db_done",
+      destProjectId: dest.importedProjectId,
+      sizeEstimateBytes: totalBytes,
+      bytesTransferred: 0,
+    });
+    if (!normalized) return; // raced (aborted concurrently)
+
+    if (built.archives.length > 0) {
+      const total = await uploadArchiveChunks(
+        deps,
+        peer,
+        jobId,
+        built,
+        dest.receivedChunks,
+        0,
+      );
+      if (total === null) return; // aborted mid-upload (destination rolled back)
+      const filesDone = await deps.transition(jobId, ["db_done"], { status: "files_done" });
+      if (!filesDone) return;
+    }
+
+    await finalizeVerifyAndComplete(
+      deps,
+      peer,
+      { ...job, destProjectId: dest.importedProjectId },
+      [],
+      {},
+    );
+  } catch (error) {
+    await fail(error);
+  } finally {
+    if (built) {
+      try {
+        await deps.removeDir(built.stagingDir);
+      } catch (cleanupError) {
+        log.warn("Failed to remove source staging dir (resume)", {
+          jobId,
+          error: String(cleanupError),
+        });
+      }
+    }
+  }
+}
+
+/**
+ * Startup pass: re-drive migration jobs left in-flight by a SOURCE-process
+ * restart (running/db_done/files_done) instead of waiting for the 2h stale
+ * prune to fail them. Only jobs younger than the stale cutoff are re-driven —
+ * older ones are presumed genuinely dead (peer gone) and left to
+ * {@link pruneStaleMigrations}. Each re-drive is fire-and-forget and idempotent
+ * (resumeJob never throws). Returns the number of jobs scheduled for re-drive.
+ */
+export async function resumeInterruptedMigrations(now: Date = new Date()): Promise<number> {
+  const cutoff = new Date(now.getTime() - STALE_JOB_MAX_AGE_MS);
+  const rows = await db
+    .select({ id: migrationJobs.id })
+    .from(migrationJobs)
+    .where(
+      and(
+        inArray(migrationJobs.status, RESUMABLE_STATUSES),
+        // Younger than the stale cutoff — older jobs are handled by the prune.
+        gte(migrationJobs.updatedAt, cutoff),
+      ),
+    );
+  for (const row of rows) {
+    // Fire-and-forget: resumeJob lands all outcomes on the row itself.
+    void resumeJob(row.id);
+  }
+  if (rows.length > 0) {
+    log.info("Re-driving interrupted migration jobs on startup", { count: rows.length });
+  }
+  return rows.length;
 }
 
 /**
