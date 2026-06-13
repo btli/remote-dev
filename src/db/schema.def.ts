@@ -1649,18 +1649,20 @@ export const schema: SchemaDefinition = [
     ],
   },
   {
-    // SOURCE-side migration job state machine. Stage 1 runs
-    // pending → running → db_done → verifying → completed; `files_done` is
-    // reserved for the stage-2 file phases. The include* toggles + chunk
-    // bookkeeping (sizeEstimateBytes/bytesTransferred) are designed for
-    // stage 2 now so the schema does not churn.
+    // SOURCE-side migration job state machine:
+    // pending → running → db_done → files_done → verifying → completed
+    // (DB-only migrations skip files_done; failed/aborted are terminal).
+    // The include* toggles capture the chosen export scope; sizeEstimateBytes
+    // (total archive bytes) + bytesTransferred drive the live progress bar.
+    // peerInstanceId is `set null` (NOT cascade): deleting a peer preserves
+    // completed-migration audit rows and never yanks a live job mid-push.
     exportName: "migrationJobs",
     sqlName: "migration_job",
     columns: [
       { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
       { field: "userId", dbName: "user_id", kind: "text", notNull: true, references: { table: "users", column: "id", onDelete: "cascade" } },
       { field: "projectId", dbName: "project_id", kind: "text", notNull: true, references: { table: "projects", column: "id", onDelete: "cascade" } },
-      { field: "peerInstanceId", dbName: "peer_instance_id", kind: "text", references: { table: "peerInstances", column: "id", onDelete: "cascade" } },
+      { field: "peerInstanceId", dbName: "peer_instance_id", kind: "text", references: { table: "peerInstances", column: "id", onDelete: "set null" } },
       { field: "status", dbName: "status", kind: "text", notNull: true, typeBrand: "MigrationJobStatus", default: { kind: "value", value: "\"pending\"" } },
       { field: "workingTreeMode", dbName: "working_tree_mode", kind: "text", notNull: true, typeBrand: "MigrationWorkingTreeMode", default: { kind: "value", value: "\"full_tar\"" } },
       { field: "includeDotEnv", dbName: "include_dot_env", kind: "boolean", notNull: true, default: { kind: "value", value: "true" } },
@@ -1689,9 +1691,10 @@ export const schema: SchemaDefinition = [
   },
   {
     // DESTINATION-side import record. `id` is the SOURCE job id (correlation
-    // key across the two instances) so it carries NO uuid default. Chunk
-    // bookkeeping (chunksReceived/totalChunks + stagingDir) is the stage-2
-    // file-upload state; stage 1 only stages + imports the DB bundle.
+    // key across the two instances) so it carries NO uuid default. Lifecycle:
+    // staged → importing (DB bundle) → receiving (file chunks) → finalizing
+    // (assemble + extract) → completed (failed terminal). chunksReceived/
+    // totalChunks + stagingDir track the chunk-upload phase.
     exportName: "migrationImports",
     sqlName: "migration_import",
     columns: [

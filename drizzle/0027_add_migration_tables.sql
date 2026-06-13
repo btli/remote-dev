@@ -52,7 +52,7 @@ CREATE TABLE `migration_job` (
 	`updated_at` integer NOT NULL,
 	FOREIGN KEY (`user_id`) REFERENCES `user`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON UPDATE no action ON DELETE cascade,
-	FOREIGN KEY (`peer_instance_id`) REFERENCES `peer_instance`(`id`) ON UPDATE no action ON DELETE cascade
+	FOREIGN KEY (`peer_instance_id`) REFERENCES `peer_instance`(`id`) ON UPDATE no action ON DELETE set null
 );
 --> statement-breakpoint
 CREATE INDEX `migration_job_user_idx` ON `migration_job` (`user_id`);--> statement-breakpoint

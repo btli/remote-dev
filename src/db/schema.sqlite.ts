@@ -1520,7 +1520,7 @@ export const migrationJobs = sqliteTable(
     id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
     userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
-    peerInstanceId: text("peer_instance_id").references(() => peerInstances.id, { onDelete: "cascade" }),
+    peerInstanceId: text("peer_instance_id").references(() => peerInstances.id, { onDelete: "set null" }),
     status: text("status").$type<MigrationJobStatus>().notNull().default("pending"),
     workingTreeMode: text("working_tree_mode").$type<MigrationWorkingTreeMode>().notNull().default("full_tar"),
     includeDotEnv: integer("include_dot_env", { mode: "boolean" }).notNull().default(true),

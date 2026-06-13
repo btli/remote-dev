@@ -56,7 +56,7 @@ CREATE TABLE "peer_instance" (
 ALTER TABLE "migration_import" ADD CONSTRAINT "migration_import_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "migration_job" ADD CONSTRAINT "migration_job_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "migration_job" ADD CONSTRAINT "migration_job_project_id_project_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."project"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "migration_job" ADD CONSTRAINT "migration_job_peer_instance_id_peer_instance_id_fk" FOREIGN KEY ("peer_instance_id") REFERENCES "public"."peer_instance"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "migration_job" ADD CONSTRAINT "migration_job_peer_instance_id_peer_instance_id_fk" FOREIGN KEY ("peer_instance_id") REFERENCES "public"."peer_instance"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "peer_instance" ADD CONSTRAINT "peer_instance_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "migration_import_status_idx" ON "migration_import" USING btree ("status");--> statement-breakpoint
 CREATE INDEX "migration_import_user_idx" ON "migration_import" USING btree ("user_id");--> statement-breakpoint
