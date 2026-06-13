@@ -66,7 +66,6 @@ import {
   ARCHIVE_NAMES,
   dbBundleSchema,
   type ArchiveManifestEntry,
-  type ArchiveName,
   type BundleManifest,
   type ConflictReport,
   type DbBundle,
@@ -1554,6 +1553,12 @@ export async function verifyImport(
   const expected = bookkeeping.expectedRowCounts ?? {};
   const profileIds = Object.values(bookkeeping.profileIdRemaps ?? {});
   const actual = await countImportedRows(destUserId, row.importedProjectId, profileIds);
+
+  // A failed import NEVER verifies ok — a pre-existing directory at the
+  // destination path must not masquerade as a successful extraction.
+  if (row.status === "failed") {
+    return { ok: false, rowCounts: actual, missingPaths: [] };
+  }
 
   // Compare only keys the recount covers (importDb tracks a few link-table
   // counts the recount reproduces too; any drift in shared keys fails).

@@ -34,7 +34,7 @@ import {
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -353,8 +353,10 @@ async function stageEssentials(
   }
 
   const shipped = new Set<string>();
+  const isDotEnv = (rel: string) => basename(rel).startsWith(".env");
 
-  // .env* files (gated): ignored by git, so never in the untracked list.
+  // .env* files (gated): usually gitignored, so the explicit find is what
+  // ships them at all.
   if (options.includeDotEnv) {
     for (const rel of await findDotEnvFiles(workingDir)) {
       await copyRelative(workingDir, rel, stageRoot);
@@ -362,9 +364,12 @@ async function stageEssentials(
     }
   }
 
-  // Untracked-but-not-ignored files.
+  // Untracked-but-not-ignored files. The includeDotEnv toggle WINS here too:
+  // a repo without a .gitignore reports .env* as untracked, and the opt-out
+  // must not be bypassable through that path.
   for (const rel of await listUntrackedFiles(workingDir)) {
     if (shipped.has(rel)) continue;
+    if (!options.includeDotEnv && isDotEnv(rel)) continue;
     try {
       await copyRelative(workingDir, rel, stageRoot);
       shipped.add(rel);
