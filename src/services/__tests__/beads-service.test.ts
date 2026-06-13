@@ -21,6 +21,7 @@ import { hasActiveBlockers, type BeadsDependency } from "@/types/beads";
 type RunCall = { args: string[] };
 const runCalls: RunCall[] = [];
 let exportJsonl = "";
+let infraListJson = "[]";
 let statusJson: unknown = { schema_version: 1, summary: {} };
 let historyJson: unknown = [];
 let runThrows: unknown = null;
@@ -33,12 +34,18 @@ vi.mock("@/lib/beads-cli", async (importOriginal) => {
       runCalls.push({ args });
       if (runThrows) throw runThrows;
       if (args[0] === "export") return exportJsonl;
+      if (args[0] === "list") return infraListJson;
       return "";
     }),
     runBdExportCached: vi.fn(async (_path: string) => {
       runCalls.push({ args: ["export"] });
       if (runThrows) throw runThrows;
       return exportJsonl;
+    }),
+    runBdInfraListCached: vi.fn(async (_path: string) => {
+      runCalls.push({ args: ["list", "--include-infra", "-n", "0", "--json"] });
+      if (runThrows) throw runThrows;
+      return infraListJson;
     }),
     runBdJson: vi.fn(async (_path: string, args: string[]) => {
       runCalls.push({ args });
@@ -96,9 +103,41 @@ function toJsonl(records: Array<Record<string, unknown>>): string {
   return records.map((r) => JSON.stringify(r)).join("\n");
 }
 
+/** Build a lean `bd list --include-infra --json` record (a wisp/message/infra bead). */
+function listRecord(input: {
+  id: string;
+  title?: string;
+  status?: string;
+  issue_type?: string;
+  created_at?: string;
+}): Record<string, unknown> {
+  return {
+    id: input.id,
+    title: input.title ?? input.id,
+    description: "",
+    status: input.status ?? "open",
+    priority: 3,
+    issue_type: input.issue_type ?? "message",
+    owner: "agent",
+    created_at: input.created_at ?? "2026-01-01T00:00:00Z",
+    created_by: "tester",
+    updated_at: input.created_at ?? "2026-01-01T00:00:00Z",
+    ephemeral: true,
+    dependency_count: 0,
+    dependent_count: 0,
+    comment_count: 0,
+  };
+}
+
+/** `bd list --json` emits a single JSON array (NOT JSONL). */
+function toJsonArray(records: Array<Record<string, unknown>>): string {
+  return JSON.stringify(records);
+}
+
 beforeEach(() => {
   runCalls.length = 0;
   exportJsonl = "";
+  infraListJson = "[]";
   statusJson = { schema_version: 1, summary: {} };
   historyJson = [];
   runThrows = null;
@@ -354,22 +393,62 @@ describe("getIssues", () => {
     expect(issues.map((i) => i.id).sort()).toEqual(["child-1", "epic-1"]);
   });
 
-  it("includes message-type beads but excludes agent/rig/role infra beads", async () => {
-    exportJsonl = toJsonl([
-      exportRecord({ id: "task-1", issue_type: "task" }),
-      exportRecord({ id: "msg-1", issue_type: "message" }),
-      exportRecord({ id: "agent-1", issue_type: "agent" }),
+  it("includes message-type beads from the infra list but excludes agent/rig/role infra beads", async () => {
+    // Regular issues come from the export; messages live outside it (ephemeral
+    // wisps) and are fetched via `bd list --include-infra`.
+    exportJsonl = toJsonl([exportRecord({ id: "task-1", issue_type: "task" })]);
+    infraListJson = toJsonArray([
+      listRecord({ id: "msg-1", issue_type: "message" }),
+      // `bd list --include-infra` also returns infra beads + the regular task;
+      // only the message should survive the JS-side filter.
+      listRecord({ id: "agent-1", issue_type: "agent" }),
+      listRecord({ id: "task-1", issue_type: "task" }),
     ]);
 
     const issues = await getIssues("/proj");
     const ids = issues.map((i) => i.id);
 
-    // The message bead is shown; the agent infra bead is filtered out.
+    // The message bead is shown (from the list); the regular task (from the
+    // export); the agent infra bead is filtered out; and the duplicate task in
+    // the list does not double up.
     expect(ids).toContain("msg-1");
     expect(ids).toContain("task-1");
     expect(ids).not.toContain("agent-1");
+    expect(ids.filter((id) => id === "task-1")).toHaveLength(1);
     // Confirm the message issue keeps its type through mapping.
     expect(issues.find((i) => i.id === "msg-1")!.issueType).toBe("message");
+  });
+
+  it("falls back to the infra list for getIssue when the id is a message (export miss)", async () => {
+    exportJsonl = toJsonl([exportRecord({ id: "task-1", issue_type: "task" })]);
+    infraListJson = toJsonArray([listRecord({ id: "msg-1", issue_type: "message" })]);
+
+    const issue = await getIssue("/proj", "msg-1");
+    expect(issue).not.toBeNull();
+    expect(issue!.id).toBe("msg-1");
+    expect(issue!.issueType).toBe("message");
+    // Lean record -> empty defaults.
+    expect(issue!.dependencies).toEqual([]);
+    expect(issue!.dependents).toEqual([]);
+    expect(issue!.labels).toEqual([]);
+  });
+
+  it("applies the closed-retention filter to messages (an old closed message is dropped)", async () => {
+    exportJsonl = toJsonl([exportRecord({ id: "task-1", issue_type: "task" })]);
+    infraListJson = toJsonArray([
+      listRecord({
+        id: "msg-old",
+        issue_type: "message",
+        status: "closed",
+        created_at: "2020-01-01T00:00:00Z",
+      }),
+      listRecord({ id: "msg-open", issue_type: "message", status: "open" }),
+    ]);
+
+    const ids = (await getIssues("/proj")).map((i) => i.id);
+    expect(ids).toContain("msg-open");
+    expect(ids).toContain("task-1");
+    expect(ids).not.toContain("msg-old");
   });
 
   it("filters by explicit status when provided", async () => {
