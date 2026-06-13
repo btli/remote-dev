@@ -46,6 +46,7 @@ function pendingRow(overrides: Partial<AgentRunRow> = {}): AgentRunRow {
     prompt: "do the thing",
     sessionId: null,
     headSha: null,
+    profileId: null,
     status: "pending",
     errorMessage: null,
     startedAt: null,
@@ -82,9 +83,16 @@ function makeDeps(over: Partial<AgentRunDeps> = {}): {
       return current;
     }),
     supersede: vi.fn(async () => 0),
-    launchSession: vi.fn(async () => {
+    launchSession: vi.fn(async (input) => {
       launched += 1;
-      return { id: "sess-1", tmuxSessionName: "rdv-sess-1" };
+      // Mirror session-service: an explicit pin flows straight through as the
+      // resolved profile; a null pin resolves to null here (auto-select is
+      // exercised separately by overriding this fake).
+      return {
+        id: "sess-1",
+        tmuxSessionName: "rdv-sess-1",
+        profileId: input.profileId ?? null,
+      };
     }),
     waitForAgentReady: vi.fn(async () => {}),
     sendPrompt: vi.fn(async (_tmux, prompt) => {
@@ -160,6 +168,71 @@ describe("AgentRunService.launchAgentRun", () => {
         autoLaunchAgent: true,
       }),
     );
+  });
+
+  it("passes an explicit profileId to the launcher and records it on the run", async () => {
+    const h = makeDeps();
+    const run = await launchAgentRun(
+      {
+        userId: "user-1",
+        projectId: "proj-1",
+        source: "manual",
+        agentProvider: "claude",
+        agentFlags: [],
+        prompt: "p",
+        profileId: "profile-pinned",
+      },
+      h.deps,
+    );
+
+    // Explicit pin threaded into the session launch.
+    expect(h.deps.launchSession).toHaveBeenCalledWith(
+      expect.objectContaining({ profileId: "profile-pinned" }),
+    );
+    // Pending insert carries the requested pin.
+    expect(h.deps.insertRun).toHaveBeenCalledWith(
+      expect.objectContaining({ profileId: "profile-pinned" }),
+    );
+    // The run records the resolved profile (here == the pin).
+    const runningPatch = h.updates.find((u) => u.patch.status === "running");
+    expect(runningPatch?.patch.profileId).toBe("profile-pinned");
+    expect(run.profileId).toBe("profile-pinned");
+  });
+
+  it("records the RESOLVED profile when the launcher auto-selects a different one", async () => {
+    // No explicit pin, but session-service auto-selects "profile-auto".
+    const h = makeDeps({
+      launchSession: vi.fn(async () => ({
+        id: "sess-1",
+        tmuxSessionName: "rdv-sess-1",
+        profileId: "profile-auto",
+      })),
+    });
+    const run = await launchAgentRun(
+      {
+        userId: "user-1",
+        projectId: "proj-1",
+        source: "schedule",
+        agentProvider: "claude",
+        agentFlags: [],
+        prompt: "p",
+        // profileId omitted → null → auto-select
+      },
+      h.deps,
+    );
+
+    // The pending insert recorded the (null) request...
+    expect(h.deps.insertRun).toHaveBeenCalledWith(
+      expect.objectContaining({ profileId: null }),
+    );
+    // ...but the launch passed null (auto-select) downstream...
+    expect(h.deps.launchSession).toHaveBeenCalledWith(
+      expect.objectContaining({ profileId: undefined }),
+    );
+    // ...and the running patch records the RESOLVED auto-selected profile.
+    const runningPatch = h.updates.find((u) => u.patch.status === "running");
+    expect(runningPatch?.patch.profileId).toBe("profile-auto");
+    expect(run.profileId).toBe("profile-auto");
   });
 
   it("marks the run failed with errorMessage when the launch throws", async () => {

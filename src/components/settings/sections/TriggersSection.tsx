@@ -27,6 +27,9 @@ import {
 } from "@/components/ui/select";
 import { apiFetch } from "@/lib/api-fetch";
 import { useProjectTree } from "@/contexts/ProjectTreeContext";
+import { ProfileSelector } from "@/components/profiles/ProfileSelector";
+import { isClaudeCapableProvider } from "@/types/agent";
+import type { AgentProvider } from "@/types/agent";
 import type { TriggerKind } from "@/types/agent-run";
 
 interface TriggerConfigDTO {
@@ -37,6 +40,7 @@ interface TriggerConfigDTO {
   agentProvider: string;
   promptTemplate: string;
   worktreeType: string | null;
+  profileId: string | null;
   enabled: boolean;
 }
 
@@ -202,7 +206,14 @@ function TriggerForm({
     "Address {{repo}} #{{prNumber}}.",
   );
   const [worktreeType, setWorktreeType] = useState("fix");
+  // null = "Auto" (use the project's primary Claude profile + fallback pool).
+  const [profileId, setProfileId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Profiles only apply to Claude-capable providers; other providers ignore them.
+  const showProfilePicker = isClaudeCapableProvider(
+    agentProvider as AgentProvider,
+  );
 
   async function save() {
     setSaving(true);
@@ -219,6 +230,8 @@ function TriggerForm({
           agentProvider,
           promptTemplate,
           worktreeType: worktreeType || null,
+          // Only meaningful for Claude; send null (auto-select) otherwise.
+          profileId: showProfilePicker ? profileId : null,
         }),
       });
       if (!res.ok) {
@@ -297,6 +310,24 @@ function TriggerForm({
           </SelectContent>
         </Select>
       </div>
+
+      {showProfilePicker && (
+        <div className="space-y-2">
+          <Label>Claude profile</Label>
+          <ProfileSelector
+            value={profileId}
+            onChange={setProfileId}
+            claudeCapableOnly
+            placeholder="Auto (project default / pool)"
+            noneLabel="Auto (project default / pool)"
+          />
+          <p className="text-xs text-muted-foreground">
+            Pin a specific Claude profile, or leave on Auto to use the
+            project&apos;s primary profile and fallback pool (skipping limited
+            accounts).
+          </p>
+        </div>
+      )}
 
       <div className="space-y-2">
         <Label htmlFor="trigger-prompt">Prompt template</Label>

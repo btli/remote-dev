@@ -38,6 +38,8 @@ export interface TriggerConfigLike {
   agentFlags: string;
   promptTemplate: string;
   worktreeType: string | null;
+  /** Explicit Claude profile pin for the launched run (null → auto-select). */
+  profileId: string | null;
   enabled: boolean;
 }
 
@@ -55,6 +57,7 @@ export interface TriggerDeps {
     agentFlags: string[];
     prompt: string;
     worktreeType: string | null;
+    profileId?: string | null;
   }): Promise<{ id: string }>;
   supersedePriorRuns(
     triggerConfigId: string,
@@ -239,6 +242,7 @@ export async function handleEvent(
         agentFlags: JSON.parse(cfg.agentFlags) as string[],
         prompt: renderTemplate(cfg.promptTemplate, e),
         worktreeType: cfg.worktreeType,
+        profileId: cfg.profileId,
       });
       if (e.headSha) {
         await deps.supersedePriorRuns(cfg.id, e.headSha, run.id);

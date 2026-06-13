@@ -47,6 +47,7 @@ export interface ValidatedTriggerConfig {
   agentFlags: string[];
   promptTemplate: string;
   worktreeType: string | null;
+  profileId: string | null;
   enabled: boolean;
   githubRepoId: string | null;
 }
@@ -98,6 +99,7 @@ export function validateTriggerConfigInput(
     agentFlags: input.agentFlags ?? [],
     promptTemplate: input.promptTemplate,
     worktreeType: input.worktreeType ?? null,
+    profileId: input.profileId ?? null,
     enabled: input.enabled ?? true,
     githubRepoId: input.githubRepoId ?? null,
   };
@@ -121,6 +123,7 @@ export async function createTriggerConfig(
       agentFlags: JSON.stringify(v.agentFlags),
       promptTemplate: v.promptTemplate,
       worktreeType: v.worktreeType,
+      profileId: v.profileId,
       enabled: v.enabled,
     })
     .returning();
@@ -190,6 +193,7 @@ export async function updateTriggerConfig(
     set.promptTemplate = patch.promptTemplate;
   if (patch.worktreeType !== undefined)
     set.worktreeType = patch.worktreeType ?? null;
+  if (patch.profileId !== undefined) set.profileId = patch.profileId ?? null;
   if (patch.githubRepoId !== undefined)
     set.githubRepoId = patch.githubRepoId ?? null;
   if (patch.enabled !== undefined) set.enabled = patch.enabled;
