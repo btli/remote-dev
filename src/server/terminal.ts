@@ -91,18 +91,30 @@ function validateSessionName(name: string): boolean {
  * `validateSessionName`, but format alone does not prove ownership: a user
  * holding a valid token for their own session could otherwise point
  * `?tmuxSession` at another user's `rdv-<uuid>` and attach to it. This is the
- * defense-in-depth check that re-binds the token to the requested tmux session
- * at connect time.
+ * defense-in-depth check that re-binds the requested tmux session to the
+ * token's USER at connect time.
  *
- * Authorization holds iff the DB row whose `tmuxSessionName` equals the
- * requested name exists AND both:
- *   - `row.userId === token.userId` (same owner), and
- *   - `row.id === token.sessionId`  (the token was minted for THIS session).
+ * Authorization is decided by USER-LEVEL ownership:
+ *   - **No row** (`null`/`undefined`) → ALLOW. There is no existing session to
+ *     hijack: this is the session-CREATION path. The terminal server derives
+ *     `rdv-${token.sessionId}` and CREATES the tmux session + its DB row on this
+ *     connect, so no row exists yet at check time. The HMAC token already proves
+ *     the caller, and for the no-`?tmuxSession`-override case the derived name is
+ *     `rdv-${token.sessionId}` (bound to the token). Rejecting null would block
+ *     every brand-new session (and the supervisor-router E2E smoke, which mints
+ *     a token for a fresh `randomUUID()` sessionId with no pre-existing row).
+ *   - **Row owned by the same user** (`row.userId === token.userId`) → ALLOW.
+ *     We use user-level ownership, NOT `row.id === token.sessionId`: a legitimate
+ *     control-mode token can attach to ANOTHER of the SAME user's own sessions,
+ *     so pinning to the token's own sessionId would over-reject. The user owns
+ *     every `rdv-<uuid>` whose row carries their userId — attaching to one is not
+ *     a privilege escalation.
+ *   - **Row owned by a DIFFERENT user** (`row.userId !== token.userId`) → REJECT.
+ *     This is the actual remote-dev-yk42 attack (attaching to another user's live
+ *     tmux session) and stays blocked.
  *
- * The second clause is the tight binding: tmux names are deterministically
- * `rdv-${sessionId}` (TmuxService.generateSessionName), so the only legitimate
- * target for a token is the session it was minted for. A `null`/missing row
- * (no such session) is unauthorized — we never attach to an unknown tmux name.
+ * (DB-error fail-closed is handled by the connect-time caller, which rejects
+ * BEFORE invoking this predicate; a null here only ever means "no such row".)
  *
  * Pure + side-effect free so it can be unit-tested without a DB.
  */
@@ -110,8 +122,11 @@ export function isTmuxSessionAuthorized(
   row: { id: string; userId: string } | null | undefined,
   token: { sessionId: string; userId: string },
 ): boolean {
-  if (!row) return false;
-  return row.userId === token.userId && row.id === token.sessionId;
+  // No existing row = creation path: nothing to hijack, the token authorizes
+  // the caller and the derived tmux name is bound to the token's sessionId.
+  if (!row) return true;
+  // An existing row may only be attached by its OWNING user.
+  return row.userId === token.userId;
 }
 
 /**
@@ -2899,13 +2914,17 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     // SECURITY [remote-dev-yk42]: Ownership check on the ?tmuxSession override.
     // The token is HMAC-bound to { sessionId, userId }, but `tmuxSessionName`
     // comes from an attacker-controllable query param that has so far only been
-    // FORMAT-validated. Re-bind it to the token at connect: look up the session
-    // row that owns the requested tmux name and require it to belong to the
-    // token's user AND be the exact session the token was minted for. Without
-    // this, any authenticated user could attach to another user's tmux session
-    // (matters for multi-instance / multi-user; single-user is unaffected in
-    // practice). Runs BEFORE any tmux create/attach so we never touch a tmux
-    // session the caller does not own.
+    // FORMAT-validated. Re-bind it to the token's USER at connect: look up the
+    // session row that owns the requested tmux name and require it to belong to
+    // the token's user. Without this, any authenticated user could attach to
+    // ANOTHER user's tmux session (matters for multi-instance / multi-user;
+    // single-user is unaffected in practice). Runs BEFORE any tmux create/attach
+    // so we never touch a tmux session the caller does not own.
+    //
+    // A MISSING row is the session-CREATION path (this connect creates the tmux
+    // session + its DB row), so it is ALLOWED — there is nothing to hijack and
+    // the derived name is `rdv-${token.sessionId}`. A DB-error fails CLOSED
+    // below (we reject rather than attach when ownership can't be verified).
     {
       let owningRow: { id: string; userId: string } | null = null;
       try {
@@ -2930,7 +2949,10 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       }
 
       if (!isTmuxSessionAuthorized(owningRow, { sessionId, userId })) {
-        log.warn("Rejected WS connect: tmuxSession not owned by token", {
+        // Reachable only when a row EXISTS and belongs to a DIFFERENT user
+        // (the remote-dev-yk42 cross-user attach); creation (null) + same-user
+        // attach are authorized above.
+        log.warn("Rejected WS connect: tmuxSession owned by a different user", {
           tmuxSessionName,
           tokenSessionId: sessionId,
           tokenUserId: userId,
