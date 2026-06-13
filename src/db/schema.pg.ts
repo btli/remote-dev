@@ -16,6 +16,7 @@ import type { NotificationType, NotificationSeverity, NotificationMeta } from "@
 import type { ChannelType } from "@/types/channels";
 import type { AgentRunStatus, AgentRunSource, TriggerKind } from "@/types/agent-run";
 import type { CrownRunStatus } from "@/types/crown";
+import type { MigrationJobStatus, MigrationImportStatus, MigrationWorkingTreeMode } from "@/types/migration";
 
 export const users = pgTable(
   "user",
@@ -1488,5 +1489,82 @@ export const agentWorkContext = pgTable(
   },
   (table) => [
     index("agent_work_context_project_idx").on(table.projectId),
+  ]
+);
+
+export const peerInstances = pgTable(
+  "peer_instance",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    baseUrl: text("base_url").notNull(),
+    encryptedApiKey: text("encrypted_api_key").notNull(),
+    cfAccessClientId: text("cf_access_client_id"),
+    encryptedCfAccessSecret: text("encrypted_cf_access_secret"),
+    capabilities: text("capabilities"),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("peer_instance_user_idx").on(table.userId),
+    uniqueIndex("peer_instance_user_name_unique").on(table.userId, table.name),
+  ]
+);
+
+export const migrationJobs = pgTable(
+  "migration_job",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    peerInstanceId: text("peer_instance_id").references(() => peerInstances.id, { onDelete: "cascade" }),
+    status: text("status").$type<MigrationJobStatus>().notNull().default("pending"),
+    workingTreeMode: text("working_tree_mode").$type<MigrationWorkingTreeMode>().notNull().default("full_tar"),
+    includeDotEnv: boolean("include_dot_env").notNull().default(true),
+    includeAgentCreds: boolean("include_agent_creds").notNull().default(true),
+    includeSshKeys: boolean("include_ssh_keys").notNull().default(false),
+    includeAgentSettings: boolean("include_agent_settings").notNull().default(true),
+    includeChannelHistory: boolean("include_channel_history").notNull().default(false),
+    removeSourceAfterVerify: boolean("remove_source_after_verify").notNull().default(false),
+    sizeEstimateBytes: integer("size_estimate_bytes"),
+    bytesTransferred: integer("bytes_transferred").notNull().default(0),
+    destProjectId: text("dest_project_id"),
+    bundleManifestJson: text("bundle_manifest_json"),
+    conflictReportJson: text("conflict_report_json"),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
+    completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("migration_job_user_idx").on(table.userId),
+    index("migration_job_project_idx").on(table.projectId),
+    index("migration_job_user_status_idx").on(table.userId, table.status),
+  ]
+);
+
+export const migrationImports = pgTable(
+  "migration_import",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    sourceInstanceUrl: text("source_instance_url").notNull(),
+    status: text("status").$type<MigrationImportStatus>().notNull().default("staged"),
+    stagingDir: text("staging_dir").notNull(),
+    chunksReceived: integer("chunks_received").notNull().default(0),
+    totalChunks: integer("total_chunks"),
+    importedProjectId: text("imported_project_id"),
+    manifestJson: text("manifest_json"),
+    optionsJson: text("options_json").notNull().default("{}"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("migration_import_status_idx").on(table.status),
+    index("migration_import_user_idx").on(table.userId),
   ]
 );

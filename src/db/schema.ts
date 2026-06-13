@@ -85,4 +85,7 @@ export const {
   messageDelivery,
   channelSubscription,
   agentWorkContext,
+  peerInstances,
+  migrationJobs,
+  migrationImports,
 } = active;

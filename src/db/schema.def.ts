@@ -22,9 +22,11 @@ import type { ChannelType } from "@/types/channels";
 // [oyej] Automation-platform schema brands (epic remote-dev-oyej).
 import type { AgentRunStatus, AgentRunSource, TriggerKind } from "@/types/agent-run";
 import type { CrownRunStatus } from "@/types/crown";
+// Server-to-server project migration schema brands.
+import type { MigrationJobStatus, MigrationImportStatus, MigrationWorkingTreeMode } from "@/types/migration";
 
 // Re-exported so the verbatim import block above (consumed by the codegen extractor) is not flagged as unused.
-export type { AdapterAccountType, SessionStatus, CIStatusState, PRState, ScheduleType, ScheduleStatus, ExecutionStatus, AgentProvider, AgentConfigType, MCPTransport, AgentProviderType, WorktreeType, TerminalType, AgentExitState, AppearanceMode, ColorSchemeCategory, ColorSchemeId, TaskPriority, TaskStatus, TaskSource, NotificationType, NotificationSeverity, NotificationMeta, ChannelType, AgentRunStatus, AgentRunSource, TriggerKind, CrownRunStatus };
+export type { AdapterAccountType, SessionStatus, CIStatusState, PRState, ScheduleType, ScheduleStatus, ExecutionStatus, AgentProvider, AgentConfigType, MCPTransport, AgentProviderType, WorktreeType, TerminalType, AgentExitState, AppearanceMode, ColorSchemeCategory, ColorSchemeId, TaskPriority, TaskStatus, TaskSource, NotificationType, NotificationSeverity, NotificationMeta, ChannelType, AgentRunStatus, AgentRunSource, TriggerKind, CrownRunStatus, MigrationJobStatus, MigrationImportStatus, MigrationWorkingTreeMode };
 
 // DSL vocabulary lives in the shared generator core so both this app and the
 // supervisor app describe their schemas with one set of types. Re-exported here
@@ -1613,4 +1615,106 @@ export const schema: SchemaDefinition = [
     ],
   },
   // [x386] end chat & coordination tables.
+
+  // ===========================================================================
+  // Server-to-server project migration (stage 1: schema + peer registry +
+  // DB-row transfer; stage 2 adds chunked file transfer; stage 3 adds UI/CLI).
+  // Source pushes to destination over HTTPS, authenticating with the
+  // destination's API key held in the peer registry below.
+  // ===========================================================================
+  {
+    // Registry of remote Remote Dev instances this instance can migrate
+    // projects to. The destination API key (and optional Cloudflare Access
+    // service-token secret) are encrypted at rest with src/lib/encryption.ts.
+    exportName: "peerInstances",
+    sqlName: "peer_instance",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
+      { field: "userId", dbName: "user_id", kind: "text", notNull: true, references: { table: "users", column: "id", onDelete: "cascade" } },
+      { field: "name", dbName: "name", kind: "text", notNull: true },
+      { field: "baseUrl", dbName: "base_url", kind: "text", notNull: true },
+      { field: "encryptedApiKey", dbName: "encrypted_api_key", kind: "text", notNull: true },
+      // Optional Cloudflare Access service-token pair for peers behind CF Access.
+      { field: "cfAccessClientId", dbName: "cf_access_client_id", kind: "text" },
+      { field: "encryptedCfAccessSecret", dbName: "encrypted_cf_access_secret", kind: "text" },
+      // JSON cache of the peer's GET /api/migration/capabilities response.
+      { field: "capabilities", dbName: "capabilities", kind: "text" },
+      { field: "lastSeenAt", dbName: "last_seen_at", kind: "timestampMs" },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+      { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "peer_instance_user_idx", columns: ["userId"] },
+      { name: "peer_instance_user_name_unique", columns: ["userId","name"], unique: true },
+    ],
+  },
+  {
+    // SOURCE-side migration job state machine. Stage 1 runs
+    // pending → running → db_done → verifying → completed; `files_done` is
+    // reserved for the stage-2 file phases. The include* toggles + chunk
+    // bookkeeping (sizeEstimateBytes/bytesTransferred) are designed for
+    // stage 2 now so the schema does not churn.
+    exportName: "migrationJobs",
+    sqlName: "migration_job",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
+      { field: "userId", dbName: "user_id", kind: "text", notNull: true, references: { table: "users", column: "id", onDelete: "cascade" } },
+      { field: "projectId", dbName: "project_id", kind: "text", notNull: true, references: { table: "projects", column: "id", onDelete: "cascade" } },
+      { field: "peerInstanceId", dbName: "peer_instance_id", kind: "text", references: { table: "peerInstances", column: "id", onDelete: "cascade" } },
+      { field: "status", dbName: "status", kind: "text", notNull: true, typeBrand: "MigrationJobStatus", default: { kind: "value", value: "\"pending\"" } },
+      { field: "workingTreeMode", dbName: "working_tree_mode", kind: "text", notNull: true, typeBrand: "MigrationWorkingTreeMode", default: { kind: "value", value: "\"full_tar\"" } },
+      { field: "includeDotEnv", dbName: "include_dot_env", kind: "boolean", notNull: true, default: { kind: "value", value: "true" } },
+      { field: "includeAgentCreds", dbName: "include_agent_creds", kind: "boolean", notNull: true, default: { kind: "value", value: "true" } },
+      { field: "includeSshKeys", dbName: "include_ssh_keys", kind: "boolean", notNull: true, default: { kind: "value", value: "false" } },
+      { field: "includeAgentSettings", dbName: "include_agent_settings", kind: "boolean", notNull: true, default: { kind: "value", value: "true" } },
+      { field: "includeChannelHistory", dbName: "include_channel_history", kind: "boolean", notNull: true, default: { kind: "value", value: "false" } },
+      { field: "removeSourceAfterVerify", dbName: "remove_source_after_verify", kind: "boolean", notNull: true, default: { kind: "value", value: "false" } },
+      { field: "sizeEstimateBytes", dbName: "size_estimate_bytes", kind: "integer" },
+      { field: "bytesTransferred", dbName: "bytes_transferred", kind: "integer", notNull: true, default: { kind: "value", value: "0" } },
+      // The project id the DESTINATION assigned (may differ on id collision).
+      { field: "destProjectId", dbName: "dest_project_id", kind: "text" },
+      { field: "bundleManifestJson", dbName: "bundle_manifest_json", kind: "text" },
+      { field: "conflictReportJson", dbName: "conflict_report_json", kind: "text" },
+      { field: "errorMessage", dbName: "error_message", kind: "text" },
+      { field: "startedAt", dbName: "started_at", kind: "timestampMs" },
+      { field: "completedAt", dbName: "completed_at", kind: "timestampMs" },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+      { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "migration_job_user_idx", columns: ["userId"] },
+      { name: "migration_job_project_idx", columns: ["projectId"] },
+      { name: "migration_job_user_status_idx", columns: ["userId","status"] },
+    ],
+  },
+  {
+    // DESTINATION-side import record. `id` is the SOURCE job id (correlation
+    // key across the two instances) so it carries NO uuid default. Chunk
+    // bookkeeping (chunksReceived/totalChunks + stagingDir) is the stage-2
+    // file-upload state; stage 1 only stages + imports the DB bundle.
+    exportName: "migrationImports",
+    sqlName: "migration_import",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true },
+      { field: "userId", dbName: "user_id", kind: "text", notNull: true, references: { table: "users", column: "id", onDelete: "cascade" } },
+      { field: "sourceInstanceUrl", dbName: "source_instance_url", kind: "text", notNull: true },
+      { field: "status", dbName: "status", kind: "text", notNull: true, typeBrand: "MigrationImportStatus", default: { kind: "value", value: "\"staged\"" } },
+      { field: "stagingDir", dbName: "staging_dir", kind: "text", notNull: true },
+      { field: "chunksReceived", dbName: "chunks_received", kind: "integer", notNull: true, default: { kind: "value", value: "0" } },
+      { field: "totalChunks", dbName: "total_chunks", kind: "integer" },
+      { field: "importedProjectId", dbName: "imported_project_id", kind: "text" },
+      { field: "manifestJson", dbName: "manifest_json", kind: "text" },
+      // Import options + bookkeeping the file phase needs later (e.g. the
+      // source→destination working-directory path mapping recorded by importDb).
+      { field: "optionsJson", dbName: "options_json", kind: "text", notNull: true, default: { kind: "value", value: "\"{}\"" } },
+      { field: "errorMessage", dbName: "error_message", kind: "text" },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+      { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "migration_import_status_idx", columns: ["status"] },
+      { name: "migration_import_user_idx", columns: ["userId"] },
+    ],
+  },
+  // end server-to-server migration tables.
 ];
