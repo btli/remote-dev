@@ -24,6 +24,13 @@ export interface ProfilePoolRepository {
   /** All pools owned by a user. */
   poolsForUser(userId: string): Promise<PoolSummary[]>;
 
+  /**
+   * A single pool, but only if it belongs to `userId`. Returns null when the
+   * pool does not exist or is owned by someone else — the ownership gate for
+   * pool routes (never leaks another user's pool).
+   */
+  getPool(poolId: string, userId: string): Promise<PoolSummary | null>;
+
   /** Create a pool; returns the new pool id. */
   createPool(userId: string, name: string): Promise<string>;
 

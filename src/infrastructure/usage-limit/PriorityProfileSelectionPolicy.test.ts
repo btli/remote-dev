@@ -24,6 +24,9 @@ class FakePoolRepo implements ProfilePoolRepository {
   async poolsForUser(): Promise<PoolSummary[]> {
     return [];
   }
+  async getPool(): Promise<PoolSummary | null> {
+    return null;
+  }
   async createPool(): Promise<string> {
     return "x";
   }

@@ -30,6 +30,16 @@ export class DrizzleProfilePoolRepository implements ProfilePoolRepository {
     return rows.map((r) => ({ id: r.id, name: r.name }));
   }
 
+  async getPool(poolId: string, userId: string): Promise<PoolSummary | null> {
+    const row = await db.query.claudeProfilePools.findFirst({
+      where: and(
+        eq(claudeProfilePools.id, poolId),
+        eq(claudeProfilePools.userId, userId)
+      ),
+    });
+    return row ? { id: row.id, name: row.name } : null;
+  }
+
   async createPool(userId: string, name: string): Promise<string> {
     const id = crypto.randomUUID();
     await db.insert(claudeProfilePools).values({ id, userId, name });
