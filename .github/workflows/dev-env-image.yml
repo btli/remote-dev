@@ -46,6 +46,13 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+        with:
+          # Mirror docker.io → mirror.gcr.io: the shared-WAN-IP runners 429 on
+          # anonymous Docker Hub pulls; the docker-container buildx driver ignores
+          # the DinD daemon mirror, so set the buildkit mirror here too.
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
       - name: Build dev-env image (Node 24, load to local daemon)
         uses: docker/build-push-action@v7
