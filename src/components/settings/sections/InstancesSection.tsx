@@ -428,6 +428,11 @@ function PeerEditDialog({
               onChange={(e) => setBaseUrl(e.target.value)}
               placeholder="https://rdv.example.com"
             />
+            <p className="text-xs text-muted-foreground">
+              The destination&apos;s origin. If it&apos;s served under a path prefix
+              (a Shape B instance behind the supervisor router), include the slug —
+              e.g. <code>https://rdv.example.com/alpha</code>.
+            </p>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="peer-key">

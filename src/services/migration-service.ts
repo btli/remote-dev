@@ -387,7 +387,10 @@ export async function startJob(
       result: ImportResult;
     };
 
-    let bytesTransferred = Buffer.byteLength(JSON.stringify(bundle), "utf8");
+    // `bytesTransferred` tracks ARCHIVE bytes confirmed on the destination,
+    // measured against `sizeEstimateBytes` (= totalBytes, archive bytes only),
+    // so it converges to 100% exactly. Starts at 0 for a fresh push.
+    let bytesTransferred = 0;
     const dbDone = await deps.transition(jobId, ["running"], {
       status: "db_done",
       destProjectId: importBody.result?.importedProjectId ?? null,
@@ -423,19 +426,32 @@ export async function startJob(
           throw new Error(`Built archive path missing for ${entry.name}`);
         }
         const have = new Set(received[entry.name] ?? []);
+        // Count chunks the destination ALREADY holds once, up front — they
+        // are part of the transferred total but are never re-uploaded.
+        for (const index of have) {
+          if (index >= 0 && index < entry.chunkCount) {
+            bytesTransferred += Math.max(
+              0,
+              Math.min(CHUNK_SIZE_BYTES, entry.sizeBytes - index * CHUNK_SIZE_BYTES),
+            );
+          }
+        }
         for (let index = 0; index < entry.chunkCount; index++) {
-          const chunkSize = Math.min(
-            CHUNK_SIZE_BYTES,
-            entry.sizeBytes - index * CHUNK_SIZE_BYTES,
+          const chunkSize = Math.max(
+            0,
+            Math.min(CHUNK_SIZE_BYTES, entry.sizeBytes - index * CHUNK_SIZE_BYTES),
           );
           if (!have.has(index)) {
             const data = await deps.readChunk(archivePath, index);
             const sha = createHash("sha256").update(data).digest("hex");
             await putChunkWithRetry(deps, peer, jobId, entry.name, index, entry.chunkCount, sha, data);
+            // Only newly-uploaded chunks add to the total here (already-held
+            // chunks were counted above) — so a resumed push can't overshoot.
+            bytesTransferred += chunkSize;
           }
-          // Progress update doubles as the between-chunks abort check: a
-          // status no longer db_done (aborted) matches nothing → stop.
-          bytesTransferred += Math.max(0, chunkSize);
+          // The progress update runs EVERY iteration and doubles as the
+          // between-chunks abort check: a status no longer db_done (the job
+          // was aborted) matches nothing → stop and roll the destination back.
           const progressed = await deps.transition(jobId, ["db_done"], {
             bytesTransferred,
           });

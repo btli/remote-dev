@@ -31,7 +31,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, lt, ne } from "drizzle-orm";
 import { db } from "@/db";
 import {
   projects,
@@ -79,6 +79,7 @@ import {
   sha256File,
   walkFiles,
 } from "@/services/migration-file-service";
+import type { MigrationImportStatus } from "@/types/migration";
 import type { ChannelType } from "@/types/channels";
 import type { TaskPriority, TaskSource, TaskStatus } from "@/types/task";
 import type { AgentProvider, AgentConfigType, MCPTransport } from "@/types/agent";
@@ -1620,9 +1621,11 @@ async function countImportedRows(
 }
 
 /**
- * Recount the imported project's rows against the counts recorded by
- * importDb. Filesystem verification (working tree, profile dirs) is a
- * stage-2 concern — `missingPaths` is always empty in stage 1.
+ * Recount the imported project's rows against the counts recorded by importDb
+ * AND run filesystem checks: the imported working tree, its `.beads/` dir
+ * (when the manifest shipped one), and each remapped profile dir. Any path
+ * that is promised but absent on disk is reported in `missingPaths` (and
+ * fails the verify).
  */
 export async function verifyImport(
   destUserId: string,
@@ -1733,4 +1736,63 @@ async function markFailed(importId: string, errorMessage: string): Promise<void>
     .update(migrationImports)
     .set({ status: "failed", errorMessage, updatedAt: new Date() })
     .where(eq(migrationImports.id, importId));
+}
+
+/** Non-terminal DESTINATION import states (mirror of the source-job set). */
+const NON_TERMINAL_IMPORT_STATUSES: MigrationImportStatus[] = [
+  "staged",
+  "receiving",
+  "importing",
+  "finalizing",
+];
+
+/** Imports stuck non-terminal longer than this are presumed dead (2h). */
+const STALE_IMPORT_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * Startup hygiene for the DESTINATION side: an inbound migration whose source
+ * died mid-push leaves an import row stuck non-terminal (and a staging dir on
+ * disk). Mark any such row older than 2h failed and best-effort remove its
+ * staging directory. Mirrors pruneStaleMigrations on the source side. Returns
+ * the number of imports failed.
+ */
+export async function pruneStaleImports(now: Date = new Date()): Promise<number> {
+  const cutoff = new Date(now.getTime() - STALE_IMPORT_MAX_AGE_MS);
+  const stale = await db
+    .select()
+    .from(migrationImports)
+    .where(
+      and(
+        inArray(migrationImports.status, NON_TERMINAL_IMPORT_STATUSES),
+        lt(migrationImports.updatedAt, cutoff),
+      ),
+    );
+
+  const stagingRoot = getMigrationStagingDir();
+  for (const row of stale) {
+    // Safety: never rm anything outside the migration-staging root, even if a
+    // row somehow carried a tampered stagingDir.
+    if (row.stagingDir.startsWith(`${stagingRoot}/`) || row.stagingDir === stagingRoot) {
+      try {
+        await rm(row.stagingDir, { recursive: true, force: true });
+      } catch (error) {
+        log.warn("Failed to remove staging dir for stale import", {
+          importId: row.id,
+          stagingDir: row.stagingDir,
+          error: String(error),
+        });
+      }
+    } else {
+      log.warn("Refusing to remove out-of-root staging dir for stale import", {
+        importId: row.id,
+        stagingDir: row.stagingDir,
+      });
+    }
+    await markFailed(row.id, "Marked failed by startup hygiene (no progress for 2h)");
+  }
+
+  if (stale.length > 0) {
+    log.warn("Pruned stale destination imports", { count: stale.length });
+  }
+  return stale.length;
 }

@@ -376,7 +376,11 @@ export interface ImportResult {
 export interface VerifyResult {
   ok: boolean;
   rowCounts: Record<string, number>;
-  /** Filesystem paths expected but missing (always empty in stage 1). */
+  /**
+   * Filesystem paths the file phase promised but that are missing on disk —
+   * verifyImport checks the imported working tree, its `.beads/` dir (when
+   * shipped), and each remapped profile dir. Empty = nothing missing.
+   */
   missingPaths: string[];
 }
 

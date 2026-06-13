@@ -286,11 +286,11 @@ describe("MigrationService.startJob", () => {
     expect(manifest.warnings).toEqual(["w1", "w-arch"]);
   });
 
-  it("skips chunks the destination already holds (resume)", async () => {
+  it("skips chunks the destination already holds (resume) without overcounting progress", async () => {
     const h = makeHarness({
       job: makeJob(),
       built: TWO_CHUNK_ARCHIVES,
-      receivedChunks: { "working-tree": [0] },
+      receivedChunks: { "working-tree": [0] }, // chunk 0 (64 MiB) already there
     });
     await startJob("job-1", h.deps);
 
@@ -298,6 +298,29 @@ describe("MigrationService.startJob", () => {
     expect(puts).toHaveLength(1);
     expect(puts[0].headers?.["x-chunk-index"]).toBe("1");
     expect(h.transitions.at(-1)?.patch.status).toBe("completed");
+
+    // A resumed transfer counts the already-held chunk ONCE: the final
+    // bytesTransferred equals the archive total (sizeEstimateBytes), not 1.5×.
+    const total = TWO_CHUNK_ARCHIVES.archives[0].sizeBytes;
+    const progressPatches = h.transitions.filter(
+      (t) => !t.patch.status && typeof t.patch.bytesTransferred === "number",
+    );
+    const finalBytes = progressPatches.at(-1)!.patch.bytesTransferred as number;
+    expect(finalBytes).toBe(total);
+    // Never exceeds the estimate at any point.
+    for (const p of progressPatches) {
+      expect(p.patch.bytesTransferred as number).toBeLessThanOrEqual(total);
+    }
+  });
+
+  it("a non-resumed transfer's progress converges to exactly sizeEstimateBytes", async () => {
+    const h = makeHarness({ job: makeJob(), built: TWO_CHUNK_ARCHIVES });
+    await startJob("job-1", h.deps);
+    const total = TWO_CHUNK_ARCHIVES.archives[0].sizeBytes;
+    const progressPatches = h.transitions.filter(
+      (t) => !t.patch.status && typeof t.patch.bytesTransferred === "number",
+    );
+    expect(progressPatches.at(-1)!.patch.bytesTransferred).toBe(total);
   });
 
   it("stops between chunks and rolls back the destination when an abort lands mid-upload", async () => {

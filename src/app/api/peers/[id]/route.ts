@@ -42,8 +42,13 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
     if (!peer) return errorResponse("Peer not found", 404, "NOT_FOUND");
     return NextResponse.json({ peer });
   } catch (error) {
-    log.error("Error updating peer", { peerId: id, error: String(error) });
-    return errorResponse(String(error instanceof Error ? error.message : error), 400, "UPDATE_FAILED");
+    const message = String(error instanceof Error ? error.message : error);
+    // Renaming to a name another peer already uses (mirrors POST).
+    if (message.includes("UNIQUE") || message.includes("unique")) {
+      return errorResponse("A peer with that name already exists", 409, "DUPLICATE_NAME");
+    }
+    log.error("Error updating peer", { peerId: id, error: message });
+    return errorResponse("Failed to update peer", 400, "UPDATE_FAILED");
   }
 });
 

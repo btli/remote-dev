@@ -134,6 +134,7 @@ import { SessionAdapterImpl } from "./adapters/SessionAdapterImpl";
 import { TmuxAdapterImpl } from "./adapters/TmuxAdapterImpl";
 import { pruneExpiredClaims } from "@/services/port-claims-service";
 import { pruneStaleMigrations } from "@/services/migration-service";
+import { pruneStaleImports } from "@/services/migration-import-service";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("Container");
@@ -456,6 +457,21 @@ void pruneStaleMigrations()
   })
   .catch((error) => {
     log.error("Failed to prune stale migration jobs on startup", {
+      error: String(error),
+    });
+  });
+
+// Destination-side counterpart: an inbound migration whose source died
+// mid-push leaves an import row stuck non-terminal (+ a staging dir). Fail
+// anything older than 2h and reclaim its staging directory.
+void pruneStaleImports()
+  .then((failed) => {
+    if (failed > 0) {
+      log.info("Pruned stale destination imports on startup", { failed });
+    }
+  })
+  .catch((error) => {
+    log.error("Failed to prune stale destination imports on startup", {
       error: String(error),
     });
   });

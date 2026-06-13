@@ -25,8 +25,12 @@ export const POST = withApiAuth(async (_request, { userId, params }) => {
       log.warn("Import finalize rejected", { importId: id, error: error.message });
       return errorResponse(error.message, error.status, error.code);
     }
-    const message = String(error instanceof Error ? error.message : error);
-    log.error("Import finalize failed", { importId: id, error: message });
-    return errorResponse(message, 500, "FINALIZE_FAILED");
+    // Untyped failures can carry absolute staging paths / git stderr — keep
+    // the detail server-side and return a generic message to the peer.
+    log.error("Import finalize failed", {
+      importId: id,
+      error: String(error instanceof Error ? error.message : error),
+    });
+    return errorResponse("Internal error during finalize", 500, "FINALIZE_FAILED");
   }
 });

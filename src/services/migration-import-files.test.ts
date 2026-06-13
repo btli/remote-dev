@@ -49,6 +49,7 @@ import {
   finalizeImport,
   verifyImport,
   getImport,
+  pruneStaleImports,
   MigrationImportError,
   type ImportBookkeeping,
 } from "./migration-import-service";
@@ -546,5 +547,43 @@ describe("MigrationImportService file phase", () => {
         body: Buffer.from("late"),
       }),
     ).rejects.toMatchObject({ code: "BAD_STATE" });
+  });
+
+  it("pruneStaleImports fails non-terminal imports older than 2h and reclaims their staging dir", async () => {
+    write("contentp/file.txt", "abandoned");
+    const tree = await makeArchive("working-tree", join(fixtureRoot, "contentp"), 1);
+    await initWithArchives([tree.entry]);
+    await pushChunks(tree); // status → receiving, staging dir populated
+
+    const row = (await getImport(DEST_USER, JOB_ID))!;
+    expect(row.status).toBe("receiving");
+    expect(existsSync(row.stagingDir)).toBe(true);
+
+    // Not yet stale → no-op.
+    expect(await pruneStaleImports()).toBe(0);
+    expect((await getImport(DEST_USER, JOB_ID))?.status).toBe("receiving");
+
+    // Backdate it past the 2h cutoff.
+    await handle.db
+      .update(migrationImports)
+      .set({ updatedAt: new Date(Date.now() - 3 * 60 * 60 * 1000) })
+      .where(eq(migrationImports.id, JOB_ID));
+
+    expect(await pruneStaleImports()).toBe(1);
+    expect((await getImport(DEST_USER, JOB_ID))?.status).toBe("failed");
+    // Staging dir reclaimed.
+    expect(existsSync(row.stagingDir)).toBe(false);
+
+    // A completed import is never touched.
+    const DONE_ID = "33333333-3333-4333-8333-555555555555";
+    await initImport(DEST_USER, DONE_ID, "https://src", makeManifest([]), OPTIONS);
+    await importDb(DEST_USER, DONE_ID, makeBundle());
+    await finalizeImport(DEST_USER, DONE_ID); // DB-only → completed
+    await handle.db
+      .update(migrationImports)
+      .set({ updatedAt: new Date(Date.now() - 5 * 60 * 60 * 1000) })
+      .where(eq(migrationImports.id, DONE_ID));
+    expect(await pruneStaleImports()).toBe(0);
+    expect((await getImport(DEST_USER, DONE_ID))?.status).toBe("completed");
   });
 });
