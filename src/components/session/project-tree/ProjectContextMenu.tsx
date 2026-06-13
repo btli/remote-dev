@@ -28,6 +28,7 @@ import {
   FolderOpen,
   ChevronDown,
   ChevronRight,
+  ArrowRightLeft,
 } from "lucide-react";
 import type { ProjectNode } from "@/contexts/ProjectTreeContext";
 import { ContextNewSshSubmenu } from "../NewSshSubmenu";
@@ -75,6 +76,11 @@ interface ContentProps {
   onToggleCollapse?: () => void;
   /** Move this project under a new group. `null` targets the root. */
   onMoveToGroup?: (newGroupId: string | null) => void;
+  /**
+   * Optional. Opens the migrate-to-instance dialog (server-to-server
+   * migration). When omitted, the item is not rendered.
+   */
+  onMigrate?: () => void;
   onDelete: () => void;
 }
 
@@ -108,6 +114,7 @@ export function ProjectContextMenuContent({
   onStartEdit,
   onToggleCollapse,
   onMoveToGroup,
+  onMigrate,
   onDelete,
 }: ContentProps) {
   // Plain-button variant: we don't render a hover-expanded submenu of saved
@@ -257,6 +264,15 @@ export function ProjectContextMenuContent({
           ))}
         </div>
       )}
+      {onMigrate && (
+        <button
+          role="menuitem"
+          data-testid="project-migrate"
+          onClick={onMigrate}
+        >
+          <ArrowRightLeft className="mr-2 h-4 w-4" /> Migrate to instance…
+        </button>
+      )}
       <hr />
       <button
         role="menuitem"
@@ -299,6 +315,7 @@ export function ProjectContextMenu({
   onStartEdit,
   onToggleCollapse,
   onMoveToGroup,
+  onMigrate,
   onDelete,
   children,
 }: ProjectContextMenuProps) {
@@ -416,6 +433,11 @@ export function ProjectContextMenu({
               ))}
             </ContextMenuSubContent>
           </ContextMenuSub>
+        )}
+        {onMigrate && (
+          <ContextMenuItem onSelect={onMigrate}>
+            <ArrowRightLeft className="mr-2 h-4 w-4" /> Migrate to instance…
+          </ContextMenuItem>
         )}
         <ContextMenuSeparator />
         <ContextMenuItem

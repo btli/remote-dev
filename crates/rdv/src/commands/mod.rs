@@ -7,6 +7,7 @@ pub mod delegate; // [oyej] cross-instance delegation
 pub mod group;
 pub mod hook;
 pub mod indicator;
+pub mod migrate; // server-to-server project migration (stage 3)
 pub mod notification;
 pub mod peer;
 pub mod project;
