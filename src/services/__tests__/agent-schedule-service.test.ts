@@ -37,6 +37,30 @@ describe("validateAgentScheduleInput", () => {
     expect(r.scheduleType).toBe("recurring");
     expect(r.nextRunAt).toBeInstanceOf(Date);
     expect(r.agentProvider).toBe("claude");
+    // No explicit profile → null (auto-select at launch).
+    expect(r.profileId).toBeNull();
+  });
+
+  it("normalizes an explicit profileId (pin) and defaults it to null when absent", () => {
+    const pinned = validateAgentScheduleInput({
+      projectId: "p1",
+      name: "nightly",
+      prompt: "p",
+      scheduleType: "recurring",
+      cronExpression: "0 3 * * *",
+      profileId: "profile-pin",
+    });
+    expect(pinned.profileId).toBe("profile-pin");
+
+    const auto = validateAgentScheduleInput({
+      projectId: "p1",
+      name: "nightly",
+      prompt: "p",
+      scheduleType: "recurring",
+      cronExpression: "0 3 * * *",
+      profileId: null,
+    });
+    expect(auto.profileId).toBeNull();
   });
 
   it("rejects a bad cron expression", () => {
