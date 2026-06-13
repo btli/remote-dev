@@ -17,7 +17,7 @@ Documentation for Remote Dev. For agent-initialization guidance, see the root [`
 |-----|-------------|
 | [SETUP.md](SETUP.md) | Installation and configuration: env vars, GitHub OAuth, multi-instance environment |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture: two-server model, services, DB schema, terminal plugins, peer comms, Clean Architecture, state management |
-| [API.md](API.md) | REST API reference (246 operations across 42 route groups) + WebSocket protocol |
+| [API.md](API.md) | REST API reference (296 operations across 51 route groups) + WebSocket protocol |
 | [openapi.yaml](openapi.yaml) | OpenAPI 3.1 specification (machine-readable) |
 
 ### Agents & CLI
@@ -33,6 +33,7 @@ Documentation for Remote Dev. For agent-initialization guidance, see the root [`
 |-----|-------------|
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Production deploy: blue/green slot swap, HMAC auto-deploy webhook, rollback, operator gotchas |
 | [POSTGRES_MIGRATION.md](POSTGRES_MIGRATION.md) | Runbook for migrating an existing SQLite install to the optional PostgreSQL backend (offline `db:migrate-to-postgres` CLI) |
+| [MIGRATION.md](MIGRATION.md) | Server-to-server project migration: peer registry, what travels (DB rows, files, secrets, agent settings), the job lifecycle, and the `rdv migrate` / UI flows |
 | [MULTI_INSTANCE.md](MULTI_INSTANCE.md) | Multi-instance hosting — the two deployment shapes (Shape A routerless; Shape B supervisor + router single front door) and the hand-rolled k8s manifests |
 | [SUPERVISOR_DEPLOY.md](SUPERVISOR_DEPLOY.md) | k3s supervisor-platform deploy runbook (Shape B): the Supervisor + router single front door |
 

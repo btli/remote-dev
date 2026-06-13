@@ -109,7 +109,7 @@ Full architecture: `docs/ARCHITECTURE.md`.
 
 | Subsystem | What it is | Doc |
 |-----------|-----------|-----|
-| REST API + WebSocket protocol | 246 operations across 42 route groups | `docs/API.md` (+ `docs/openapi.yaml`) |
+| REST API + WebSocket protocol | 296 operations across 51 route groups | `docs/API.md` (+ `docs/openapi.yaml`) |
 | Agent CLIs & profiles | 5 providers, profile isolation, appearance, CLI verification | `docs/AGENTS.md` |
 | `rdv` CLI | Rust CLI agents use via Bash (sessions, agents, peers, hooks, browser…) | `docs/RDV_CLI.md` |
 | Production deploy | Blue/green slot swap + HMAC auto-deploy webhook, rollback | `docs/DEPLOYMENT.md` |
