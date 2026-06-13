@@ -32,6 +32,7 @@ const notifyLog = createLogger("Notify");
 const internalLog = createLogger("InternalAPI");
 const ptyLog = createLogger("PtyControl");
 const peerLog = createLogger("PeerAPI");
+const usageLog = createLogger("UsageLimit");
 
 /** Retry an async operation up to maxRetries times with exponential backoff (for SQLITE_BUSY) */
 async function retryOnBusy<T>(fn: () => Promise<T>, maxRetries = 2): Promise<T> {
@@ -286,6 +287,230 @@ async function broadcastSessionMetadata(
     log.warn("session_metadata broadcast failed", {
       error: String(err),
       sessionId,
+    });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Claude usage-limit detection [remote-dev-3b3l]
+//
+// Reactive detection is server-side this wave: when an agent session goes idle
+// we scan its scrollback for the limit phrase (reusing the single TS parser),
+// record the observation via the use-case, broadcast a `profile_limit_changed`
+// event (Wave D's ProfileContext consumes it), and fire the relaunch use-case.
+// A manual/programmatic seam (`POST /internal/usage-limit`) shares the same
+// track+broadcast+relaunch path (the Phase-2 poller / rdv hook will use it).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Minimal session shape the limit helpers need (a terminal_session row). */
+interface LimitSessionRow {
+  id: string;
+  userId: string;
+  projectId: string | null;
+  profileId: string | null;
+  agentProvider: string | null;
+  tmuxSessionName: string;
+  name: string | null;
+}
+
+/**
+ * Project a domain LimitState into the WS `profile_limit_changed` payload.
+ * Pulls the 5h / 7d window percentages + reset times out of the windows array.
+ */
+function limitStateToBroadcast(
+  state: import("@/domain/value-objects/LimitState").LimitState
+): {
+  profileId: string;
+  limitStatus: import("@/types/claude-limits").ClaudeLimitStatus;
+  resetAt5h: string | null;
+  resetAt7d: string | null;
+  window5hPct: number | null;
+  window7dPct: number | null;
+} {
+  let window5hPct: number | null = null;
+  let window7dPct: number | null = null;
+  let resetAt5h: string | null = null;
+  let resetAt7d: string | null = null;
+  for (const window of state.getWindows()) {
+    const reset = window.getResetAt();
+    if (window.getDuration() === "5h") {
+      window5hPct = window.getUtilizationPct();
+      resetAt5h = reset ? reset.toISOString() : null;
+    } else if (window.getDuration() === "7d") {
+      window7dPct = window.getUtilizationPct();
+      resetAt7d = reset ? reset.toISOString() : null;
+    }
+  }
+  return {
+    profileId: state.getProfileId(),
+    limitStatus: state.isLimited() ? "limited" : "available",
+    resetAt5h,
+    resetAt7d,
+    window5hPct,
+    window7dPct,
+  };
+}
+
+/**
+ * Broadcast a usage-limit state change to the OWNING user's UI clients only
+ * (Wave D consumes it). Scoped to the owner so another user's profileId, reset
+ * times, and usage percentages don't leak to every connected client.
+ */
+function broadcastProfileLimitChanged(
+  ownerUserId: string,
+  state: import("@/domain/value-objects/LimitState").LimitState
+): void {
+  broadcastToUser(ownerUserId, {
+    type: "profile_limit_changed",
+    ...limitStateToBroadcast(state),
+  });
+}
+
+/**
+ * Record a usage-limit observation, broadcast the new state, and (when limited
+ * and a project is known) fire the relaunch use-case. Shared by the idle scan
+ * and the `/internal/usage-limit` endpoint. Best-effort: logs + swallows.
+ */
+async function trackAndBroadcastLimit(input: {
+  profileId: string;
+  userId: string;
+  source: import("@/types/claude-limits").UsageDetectionSource;
+  isLimited: boolean;
+  resetAt5h?: Date | null;
+  resetAt7d?: Date | null;
+  window5hPct?: number | null;
+  window7dPct?: number | null;
+  observedAt?: Date;
+  // Relaunch context — only fires when limited AND projectId is present.
+  projectId?: string | null;
+  sessionId?: string;
+  sessionName?: string | null;
+  agentProvider?: string | null;
+}): Promise<void> {
+  try {
+    const { trackUsageLimitUseCase } = await import("@/infrastructure/container");
+    const { state, wasNewlyLimited, wrote } = await trackUsageLimitUseCase.execute({
+      profileId: input.profileId,
+      userId: input.userId,
+      source: input.source,
+      isLimited: input.isLimited,
+      resetAt5h: input.resetAt5h ?? undefined,
+      resetAt7d: input.resetAt7d ?? undefined,
+      window5hPct: input.window5hPct ?? undefined,
+      window7dPct: input.window7dPct ?? undefined,
+      observedAt: input.observedAt,
+    });
+
+    // The staleness guard may have dropped this write because a strictly-newer
+    // observation already won. If so, do NOT broadcast (the DB doesn't hold
+    // this state) and do NOT relaunch (a stale reading must not act).
+    if (!wrote) return;
+
+    // Broadcast the new state to the owner's clients (the UI reflects every
+    // persisted observation).
+    broadcastProfileLimitChanged(input.userId, state);
+
+    // Relaunch handling fires only on a NEW limit (off→on transition), so a
+    // repeat "still limited" observation doesn't double-relaunch — and only
+    // when we know which project + session to act on. Fire-and-forget. The
+    // use-case computes `wasNewlyLimited` from the prior stored state, which
+    // centralizes the dedup for every path that funnels through here.
+    if (wasNewlyLimited && input.projectId && input.sessionId) {
+      const { handleSessionLimit } = await import(
+        "@/infrastructure/usage-limit/relaunch-orchestration"
+      );
+      void handleSessionLimit({
+        sessionId: input.sessionId,
+        userId: input.userId,
+        projectId: input.projectId,
+        currentProfileId: input.profileId,
+        agentProvider: input.agentProvider ?? "claude",
+        sessionName: input.sessionName ?? undefined,
+      });
+    }
+  } catch (err) {
+    usageLog.error("Failed to track/broadcast usage limit", {
+      profileId: input.profileId,
+      source: input.source,
+      error: String(err),
+    });
+  }
+}
+
+/**
+ * Scan a session's recent scrollback for a Claude usage-limit signal when it
+ * goes idle. Only runs for Claude agent sessions that have a profile (a limit
+ * has to attribute to a profile). Skips the scan when the repo already shows
+ * the profile limited + unexpired (cheap read) so we don't re-fire on every
+ * idle transition while waiting for a reset. Best-effort throughout — never
+ * throws into the status handler.
+ */
+async function scanSessionScrollbackForLimit(
+  session: LimitSessionRow
+): Promise<void> {
+  if (!session.profileId) return;
+  // Reactive detection only recognizes the subscription "usage limit reached"
+  // phrase; non-Claude providers never print it.
+  if (session.agentProvider !== "claude") return;
+
+  try {
+    // Cheap performance guard (NOT the relaunch dedup — that now lives in the
+    // use-case via `wasNewlyLimited`): if the profile is already recorded
+    // limited and not yet past its reset, there's nothing new to detect, so
+    // skip the expensive scrollback capture + parse on this idle transition.
+    const { usageLimitStateRepository } = await import(
+      "@/infrastructure/container"
+    );
+    const existing = await usageLimitStateRepository.findByProfileId(
+      session.profileId
+    );
+    const now = new Date();
+    if (existing && existing.isLimited() && !existing.isAvailableNow(now)) {
+      return;
+    }
+
+    const TmuxService = await import("@/services/tmux-service");
+    let output: string;
+    try {
+      output = await TmuxService.captureOutput(session.tmuxSessionName, 150);
+    } catch (err) {
+      // Session may have already gone away (idle → closed race); not an error.
+      usageLog.debug("Scrollback capture skipped", {
+        sessionId: session.id,
+        error: String(err),
+      });
+      return;
+    }
+
+    const { ReactiveOutputDetector } = await import(
+      "@/infrastructure/usage-limit/ReactiveOutputDetector"
+    );
+    const parsed = ReactiveOutputDetector.parse(output);
+    if (!parsed.isLimited) return;
+
+    usageLog.info("Reactive usage-limit detected on idle", {
+      sessionId: session.id,
+      profileId: session.profileId,
+      hasReset: parsed.resetAt5h !== null || parsed.resetAt7d !== null,
+    });
+
+    await trackAndBroadcastLimit({
+      profileId: session.profileId,
+      userId: session.userId,
+      source: "reactive",
+      isLimited: true,
+      resetAt5h: parsed.resetAt5h ?? undefined,
+      resetAt7d: parsed.resetAt7d ?? undefined,
+      observedAt: now,
+      projectId: session.projectId,
+      sessionId: session.id,
+      sessionName: session.name,
+      agentProvider: session.agentProvider,
+    });
+  } catch (err) {
+    usageLog.error("Scrollback limit scan failed", {
+      sessionId: session.id,
+      error: String(err),
     });
   }
 }
@@ -842,6 +1067,39 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       }
     })();
 
+    // [remote-dev-3b3l] Reactive usage-limit scan on idle/ended. When a Claude
+    // agent session with a profile goes quiet, scan its recent scrollback for
+    // the "usage limit reached" phrase; on a hit, record + broadcast + relaunch.
+    // Fire-and-forget; `scanSessionScrollbackForLimit` self-guards on
+    // provider/profile/already-limited and never throws.
+    if (status === "idle" || status === "ended") {
+      void (async () => {
+        try {
+          const { db } = await import("@/db");
+          const { terminalSessions } = await import("@/db/schema");
+          const { eq } = await import("drizzle-orm");
+          const row = await db.query.terminalSessions.findFirst({
+            where: eq(terminalSessions.id, sessionId),
+            columns: {
+              id: true,
+              userId: true,
+              projectId: true,
+              profileId: true,
+              agentProvider: true,
+              tmuxSessionName: true,
+              name: true,
+            },
+          });
+          if (row) await scanSessionScrollbackForLimit(row);
+        } catch (err) {
+          usageLog.warn("Idle usage-limit scan setup failed", {
+            error: String(err),
+            sessionId,
+          });
+        }
+      })();
+    }
+
     // [y5ch.3] Create an in-app notification only for waiting/error statuses
     // (idle/ended/running/compacting/subagent never reach this branch — a clean
     // stop is passive and produces no notification). Severity is explicit:
@@ -884,6 +1142,122 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     }
 
     sendJson(res, 200, { success: true });
+    return true;
+  }
+
+  // POST /internal/usage-limit — record a Claude usage-limit observation.
+  // [remote-dev-3b3l] The manual/programmatic seam the Phase-2 poller / rdv
+  // hook (and the manual "mark limited" UI) will use. Body:
+  //   { sessionId?, profileId?, isLimited, resetAt5h?, resetAt7d?,
+  //     window5hPct?, window7dPct?, source? }
+  // Resolves profileId/userId/projectId from the session row when sessionId is
+  // given, else from profileId + its owning profile. Records via the use-case,
+  // broadcasts `profile_limit_changed`, and (when limited + a session/project
+  // is known) fires the relaunch use-case.
+  if (pathname === "/internal/usage-limit" && req.method === "POST") {
+    const payload = await parseRequestJson(req, res);
+    if (!payload) return true; // invalid JSON already responded
+
+    const sessionId = payload.sessionId as string | undefined;
+    const bodyProfileId = payload.profileId as string | undefined;
+    const isLimited = payload.isLimited === true;
+    const source =
+      (payload.source as import("@/types/claude-limits").UsageDetectionSource | undefined) ??
+      "manual";
+
+    // A reset can arrive as an ISO string or an epoch number; coerce to
+    // Date | null. Anthropic's reset headers are epoch SECONDS (the reactive
+    // detector multiplies them by 1000), so disambiguate by magnitude: a value
+    // below 1e12 is treated as seconds, otherwise as milliseconds.
+    const toDate = (v: unknown): Date | null => {
+      if (v == null) return null;
+      if (typeof v === "number") {
+        return new Date(v < 1e12 ? v * 1000 : v);
+      }
+      if (typeof v === "string") {
+        const d = new Date(v);
+        return Number.isNaN(d.getTime()) ? null : d;
+      }
+      return null;
+    };
+    const toPct = (v: unknown): number | null =>
+      typeof v === "number" && Number.isFinite(v) ? v : null;
+
+    try {
+      // Resolve the (profileId, userId, projectId, …) tuple.
+      let profileId: string | undefined = bodyProfileId;
+      let userId: string | undefined;
+      let projectId: string | null = null;
+      let sessionName: string | null = null;
+      let agentProvider: string | null = null;
+
+      const { db } = await import("@/db");
+
+      if (sessionId) {
+        const { terminalSessions } = await import("@/db/schema");
+        const { eq } = await import("drizzle-orm");
+        const row = await db.query.terminalSessions.findFirst({
+          where: eq(terminalSessions.id, sessionId),
+          columns: {
+            userId: true,
+            profileId: true,
+            projectId: true,
+            agentProvider: true,
+            name: true,
+          },
+        });
+        if (!row) {
+          sendJson(res, 404, { error: "Session not found" });
+          return true;
+        }
+        userId = row.userId;
+        profileId = profileId ?? row.profileId ?? undefined;
+        projectId = row.projectId ?? null;
+        sessionName = row.name ?? null;
+        agentProvider = row.agentProvider ?? null;
+      } else if (profileId) {
+        // No session — resolve the owner from the profile itself.
+        const { agentProfiles } = await import("@/db/schema");
+        const { eq } = await import("drizzle-orm");
+        const profile = await db.query.agentProfiles.findFirst({
+          where: eq(agentProfiles.id, profileId),
+          columns: { userId: true },
+        });
+        if (!profile) {
+          sendJson(res, 404, { error: "Profile not found" });
+          return true;
+        }
+        userId = profile.userId;
+      }
+
+      if (!profileId || !userId) {
+        sendJson(res, 400, {
+          error: "Could not resolve a profileId + userId (pass sessionId or profileId)",
+        });
+        return true;
+      }
+
+      await trackAndBroadcastLimit({
+        profileId,
+        userId,
+        source,
+        isLimited,
+        resetAt5h: toDate(payload.resetAt5h),
+        resetAt7d: toDate(payload.resetAt7d),
+        window5hPct: toPct(payload.window5hPct),
+        window7dPct: toPct(payload.window7dPct),
+        observedAt: new Date(),
+        projectId,
+        sessionId,
+        sessionName,
+        agentProvider,
+      });
+
+      sendJson(res, 200, { ok: true });
+    } catch (err) {
+      usageLog.error("usage-limit endpoint failed", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to record usage limit" });
+    }
     return true;
   }
 

@@ -2,11 +2,25 @@ import { NextResponse } from "next/server";
 import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as AgentProfileService from "@/services/agent-profile-service";
 import type { AgentProvider } from "@/types/agent";
+import { usageLimitStateRepository } from "@/infrastructure/container";
+import {
+  serializeLimitState,
+  getClaudeAccountInfoMany,
+  defaultClaudeAccountInfo,
+  isClaudeCapable,
+} from "@/app/api/_lib/serialize-limit-state";
 
 const VALID_PROVIDERS: AgentProvider[] = ["claude", "codex", "gemini", "opencode", "all"];
 
 /**
- * GET /api/profiles - Get all profiles for the current user
+ * GET /api/profiles - Get all profiles for the current user.
+ *
+ * Each profile is augmented (additively — existing fields are untouched) with:
+ * - `accountKind`: from `claude_account`, defaulting to "subscription" for
+ *   claude-capable profiles without a row (non-claude profiles also default,
+ *   but their limit state is always the unknown default).
+ * - `limitState`: the serialized Claude usage-limit block (available/unknown
+ *   default when no row exists). See `_lib/serialize-limit-state`.
  */
 export const GET = withAuth(async (_request, { userId }) => {
   const [profiles, folderLinks] = await Promise.all([
@@ -14,7 +28,27 @@ export const GET = withAuth(async (_request, { userId }) => {
     AgentProfileService.getFolderProfileLinks(userId),
   ]);
 
-  return NextResponse.json({ profiles, folderLinks });
+  // Batch-load limit state + account info for claude-capable profiles only;
+  // others get the defaults without a query.
+  const claudeProfileIds = profiles
+    .filter((p) => isClaudeCapable(p.provider))
+    .map((p) => p.id);
+
+  const [limitStates, accountInfo] = await Promise.all([
+    usageLimitStateRepository.findManyByProfileIds(claudeProfileIds),
+    getClaudeAccountInfoMany(claudeProfileIds),
+  ]);
+
+  const augmented = profiles.map((profile) => {
+    const account = accountInfo.get(profile.id) ?? defaultClaudeAccountInfo();
+    return {
+      ...profile,
+      accountKind: account.accountKind,
+      limitState: serializeLimitState(limitStates.get(profile.id) ?? null),
+    };
+  });
+
+  return NextResponse.json({ profiles: augmented, folderLinks });
 });
 
 /**

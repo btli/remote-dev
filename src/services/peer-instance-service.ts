@@ -252,6 +252,9 @@ export async function verifyPeer(
     log.warn("Peer capabilities fetch failed", {
       peerId: id,
       error: String(error),
+      // undici hides the real network error (ECONNREFUSED, ENOTFOUND, TLS …)
+      // in error.cause; without this the log only shows "TypeError: fetch failed".
+      cause: String((error as { cause?: unknown })?.cause ?? ""),
     });
     throw error instanceof Error
       ? error

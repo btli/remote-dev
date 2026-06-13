@@ -157,6 +157,7 @@ Map the message to the fix:
 | **unexpected redirect … Cloudflare Access** / **expected JSON but got text/html … login page** | The request hit a Cloudflare Access / OIDC login wall instead of the API | Add a **CF Access service token** (Client ID + Secret) to the peer (off-LAN destinations), or verify the base URL points at the instance and not a login page. |
 | **Client ID is set but the Client Secret is missing** (or vice-versa) | Only one half of the CF service token was saved | Re-save the peer with **both** the Client ID and Secret, or clear both. |
 | **API key cannot be decrypted** | `AUTH_SECRET` on the source changed since the peer was registered | Re-register the peer (re-enter its API key). |
+| **PEER_UNREACHABLE / fetch failed** to a Cloudflare-fronted destination, while internet egress otherwise works | The source host shares a LAN with the destination, so split-horizon DNS resolves the peer hostname to a **private LAN IP**, and a launchd-parented daemon (macOS Sequoia Local Network privacy) is denied local-subnet access | For CF-fronted peers the source now resolves the hostname via a **public resolver** (1.1.1.1 by default) and connects over Cloudflare's public edge — no action needed. Override the resolvers with `RDV_PEER_DNS_SERVERS` (comma-separated) if 1.1.1.1 is blocked on your network. |
 
 Other notes:
 

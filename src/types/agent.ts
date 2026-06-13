@@ -10,6 +10,16 @@ import type { AppearanceMode, ColorSchemeId } from "./appearance";
 export type AgentProvider = "claude" | "codex" | "gemini" | "antigravity" | "opencode" | "all";
 
 /**
+ * Whether a profile's provider can run Claude Code (and therefore carries a
+ * Claude account / usage limits). Profiles created with provider "all" install
+ * the Claude config dir too, so they are claude-capable. Pure + client-safe
+ * (mirrors the server-only `isClaudeCapable` in `_lib/serialize-limit-state`).
+ */
+export function isClaudeCapableProvider(provider: AgentProvider): boolean {
+  return provider === "claude" || provider === "all";
+}
+
+/**
  * Agent configuration file types.
  */
 export type AgentConfigType = "CLAUDE.md" | "AGENTS.md" | "GEMINI.md" | "ANTIGRAVITY.md" | "OPENCODE.md";

@@ -149,6 +149,33 @@ beforeEach(() => {
   sessionMockState.resumeSession = vi.fn().mockResolvedValue(undefined);
   sessionMockState.closeSession = vi.fn().mockResolvedValue(undefined);
   sessionMockState.setActiveSession = vi.fn();
+
+  // The new-session sheet (dynamically imported here) mounts ProfileProvider,
+  // which fires `/api/profiles` + `/api/claude-pools` fetches on mount. Stub
+  // global fetch so those resolve to empty payloads instead of hitting the
+  // network (an unhandled rejection there would fail the whole run).
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/claude-pools")) {
+        return new Response(JSON.stringify({ pools: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/api/profiles")) {
+        return new Response(
+          JSON.stringify({ profiles: [], folderLinks: [] }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    })
+  );
 });
 
 afterEach(() => cleanup());

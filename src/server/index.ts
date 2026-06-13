@@ -55,6 +55,16 @@ const TERMINAL_PORT = parseInt(process.env.TERMINAL_PORT || "6002");
 let shuttingDown = false;
 
 /**
+ * [remote-dev-3b3l] Handle for the proactive Claude usage-limit poll sweep.
+ * Registered unconditionally (the sweep itself no-ops unless
+ * RDV_CLAUDE_USAGE_POLL_ENABLED=1) and cleared on shutdown.
+ */
+let usagePollTimer: ReturnType<typeof setInterval> | null = null;
+
+/** How often the proactive usage-limit poll sweep runs (10 minutes). */
+const USAGE_POLL_INTERVAL_MS = 10 * 60 * 1000;
+
+/**
  * Hard ceiling on async cleanup during shutdown. The deploy stop phase
  * (`scripts/deploy.ts` `PROCESS_STOP_TIMEOUT_MS`) SIGKILLs us at 10s; a
  * SIGKILL can't release the instance lock or sockets. Cap cleanup well under
@@ -154,6 +164,22 @@ async function startServer(): Promise<void> {
     })
     .catch((error) => log.error("Failed to auto-start LiteLLM", { error: String(error) }));
 
+  // [remote-dev-3b3l] Proactive Claude usage-limit poll sweep (~10m). The sweep
+  // is a NO-OP unless RDV_CLAUDE_USAGE_POLL_ENABLED=1 (it self-guards), so the
+  // interval is always registered but does nothing by default. Lives here next
+  // to the other orchestrators with a matching clearInterval on shutdown.
+  usagePollTimer = setInterval(() => {
+    import("../infrastructure/usage-limit/usage-poll-sweep.js")
+      .then((mod) => mod.runUsagePollSweep())
+      .catch((error) =>
+        log.error("Usage poll sweep failed", { error: String(error) })
+      );
+  }, USAGE_POLL_INTERVAL_MS);
+  log.info("Usage-limit poll sweep registered", {
+    intervalMs: USAGE_POLL_INTERVAL_MS,
+    enabled: process.env.RDV_CLAUDE_USAGE_POLL_ENABLED === "1",
+  });
+
   async function shutdown(signal: string): Promise<void> {
     // A second signal while we're already tearing down must not re-run
     // cleanup or wedge — force an immediate exit instead.
@@ -171,6 +197,11 @@ async function startServer(): Promise<void> {
     try {
       updateScheduler.stop();
       autoUpdateOrchestrator.stop();
+      // [remote-dev-3b3l] Stop the usage-limit poll sweep.
+      if (usagePollTimer) {
+        clearInterval(usagePollTimer);
+        usagePollTimer = null;
+      }
     } catch (err) {
       log.error("Error during synchronous shutdown stops", { error: String(err) });
     }
