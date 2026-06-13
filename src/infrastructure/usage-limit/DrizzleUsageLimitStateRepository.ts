@@ -124,6 +124,16 @@ function rowToLimitState(row: Row): LimitState {
   const w7d = makeWindow("7d", row.window7dPct, row.resetAt7d);
   if (w7d) windows.push(w7d);
 
+  // api_key (rate/credit) accounts carry no 5h/7d window — their reset lands in
+  // `effectiveResetAt` only. Without rebuilding a window here, a limited api_key
+  // row would round-trip as "limited with no reset" (permanently unavailable
+  // until cleared), defeating "available again when the rate window passes".
+  // Reconstruct an `org` window from `effectiveResetAt` when no rolling window
+  // exists so `isAvailableNow` frees the account at its rate reset. [remote-dev-1kt5]
+  if (windows.length === 0 && row.effectiveResetAt instanceof Date) {
+    windows.push(UsageWindow.create("org", 100, row.effectiveResetAt));
+  }
+
   const source = (row.detectionSource as UsageDetectionSource | null) ?? null;
   const isLimited = (row.limitStatus as ClaudeLimitStatus) === "limited";
 
