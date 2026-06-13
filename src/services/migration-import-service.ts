@@ -14,13 +14,13 @@
  *   directory itself is materialized by the stage-2 file transfer).
  * - all other child rows: fresh uuids, with in-bundle references
  *   (group→channel, message threads, task dependency edges) remapped.
- * - working directories: rewritten to `~/projects/<basename>` on this host;
- *   the source→destination path map is recorded for stage-2 extraction.
+ * - working directories: rewritten to `<RDV_DATA_DIR>/projects/<basename>` on
+ *   this host (the persistent projects root, `getProjectsDir()`); the
+ *   source→destination path map is recorded for stage-2 extraction.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import { pipeline } from "node:stream/promises";
-import { homedir } from "node:os";
 import { basename, dirname } from "node:path";
 import {
   copyFile,
@@ -59,7 +59,7 @@ import {
   migrationImports,
 } from "@/db/schema";
 import { encrypt } from "@/lib/encryption";
-import { getMigrationStagingDir, getProfilesDir } from "@/lib/paths";
+import { getMigrationStagingDir, getProfilesDir, getProjectsDir } from "@/lib/paths";
 import { runtimeJoin as join } from "@/lib/dynamic-fs";
 import {
   ARCHIVE_NAMES,
@@ -436,7 +436,8 @@ export async function receiveChunk(
 
 /**
  * Rewrite a source working-directory path to this host:
- * `~/projects/<basename>`, suffixing `-2`/`-3`/… when another project's
+ * `<RDV_DATA_DIR>/projects/<basename>` (the persistent projects root,
+ * `getProjectsDir()`), suffixing `-2`/`-3`/… when another project's
  * preferences already reference the candidate. `usedInRun` covers paths
  * assigned earlier in the same import.
  */
@@ -449,8 +450,7 @@ async function rewriteWorkingDir(
   const base = basename(sourcePath.replace(/\/+$/, "")) || "project";
   for (let attempt = 1; attempt < 100; attempt++) {
     const candidate = join(
-      homedir(),
-      "projects",
+      getProjectsDir(),
       attempt === 1 ? base : `${base}-${attempt}`,
     );
     if (usedInRun.has(candidate)) continue;
@@ -470,7 +470,7 @@ async function rewriteWorkingDir(
     }
   }
   // Pathological collision space — fall back to a unique suffix.
-  const fallback = join(homedir(), "projects", `${base}-${randomUUID().slice(0, 8)}`);
+  const fallback = join(getProjectsDir(), `${base}-${randomUUID().slice(0, 8)}`);
   usedInRun.add(fallback);
   return fallback;
 }
@@ -681,10 +681,10 @@ export async function importDb(
         let localRepoPath: string | null = null;
         if (pref.localRepoPath) {
           // Reuse the mapping when the repo path matches the working dir;
-          // otherwise rewrite it to its own ~/projects/<basename>.
+          // otherwise rewrite it to its own getProjectsDir()/<basename>.
           localRepoPath =
             pathMap[pref.localRepoPath] ??
-            join(homedir(), "projects", basename(pref.localRepoPath.replace(/\/+$/, "")));
+            join(getProjectsDir(), basename(pref.localRepoPath.replace(/\/+$/, "")));
           pathMap[pref.localRepoPath] = localRepoPath;
         }
         const values = {
