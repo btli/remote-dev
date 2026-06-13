@@ -6,10 +6,12 @@
  * The profile's kind comes from its `claude_account` row; profiles with no
  * `claude_account` row default to "subscription" (the common case — a profile
  * logged in via OAuth). The raw kind is wrapped in the `AccountKind` value
- * object so dispatch reasons about window SEMANTICS rather than the bare brand:
- * only subscription accounts (rolling 5h/7d windows) have a usage-limit gateway
- * today; api_key accounts (rate/credits) have none, so the dispatch
- * short-circuits for them.
+ * object so an unrecognized stored brand falls through to "no gateway" rather
+ * than throwing. Dispatch is purely "first adapter that `supports(kind)`":
+ * subscription accounts (rolling 5h/7d windows) are served by the reactive
+ * detector and the proactive poller; api_key accounts (rate/credits) are served
+ * by the poller only (when its flag is on, via the documented rate-limit
+ * headers). Each adapter's `supports()` is authoritative.
  */
 
 import { db } from "@/db";
@@ -44,18 +46,10 @@ export class CompositeUsageLimitGateway implements UsageLimitGateway {
     const accountKind = await this.resolveKind(profileId);
     if (!accountKind) return null; // unrecognized stored kind → no gateway
 
-    // Only accounts with rolling 5h/7d windows (subscription) have a
-    // usage-limit gateway; rate/credits accounts (api_key) have none, so skip
-    // the adapter search entirely for them.
-    if (accountKind.windowSemantics() !== "rolling_5h_7d") {
-      log.debug("Account kind has no rolling-window gateway", {
-        profileId,
-        kind: accountKind.toString(),
-        semantics: accountKind.windowSemantics(),
-      });
-      return null;
-    }
-
+    // Dispatch to the first adapter that supports this kind. Each adapter's
+    // supports() encodes both the kind AND any feature flag (the poller is a
+    // no-op unless RDV_CLAUDE_USAGE_POLL_ENABLED=1), so api_key resolves to the
+    // poller only when enabled and to "no gateway" otherwise.
     const kind = accountKind.toString();
     const adapter = this.adapters.find((a) => a.supports(kind));
     if (!adapter) {
