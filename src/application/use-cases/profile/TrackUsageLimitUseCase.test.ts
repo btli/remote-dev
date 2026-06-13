@@ -24,16 +24,17 @@ class FakeStateRepo implements UsageLimitStateRepository {
     return out;
   }
 
-  async upsert(state: LimitState, opts?: { onlyIfNewer?: Date }): Promise<void> {
+  async upsert(state: LimitState, opts?: { onlyIfNewer?: Date }): Promise<boolean> {
     if (opts?.onlyIfNewer) {
       const existing = this.store.get(state.getProfileId());
       const existingChecked = existing?.getLastCheckedAt();
       // Skip when a strictly-newer observation already won.
       if (existingChecked && existingChecked.getTime() > opts.onlyIfNewer.getTime()) {
-        return;
+        return false;
       }
     }
     this.store.set(state.getProfileId(), state);
+    return true;
   }
 
   async listForUser(): Promise<LimitState[]> {
@@ -168,6 +169,97 @@ describe("TrackUsageLimitUseCase", () => {
         isLimited: false,
       });
       expect(wasNewlyLimited).toBe(false);
+    });
+
+    it("is TRUE when a NEW limit follows a prior limit whose reset already passed", async () => {
+      // Prior episode: limited, but its 5h reset is in the PAST relative to the
+      // new observation. `isLimited()` is still raw-true, but
+      // `isAvailableNow(observedAt)` is true (reset has passed), so the gate
+      // must treat the new observation as a fresh episode.
+      const priorObservedAt = new Date("2026-06-13T05:00:00Z");
+      const priorReset = new Date("2026-06-13T06:00:00Z"); // already past below
+      await useCase.execute({
+        profileId: "p1",
+        userId: "u1",
+        source: "reactive",
+        isLimited: true,
+        resetAt5h: priorReset,
+        observedAt: priorObservedAt,
+      });
+
+      const observedAt = new Date("2026-06-13T10:00:00Z"); // after priorReset
+      const prior = await repo.findByProfileId("p1");
+      // Sanity: the prior row reads as available at the new observation time.
+      expect(prior?.isLimited()).toBe(true);
+      expect(prior?.isAvailableNow(observedAt)).toBe(true);
+
+      const { wasNewlyLimited } = await useCase.execute({
+        profileId: "p1",
+        userId: "u1",
+        source: "reactive",
+        isLimited: true,
+        resetAt5h: new Date("2026-06-13T15:00:00Z"),
+        observedAt,
+      });
+      expect(wasNewlyLimited).toBe(true);
+    });
+  });
+
+  describe("wrote", () => {
+    it("is true on a normal write", async () => {
+      const { wrote } = await useCase.execute({
+        profileId: "p1",
+        userId: "u1",
+        source: "reactive",
+        isLimited: true,
+        observedAt: new Date("2026-06-13T11:00:00Z"),
+      });
+      expect(wrote).toBe(true);
+    });
+
+    it("is false when the staleness guard drops the write", async () => {
+      const newer = new Date("2026-06-13T12:00:00Z");
+      const older = new Date("2026-06-13T11:00:00Z");
+
+      await useCase.execute({
+        profileId: "p1",
+        userId: "u1",
+        source: "poller",
+        isLimited: true,
+        observedAt: newer,
+      });
+
+      // A stale automated reading arrives late — the guard drops it.
+      const { wrote } = await useCase.execute({
+        profileId: "p1",
+        userId: "u1",
+        source: "reactive",
+        isLimited: false,
+        observedAt: older,
+      });
+      expect(wrote).toBe(false);
+    });
+
+    it("is true for a manual override even over a newer reading (guard bypassed)", async () => {
+      const newer = new Date("2026-06-13T12:00:00Z");
+      const older = new Date("2026-06-13T11:00:00Z");
+
+      await useCase.execute({
+        profileId: "p1",
+        userId: "u1",
+        source: "poller",
+        isLimited: true,
+        observedAt: newer,
+      });
+
+      const { wrote } = await useCase.execute({
+        profileId: "p1",
+        userId: "u1",
+        source: "manual",
+        isLimited: false,
+        observedAt: older,
+      });
+      expect(wrote).toBe(true);
     });
   });
 

@@ -236,15 +236,22 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
   // ───────────────────────────────────────────────────────────────────────
 
   const refreshPools = useCallback(async (): Promise<void> => {
-    const response = await apiFetch("/api/claude-pools");
-    if (!response.ok) {
-      // Pools are an optional layer; never throw on read (keep the dashboard
-      // usable when no pools exist / the route is unavailable).
-      console.error("Failed to fetch pools:", response.status);
-      return;
+    // Pools are an optional layer; never throw on read (keep the dashboard
+    // usable when no pools exist / the route or network is unavailable). The
+    // try/catch also keeps the `void refreshPools()` mount call from becoming
+    // an unhandled rejection when the fetch itself rejects.
+    try {
+      const response = await apiFetch("/api/claude-pools");
+      if (!response.ok) {
+        console.error("Failed to fetch pools:", response.status);
+        return;
+      }
+      const data = await response.json();
+      setPools((data.pools as ClaudePoolSummary[]) ?? []);
+    } catch (err) {
+      console.error("Failed to fetch pools:", err);
+      setPools([]);
     }
-    const data = await response.json();
-    setPools((data.pools as ClaudePoolSummary[]) ?? []);
   }, []);
 
   // Load pools once on mount alongside profiles.

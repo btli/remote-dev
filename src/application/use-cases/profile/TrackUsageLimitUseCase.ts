@@ -39,10 +39,19 @@ export interface TrackUsageLimitResult {
   /** The state built from this observation (the caller broadcasts it). */
   state: LimitState;
   /**
-   * True when this observation transitions the profile INTO limited (the prior
-   * stored state was absent or not-limited). Used to gate one-shot relaunch.
+   * True when this observation transitions the profile INTO limited — i.e. the
+   * prior stored state was absent, not-limited, OR limited-but-already-expired
+   * (a brand-new limit episode after a previous one's reset passed). Used to
+   * gate one-shot relaunch.
    */
   wasNewlyLimited: boolean;
+  /**
+   * Whether the repository actually persisted this write. False when the
+   * staleness guard skipped the upsert because a strictly-newer row already
+   * exists. Callers gate broadcast/relaunch on this so a dropped stale write
+   * never fires a relaunch or announces a state the DB doesn't hold.
+   */
+  wrote: boolean;
 }
 
 export class TrackUsageLimitUseCase {
@@ -56,8 +65,13 @@ export class TrackUsageLimitUseCase {
 
     // Read the prior state up front so we can tell whether this observation is
     // a NEW limit (off→on transition) vs. a repeat of an already-limited state.
+    // `isLimited()` is the raw stored flag and is NOT time-aware, and nothing
+    // flips an expired `limited` row back to available, so compare against
+    // `isAvailableNow(observedAt)` instead: a prior limit whose reset has
+    // already passed counts as available, making a fresh limit a NEW episode.
     const prior = await this.stateRepository.findByProfileId(input.profileId);
-    const wasNewlyLimited = isLimited && (!prior || !prior.isLimited());
+    const wasNewlyLimited =
+      isLimited && (!prior || prior.isAvailableNow(observedAt));
 
     // Build usage windows only for the dimensions we actually observed. A
     // window with neither a percentage nor a reset carries no information, so
@@ -85,17 +99,18 @@ export class TrackUsageLimitUseCase {
     const opts =
       input.source === "manual" ? undefined : { onlyIfNewer: observedAt };
 
-    await this.stateRepository.upsert(state, opts);
+    const wrote = await this.stateRepository.upsert(state, opts);
 
     log.debug("Tracked usage-limit observation", {
       profileId: input.profileId,
       source: input.source,
       isLimited,
       wasNewlyLimited,
+      wrote,
       observedAt: observedAt.toISOString(),
     });
 
-    return { state, wasNewlyLimited };
+    return { state, wasNewlyLimited, wrote };
   }
 }
 
@@ -117,8 +132,14 @@ function buildWindow(
   return UsageWindow.create(duration, utilization, hasReset ? resetAt : null);
 }
 
+/**
+ * Clamp a percentage into 0-100 AND round it to an integer. The DB pct columns
+ * are `integer`, so an un-rounded float would diverge across backends
+ * (PostgreSQL rounds on write, SQLite keeps the float) — round here so both
+ * dialects persist the same value.
+ */
 function clampPct(value: number): number {
   if (value < 0) return 0;
   if (value > 100) return 100;
-  return value;
+  return Math.round(value);
 }

@@ -24,8 +24,12 @@ export interface UsageLimitStateRepository {
    * row's `lastCheckedAt` is strictly newer than `onlyIfNewer` — i.e. a
    * fresher observation already won. A row with no `lastCheckedAt`, or no row
    * at all, is always overwritten.
+   *
+   * Returns `true` when the write was persisted, `false` when the staleness
+   * guard skipped it. Callers use this to avoid acting on (broadcasting /
+   * relaunching) a state the DB did not actually accept.
    */
-  upsert(state: LimitState, opts?: { onlyIfNewer?: Date }): Promise<void>;
+  upsert(state: LimitState, opts?: { onlyIfNewer?: Date }): Promise<boolean>;
 
   /** All stored states for a user's profiles. */
   listForUser(userId: string): Promise<LimitState[]>;

@@ -15,7 +15,7 @@ import type { ClaudeAccountKind, ClaudeLimitStatus } from "@/types/claude-limits
 import type { AgentProvider } from "@/types/agent";
 import { db } from "@/db";
 import { claudeAccounts } from "@/db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 
 /** The serialized limit-state block shared across all profile/pool routes. */
 export interface SerializedLimitState {
@@ -91,24 +91,6 @@ const DEFAULT_ACCOUNT_INFO: ClaudeAccountInfo = {
   emailAddress: null,
   organizationName: null,
 };
-
-/**
- * Load Claude-account info for one profile, defaulting to a subscription
- * account with null display fields when no row exists.
- */
-export async function getClaudeAccountInfo(
-  profileId: string
-): Promise<ClaudeAccountInfo> {
-  const row = await db.query.claudeAccounts.findFirst({
-    where: eq(claudeAccounts.profileId, profileId),
-  });
-  if (!row) return { ...DEFAULT_ACCOUNT_INFO };
-  return {
-    accountKind: row.accountKind as ClaudeAccountKind,
-    emailAddress: row.emailAddress ?? null,
-    organizationName: row.organizationName ?? null,
-  };
-}
 
 /**
  * Batch-load Claude-account info for many profiles, keyed by profileId.

@@ -351,11 +351,16 @@ function limitStateToBroadcast(
   };
 }
 
-/** Broadcast a usage-limit state change to all UI clients (Wave D consumes it). */
+/**
+ * Broadcast a usage-limit state change to the OWNING user's UI clients only
+ * (Wave D consumes it). Scoped to the owner so another user's profileId, reset
+ * times, and usage percentages don't leak to every connected client.
+ */
 function broadcastProfileLimitChanged(
+  ownerUserId: string,
   state: import("@/domain/value-objects/LimitState").LimitState
 ): void {
-  broadcastToClients({
+  broadcastToUser(ownerUserId, {
     type: "profile_limit_changed",
     ...limitStateToBroadcast(state),
   });
@@ -384,7 +389,7 @@ async function trackAndBroadcastLimit(input: {
 }): Promise<void> {
   try {
     const { trackUsageLimitUseCase } = await import("@/infrastructure/container");
-    const { state, wasNewlyLimited } = await trackUsageLimitUseCase.execute({
+    const { state, wasNewlyLimited, wrote } = await trackUsageLimitUseCase.execute({
       profileId: input.profileId,
       userId: input.userId,
       source: input.source,
@@ -396,8 +401,14 @@ async function trackAndBroadcastLimit(input: {
       observedAt: input.observedAt,
     });
 
-    // Always broadcast the new state (the UI reflects every observation).
-    broadcastProfileLimitChanged(state);
+    // The staleness guard may have dropped this write because a strictly-newer
+    // observation already won. If so, do NOT broadcast (the DB doesn't hold
+    // this state) and do NOT relaunch (a stale reading must not act).
+    if (!wrote) return;
+
+    // Broadcast the new state to the owner's clients (the UI reflects every
+    // persisted observation).
+    broadcastProfileLimitChanged(input.userId, state);
 
     // Relaunch handling fires only on a NEW limit (off→on transition), so a
     // repeat "still limited" observation doesn't double-relaunch — and only
@@ -1154,10 +1165,15 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       (payload.source as import("@/types/claude-limits").UsageDetectionSource | undefined) ??
       "manual";
 
-    // A reset can arrive as an ISO string or epoch ms; coerce to Date | null.
+    // A reset can arrive as an ISO string or an epoch number; coerce to
+    // Date | null. Anthropic's reset headers are epoch SECONDS (the reactive
+    // detector multiplies them by 1000), so disambiguate by magnitude: a value
+    // below 1e12 is treated as seconds, otherwise as milliseconds.
     const toDate = (v: unknown): Date | null => {
       if (v == null) return null;
-      if (typeof v === "number") return new Date(v);
+      if (typeof v === "number") {
+        return new Date(v < 1e12 ? v * 1000 : v);
+      }
       if (typeof v === "string") {
         const d = new Date(v);
         return Number.isNaN(d.getTime()) ? null : d;

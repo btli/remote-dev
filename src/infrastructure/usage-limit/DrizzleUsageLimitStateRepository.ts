@@ -53,7 +53,7 @@ export class DrizzleUsageLimitStateRepository
   async upsert(
     state: LimitState,
     opts?: { onlyIfNewer?: Date }
-  ): Promise<void> {
+  ): Promise<boolean> {
     const profileId = state.getProfileId();
 
     const existing = await db.query.claudeUsageLimitStates.findFirst({
@@ -61,13 +61,14 @@ export class DrizzleUsageLimitStateRepository
       columns: { profileId: true, userId: true, lastCheckedAt: true },
     });
 
-    // Staleness guard: a strictly-newer stored observation already won.
+    // Staleness guard: a strictly-newer stored observation already won, so this
+    // write is dropped — report `false` so the caller doesn't act on it.
     if (
       opts?.onlyIfNewer &&
       existing?.lastCheckedAt &&
       existing.lastCheckedAt.getTime() > opts.onlyIfNewer.getTime()
     ) {
-      return;
+      return false;
     }
 
     const set = limitStateToColumns(state);
@@ -77,7 +78,7 @@ export class DrizzleUsageLimitStateRepository
         .update(claudeUsageLimitStates)
         .set({ ...set, updatedAt: new Date() })
         .where(eq(claudeUsageLimitStates.profileId, profileId));
-      return;
+      return true;
     }
 
     // First insert: resolve the owning userId from the profile row.
@@ -86,7 +87,7 @@ export class DrizzleUsageLimitStateRepository
       log.warn("Skipping usage-limit upsert: profile has no owner row", {
         profileId,
       });
-      return;
+      return false;
     }
 
     await db
@@ -96,6 +97,7 @@ export class DrizzleUsageLimitStateRepository
         target: claudeUsageLimitStates.profileId,
         set: { ...set, updatedAt: new Date() },
       });
+    return true;
   }
 
   async listForUser(userId: string): Promise<LimitState[]> {

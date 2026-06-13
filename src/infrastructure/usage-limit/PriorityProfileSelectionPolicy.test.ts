@@ -51,7 +51,9 @@ class FakeStateRepo implements UsageLimitStateRepository {
     }
     return out;
   }
-  async upsert(): Promise<void> {}
+  async upsert(): Promise<boolean> {
+    return true;
+  }
   async listForUser(): Promise<LimitState[]> {
     return [...this.states.values()];
   }
