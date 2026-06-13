@@ -42,6 +42,7 @@ import {
   sha256File,
   sizePreview,
 } from "./migration-file-service";
+import * as exec from "@/lib/exec";
 import { CHUNK_SIZE_BYTES, type MigrationOptions } from "@/lib/migration-bundle";
 import { users, projects, nodePreferences, agentProfiles, projectProfileLinks } from "@/db/schema";
 
@@ -137,6 +138,27 @@ describe("MigrationFileService", () => {
     // readArchiveChunk(0) returns the whole (single-chunk) archive.
     const chunk = await readArchiveChunk(built.archivePaths["working-tree"]!, 0);
     expect(chunk.length).toBe(entry.sizeBytes);
+  });
+
+  it("tar invocations set COPYFILE_DISABLE=1 (no macOS AppleDouble ._* files)", async () => {
+    write("tree/src/index.ts", "code");
+    // Spy on the real execFile but delegate through to it, so the archive is
+    // still produced and we can inspect the options tar was invoked with.
+    const spy = vi.spyOn(exec, "execFile");
+
+    await buildArchives({
+      jobId: "job-copyfile",
+      workingDir: join(fixtureRoot, "tree"),
+      options: { ...OPTIONS, includeAgentSettings: false },
+      profiles: [],
+    });
+
+    const tarCalls = spy.mock.calls.filter(([command]) => command === "tar");
+    expect(tarCalls.length).toBeGreaterThan(0);
+    for (const [, , options] of tarCalls) {
+      expect(options?.env?.COPYFILE_DISABLE).toBe("1");
+    }
+    spy.mockRestore();
   });
 
   it("profiles archive excludes .cache always and .ssh unless includeSshKeys", async () => {

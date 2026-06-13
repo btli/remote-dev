@@ -146,7 +146,13 @@ async function tarCreate(
   await execFile(
     "tar",
     ["-czf", outFile, ...tarExcludeArgs(excludePatterns), "-C", cwd, "."],
-    { timeout: 10 * 60 * 1000 },
+    {
+      timeout: 10 * 60 * 1000,
+      // COPYFILE_DISABLE stops macOS bsdtar from emitting AppleDouble `._*`
+      // sidecar files that extract as junk on the Linux destination
+      // (remote-dev-awwu). No-op on GNU tar / Linux.
+      env: { COPYFILE_DISABLE: "1" },
+    },
   );
 }
 
