@@ -43,14 +43,18 @@ function makePeer(overrides: Partial<PeerTarget> = {}): PeerTarget {
  * A fetch double that records its args and returns a canned Response. The
  * recorded init is widened to expose the optional `dispatcher` (undici-only,
  * not on the DOM RequestInit) — the mock simply ignores it, like real tests do.
+ * It is typed to peerFetch's `fetchImpl` shape (a `string` URL + dispatcher-
+ * bearing init) rather than the global `fetch`, since peerFetch now defaults to
+ * undici's fetch and the global signature no longer matches the parameter.
  */
 type RecordedInit = (RequestInit & { dispatcher?: unknown }) | undefined;
+type FetchDouble = (url: string, init?: RecordedInit) => Promise<Response>;
 function fakeFetch(response = new Response("{}", { status: 200 })) {
   const calls: { url: string; init?: RecordedInit }[] = [];
-  const impl = (async (url: string | URL | Request, init?: RecordedInit) => {
+  const impl = (async (url: string, init?: RecordedInit) => {
     calls.push({ url: String(url), init });
     return response;
-  }) as unknown as typeof fetch;
+  }) as FetchDouble;
   return { impl, calls };
 }
 

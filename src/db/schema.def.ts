@@ -24,9 +24,11 @@ import type { AgentRunStatus, AgentRunSource, TriggerKind } from "@/types/agent-
 import type { CrownRunStatus } from "@/types/crown";
 // Server-to-server project migration schema brands.
 import type { MigrationJobStatus, MigrationImportStatus, MigrationWorkingTreeMode } from "@/types/migration";
+// Claude profile usage-limit / pool schema brands (epic remote-dev-3b3l).
+import type { ClaudeAccountKind, ClaudeLimitStatus, UsageDetectionSource, ClaudeAutoRelaunchMode } from "@/types/claude-limits";
 
 // Re-exported so the verbatim import block above (consumed by the codegen extractor) is not flagged as unused.
-export type { AdapterAccountType, SessionStatus, CIStatusState, PRState, ScheduleType, ScheduleStatus, ExecutionStatus, AgentProvider, AgentConfigType, MCPTransport, AgentProviderType, WorktreeType, TerminalType, AgentExitState, AppearanceMode, ColorSchemeCategory, ColorSchemeId, TaskPriority, TaskStatus, TaskSource, NotificationType, NotificationSeverity, NotificationMeta, ChannelType, AgentRunStatus, AgentRunSource, TriggerKind, CrownRunStatus, MigrationJobStatus, MigrationImportStatus, MigrationWorkingTreeMode };
+export type { AdapterAccountType, SessionStatus, CIStatusState, PRState, ScheduleType, ScheduleStatus, ExecutionStatus, AgentProvider, AgentConfigType, MCPTransport, AgentProviderType, WorktreeType, TerminalType, AgentExitState, AppearanceMode, ColorSchemeCategory, ColorSchemeId, TaskPriority, TaskStatus, TaskSource, NotificationType, NotificationSeverity, NotificationMeta, ChannelType, AgentRunStatus, AgentRunSource, TriggerKind, CrownRunStatus, MigrationJobStatus, MigrationImportStatus, MigrationWorkingTreeMode, ClaudeAccountKind, ClaudeLimitStatus, UsageDetectionSource, ClaudeAutoRelaunchMode };
 
 // DSL vocabulary lives in the shared generator core so both this app and the
 // supervisor app describe their schemas with one set of types. Re-exported here
@@ -164,6 +166,9 @@ export const schema: SchemaDefinition = [
       { field: "beadsSidebarWidth", dbName: "beads_sidebar_width", kind: "integer", default: { kind: "value", value: "320" } },
       { field: "beadsClosedRetentionDays", dbName: "beads_closed_retention_days", kind: "integer", default: { kind: "value", value: "7" } },
       { field: "beadsSectionExpanded", dbName: "beads_section_expanded", kind: "text" },
+      // Global default for what to do when a running Claude session hits a usage
+      // limit (per-project override lives on node_preferences). [remote-dev-3b3l]
+      { field: "claudeAutoRelaunchMode", dbName: "claude_auto_relaunch_mode", kind: "text", notNull: true, typeBrand: "ClaudeAutoRelaunchMode", default: { kind: "value", value: "\"notify\"" } },
       { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
       { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
     ],
@@ -1246,6 +1251,91 @@ export const schema: SchemaDefinition = [
     ],
   },
   {
+    // Claude-specific identity + account kind, kept off the provider-agnostic
+    // agent_profile. 1:1 with a profile. [remote-dev-3b3l]
+    exportName: "claudeAccounts",
+    sqlName: "claude_account",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
+      { field: "profileId", dbName: "profile_id", kind: "text", notNull: true, unique: true, references: { table: "agentProfiles", column: "id", onDelete: "cascade" } },
+      { field: "userId", dbName: "user_id", kind: "text", notNull: true, references: { table: "users", column: "id", onDelete: "cascade" } },
+      { field: "accountKind", dbName: "account_kind", kind: "text", notNull: true, typeBrand: "ClaudeAccountKind", default: { kind: "value", value: "\"subscription\"" } },
+      // "file" | "keychain"; null = unknown (P2 fills it).
+      { field: "credentialMode", dbName: "credential_mode", kind: "text" },
+      // Display fields sourced from ~/.claude.json oauthAccount.
+      { field: "emailAddress", dbName: "email_address", kind: "text" },
+      { field: "organizationName", dbName: "organization_name", kind: "text" },
+      { field: "rateLimitTier", dbName: "rate_limit_tier", kind: "text" },
+      // First 8 chars only; the full key stays in profile_secrets_config.
+      { field: "apiKeyPrefix", dbName: "api_key_prefix", kind: "text" },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+      { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "claude_account_profile_idx", columns: ["profileId"] },
+      { name: "claude_account_user_idx", columns: ["userId"] },
+    ],
+  },
+  {
+    // Authoritative per-profile Claude usage-limit store. [remote-dev-3b3l]
+    exportName: "claudeUsageLimitStates",
+    sqlName: "claude_usage_limit_state",
+    columns: [
+      { field: "profileId", dbName: "profile_id", kind: "text", primaryKey: true, references: { table: "agentProfiles", column: "id", onDelete: "cascade" } },
+      { field: "userId", dbName: "user_id", kind: "text", notNull: true, references: { table: "users", column: "id", onDelete: "cascade" } },
+      { field: "limitStatus", dbName: "limit_status", kind: "text", notNull: true, typeBrand: "ClaudeLimitStatus", default: { kind: "value", value: "\"unknown\"" } },
+      // 0-100, null if unknown.
+      { field: "window5hPct", dbName: "window_5h_pct", kind: "integer" },
+      { field: "window7dPct", dbName: "window_7d_pct", kind: "integer" },
+      { field: "resetAt5h", dbName: "reset_at_5h", kind: "timestampMs" },
+      { field: "resetAt7d", dbName: "reset_at_7d", kind: "timestampMs" },
+      // min(resetAt5h, resetAt7d): soonest the account is available again.
+      { field: "effectiveResetAt", dbName: "effective_reset_at", kind: "timestampMs" },
+      { field: "detectionSource", dbName: "detection_source", kind: "text", typeBrand: "UsageDetectionSource" },
+      { field: "lastCheckedAt", dbName: "last_checked_at", kind: "timestampMs" },
+      { field: "lastPolledAt", dbName: "last_polled_at", kind: "timestampMs" },
+      { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "claude_usage_limit_user_status_idx", columns: ["userId","limitStatus"] },
+      { name: "claude_usage_limit_user_idx", columns: ["userId"] },
+    ],
+  },
+  {
+    // A named, ordered fallback pool of Claude profiles to rotate through when
+    // the primary is limited. [remote-dev-3b3l]
+    exportName: "claudeProfilePools",
+    sqlName: "claude_profile_pool",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
+      { field: "userId", dbName: "user_id", kind: "text", notNull: true, references: { table: "users", column: "id", onDelete: "cascade" } },
+      { field: "name", dbName: "name", kind: "text", notNull: true },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+      { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "claude_profile_pool_user_idx", columns: ["userId"] },
+    ],
+  },
+  {
+    // Membership of a profile in a pool, with rotation priority
+    // (lower = higher priority / earlier in rotation). [remote-dev-3b3l]
+    exportName: "claudeProfilePoolMembers",
+    sqlName: "claude_profile_pool_member",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
+      { field: "poolId", dbName: "pool_id", kind: "text", notNull: true, references: { table: "claudeProfilePools", column: "id", onDelete: "cascade" } },
+      { field: "profileId", dbName: "profile_id", kind: "text", notNull: true, references: { table: "agentProfiles", column: "id", onDelete: "cascade" } },
+      { field: "priority", dbName: "priority", kind: "integer", notNull: true, default: { kind: "value", value: "0" } },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "claude_pool_member_pool_profile_unique", columns: ["poolId","profileId"], unique: true },
+      { name: "claude_pool_member_pool_priority_idx", columns: ["poolId","priority"] },
+      { name: "claude_pool_member_profile_idx", columns: ["profileId"] },
+    ],
+  },
+  {
     exportName: "nodePreferences",
     sqlName: "node_preferences",
     columns: [
@@ -1268,6 +1358,11 @@ export const schema: SchemaDefinition = [
       { field: "gitIdentityName", dbName: "git_identity_name", kind: "text" },
       { field: "gitIdentityEmail", dbName: "git_identity_email", kind: "text" },
       { field: "isSensitive", dbName: "is_sensitive", kind: "boolean", notNull: true, default: { kind: "value", value: "false" } },
+      // Group/project-inherited Claude fallback pool + per-node auto-relaunch
+      // override (null = inherit). Resolved via the existing preference chain
+      // (resolvePreferences reads the whole row — no resolver change). [remote-dev-3b3l]
+      { field: "claudeProfilePoolId", dbName: "claude_profile_pool_id", kind: "text" },
+      { field: "claudeAutoRelaunchMode", dbName: "claude_auto_relaunch_mode", kind: "text", typeBrand: "ClaudeAutoRelaunchMode" },
       { field: "createdAt", dbName: "created_at", kind: "timestampS", notNull: true, default: { kind: "fn", fn: "now" } },
       { field: "updatedAt", dbName: "updated_at", kind: "timestampS", notNull: true, default: { kind: "fn", fn: "now" } },
     ],
@@ -1312,6 +1407,9 @@ export const schema: SchemaDefinition = [
     columns: [
       { field: "projectId", dbName: "project_id", kind: "text", primaryKey: true, references: { table: "projects", column: "id", onDelete: "cascade" } },
       { field: "profileId", dbName: "profile_id", kind: "text", notNull: true, references: { table: "agentProfiles", column: "id", onDelete: "cascade" } },
+      // Fallback pool for auto-rotation (primary profileId above stays primary;
+      // set null on pool delete). [remote-dev-3b3l]
+      { field: "poolId", dbName: "pool_id", kind: "text", references: { table: "claudeProfilePools", column: "id", onDelete: "set null" } },
       { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
     ],
     indexes: [
@@ -1385,6 +1483,9 @@ export const schema: SchemaDefinition = [
       // {{repo}} {{prNumber}} {{issueNumber}} placeholders.
       { field: "promptTemplate", dbName: "prompt_template", kind: "text", notNull: true },
       { field: "worktreeType", dbName: "worktree_type", kind: "text" },
+      // Pinned Claude profile for triggered runs (schema only in P1; wiring is
+      // P2 / remote-dev-vk1z). Set null on profile delete. [remote-dev-3b3l]
+      { field: "profileId", dbName: "profile_id", kind: "text", references: { table: "agentProfiles", column: "id", onDelete: "set null" } },
       { field: "enabled", dbName: "enabled", kind: "boolean", notNull: true, default: { kind: "value", value: "true" } },
       { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
       { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
@@ -1410,6 +1511,9 @@ export const schema: SchemaDefinition = [
       { field: "prompt", dbName: "prompt", kind: "text", notNull: true },
       { field: "worktreeType", dbName: "worktree_type", kind: "text" },
       { field: "baseBranch", dbName: "base_branch", kind: "text" },
+      // Pinned Claude profile for scheduled runs (schema only in P1; wiring is
+      // P2 / remote-dev-vk1z). Set null on profile delete. [remote-dev-3b3l]
+      { field: "profileId", dbName: "profile_id", kind: "text", references: { table: "agentProfiles", column: "id", onDelete: "set null" } },
       // Cron (mirrors sessionSchedules).
       { field: "scheduleType", dbName: "schedule_type", kind: "text", notNull: true, typeBrand: "ScheduleType", default: { kind: "value", value: "\"recurring\"" } },
       { field: "cronExpression", dbName: "cron_expression", kind: "text" },
@@ -1445,6 +1549,9 @@ export const schema: SchemaDefinition = [
       // Launch params snapshot.
       { field: "agentProvider", dbName: "agent_provider", kind: "text", notNull: true },
       { field: "agentFlags", dbName: "agent_flags", kind: "text", notNull: true, default: { kind: "value", value: "\"[]\"" } },
+      // Claude profile this run launched under (schema only in P1; wiring is
+      // P2 / remote-dev-vk1z). Set null on profile delete. [remote-dev-3b3l]
+      { field: "profileId", dbName: "profile_id", kind: "text", references: { table: "agentProfiles", column: "id", onDelete: "set null" } },
       { field: "prompt", dbName: "prompt", kind: "text", notNull: true },
       // The session this run created (null until launched).
       { field: "sessionId", dbName: "session_id", kind: "text", references: { table: "terminalSessions", column: "id", onDelete: "set null" } },

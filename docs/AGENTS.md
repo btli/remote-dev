@@ -119,6 +119,25 @@ interface in [`src/types/agent.ts`](../src/types/agent.ts)):
   `getProjectProfile`), binding that project's agent sessions to the profile via the
   `project_profile_link` table.
 
+### Claude usage limits & fallback pools
+
+Claude profiles additionally carry a Claude-specific identity + account kind
+(`subscription` | `api_key`, in `claude_account`) and a per-profile usage-limit
+state (5h/7d window utilization + reset times, in `claude_usage_limit_state`). A
+project's `project_profile_link` can also reference a **fallback pool**
+(`claude_profile_pool` / `claude_profile_pool_member`, ordered by rotation
+priority), and `node_preferences` carries an inherited `claudeProfilePoolId` so a
+pool can be set at the group level and inherited by its projects. When a `claude`
+session is created **without an explicit profile**, the project's profile is now
+resolved server-side (primary → pool rotation to the first available profile) and
+injected as `RDV_PROFILE_ID` — previously the project→profile link existed but was
+never applied at session creation. Reactive detection (session-output scan + a
+`Stop` hook) marks a profile limited; on a limit the default is notify + 1-click
+relaunch, with an optional per-project auto-relaunch that spawns a parallel
+session under an available profile (it never force-kills the running one). See
+[`API.md`](./API.md) → "Claude usage limits & pools" and the
+`RDV_CLAUDE_USAGE_POLL_ENABLED` flag in [`SETUP.md`](./SETUP.md).
+
 ---
 
 ## 3. Per-profile appearance / theming

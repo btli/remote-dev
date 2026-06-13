@@ -259,6 +259,19 @@ type _SchemaParity = [
   // agentWorkContext
   Expect<Equal<(typeof sqliteSchema.agentWorkContext)["$inferSelect"], (typeof pgSchema.agentWorkContext)["$inferSelect"]>>,
   Expect<Equal<(typeof sqliteSchema.agentWorkContext)["$inferInsert"], (typeof pgSchema.agentWorkContext)["$inferInsert"]>>,
+  // [remote-dev-3b3l] Claude usage-limit / pool tables
+  // claudeAccounts
+  Expect<Equal<(typeof sqliteSchema.claudeAccounts)["$inferSelect"], (typeof pgSchema.claudeAccounts)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.claudeAccounts)["$inferInsert"], (typeof pgSchema.claudeAccounts)["$inferInsert"]>>,
+  // claudeUsageLimitStates
+  Expect<Equal<(typeof sqliteSchema.claudeUsageLimitStates)["$inferSelect"], (typeof pgSchema.claudeUsageLimitStates)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.claudeUsageLimitStates)["$inferInsert"], (typeof pgSchema.claudeUsageLimitStates)["$inferInsert"]>>,
+  // claudeProfilePools
+  Expect<Equal<(typeof sqliteSchema.claudeProfilePools)["$inferSelect"], (typeof pgSchema.claudeProfilePools)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.claudeProfilePools)["$inferInsert"], (typeof pgSchema.claudeProfilePools)["$inferInsert"]>>,
+  // claudeProfilePoolMembers
+  Expect<Equal<(typeof sqliteSchema.claudeProfilePoolMembers)["$inferSelect"], (typeof pgSchema.claudeProfilePoolMembers)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.claudeProfilePoolMembers)["$inferInsert"], (typeof pgSchema.claudeProfilePoolMembers)["$inferInsert"]>>,
 ];
 
 // Force the assertion tuple to be evaluated: `true[]` only accepts a tuple
@@ -269,7 +282,7 @@ void _parityHolds;
 
 // Trivial runtime test so vitest treats this file as a (passing) suite. The
 // real guarantee is the compile-time tuple above, enforced by `tsc`.
-it("schema.sqlite and schema.pg expose the same 77 table exports", () => {
+it("schema.sqlite and schema.pg expose the same 81 table exports", () => {
   const sqliteTables = Object.keys(sqliteSchema).sort();
   const pgTables = Object.keys(pgSchema).sort();
   expect(sqliteTables).toEqual(pgTables);
@@ -278,6 +291,8 @@ it("schema.sqlite and schema.pg expose the same 77 table exports", () => {
   // triggerEvents, crownRuns, crownCandidates) + 3 (x386: messageDelivery,
   // channelSubscription, agentWorkContext) + 1 (oyej.14: webhookDeliveries) +
   // 3 (server-to-server migration: peerInstances, migrationJobs,
-  // migrationImports) = 77. (x386.16 dropped message_replay_cursor.)
-  expect(sqliteTables).toHaveLength(77);
+  // migrationImports) + 4 (remote-dev-3b3l: claudeAccounts,
+  // claudeUsageLimitStates, claudeProfilePools, claudeProfilePoolMembers)
+  // = 81. (x386.16 dropped message_replay_cursor.)
+  expect(sqliteTables).toHaveLength(81);
 });

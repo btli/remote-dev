@@ -293,6 +293,46 @@ export async function createSessionWithDedupFlag(
     }
   }
 
+  // [remote-dev-3b3l] Auto-apply a Claude profile when the caller didn't pick
+  // one. The project→profile link (+ inherited fallback pool) already exists in
+  // the data model but was never resolved at session creation — this closes
+  // that gap. Only kicks in for an unspecified profile on a Claude session with
+  // a project: explicit selections, non-Claude providers, and projectless
+  // sessions are untouched. On any failure we proceed with NO profile (today's
+  // behavior); selection never blocks a launch. `effectiveProfileId` threads the
+  // resolved id through every downstream use of `input.profileId` (plugin stub,
+  // profile-env overlay, RDV_PROFILE_ID, DB insert) so the auto-selected profile
+  // actually launches and is recorded.
+  let effectiveProfileId: string | undefined = input.profileId;
+  if (
+    !input.profileId &&
+    mergedAgentProvider === "claude" &&
+    input.projectId
+  ) {
+    try {
+      const { selectProfileUseCase } = await import("@/infrastructure/container");
+      const result = await selectProfileUseCase.execute({
+        projectId: input.projectId,
+        userId,
+        now: new Date(),
+      });
+      if (result.profileId) {
+        effectiveProfileId = result.profileId;
+        log.info("Auto-selected Claude profile for session", {
+          projectId: input.projectId,
+          profileId: result.profileId,
+          wasAutoSelected: result.wasAutoSelected,
+        });
+      }
+    } catch (error) {
+      // Selection is best-effort: proceed with no profile (legacy behavior).
+      log.warn("Claude profile auto-selection failed; proceeding without a profile", {
+        projectId: input.projectId,
+        error: String(error),
+      });
+    }
+  }
+
   // Build a partial session stub for the plugin to introspect if needed.
   // Constructed AFTER the merge so the provider exposed to server plugins
   // matches what actually launches — `mergedAgentProvider` (input → folder/user
@@ -304,7 +344,7 @@ export async function createSessionWithDedupFlag(
     userId,
     name: input.name,
     projectId: input.projectId,
-    profileId: input.profileId ?? null,
+    profileId: effectiveProfileId ?? null,
     terminalType,
     agentProvider: isAgentTerminal ? (mergedAgentProvider ?? "claude") : null,
   };
@@ -530,13 +570,15 @@ export async function createSessionWithDedupFlag(
     }
   }
 
-  // Fetch profile and its environment overlay if profile is specified
+  // Fetch profile and its environment overlay if profile is specified.
+  // Uses `effectiveProfileId` so an auto-selected Claude profile contributes
+  // its CLAUDE_CONFIG_DIR / env overlay just like an explicitly chosen one.
   let profileEnv: Record<string, string> | undefined;
-  const profile = input.profileId
-    ? await AgentProfileService.getProfile(input.profileId, userId)
+  const profile = effectiveProfileId
+    ? await AgentProfileService.getProfile(effectiveProfileId, userId)
     : undefined;
   if (profile) {
-    const env = await AgentProfileService.getProfileEnvironment(input.profileId!, userId, profile);
+    const env = await AgentProfileService.getProfileEnvironment(effectiveProfileId!, userId, profile);
     if (env) {
       profileEnv = Object.fromEntries(
         Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)
@@ -658,6 +700,10 @@ export async function createSessionWithDedupFlag(
           ? { RDV_API_SOCKET: process.env.SOCKET_PATH }
           : { RDV_API_PORT: process.env.PORT ?? "6001" }),
         ...(agentApiKey ? { RDV_API_KEY: agentApiKey } : {}),
+        // [remote-dev-3b3l] Expose the active profile id so future hooks / the
+        // usage poller can attribute agent output back to a profile. Rides
+        // `rdvEnv` (highest precedence) like the other RDV_* vars.
+        ...(effectiveProfileId ? { RDV_PROFILE_ID: effectiveProfileId } : {}),
       }
     : {};
 
@@ -856,7 +902,7 @@ export async function createSessionWithDedupFlag(
         worktreeBranch: branchName ?? null,
         worktreeType: input.worktreeType ?? null,
         projectId: input.projectId,
-        profileId: input.profileId ?? null,
+        profileId: effectiveProfileId ?? null,
         parentSessionId: input.parentSessionId ?? null,
         terminalType,
         typeMetadata,
