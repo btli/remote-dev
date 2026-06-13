@@ -52,6 +52,7 @@
     "db:backfill-user-emails": "bun run scripts/backfill-user-emails.ts",
     "db:verify-backfills": "bun run scripts/verify-backfills.ts",
     "db:check-drift": "bun run scripts/check-schema-drift.ts",
+    "db:reconcile-fk-drop": "bun run scripts/db-reconcile-fk-drop.ts",
     "db:migrate-profile-gitconfigs": "bun run scripts/migrate-profile-gitconfigs.ts",
     "db:migrate-channels": "tsx src/db/migrations/migrate-channels.ts",
     "db:migrate-agent-provider": "bun run scripts/migrate-agent-provider.ts",
