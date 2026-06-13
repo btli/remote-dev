@@ -426,21 +426,18 @@ export async function startJob(
           throw new Error(`Built archive path missing for ${entry.name}`);
         }
         const have = new Set(received[entry.name] ?? []);
+        // Byte size of chunk `index` (the last chunk is short); clamped to 0.
+        const chunkBytes = (index: number): number =>
+          Math.max(0, Math.min(CHUNK_SIZE_BYTES, entry.sizeBytes - index * CHUNK_SIZE_BYTES));
         // Count chunks the destination ALREADY holds once, up front — they
         // are part of the transferred total but are never re-uploaded.
         for (const index of have) {
           if (index >= 0 && index < entry.chunkCount) {
-            bytesTransferred += Math.max(
-              0,
-              Math.min(CHUNK_SIZE_BYTES, entry.sizeBytes - index * CHUNK_SIZE_BYTES),
-            );
+            bytesTransferred += chunkBytes(index);
           }
         }
         for (let index = 0; index < entry.chunkCount; index++) {
-          const chunkSize = Math.max(
-            0,
-            Math.min(CHUNK_SIZE_BYTES, entry.sizeBytes - index * CHUNK_SIZE_BYTES),
-          );
+          const chunkSize = chunkBytes(index);
           if (!have.has(index)) {
             const data = await deps.readChunk(archivePath, index);
             const sha = createHash("sha256").update(data).digest("hex");
