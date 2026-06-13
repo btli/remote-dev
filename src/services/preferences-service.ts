@@ -20,6 +20,7 @@ import type {
   AgentProviderSettingsMap,
 } from "@/types/preferences";
 import type { AgentProviderType } from "@/types/session";
+import type { ClaudeAutoRelaunchMode } from "@/types/claude-limits";
 import type { PortValidationWithRuntimeResult } from "@/types/environment";
 import { BEADS_SECTION_EXPAND_DEFAULTS, type BeadsSectionExpandDefaults } from "@/types/preferences";
 import { safeJsonParse } from "@/lib/utils";
@@ -563,6 +564,8 @@ function mapDbUserSettings(
     notificationsEnabled: db.notificationsEnabled ?? true,
     defaultAgentProvider: (db.defaultAgentProvider as AgentProviderType | null) ?? null,
     agentProviderSettings: parseAgentProviderSettings(db.agentProviderSettings),
+    claudeAutoRelaunchMode:
+      (db.claudeAutoRelaunchMode as ClaudeAutoRelaunchMode | null) ?? "notify",
     beadsSidebarCollapsed: db.beadsSidebarCollapsed ?? true,
     beadsSidebarWidth: db.beadsSidebarWidth ?? 320,
     beadsClosedRetentionDays: db.beadsClosedRetentionDays ?? 7,
@@ -591,6 +594,8 @@ function mapDbFolderPreferences(
     localRepoPath: dbRow.localRepoPath,
     defaultAgentProvider: (dbRow.defaultAgentProvider as import("@/types/session").AgentProviderType | null) ?? null,
     agentProviderSettings: parseAgentProviderSettings(dbRow.agentProviderSettings),
+    claudeProfilePoolId: dbRow.claudeProfilePoolId ?? null,
+    claudeAutoRelaunchMode: (dbRow.claudeAutoRelaunchMode as ClaudeAutoRelaunchMode | null) ?? null,
     environmentVars: parseEnvironmentVars(typeof dbRow.environmentVars === "string" ? dbRow.environmentVars : dbRow.environmentVars == null ? null : JSON.stringify(dbRow.environmentVars)),
     pinnedFiles: parsePinnedFiles(typeof dbRow.pinnedFiles === "string" ? dbRow.pinnedFiles : dbRow.pinnedFiles == null ? null : JSON.stringify(dbRow.pinnedFiles)),
     gitIdentityName: dbRow.gitIdentityName ?? null,
