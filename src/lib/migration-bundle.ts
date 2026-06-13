@@ -30,6 +30,18 @@ export const BUNDLE_VERSION = 1;
 export const CHUNK_SIZE_BYTES = 64 * 1024 * 1024;
 
 /**
+ * Whether THIS build's import intake (`POST /api/migration/imports`) can decode
+ * a gzip-compressed JSON body (`Content-Encoding: gzip`). Advertised in the
+ * capabilities document as `acceptsGzipBundle` so a newer source only compresses
+ * the DB bundle for destinations that can decompress it — an older destination
+ * (which reads the raw body) still receives plain JSON. Compression matters
+ * because the whole bundle travels as ONE POST body and the wire path (CF / the
+ * supervisor router) caps the on-wire request size at ~100 MB; gzip multiplies
+ * the headroom of that fixed ceiling rather than raising it.
+ */
+export const BUNDLE_GZIP_SUPPORTED = true;
+
+/**
  * Directory names excluded from working-tree transfer (stage 2). Dependency /
  * build / cache trees that are large and fully reproducible.
  */

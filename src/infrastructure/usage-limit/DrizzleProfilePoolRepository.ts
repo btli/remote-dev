@@ -5,7 +5,11 @@
 
 import { db } from "@/db";
 import { affectedRows } from "@/db/sql-helpers";
-import { claudeProfilePools, claudeProfilePoolMembers } from "@/db/schema";
+import {
+  claudeProfilePools,
+  claudeProfilePoolMembers,
+  projectProfileLinks,
+} from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import type {
   ProfilePoolRepository,
@@ -54,7 +58,15 @@ export class DrizzleProfilePoolRepository implements ProfilePoolRepository {
   }
 
   async deletePool(poolId: string): Promise<void> {
-    // Members cascade via the FK onDelete: "cascade".
+    // Null any project links that pinned this pool. `project_profile_link.pool_id`
+    // is intentionally NOT a DB-level FK (a table-level FK on that pre-existing
+    // table breaks drizzle-kit db:push idempotency — see schema.def.ts), so the
+    // former `ON DELETE SET NULL` behaviour is enforced here in the app.
+    await db
+      .update(projectProfileLinks)
+      .set({ poolId: null })
+      .where(eq(projectProfileLinks.poolId, poolId));
+    // Members still cascade via their own (retained) FK onDelete: "cascade".
     await db.delete(claudeProfilePools).where(eq(claudeProfilePools.id, poolId));
   }
 

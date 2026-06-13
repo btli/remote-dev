@@ -22,7 +22,7 @@
  * is a safe no-op before the terminal has finished initializing.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act, render, cleanup } from "@testing-library/react";
+import { act, render, cleanup, waitFor } from "@testing-library/react";
 import { createRef } from "react";
 
 import type { TerminalRef } from "./Terminal";
@@ -279,12 +279,14 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
     });
 
     // Let the async xterm init complete so xtermRef + the refit closures are
-    // wired up.
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 20));
+    // wired up. Poll for the xterm instance rather than sleeping a fixed tick:
+    // under parallel vitest workers the awaited init chain (mount → token
+    // fetch → addon load) can take longer than any single fixed delay, which
+    // made the old `setTimeout(20)` race and intermittently assert against an
+    // empty `xtermInstances`.
+    await waitFor(() => {
+      expect(xtermInstances.length).toBeGreaterThanOrEqual(1);
     });
-
-    expect(xtermInstances.length).toBeGreaterThanOrEqual(1);
     const xterm = xtermInstances[0]!;
     xterm.scrollToBottom.mockClear();
 
@@ -317,15 +319,27 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
       );
     });
 
-    // Flush async init: xterm mounts, the token fetch resolves, the WebSocket
-    // opens (its onopen sends an initial focus/blur frame), and the textarea
-    // focus listeners are attached.
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 20));
+    // Flush async init deterministically: xterm mounts, the token fetch
+    // resolves, and the component opens its WebSocket. The init effect can
+    // briefly open a throwaway socket and reconnect to a fresh one, so the
+    // observable target is the *live* (OPEN) socket whose onopen has already
+    // fired — `sent.length >= 1` proves the initial focus/blur frame landed,
+    // which is exactly the state the dedupe assertion below depends on.
+    //
+    // The old `await new Promise(r => setTimeout(r, 20))` raced this: under
+    // parallel vitest workers a fixed tick sometimes fired before the reconnect
+    // settled, leaving `wsInstances[0]` pointing at the closed throwaway socket
+    // (empty `sent`) instead of the live one — an intermittent failure that
+    // passed in isolation and on re-run. Polling for the live socket removes
+    // the timing dependency without weakening the assertion.
+    const liveSocket = () =>
+      [...wsInstances]
+        .reverse()
+        .find((w) => w.readyState === MockWebSocket.OPEN && w.sent.length >= 1);
+    await waitFor(() => {
+      expect(liveSocket()).toBeDefined();
     });
-
-    expect(wsInstances.length).toBeGreaterThanOrEqual(1);
-    const ws = wsInstances[0]!;
+    const ws = liveSocket()!;
     const xterm = xtermInstances[0]!;
 
     // Drive the last-sent focus state to "focus" via the per-terminal focus

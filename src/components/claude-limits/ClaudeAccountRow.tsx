@@ -24,6 +24,7 @@ import type {
   ClaudePoolSummary,
 } from "@/types/claude-limits";
 import { LimitStatusBadge } from "./LimitStatusBadge";
+import { ClaudeLoginButton } from "./ClaudeLoginButton";
 import { formatPct, formatResetCountdown, isLimitedNow } from "./limit-format";
 
 const ACCOUNT_KIND_LABEL: Record<ClaudeAccountKind, string> = {
@@ -40,6 +41,8 @@ interface ClaudeAccountRowProps {
   /** All of the user's pools, to resolve membership ids → names. */
   pools: ClaudePoolSummary[];
   onMarkAvailable: (profileId: string) => Promise<void>;
+  /** Called after a successful file-based login sync (refresh account info). */
+  onLoginSynced?: () => void;
 }
 
 /** A small labelled utilization bar (5h / 7d window). */
@@ -81,6 +84,7 @@ export function ClaudeAccountRow({
   now,
   pools,
   onMarkAvailable,
+  onLoginSynced,
 }: ClaudeAccountRowProps) {
   const [marking, setMarking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -157,7 +161,7 @@ export function ClaudeAccountRow({
 
       {/* Action */}
       <div className="flex flex-col items-end gap-1">
-        {limited ? (
+        {limited && (
           <Button
             size="sm"
             variant="outline"
@@ -171,7 +175,16 @@ export function ClaudeAccountRow({
               "Mark available"
             )}
           </Button>
-        ) : (
+        )}
+        {/* File-based subscription login. API-key accounts authenticate via a
+            key, not OAuth, so the affordance is subscription-only. */}
+        {profile.accountKind === "subscription" && (
+          <ClaudeLoginButton
+            profileId={profile.id}
+            onSynced={onLoginSynced}
+          />
+        )}
+        {!limited && profile.accountKind !== "subscription" && (
           <span className="text-[11px] text-muted-foreground/50">—</span>
         )}
         {error && <span className="text-[10px] text-destructive">{error}</span>}

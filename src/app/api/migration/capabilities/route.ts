@@ -1,13 +1,18 @@
 /**
  * /api/migration/capabilities — DESTINATION-side capability advertisement.
- *   GET — bundle version, max file-chunk size (stage 2), and app version.
+ *   GET — bundle version, max file-chunk size (stage 2), app version, and
+ *         whether this build can decode a gzip-compressed DB-bundle POST.
  *         Used by peer verification and as the pre-flight compatibility check.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { NextResponse } from "next/server";
 import { withApiAuth } from "@/lib/api";
-import { BUNDLE_VERSION, CHUNK_SIZE_BYTES } from "@/lib/migration-bundle";
+import {
+  BUNDLE_GZIP_SUPPORTED,
+  BUNDLE_VERSION,
+  CHUNK_SIZE_BYTES,
+} from "@/lib/migration-bundle";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("api/migration");
@@ -32,5 +37,6 @@ export const GET = withApiAuth(async () => {
     version: BUNDLE_VERSION,
     maxChunkBytes: CHUNK_SIZE_BYTES,
     appVersion: APP_VERSION,
+    acceptsGzipBundle: BUNDLE_GZIP_SUPPORTED,
   });
 });

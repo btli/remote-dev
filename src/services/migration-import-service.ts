@@ -1158,11 +1158,19 @@ async function importedWorkingDir(
  * Resolve + prepare the working-tree destination dir: parent created, and the
  * dir itself must be absent or empty — extracting over existing user files is
  * REFUSED (conflict + clean failure) rather than risked.
+ *
+ * When the guard passes it invokes `onClaimed(destDir)` BEFORE `mkdir`, so the
+ * caller learns the dir THIS import is about to populate even if a subsequent
+ * extraction step throws — letting finalize roll that dir back on failure. The
+ * callback fires only on the empty/absent path; a genuine pre-existing
+ * non-empty dir throws first and is NEVER reported as claimed (so cleanup can
+ * never touch user data).
  */
 async function prepareWorkingTreeDest(
   destUserId: string,
   importedProjectId: string,
   conflicts: ConflictReport[],
+  onClaimed?: (destDir: string) => void,
 ): Promise<string> {
   const destDir = await importedWorkingDir(destUserId, importedProjectId);
   if (!destDir) {
@@ -1184,18 +1192,29 @@ async function prepareWorkingTreeDest(
       "DEST_DIR_NOT_EMPTY",
     );
   }
+  onClaimed?.(destDir);
   await mkdir(destDir, { recursive: true });
   return destDir;
 }
 
-/** Extract the full working-tree archive into the mapped destination dir. */
+/**
+ * Extract the full working-tree archive into the mapped destination dir.
+ * `onClaimed` reports the dir this import created (see prepareWorkingTreeDest)
+ * so finalize can roll it back if a later step fails.
+ */
 async function extractWorkingTree(
   archivePath: string,
   destUserId: string,
   importedProjectId: string,
   conflicts: ConflictReport[],
+  onClaimed?: (destDir: string) => void,
 ): Promise<void> {
-  const destDir = await prepareWorkingTreeDest(destUserId, importedProjectId, conflicts);
+  const destDir = await prepareWorkingTreeDest(
+    destUserId,
+    importedProjectId,
+    conflicts,
+    onClaimed,
+  );
   await execFile("tar", ["-xzf", archivePath, "-C", destDir], {
     timeout: 10 * 60 * 1000,
   });
@@ -1204,7 +1223,9 @@ async function extractWorkingTree(
 /**
  * git_essentials extraction: clone the recorded remote, check out the
  * recorded branch (best-effort), lay the essentials archive over the clone,
- * then apply the uncommitted diff (best-effort).
+ * then apply the uncommitted diff (best-effort). `onClaimed` reports the dir
+ * this import created so finalize can roll it back on failure (a clone failure
+ * leaves a partial dir behind).
  */
 async function extractEssentials(
   archivePath: string,
@@ -1212,6 +1233,7 @@ async function extractEssentials(
   importedProjectId: string,
   manifest: BundleManifest,
   conflicts: ConflictReport[],
+  onClaimed?: (destDir: string) => void,
 ): Promise<void> {
   const remoteUrl = manifest.gitRemoteUrl;
   if (!remoteUrl) {
@@ -1225,7 +1247,12 @@ async function extractEssentials(
       "NO_GIT_REMOTE",
     );
   }
-  const destDir = await prepareWorkingTreeDest(destUserId, importedProjectId, conflicts);
+  const destDir = await prepareWorkingTreeDest(
+    destUserId,
+    importedProjectId,
+    conflicts,
+    onClaimed,
+  );
 
   const clone = await execFileNoThrow("git", ["clone", remoteUrl, destDir], {
     timeout: 10 * 60 * 1000,
@@ -1374,6 +1401,43 @@ async function extractAgentSettings(
 }
 
 /**
+ * Roll back a working-tree dir THIS import extracted into, after a later
+ * finalize step failed. Only ever called with a dir that
+ * {@link prepareWorkingTreeDest} reported as claimed — i.e. one this import
+ * created over an absent/empty path (a genuine pre-existing non-empty dir is
+ * refused before any claim, so it is never passed here). Defence in depth: the
+ * dir must also sit under `getProjectsDir()` (the persistent projects root the
+ * rewrite targets), mirroring pruneStaleImports' out-of-root staging guard, so
+ * a tampered preference path can never escalate this into deleting user data.
+ */
+async function rollbackExtractedWorkingTree(
+  importId: string,
+  destDir: string,
+): Promise<void> {
+  const projectsRoot = getProjectsDir();
+  if (!(destDir === projectsRoot || destDir.startsWith(`${projectsRoot}/`))) {
+    log.warn("Refusing to remove out-of-root working-tree dir during finalize rollback", {
+      importId,
+      destDir,
+    });
+    return;
+  }
+  try {
+    await rm(destDir, { recursive: true, force: true });
+    log.info("Rolled back extracted working-tree dir after finalize failure", {
+      importId,
+      destDir,
+    });
+  } catch (error) {
+    log.warn("Failed to remove extracted working-tree dir during finalize rollback", {
+      importId,
+      destDir,
+      error: String(error),
+    });
+  }
+}
+
+/**
  * Finalize an import. DB-only migrations (no archives in the manifest) just
  * flip importing → completed. File migrations require EVERY chunk, then per
  * archive: concatenate → verify the whole-archive sha256 → extract
@@ -1423,12 +1487,28 @@ export async function finalizeImport(
 
   const conflicts: ConflictReport[] = [];
   const bookkeeping = parseBookkeeping(row);
+  // The working-tree dir THIS finalize extracted into, captured the moment the
+  // empty/absent guard claims it (so a clone failure mid-extract is covered).
+  // Extraction lands at the FINAL location but the DB rows commit only on
+  // overall success — on failure this dir must be rolled back too, else a
+  // retry hits the non-empty guard and 409s (the staging/DB rollback already
+  // happens; the dest dir was the one piece left orphaned).
+  let extractedWorkingTreeDir: string | null = null;
+  const onWorkingTreeClaimed = (destDir: string): void => {
+    extractedWorkingTreeDir = destDir;
+  };
 
   try {
     for (const entry of archives) {
       const archivePath = await assembleArchive(row, entry);
       if (entry.name === "working-tree") {
-        await extractWorkingTree(archivePath, destUserId, row.importedProjectId, conflicts);
+        await extractWorkingTree(
+          archivePath,
+          destUserId,
+          row.importedProjectId,
+          conflicts,
+          onWorkingTreeClaimed,
+        );
       } else if (entry.name === "essentials") {
         if (!manifest) {
           throw new MigrationImportError("Import has no manifest", 409, "NO_MANIFEST");
@@ -1439,6 +1519,7 @@ export async function finalizeImport(
           row.importedProjectId,
           manifest,
           conflicts,
+          onWorkingTreeClaimed,
         );
       } else if (entry.name === "profiles") {
         await extractProfiles(archivePath, row, bookkeeping.profileIdRemaps ?? {}, conflicts);
@@ -1448,6 +1529,12 @@ export async function finalizeImport(
       await rm(archivePath, { force: true });
     }
   } catch (error) {
+    // Roll back the dir this import extracted into (if any) so a retry is not
+    // blocked by the non-empty-dest guard. Only a dir the empty/absent guard
+    // claimed — never a pre-existing user dir — is ever captured here.
+    if (extractedWorkingTreeDir !== null) {
+      await rollbackExtractedWorkingTree(importId, extractedWorkingTreeDir);
+    }
     // Persist whatever conflicts were gathered before the failure.
     bookkeeping.finalizeConflicts = conflicts;
     await db
