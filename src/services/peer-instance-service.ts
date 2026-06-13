@@ -12,7 +12,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { peerInstances } from "@/db/schema";
 import { encrypt } from "@/lib/encryption";
-import { peerFetch } from "@/lib/peer-fetch";
+import { peerFetch, readPeerJson } from "@/lib/peer-fetch";
 import { MigrationServiceError } from "./migration-errors";
 import { createLogger } from "@/lib/logger";
 
@@ -240,21 +240,24 @@ export async function verifyPeer(
       method: "GET",
     });
   } catch (error) {
+    // Decrypt / half-CF-credential / network failures land here. The message
+    // peerFetch threw is already actionable — surface it verbatim.
     log.warn("Peer capabilities fetch failed", {
       peerId: id,
       error: String(error),
     });
-    throw new Error(`Peer unreachable: ${String(error)}`);
+    throw error instanceof Error
+      ? error
+      : new Error(`Peer unreachable: ${String(error)}`);
   }
 
-  if (!response.ok) {
-    throw new Error(
-      `Peer capabilities check failed: HTTP ${response.status}` +
-        (response.status === 401 ? " (check the stored API key)" : ""),
-    );
-  }
-
-  const capabilities = (await response.json()) as PeerCapabilities;
+  // readPeerJson maps 3xx (CF Access wall) / 401 (bad key) / 404 (Base URL
+  // missing the slug) / non-JSON (login page) onto specific, debuggable
+  // messages — the Test-connection path shows these straight to the user.
+  const capabilities = await readPeerJson<PeerCapabilities>(
+    response,
+    `${peer.name} capabilities check`,
+  );
   await db
     .update(peerInstances)
     .set({
