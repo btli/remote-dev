@@ -31,6 +31,11 @@ export interface AgentScheduleInput {
   prompt: string;
   worktreeType?: string | null;
   baseBranch?: string | null;
+  /**
+   * Explicit Claude profile pin for the launched run. Omit / null → auto-select
+   * (the project's primary profile + fallback pool, skipping limited accounts).
+   */
+  profileId?: string | null;
   /** "recurring" (cronExpression) or "one-time" (scheduledAt). */
   scheduleType?: "recurring" | "one-time";
   cronExpression?: string | null;
@@ -57,6 +62,11 @@ export interface TriggerConfigInput {
   agentFlags?: string[];
   promptTemplate: string;
   worktreeType?: string | null;
+  /**
+   * Explicit Claude profile pin for the launched run. Omit / null → auto-select
+   * (the project's primary profile + fallback pool, skipping limited accounts).
+   */
+  profileId?: string | null;
   enabled?: boolean;
 }
 

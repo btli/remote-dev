@@ -45,6 +45,7 @@ export interface ValidatedAgentSchedule {
   prompt: string;
   worktreeType: string | null;
   baseBranch: string | null;
+  profileId: string | null;
   scheduleType: ScheduleType;
   cronExpression: string | null;
   scheduledAt: Date | null;
@@ -130,6 +131,7 @@ export function validateAgentScheduleInput(
     prompt: input.prompt,
     worktreeType: input.worktreeType ?? null,
     baseBranch: input.baseBranch ?? null,
+    profileId: input.profileId ?? null,
     scheduleType,
     cronExpression,
     scheduledAt,
@@ -158,6 +160,7 @@ export async function createAgentSchedule(
       prompt: v.prompt,
       worktreeType: v.worktreeType,
       baseBranch: v.baseBranch,
+      profileId: v.profileId,
       scheduleType: v.scheduleType,
       cronExpression: v.cronExpression,
       scheduledAt: v.scheduledAt,
@@ -234,6 +237,7 @@ export async function updateAgentSchedule(
   if (patch.worktreeType !== undefined)
     set.worktreeType = patch.worktreeType ?? null;
   if (patch.baseBranch !== undefined) set.baseBranch = patch.baseBranch ?? null;
+  if (patch.profileId !== undefined) set.profileId = patch.profileId ?? null;
   if (patch.timezone !== undefined) set.timezone = patch.timezone;
   if (patch.enabled !== undefined) set.enabled = patch.enabled;
   if (patch.maxRetries !== undefined) set.maxRetries = patch.maxRetries;

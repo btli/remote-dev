@@ -42,12 +42,25 @@ export interface LaunchAgentRunInput {
   scheduleId?: string | null;
   triggerConfigId?: string | null;
   headSha?: string | null;
+  /**
+   * Explicit Claude profile to PIN this run to. `null`/undefined means
+   * "auto-select" — session-service picks the project's primary profile (and
+   * its fallback pool, skipping limited accounts) for a Claude run. The
+   * resolved profile is recorded on the run row regardless (see below).
+   */
+  profileId?: string | null;
 }
 
 /** The session handle the launcher must return (subset of TerminalSession). */
 export interface LaunchedSession {
   id: string;
   tmuxSessionName: string;
+  /**
+   * The profile the session actually launched with — the explicit pin if one
+   * was passed, otherwise the auto-selected one (or null if none applied). The
+   * run row records THIS resolved value, not the requested one.
+   */
+  profileId: string | null;
 }
 
 /**
@@ -74,6 +87,8 @@ export interface AgentRunDeps {
     createWorktree: boolean;
     worktreeType?: WorktreeType;
     baseBranch?: string;
+    /** Explicit profile pin (null/undefined → session-service auto-selects). */
+    profileId?: string | null;
   }): Promise<LaunchedSession>;
   /** Best-effort wait until the agent CLI is at a prompt. */
   waitForAgentReady(tmuxSessionName: string): Promise<void>;
@@ -153,7 +168,14 @@ function defaultDeps(userId: string): AgentRunDeps {
         userId,
         input as never,
       );
-      return { id: session.id, tmuxSessionName: session.tmuxSessionName };
+      // `session` is a mapped TerminalSession; `session.profileId` is the
+      // RESOLVED profile (the explicit pin OR session-service's auto-selection),
+      // so the run row can record what actually launched.
+      return {
+        id: session.id,
+        tmuxSessionName: session.tmuxSessionName,
+        profileId: session.profileId ?? null,
+      };
     },
     waitForAgentReady: defaultWaitForAgentReady,
     // tmux send-keys uses \r (pressEnter) — the Claude/Codex TUI requires the
@@ -186,6 +208,9 @@ export async function launchAgentRun(
     scheduleId: input.scheduleId ?? null,
     triggerConfigId: input.triggerConfigId ?? null,
     headSha: input.headSha ?? null,
+    // The EXPLICIT pin requested (may be null → auto-select). On success we
+    // overwrite this with the RESOLVED profile the session actually used.
+    profileId: input.profileId ?? null,
     status: "pending",
   });
 
@@ -200,6 +225,7 @@ export async function launchAgentRun(
       createWorktree: !!input.worktreeType,
       worktreeType: (input.worktreeType ?? undefined) as WorktreeType | undefined,
       baseBranch: input.baseBranch ?? undefined,
+      profileId: input.profileId,
     });
 
     await deps.waitForAgentReady(session.tmuxSessionName);
@@ -208,6 +234,9 @@ export async function launchAgentRun(
     const running = await deps.updateRun(run.id, {
       status: "running",
       sessionId: session.id,
+      // Record the RESOLVED profile (auto-selected or explicit) so the run row
+      // reflects which Claude account actually ran — not just what was asked.
+      profileId: session.profileId,
       startedAt: deps.now(),
     });
     log.info("agent run launched", {

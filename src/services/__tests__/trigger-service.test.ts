@@ -53,6 +53,7 @@ function cfg(over: Partial<TriggerConfigLike> = {}): TriggerConfigLike {
     agentFlags: "[]",
     promptTemplate: "Fix PR {{prNumber}} in {{repo}}",
     worktreeType: "fix",
+    profileId: null,
     enabled: true,
     ...over,
   };
@@ -120,7 +121,10 @@ describe("TriggerService.handleEvent", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("dispatches one run + supersedes + records matched on a matching label", async () => {
-    const h = makeDeps();
+    // Pin a profile on the config and assert it threads into the run launch.
+    const h = makeDeps({
+      findEnabledConfigs: vi.fn(async () => [cfg({ profileId: "profile-pin" })]),
+    });
     await handleEvent(prLabeled, h.deps);
     expect(h.launches).toBe(1);
     expect(h.deps.launchAgentRun).toHaveBeenCalledWith(
@@ -132,6 +136,7 @@ describe("TriggerService.handleEvent", () => {
         headSha: "sha-1",
         prompt: "Fix PR 7 in octo/repo",
         worktreeType: "fix",
+        profileId: "profile-pin",
       }),
     );
     expect(h.deps.supersedePriorRuns).toHaveBeenCalledWith(
