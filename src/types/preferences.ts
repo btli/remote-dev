@@ -11,6 +11,7 @@
 import type { EnvironmentVariables } from "./environment";
 import type { PinnedFile } from "./pinned-files";
 import type { AgentProviderType } from "./session";
+import type { ClaudeAutoRelaunchMode } from "./claude-limits";
 
 /**
  * Core preference keys that can be customized at any level
@@ -62,6 +63,10 @@ export interface ExtendedPreferences extends Preferences {
   localRepoPath: string | null;
   defaultAgentProvider: AgentProviderType | null;
   agentProviderSettings: AgentProviderSettingsMap | null;
+  // Claude profile fallback pool inherited through the folder hierarchy, and
+  // the per-node auto-relaunch override (null = inherit). [remote-dev-3b3l]
+  claudeProfilePoolId: string | null;
+  claudeAutoRelaunchMode: ClaudeAutoRelaunchMode | null;
 }
 
 /**
@@ -102,6 +107,8 @@ export interface UserSettings {
   defaultAgentProvider: AgentProviderType | null;
   // Per-provider settings (extra flags, allow dangerous) keyed by provider id
   agentProviderSettings: AgentProviderSettingsMap | null;
+  // Global default for what to do when a running Claude session hits a limit.
+  claudeAutoRelaunchMode: ClaudeAutoRelaunchMode;
   // Beads issue tracker sidebar settings
   beadsSidebarCollapsed: boolean;
   beadsSidebarWidth: number | null;
@@ -145,6 +152,9 @@ export interface FolderPreferences {
   defaultAgentProvider: AgentProviderType | null;
   // Per-provider agent settings (replaces user-level entries by provider key)
   agentProviderSettings: AgentProviderSettingsMap | null;
+  // Claude fallback pool + auto-relaunch override (null = inherit). [remote-dev-3b3l]
+  claudeProfilePoolId: string | null;
+  claudeAutoRelaunchMode: ClaudeAutoRelaunchMode | null;
   // Environment variables (stored as JSON in database)
   // Use "__DISABLED__" value to explicitly disable an inherited variable
   environmentVars: EnvironmentVariables | null;
@@ -219,6 +229,8 @@ export interface UpdateUserSettingsInput {
   notificationsEnabled?: boolean;
   defaultAgentProvider?: AgentProviderType | null;
   agentProviderSettings?: AgentProviderSettingsMap | null;
+  // Global default for Claude auto-relaunch on limit
+  claudeAutoRelaunchMode?: ClaudeAutoRelaunchMode;
   // Beads issue tracker sidebar settings
   beadsSidebarCollapsed?: boolean;
   beadsSidebarWidth?: number | null;
@@ -242,6 +254,9 @@ export interface UpdateFolderPreferencesInput {
   defaultAgentProvider?: AgentProviderType | null;
   // Per-provider agent settings override (replaces user-level entries)
   agentProviderSettings?: AgentProviderSettingsMap | null;
+  // Claude fallback pool + auto-relaunch override (null = inherit). [remote-dev-3b3l]
+  claudeProfilePoolId?: string | null;
+  claudeAutoRelaunchMode?: ClaudeAutoRelaunchMode | null;
   // Environment variables (stored as JSON in database)
   // Use "__DISABLED__" value to explicitly disable an inherited variable
   environmentVars?: EnvironmentVariables | null;

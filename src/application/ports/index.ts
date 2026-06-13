@@ -47,3 +47,32 @@ export type {
   PushTokenRepository,
   PushTokenRecord,
 } from "./PushTokenRepository";
+
+// Claude usage-limit / profile-pool ports [remote-dev-3b3l]
+export type {
+  UsageLimitGateway,
+  LimitDetectionResult,
+} from "./UsageLimitGateway";
+
+export type { UsageLimitStateRepository } from "./UsageLimitStateRepository";
+
+export type {
+  ProfilePoolRepository,
+  PoolEntry,
+  PoolSummary,
+} from "./ProfilePoolRepository";
+
+export type { ProfileSelectionPolicy } from "./ProfileSelectionPolicy";
+
+export type {
+  NotificationPort,
+  UsageLimitNotification,
+} from "./NotificationPort";
+
+export type {
+  SessionLauncherPort,
+  LaunchReplacementInput,
+  LaunchReplacementResult,
+} from "./SessionLauncherPort";
+
+export type { AutoRelaunchModePort } from "./AutoRelaunchModePort";

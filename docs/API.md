@@ -7,8 +7,8 @@ See also: [Architecture](./ARCHITECTURE.md) · [Setup](./SETUP.md) · [OpenAPI s
 For a machine-readable contract, see [openapi.yaml](./openapi.yaml) (OpenAPI 3.1).
 
 > **Scope.** Every endpoint documented here is served by the **Next.js** app
-> (default port **6001**) under `/api/*`. The codebase exposes **51 route
-> groups** / **296 method×path operations** as of this writing.
+> (default port **6001**) under `/api/*`. The codebase exposes **53 route
+> groups** / **309 method×path operations** as of this writing.
 >
 > The **terminal server** (default port **6002**) additionally exposes
 > `/internal/*` routes (`/internal/peers/*`, `/internal/channels/*`,
@@ -99,6 +99,7 @@ by session/key auth:
 | GitHub accounts | `/api/github/accounts`, `/api/github/account` | [GitHub accounts](#github-accounts) |
 | API keys | `/api/keys` | [API keys](#api-keys) |
 | Agent profiles | `/api/profiles` | [Agent profiles](#agent-profiles) |
+| Claude usage limits & pools | `/api/profiles/:id/limit-state`, `/api/profiles/select`, `/api/claude/usage`, `/api/claude-pools` | [Claude usage limits & pools](#claude-usage-limits--pools) |
 | Agent CLI status | `/api/agent-cli/status` | [Agent CLI](#agent-cli) |
 | Agent providers | `/api/agent-providers` | [Agent providers](#agent-providers) |
 | Agent config files | `/api/agent-configs` | [Agent config files](#agent-config-files) |
@@ -819,6 +820,12 @@ DELETE /api/profiles/folders/:folderId         # unlink
 **Create** body: `name` (required), `provider` (`claude`|`codex`|`gemini`|`opencode`|`all`,
 required), `description?`, `isDefault?`. Returns `201` with the profile.
 
+**List** additively augments each profile with `accountKind`
+(`subscription`|`api_key`, defaulting to `subscription` for Claude-capable
+profiles with no `claude_account` row) and a serialized `limitState` (the
+Claude usage-limit block; available/unknown default when no state recorded).
+See [Claude usage limits & pools](#claude-usage-limits--pools).
+
 ### Agent profile JSON configs
 
 Manage the **JSON** config files (settings.json-style) inside a profile, keyed by
@@ -839,6 +846,70 @@ DELETE /api/agent-profiles/:id/configs/:agentType     # delete
 
 `:agentType` ∈ `{ claude, gemini, opencode, codex }`. A profile that does not
 belong to the caller returns `404`; an invalid `agentType` returns `400`.
+
+---
+
+## Claude usage limits & pools
+
+cswap-style Claude usage-limit tracking + fallback pools (epic remote-dev-3b3l).
+Each Claude profile carries a usage-limit state; a project can declare a primary
+profile plus a fallback **pool** that auto-rotates to an available profile when
+the primary is limited. All **[session | key]** (`withApiAuth`), ownership-checked
+against the caller (a profile/pool that is not yours returns `404`).
+
+```http
+GET    /api/profiles/:id/limit-state     # serialized limit state for a profile
+PATCH  /api/profiles/:id/limit-state     # manual override { status: "available" } (clears a limit)
+GET    /api/profiles/select?projectId=   # recommended profile for a project (read-only wizard pre-fill)
+GET    /api/claude/usage                 # dashboard payload: all Claude profiles + state + pool membership
+
+GET    /api/claude-pools                 # list the caller's pools (+ memberCount)
+POST   /api/claude-pools                 # create { name } → 201 { id, name, memberCount }
+GET    /api/claude-pools/:poolId         # pool + members (name + limit state)
+PUT    /api/claude-pools/:poolId         # rename { name }
+DELETE /api/claude-pools/:poolId         # delete (members cascade) → 204
+GET    /api/claude-pools/:poolId/members # members ordered by priority
+POST   /api/claude-pools/:poolId/members # add/upsert { profileId, priority? } → 201 (re-POST updates priority)
+DELETE /api/claude-pools/:poolId/members # remove { profileId } (body) or ?profileId= (query) → 204
+GET    /api/claude-pools/:poolId/status  # per-member availability snapshot
+```
+
+**Serialized limit state** (`limitState`, shared by every route above):
+
+```jsonc
+{
+  "limitStatus": "available" | "limited" | "unknown",
+  "window5hPct": 0-100 | null,   // utilization of the rolling 5h window
+  "window7dPct": 0-100 | null,   // utilization of the rolling 7d window
+  "resetAt5h":   <epoch-ms> | null,
+  "resetAt7d":   <epoch-ms> | null,
+  "effectiveResetAt": <epoch-ms> | null  // min(resetAt5h, resetAt7d): soonest available again
+}
+```
+
+A profile with no recorded state serializes as the available/unknown default
+(all numbers/timestamps `null`, `limitStatus: "unknown"`). `PATCH
+/api/profiles/:id/limit-state` accepts **only** `{ status: "available" }` (any
+other value → `400 INVALID_STATUS`); limiting a profile is a detection concern,
+not a manual one.
+
+`GET /api/profiles/select` returns `{ profileId, wasAutoSelected }` and creates
+nothing — `profileId` is `null` when the project has no primary/pool configured
+(the caller proceeds with no profile). The same resolution runs **server-side at
+session creation**: a `claude` session created without an explicit profile is
+auto-assigned the project's profile and gets `RDV_PROFILE_ID` injected.
+
+`GET /api/claude/usage` returns
+`{ profiles: [{ id, name, accountKind, emailAddress, organizationName, limitState, pools }] }`
+over every Claude-capable profile (`pools` is the ids of the caller's pools the
+profile belongs to). `GET /api/claude-pools/:poolId/status` returns
+`{ poolId, name, members: [{ profileId, name, priority, limitState }] }`;
+members that resolve to a profile not owned by the caller are omitted.
+
+The proactive Anthropic usage poller that can populate this state on a timer is
+**OFF by default** — see `RDV_CLAUDE_USAGE_POLL_ENABLED` in
+[SETUP.md](./SETUP.md). Reactive detection (session-output scan + a `Stop` hook)
+is always on.
 
 ---
 
