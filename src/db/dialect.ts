@@ -41,11 +41,27 @@ export type AppDb = import("drizzle-orm/libsql").LibSQLDatabase<
   typeof import("./schema.sqlite")
 >;
 
+/** Result of a SQLite `PRAGMA wal_checkpoint(TRUNCATE)`. */
+export interface WalCheckpointResult {
+  /** 0 = all frames checkpointed; non-zero = blocked by a reader/writer. */
+  busy: number;
+  /** Frames in the WAL before the checkpoint. */
+  log: number;
+  /** Frames successfully checkpointed back into the main db. */
+  checkpointed: number;
+}
+
 export interface Dialect {
   db: AppDb;
   client: DialectClient;
   execute: DialectClient["execute"];
   runProbe: DialectClient["runProbe"];
+  /**
+   * Run `PRAGMA wal_checkpoint(TRUNCATE)` to flush and shrink the WAL.
+   * Only present on the SQLite dialect (WAL is a SQLite concept); the Postgres
+   * dialect omits it, so callers must guard on the active backend.
+   */
+  checkpointWal?: () => Promise<WalCheckpointResult>;
 }
 
 /**
