@@ -1672,9 +1672,20 @@ export async function closeSession(
   }
 
   // Kill the tmux session — plugin decides whether one exists. Plugins
-  // that opt out of tmux (file viewer, browser) skip this entirely.
+  // that opt out of tmux (file viewer, browser) skip this entirely. A
+  // kill failure must NOT prevent the DB from being marked closed below;
+  // otherwise the row stays active/suspended forever (ghost: tmux dead,
+  // DB says alive) and the session gets "stuck" / won't close.
   if (sessionUsesTmux(session)) {
-    await TmuxService.killSession(session.tmuxSessionName);
+    try {
+      await TmuxService.killSession(session.tmuxSessionName);
+    } catch (error) {
+      log.error("Failed to kill tmux session during close", {
+        sessionId,
+        tmuxSessionName: session.tmuxSessionName,
+        error: String(error),
+      });
+    }
   }
 
   // Let the plugin clean up any type-specific resources (e.g. the browser

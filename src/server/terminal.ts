@@ -5,9 +5,8 @@ import type { IPty } from "node-pty";
 
 import { execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import * as fs from "node:fs";
-import { resolve as pathResolve } from "node:path";
 import { promisify } from "node:util";
+import { validatePathWithReason, sanitizeCwdForDisplay } from "./validate-cwd.js";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
 // [oyej] Agent-run scheduler (REAL agent launches; epic remote-dev-oyej).
 import { agentSchedulerOrchestrator } from "../services/agent-scheduler-orchestrator.js";
@@ -129,47 +128,10 @@ export function isTmuxSessionAuthorized(
   return row.userId === token.userId;
 }
 
-/**
- * Validate a working directory for a new terminal session.
- *
- * Canonicalizes the path (neutralizing .., ., duplicate slashes) and verifies
- * the directory exists before passing it to `tmux new-session -c`. A missing or
- * invalid path falls back to the shell's default start directory (with a
- * warning) rather than aborting session creation.
- *
- * We intentionally do NOT restrict to $HOME: instance/container workspaces
- * routinely live outside the server process's HOME (which may also be unset),
- * and a terminal already grants full shell access, so a cwd allowlist would add
- * no security — only the silent "starts in home" breakage this avoids. The
- * existence check is best-effort (the dir could change before tmux uses it);
- * worst case tmux falls back to its default dir, the same as today.
- */
-function validatePath(path: string | undefined): string | undefined {
-  if (!path) return undefined;
-
-  // Must be an absolute path
-  if (!path.startsWith("/")) {
-    log.warn("Ignoring non-absolute working directory", { path });
-    return undefined;
-  }
-
-  // Canonicalize (collapses .., ., duplicate slashes) — neutralizes traversal.
-  const resolved = pathResolve(path);
-
-  // statSync follows symlinks, so a symlink to a directory is accepted (desired
-  // for worktree/workspace layouts). Missing or non-directory → fall back.
-  try {
-    if (!fs.statSync(resolved).isDirectory()) {
-      log.warn("Working directory is not a directory; using default start dir", { path: resolved });
-      return undefined;
-    }
-  } catch {
-    log.warn("Working directory does not exist; using default start dir", { path: resolved });
-    return undefined;
-  }
-
-  return resolved;
-}
+// Working-directory validation (canonicalize + existence check, with a
+// rejection reason for user-facing feedback) lives in ./validate-cwd so it can
+// be unit-tested without pulling in node-pty. `validatePathWithReason` is
+// imported at the top of this file.
 
 interface TerminalConnection {
   connectionId: string;
@@ -2966,7 +2928,13 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     }
 
     // SECURITY: Validate cwd to prevent path traversal
-    const cwd = validatePath(rawCwd);
+    const { path: cwd, rejectedReason: cwdRejectedReason } =
+      validatePathWithReason(rawCwd);
+    // The user asked for a specific working directory that does not exist (or
+    // isn't a directory). tmux will silently fall back to its default dir, so
+    // flag it for a one-time user-facing banner in the CREATE branch below.
+    const cwdMissing =
+      cwdRejectedReason === "missing" || cwdRejectedReason === "not-dir";
 
     // Generate a unique connection ID for multi-client support
     const connectionId = randomUUID();
@@ -3001,6 +2969,20 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
           sessionId,
           tmuxSessionName,
         }));
+
+        // The configured working directory didn't exist, so the new tmux
+        // session started in the default dir instead. Surface that to the USER
+        // (a server-side warn alone gave zero feedback) — only on CREATE (the
+        // attach branch reuses the existing session's dir, nothing was chosen).
+        if (cwdMissing && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: "output",
+            data:
+              "\r\n\x1b[33m⚠ Working directory not found:\x1b[0m " +
+              sanitizeCwdForDisplay(rawCwd ?? "") +
+              "\r\n\x1b[33m  Started in the default directory instead — fix it in the project's Preferences → Working Directory.\x1b[0m\r\n",
+          }));
+        }
 
         // [hgwo] We took the CREATE branch for an agent session, which means
         // the tmux session was gone — the terminal server (or the whole pod)

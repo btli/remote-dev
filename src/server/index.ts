@@ -29,6 +29,10 @@ import { createLogger } from "../lib/logger.js";
 import { closeLogDatabase } from "../infrastructure/logging/LogDatabase.js";
 import { acquireInstanceLock, releaseInstanceLock } from "../lib/instance-lock.js";
 import { withTimeout } from "../lib/with-timeout.js";
+// WAL auto-truncate (SQLite only) — keeps the WAL from growing unbounded.
+import { startWalCheckpointTimer } from "./wal-checkpoint.js";
+// Startup janitor — heal ghost sessions (DB alive, tmux gone).
+import { reconcileSessionsWithTmux } from "./session-reconcile.js";
 
 const log = createLogger("Server");
 
@@ -63,6 +67,15 @@ let usagePollTimer: ReturnType<typeof setInterval> | null = null;
 
 /** How often the proactive usage-limit poll sweep runs (10 minutes). */
 const USAGE_POLL_INTERVAL_MS = 10 * 60 * 1000;
+
+/** Handle for the SQLite WAL auto-truncate timer (null on Postgres). */
+let walCheckpointTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Handle for the periodic ghost-session reconcile sweep. */
+let reconcileTimer: ReturnType<typeof setInterval> | null = null;
+
+/** How often the ghost-session reconcile sweep runs (10 minutes). */
+const RECONCILE_INTERVAL_MS = 10 * 60 * 1000;
 
 /**
  * Hard ceiling on async cleanup during shutdown. The deploy stop phase
@@ -120,6 +133,24 @@ async function startServer(): Promise<void> {
   } catch (error) {
     log.error("Schema-ready wait failed", { error: String(error) });
   }
+
+  // WAL auto-truncate (SQLite only; no-op on Postgres). Keeps the WAL from
+  // growing unbounded — a 2.1 GB WAL once amplified write contention into
+  // SQLITE_BUSY. The timer self-unrefs and runs its first pass ~30s in.
+  walCheckpointTimer = startWalCheckpointTimer();
+
+  // Reconcile DB session state with live tmux: heal ghosts (DB says alive,
+  // tmux gone) left behind by restarts or a failed status write. Run once on
+  // boot, then on a ~10m interval. Fire-and-forget; never blocks startup.
+  void reconcileSessionsWithTmux().catch((error) =>
+    log.error("Initial session reconcile failed", { error: String(error) })
+  );
+  reconcileTimer = setInterval(() => {
+    void reconcileSessionsWithTmux().catch((error) =>
+      log.error("Session reconcile sweep failed", { error: String(error) })
+    );
+  }, RECONCILE_INTERVAL_MS);
+  reconcileTimer.unref();
 
   try {
     await schedulerOrchestrator.start();
@@ -201,6 +232,15 @@ async function startServer(): Promise<void> {
       if (usagePollTimer) {
         clearInterval(usagePollTimer);
         usagePollTimer = null;
+      }
+      // Stop the WAL checkpoint + ghost-session reconcile timers.
+      if (walCheckpointTimer) {
+        clearInterval(walCheckpointTimer);
+        walCheckpointTimer = null;
+      }
+      if (reconcileTimer) {
+        clearInterval(reconcileTimer);
+        reconcileTimer = null;
       }
     } catch (err) {
       log.error("Error during synchronous shutdown stops", { error: String(err) });
