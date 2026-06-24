@@ -10,6 +10,19 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("McpDiscovery");
+
+/**
+ * Grace period (ms) between SIGTERM and the SIGKILL escalation when tearing
+ * down a stdio discovery child. The wrappers we spawn (`npx`/`npm exec` →
+ * `tsx` → node) frequently do NOT forward signals to their grandchild, and
+ * some MCP servers (e.g. the bundled `rdv` peer-server) trap/ignore SIGTERM
+ * outright. We therefore escalate the process GROUP to SIGKILL after this
+ * grace window if it hasn't exited on its own.
+ */
+const KILL_ESCALATION_GRACE_MS = 2000;
 
 // =============================================================================
 // Types
@@ -121,14 +134,63 @@ export async function discoverViaStdio(
       }
     >();
 
-    // Spawn the MCP server process
+    // Spawn the MCP server process.
+    //
+    // `detached: true` makes the child a process-group leader (its pgid == its
+    // pid) so we can signal the WHOLE tree via `process.kill(-pid, ...)`. This
+    // is required because the command is typically a wrapper (`npx`/`npm exec`)
+    // that does NOT forward signals to its `tsx` → node grandchild — killing
+    // only `child` (the wrapper) would orphan and leak the real server.
     const child: ChildProcess = spawn(config.command, config.args, {
       stdio: ["pipe", "pipe", "pipe"],
       env,
+      detached: true,
     });
 
-    // Cleanup function to ensure resources are freed
+    // Track teardown so `cleanup()` is idempotent across its many call sites
+    // (success, timeout, error, exit) and so the escalation timer is never
+    // armed twice or leaked.
+    let cleanedUp = false;
+    let killEscalationTimer: ReturnType<typeof setTimeout> | null = null;
+    let childExited = false;
+
+    // Once the child actually exits, cancel any pending SIGKILL escalation —
+    // the process group is gone, so there is nothing left to escalate against
+    // and we must not leave a timer keeping the event loop alive.
+    child.on("exit", () => {
+      childExited = true;
+      if (killEscalationTimer) {
+        clearTimeout(killEscalationTimer);
+        killEscalationTimer = null;
+      }
+    });
+
+    // Signal the child's entire process group, swallowing ESRCH (already gone).
+    // Uses a negative pid so the signal hits every process in the group, not
+    // just the wrapper.
+    const killGroup = (signal: NodeJS.Signals): void => {
+      const pid = child.pid;
+      if (pid === undefined) return;
+      try {
+        process.kill(-pid, signal);
+      } catch (err) {
+        // ESRCH = process/group already exited; anything else is unexpected.
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== "ESRCH") {
+          log.warn("Failed to signal MCP discovery process group", {
+            signal,
+            pid,
+            error: String(err),
+          });
+        }
+      }
+    };
+
+    // Cleanup function to ensure resources are freed. Idempotent.
     const cleanup = (error?: Error) => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+
       if (timeoutId) {
         clearTimeout(timeoutId);
         timeoutId = null;
@@ -141,10 +203,24 @@ export async function discoverViaStdio(
       });
       pendingRequests.clear();
 
-      // Kill child process if still running
-      if (!child.killed) {
-        child.kill("SIGTERM");
+      // Terminate the whole process group with SIGTERM → SIGKILL escalation.
+      // If the child already exited there is nothing to signal.
+      if (childExited || child.pid === undefined || child.killed) {
+        return;
       }
+
+      killGroup("SIGTERM");
+
+      // Escalate to SIGKILL if the group hasn't exited within the grace window.
+      // `unref()` so this timer never blocks process shutdown; cleared in the
+      // `exit` handler above if the child dies first.
+      killEscalationTimer = setTimeout(() => {
+        killEscalationTimer = null;
+        if (!childExited) {
+          killGroup("SIGKILL");
+        }
+      }, KILL_ESCALATION_GRACE_MS);
+      killEscalationTimer.unref?.();
     };
 
     timeoutId = setTimeout(() => {
