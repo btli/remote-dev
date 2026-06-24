@@ -28,7 +28,13 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discoverViaStdio, type MCPServerConfig } from "./core";
@@ -111,9 +117,24 @@ async function waitUntilDead(pid: number, timeoutMs = 6000): Promise<boolean> {
   return !isAlive(pid);
 }
 
+/** Poll until `path` exists or the deadline elapses. */
+async function waitForFile(path: string, timeoutMs = 6000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(path)) return true;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return existsSync(path);
+}
+
 interface Stub {
   config: MCPServerConfig;
-  readPid: () => number;
+  /**
+   * Resolve the pid the stub recorded for itself. Waits for the sidecar file to
+   * appear first, because with a short discovery timeout the teardown can race
+   * cold node startup — the stub may not have written its pid yet when we read.
+   */
+  readPid: () => Promise<number>;
   cleanup: () => void;
 }
 
@@ -128,7 +149,11 @@ function makeStub(makeSource: (pidFile: string) => string): Stub {
       args: [scriptPath],
       env: {},
     },
-    readPid: () => Number(readFileSync(pidFile, "utf8").trim()),
+    readPid: async () => {
+      const appeared = await waitForFile(pidFile);
+      if (!appeared) throw new Error(`stub pid file never appeared: ${pidFile}`);
+      return Number(readFileSync(pidFile, "utf8").trim());
+    },
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
 }
@@ -140,7 +165,7 @@ describe("discoverViaStdio process-group teardown (remote-dev-31cn)", () => {
       const result = await discoverViaStdio(stub.config, 5000);
       expect(result.tools.map((t) => t.name)).toContain("stub_tool");
 
-      const pid = stub.readPid();
+      const pid = await stub.readPid();
       expect(Number.isInteger(pid)).toBe(true);
 
       // The child ignored SIGTERM, so only the SIGKILL escalation (~2s grace)
@@ -155,10 +180,12 @@ describe("discoverViaStdio process-group teardown (remote-dev-31cn)", () => {
   it("kills the SIGTERM-ignoring child after a TIMEOUT", async () => {
     const stub = makeStub(unresponsiveServer);
     try {
-      // Short timeout so the test is fast; discovery must reject.
-      await expect(discoverViaStdio(stub.config, 500)).rejects.toThrow(/timeout/i);
+      // Short timeout so the test is fast, but long enough to clear cold node
+      // startup so the stub reliably reaches its keep-alive state (the unhappy
+      // path we want to exercise) rather than being killed mid-boot.
+      await expect(discoverViaStdio(stub.config, 1500)).rejects.toThrow(/timeout/i);
 
-      const pid = stub.readPid();
+      const pid = await stub.readPid();
       expect(Number.isInteger(pid)).toBe(true);
 
       const dead = await waitUntilDead(pid, 6000);

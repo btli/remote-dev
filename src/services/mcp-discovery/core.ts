@@ -113,6 +113,13 @@ const CLIENT_INFO = { name: "remote-dev", version: "1.0.0" };
 /**
  * Discover tools and resources from an MCP server via stdio transport.
  * Spawns the server process, communicates via stdin/stdout, then terminates.
+ *
+ * NOTE: The returned promise resolving (or rejecting) does NOT guarantee the
+ * child process tree is already dead. Teardown sends SIGTERM and only escalates
+ * to a process-group SIGKILL after `KILL_ESCALATION_GRACE_MS`, so a
+ * SIGTERM-ignoring server may still be dying for up to that window after this
+ * function settles. Callers that immediately re-spawn the same command could
+ * briefly race a dying process tree.
  */
 export async function discoverViaStdio(
   config: MCPServerConfig,
@@ -154,17 +161,6 @@ export async function discoverViaStdio(
     let killEscalationTimer: ReturnType<typeof setTimeout> | null = null;
     let childExited = false;
 
-    // Once the child actually exits, cancel any pending SIGKILL escalation —
-    // the process group is gone, so there is nothing left to escalate against
-    // and we must not leave a timer keeping the event loop alive.
-    child.on("exit", () => {
-      childExited = true;
-      if (killEscalationTimer) {
-        clearTimeout(killEscalationTimer);
-        killEscalationTimer = null;
-      }
-    });
-
     // Signal the child's entire process group, swallowing ESRCH (already gone).
     // Uses a negative pid so the signal hits every process in the group, not
     // just the wrapper.
@@ -204,8 +200,10 @@ export async function discoverViaStdio(
       pendingRequests.clear();
 
       // Terminate the whole process group with SIGTERM → SIGKILL escalation.
-      // If the child already exited there is nothing to signal.
-      if (childExited || child.pid === undefined || child.killed) {
+      // If the child already exited there is nothing to signal. We never call
+      // `child.kill()` (we signal the group via `process.kill(-pid)`), so
+      // `child.killed` is always false and is not worth checking.
+      if (childExited || child.pid === undefined) {
         return;
       }
 
@@ -220,7 +218,7 @@ export async function discoverViaStdio(
           killGroup("SIGKILL");
         }
       }, KILL_ESCALATION_GRACE_MS);
-      killEscalationTimer.unref?.();
+      killEscalationTimer.unref();
     };
 
     timeoutId = setTimeout(() => {
@@ -276,8 +274,18 @@ export async function discoverViaStdio(
       }
     });
 
-    // Handle unexpected process exit
+    // Handle process exit. Once the child actually exits, mark it and cancel
+    // any pending SIGKILL escalation — the process group is gone, so there is
+    // nothing left to escalate against and we must not leave a timer keeping
+    // the event loop alive. If the discovery hadn't already settled, treat the
+    // exit as an unexpected failure.
     child.on("exit", (code) => {
+      childExited = true;
+      if (killEscalationTimer) {
+        clearTimeout(killEscalationTimer);
+        killEscalationTimer = null;
+      }
+
       if (!resolved) {
         resolved = true;
         const errorMsg = stderr
