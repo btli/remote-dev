@@ -6,7 +6,7 @@
 
 ## Problem
 
-The homelab supervisor host `rdv.joyful.house` is **dual-path**:
+The homelab supervisor host `rdv.example.com` is **dual-path**:
 
 | | Path | Edge gate | App credential | Result |
 |---|---|---|---|---|

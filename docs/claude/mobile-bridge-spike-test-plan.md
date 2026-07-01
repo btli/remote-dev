@@ -1,6 +1,12 @@
 # Phase 1.5 — Bridge Smoke-Test Plan (manual, physical devices)
 
-> **Status:** Code complete (P1.5.1–P1.5.3 merged). This document captures the manual validation procedure the human reviewer runs to satisfy P1.5.4. Result is recorded in `bd close remote-dev-kahi --reason="..."` after the test passes.
+> **Status: Completed spike, retained for history.** This is an internal,
+> one-time manual validation procedure from the Flutter redesign (Phase 1.5). The
+> native ↔ WebView bridge it validated is the **shipped** mobile architecture —
+> the app renders the terminal in an embedded WebView and crosses input via
+> `window.rdvBridge`. Kept as the record of *why* that boundary is trusted; it is
+> not a doc a new reader needs to run again. Original close-out was recorded via
+> `bd close remote-dev-kahi --reason="..."`.
 
 ## What this validates
 

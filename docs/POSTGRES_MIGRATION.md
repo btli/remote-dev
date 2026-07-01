@@ -9,6 +9,16 @@ need this guide — just point `DATABASE_URL` at a Postgres URL and the schema i
 applied on boot. See the "PostgreSQL backend (optional)" section in
 [`docs/SETUP.md`](./SETUP.md).
 
+> **PostgreSQL is a supported, shipped backend — not experimental.** It runs on
+> the real `pg` driver, applies its schema through migrate-on-boot
+> (`src/db/migrate.ts`), and has a production deployment path: a
+> database-per-instance model on a shared CloudNativePG cluster (see the
+> "CloudNativePG" section of [`MULTI_INSTANCE.md`](./MULTI_INSTANCE.md)). One
+> honesty footnote: the Postgres **integration/testcontainers suites run locally
+> only — they are not part of CI** (in fact CI runs no Vitest suite at all), so
+> rehearse any cutover against a staging copy of your data before doing it for
+> real.
+
 ## Prerequisites
 
 - A reachable PostgreSQL **14+** server and an empty (or dedicated) target

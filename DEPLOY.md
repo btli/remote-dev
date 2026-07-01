@@ -23,7 +23,7 @@ server pulls the new commit, rebuilds, and restarts.
 
 ### Troubleshooting
 
-- **502 from webhook**: the deploy target is offline. Check the host (currently `dev.bryanli.net`) is up; restart the deploy service there. The GitHub workflow cannot self-heal this.
+- **502 from webhook**: the deploy target is offline. Check the host (currently `dev.example.com`) is up; restart the deploy service there. The GitHub workflow cannot self-heal this.
 - **401/403 from webhook**: `DEPLOY_WEBHOOK_SECRET` or Cloudflare Access creds are stale. Rotate in the repo secrets.
 - **Deploy succeeds but app is stale**: browser / CDN cache; hard-refresh. If persistent, check the server logs on the target host.
 

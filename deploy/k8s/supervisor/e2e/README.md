@@ -18,7 +18,7 @@ through the router only**:
    router, creates a tmux-backed PTY, and echoes a sentinel back (bidirectional).
 
 > The live router path is already **proven manually** on the homelab
-> (`rdv.joyful.house` routes root → supervisor and `/<slug>/` → instance). This
+> (`rdv.example.com` routes root → supervisor and `/<slug>/` → instance). This
 > harness is the **CI artifact that guards it against regression** — a test, not
 > product functionality.
 

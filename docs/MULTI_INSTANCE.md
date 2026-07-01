@@ -16,11 +16,25 @@ namespace, and `AUTH_SECRET`.
 >   by the **router** as the **single external front door**: one hostname, one
 >   Cloudflare Access app — `/` → the Supervisor dashboard, `/<slug>/*` → the
 >   matching instance, both with **no prefix stripping** and **no per-instance
->   Ingress object**. The Phase 1+2 control plane (`apps/supervisor` +
->   `apps/supervisor-router`) exists; deploy it with the runbook
+>   Ingress object**. Deploy it with the runbook
 >   **[`docs/SUPERVISOR_DEPLOY.md`](./SUPERVISOR_DEPLOY.md)** (manifests in
 >   [`deploy/k8s/supervisor/`](../deploy/k8s/supervisor/)). Design:
 >   [`docs/plans/2026-05-30-k3s-supervisor-platform.md`](./plans/2026-05-30-k3s-supervisor-platform.md).
+>
+> **Shape B maturity — what actually exists today.** Be precise about the phase
+> boundary before you plan a fleet on this:
+>
+> | Capability | Status |
+> |---|---|
+> | Supervisor control plane (real k8s provisioner + reconciler, CF Access, RBAC, dual SQLite/PG backend) — **Phase 0–2** | **Shipped** |
+> | Router single front door (`/` → dashboard, `/<slug>/*` → instances, WebSocket-aware, no strip) | **Shipped** |
+> | Supervisor-driven provision / suspend / delete of instances | **Shipped** (provisioner is unit-tested against a **mocked** k8s API — there is no real-cluster e2e gate in CI; the one CI test job is a containerized router smoke) |
+> | k3s **worker machines** + **capacity controller** (node listing, autoscaling of capacity) — **Phase 3–4** | **Planned** — `GET /api/nodes` returns `501 PHASE1_PENDING`; there is no `MachineProvider` and no node/capacity tables yet |
+> | Warm pool / scale-to-zero of instances | **Experimental (inert)** — scaffolding only, off by default (`SUPERVISOR_WARM_POOL_SIZE=0`) and not wired to launch. See [`SUPERVISOR_DEPLOY.md`](./SUPERVISOR_DEPLOY.md). |
+>
+> In short: the control plane and router are production-shipped for **manual**
+> provisioning of a fixed set of instances; **automatic capacity/node
+> management is not built yet.**
 >
 > The hand-rolled Traefik/`IngressRoute` manifests below are a **third, manual**
 > path: static multi-instance hosting **without** the Supervisor (path-prefixed

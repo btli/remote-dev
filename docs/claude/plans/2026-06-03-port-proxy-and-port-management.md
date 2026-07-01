@@ -13,7 +13,7 @@ Two related deliverables:
    discovery/control plane: which ports exist, which are listening, which session
    owns them — per instance.
 2. **Add HTTP+WebSocket port proxying** so a user can visit
-   `https://rdv.joyful.house/dev/proxy/6000/…` (slug `dev`, port `6000`) and be
+   `https://rdv.example.com/dev/proxy/6000/…` (slug `dev`, port `6000`) and be
    served whatever is listening on port `6000` inside that instance's pod.
 
 The control plane feeds the data plane: detected/claimed ports drive an **"Open"**
@@ -41,7 +41,7 @@ So an HTTP proxy that lives **in the instance app** needs **zero router change**
 |---|---|---|
 | localhost-bound dev servers (Vite default) | Silent 502 (pod IP can't reach `127.0.0.1` binds) | Always works (loopback→loopback) |
 | Owner-scoping | Router must verify CF JWTs itself (new JWKS/crypto dep) | Falls out of the instance's existing auth |
-| Single-host parity (`dev.bryanli.net`) | Feature absent (no router there) | Same route works |
+| Single-host parity (`dev.example.com`) | Feature absent (no router there) | Same route works |
 | Redirect/cookie/base rewriting | Split across processes | One process owns it |
 
 The only router change in the whole feature is **one rule** to route
@@ -53,7 +53,7 @@ The only router change in the whole feature is **one rule** to route
 
 ```
 Browser
-  GET https://rdv.joyful.house/dev/proxy/6000/api/data
+  GET https://rdv.example.com/dev/proxy/6000/api/data
    → Cloudflare tunnel  (enforces CF Access; adds CF_Authorization + Cf-Access-Jwt-Assertion)
    → Router  decideRoute("/dev/proxy/6000/api/data", upgrade=false)
         slug=dev in allowlist, not /ws  → proxy-http to http://rdv.rdv-dev.svc.cluster.local:6001
@@ -69,7 +69,7 @@ Browser
 ### 4.2 WebSocket (HMR) flow
 
 ```
-Browser  WSS https://rdv.joyful.house/dev/proxy/6000/_hmr  (upgrade)
+Browser  WSS https://rdv.example.com/dev/proxy/6000/_hmr  (upgrade)
    → Router  decideRoute(upgrade=true)
         NEW RULE: /^\/<slug>\/proxy\/\d+/ + upgrade → proxy-ws to ws://rdv.rdv-dev.svc.cluster.local:6002
    → Terminal server (:6002)  NEW upgrade handler matches PROXY_WS_PATH_PATTERN
@@ -201,7 +201,7 @@ Depends on the Track A seam.
 - **Path-based rewriting**: `<base>` fixes relative assets; apps that hardcode
   absolute paths in JS (`fetch('/api/x')`) or build WS URLs from `location` may
   render wrong. Inherent to path-based proxying. Clean fix = the deferred
-  **subdomain scheme** (`6000-dev.joyful.house`) — design the registry/allowlist so
+  **subdomain scheme** (`6000-dev.example.com`) — design the registry/allowlist so
   a subdomain front end can be added without rework.
 - **5-min ws-token TTL**: opening an HMR socket >5 min after page load may 401;
   mitigate with a longer proxy-token TTL.
@@ -210,7 +210,7 @@ Depends on the Track A seam.
 
 - Unit: `port-claims-service`, `proxy-port-utils` (rewrites/base/blocklist),
   `decideRoute` proxy-ws cases, adapters.
-- Integration (in a real pod): `curl https://rdv.joyful.house/dev/proxy/<port>/`
+- Integration (in a real pod): `curl https://rdv.example.com/dev/proxy/<port>/`
   against a live dev server; Vite HMR reconnect end-to-end through the WS bridge.
 - Gates: `bun run lint && typecheck && test:run`; flutter + supervisor gates per
   the `/ship` convention.

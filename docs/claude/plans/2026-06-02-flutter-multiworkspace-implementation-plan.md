@@ -287,7 +287,7 @@ class InstancesApi {                 // talks to the host ORIGIN (no basePath)
 
 - [ ] `cd mobile && flutter analyze` clean; `cd apps/supervisor && bun run typecheck` clean.
 - [ ] Run available tests (note dyld caveat); record any skipped due to the hang.
-- [ ] Manual matrix (device/emulator or against `rdv.joyful.house`): (a) existing single server still connects post‑migration; (b) add the supervisor host → discover → open `demo` → sessions list + a session WebView load under `/demo`; (c) open a session from a notification → header shows the name → **back returns to the sessions list**; (d) switch between two workspaces.
+- [ ] Manual matrix (device/emulator or against `rdv.example.com`): (a) existing single server still connects post‑migration; (b) add the supervisor host → discover → open `demo` → sessions list + a session WebView load under `/demo`; (c) open a session from a notification → header shows the name → **back returns to the sessions list**; (d) switch between two workspaces.
 - [ ] Update `CHANGELOG.md` `[Unreleased]` (Added: multi‑workspace discovery; Fixed: notification back, session header name).
 
 ## Self-review (done by plan author)

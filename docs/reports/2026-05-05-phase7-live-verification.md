@@ -10,7 +10,7 @@ Branch: `phase7/live-verification`
 Drove the live UI end-to-end via Chrome DevTools MCP / CDP:
 
 - Launched mobile-emulated Chrome (375x812x3, iPhone UA), navigated to `/login`.
-- Submitted `bryan.li@databricks.com` via the credentials form.
+- Submitted `you@example.com` via the credentials form.
 - Cleared a transient Next.js HMR error (`jsx-dev-runtime` "module factory not available") with a hard reload.
 - Cleared the welcome screen, landed in the mobile shell with all four tabs (Sessions / Notifications / Channels / Profile).
 - Switched theme via `PATCH /api/appearance` (Settings tab is a placeholder on mobile — "Mobile UI for this screen lands in a follow-up").

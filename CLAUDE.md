@@ -109,14 +109,14 @@ Full architecture: `docs/ARCHITECTURE.md`.
 
 | Subsystem | What it is | Doc |
 |-----------|-----------|-----|
-| REST API + WebSocket protocol | 296 operations across 51 route groups | `docs/API.md` (+ `docs/openapi.yaml`) |
+| REST API + WebSocket protocol | 312 operations across 53 route groups | `docs/API.md` (+ `docs/openapi.yaml`) |
 | Agent CLIs & profiles | 5 providers, profile isolation, appearance, CLI verification; **Claude usage-limit state + fallback pools** (per-profile 5h/7d limits, group-inherited primary+pool with auto-rotation, server-side auto-apply at session creation) | `docs/AGENTS.md` |
 | `rdv` CLI | Rust CLI agents use via Bash (sessions, agents, peers, hooks, browser…) | `docs/RDV_CLI.md` |
 | Production deploy | Blue/green slot swap + HMAC auto-deploy webhook, rollback | `docs/DEPLOYMENT.md` |
 | Multi-instance hosting | Two shapes — Shape A routerless (`RDV_BASE_PATH` at root) and Shape B supervisor + router single front door (k3s) | `docs/MULTI_INSTANCE.md`, `docs/SUPERVISOR_DEPLOY.md` |
 | Automation & orchestration | Scheduled/triggered real agent runs, Crown best-of-N + judge + auto-PR, warm pool, scale-to-zero, supervisor agent-launch + delegation | `docs/AUTOMATION.md` |
 | Mobile & PWA | Flutter `mobile/`, Expo `packages/mobile/`, PWA architecture | `docs/MOBILE_ARCHITECTURE.md` |
-| Services / DB schema / plugins / peer comms | 54 services, 63 tables, terminal-type plugins, inter-agent messaging | `docs/ARCHITECTURE.md` |
+| Services / DB schema / plugins / peer comms | 87 services, 81 tables, terminal-type plugins, inter-agent messaging | `docs/ARCHITECTURE.md` |
 | Setup & environment | Install, env vars, GitHub OAuth, multi-instance env | `docs/SETUP.md` |
 | Capabilities & roadmap | Delivered vs planned platform features | `docs/ENHANCEMENTS.md` |
 
@@ -146,9 +146,9 @@ To change the schema:
 
 1. Edit `src/db/schema.def.ts`.
 2. Regenerate the dialect files: `bun run db:codegen`.
-3. Generate **both** migration sets when the schema changes:
-   - `bun run db:generate` (SQLite, `drizzle/`)
-   - `bun run db:generate:pg` (PostgreSQL, `drizzle/pg/`)
+3. Update both backends when the schema changes:
+   - SQLite (default) is push-based — apply the schema with `bun run db:push`.
+   - PostgreSQL — generate a migration with `bun run db:generate:pg` (→ `drizzle/pg/`).
 
 A `codegen-in-sync` test fails if the committed generated files don't match the
 def (so always run `db:codegen` after editing). `apps/supervisor` has the **same

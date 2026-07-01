@@ -11,7 +11,7 @@
 - **Servers:** Next.js on `:8001`, terminal server on `:8002`. Both started with `bun run start` / `bun run start:terminal` and `NODE_ENV` set by `dotenv -e .env.local`. Note: `next start` warns that it does not work with `output: standalone` — for these measurements it still served the routes correctly because the Next.js compiled bundles are present in `.next/`. For a maximally faithful production run, future passes should use `node .next/standalone/server.js`.
 - **Auth:** localhost-only NextAuth credentials. Cookie obtained via:
   1. `GET /api/auth/csrf` to grab the token.
-  2. `POST /api/auth/callback/credentials` with `csrfToken` + `email=bryan.li@databricks.com` + `callbackUrl=…` + `json=true`. Response sets `authjs.session-token`.
+  2. `POST /api/auth/callback/credentials` with `csrfToken` + `email=you@example.com` + `callbackUrl=…` + `json=true`. Response sets `authjs.session-token`.
   3. Cookie passed to Lighthouse via `--extra-headers='{"Cookie":"authjs.session-token=…"}'`.
 - **Tool:** `bunx lighthouse@latest`, headless Chrome (Lighthouse-bundled), `--throttling-method=simulate`, `--screenEmulation.mobile`, `--form-factor=mobile`. Performance category only.
 

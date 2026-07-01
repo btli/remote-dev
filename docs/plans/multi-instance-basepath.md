@@ -194,7 +194,7 @@ Cloudflare edge (TLS, Access)
   ▼
 Cloudflare tunnel → Traefik (cluster ingress)
   │
-  ├── Host header dev.bryanli.net
+  ├── Host header dev.example.com
   │     │
   │     ├── path /alpha/ws   → terminal-server-alpha:6002  (WebSocket)
   │     ├── path /alpha/*    → next-server-alpha:6001      (HTTP)
@@ -780,7 +780,7 @@ For context, the K8s deployment that consumes this feature looks like:
 env:
   - { name: RDV_BASE_PATH,      value: "/alpha" }
   - { name: RDV_INSTANCE_SLUG,  value: "alpha" }
-  - { name: AUTH_URL,           value: "https://dev.bryanli.net/alpha" }
+  - { name: AUTH_URL,           value: "https://dev.example.com/alpha" }
   - { name: AUTH_SECRET, valueFrom: { secretKeyRef: { name: rdv-alpha-secrets, key: AUTH_SECRET } } }
   - { name: RDV_DATA_DIR,       value: "/var/lib/rdv" }
   # plus CF_ACCESS_TEAM, CF_ACCESS_AUD, GITHUB_* as today
@@ -804,7 +804,7 @@ env:
 ```
 
 The K8s side is implemented in a separate repository
-(`joyfulhouse/k3s-infra`) and is not the responsibility of this issue.
+(`example-org/k3s-infra`) and is not the responsibility of this issue.
 
 ---
 

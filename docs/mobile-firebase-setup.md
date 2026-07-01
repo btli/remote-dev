@@ -30,9 +30,14 @@ This is a one-time manual setup the project owner runs. The Flutter code in `mob
 
 ## 5. (Server) configure FCM service-account credentials
 
-The server already has a `PushNotificationGateway` port. To send pushes, set:
-- `FCM_PROJECT_ID` (from Firebase project settings)
-- `FCM_SERVICE_ACCOUNT_JSON` (Firebase Admin SDK service account key, base64-encoded for env-var transport)
+The server wires a `PushNotificationGateway` in `src/infrastructure/container.ts`.
+When both variables below are set it uses `FcmPushGateway`; otherwise it falls
+back to a `NullPushGateway` (push silently disabled — which is why the app runs
+fine without any of this). To send real pushes, set:
+- `FCM_PROJECT_ID` — the Firebase project ID (from Firebase project settings).
+- `FCM_SERVICE_ACCOUNT_PATH` — a **filesystem path** to the Firebase Admin SDK
+  service-account JSON key file. The server reads the file at this path; it is not
+  the JSON contents inlined into the variable.
 
 ## 6. Verify
 

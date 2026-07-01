@@ -9,7 +9,7 @@
 
 Update the Flutter app so a single connection can be **either** a plain single‑workspace
 server (today's behaviour) **or** a multi‑instance **Supervisor host** that serves several
-path‑prefixed workspaces (e.g. `https://rdv.joyful.house/demo`, `/alpha`). The app will
+path‑prefixed workspaces (e.g. `https://rdv.example.com/demo`, `/alpha`). The app will
 **auto‑discover** workspaces under a host via `GET /api/instances`, let the user pick one,
 and route all API / WebView / cookie traffic under the selected workspace's base path.
 
@@ -254,7 +254,7 @@ resolves the real name; all entry points pass only the id.
 - **Risk — Supervisor route auth modes (§6.1).** The new `/auth/mobile-callback` must resolve a
   caller under both CF Access (cookie) and Supervisor OIDC (session) and return a usable
   host CF token. Typecheck/build the Supervisor app, test both paths, and validate end‑to‑end
-  against `rdv.joyful.house`.
+  against `rdv.example.com`.
 - **Risk — base‑path leakage.** Any missed URL site silently drops the prefix → 404s under a
   workspace. The change inventory (§6) is the checklist; a grep gate for hard‑coded `/m/` and
   absolute `/api/` in `mobile/` guards regressions.

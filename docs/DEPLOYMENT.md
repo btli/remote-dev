@@ -180,6 +180,20 @@ The default production path. On push to `master`, GitHub Actions sends an
 - **Endpoint:** [`src/app/api/deploy/route.ts`](../src/app/api/deploy/route.ts)
   (`POST /api/deploy`).
 
+> **CI does not run the test suite before deploying.** The `Deploy to
+> Production` workflow only *triggers* the webhook and then polls the deploy
+> outcome (see [Deploy-outcome feedback](#deploy-outcome-feedback-ci-polling)) —
+> it runs no lint, type-check, build, or Vitest step. The `Release` workflow
+> ([`release.yml`](../.github/workflows/release.yml), which fires on `v*` tags)
+> likewise only **builds** the tarballs; it runs no tests either. The one CI job
+> that executes any tests is [`supervisor-router-e2e.yml`](../.github/workflows/supervisor-router-e2e.yml),
+> a containerized end-to-end smoke that guards the **supervisor/router** apps
+> (see [`SUPERVISOR_DEPLOY.md`](./SUPERVISOR_DEPLOY.md)) — not this deploy path.
+> The **only** correctness gate on a production deploy is the post-deploy
+> **health check** in `scripts/deploy.ts` (§1 step 5), which auto-rolls-back on
+> failure. Run `bun run lint`, `bun run typecheck`, and `bun run test:run`
+> locally before pushing to `master`.
+
 ### Request contract
 
 | Item | Value |
@@ -225,7 +239,7 @@ SIGNATURE="sha256=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$DEPLOY_WEB
 | Where | Name | Purpose |
 |-------|------|---------|
 | Server env (`.env.local`) | `DEPLOY_WEBHOOK_SECRET` | HMAC secret; **must match** the GitHub secret |
-| Server env | `DEPLOY_EXTERNAL_URL` | External URL for the post-deploy health check (default `https://dev.bryanli.net`) |
+| Server env | `DEPLOY_EXTERNAL_URL` | External URL for the post-deploy health check (default `https://dev.example.com`) |
 | Server env | `DEPLOY_PROJECT_ROOT` | Project checkout where `scripts/` lives (default `~/Projects/btli/remote-dev`) |
 | Server env | `RDV_DATA_DIR` | Optional; forwarded to the deploy child if set |
 | GitHub → Secrets | `DEPLOY_WEBHOOK_SECRET` | Signs the webhook payload |

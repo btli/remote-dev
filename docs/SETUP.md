@@ -1,6 +1,11 @@
 # Setup Guide
 
-Complete guide for setting up Remote Dev on your local machine.
+Deep environment and configuration reference for Remote Dev — environment
+variables, GitHub OAuth, OIDC SSO, remote access, multi-instance hosting, and the
+PostgreSQL backend.
+
+> For a quick install, see [`../INSTALL.md`](../INSTALL.md); this doc is the full
+> configuration reference and does not repeat the basic clone / install / run steps.
 
 ## Prerequisites
 
@@ -41,29 +46,15 @@ tmux -V          # Should show tmux 3.x
 git --version    # Should show git 2.x
 ```
 
-## Installation
+## Configuration
 
-### 1. Clone the Repository
+The basic clone → `bun install` → run happy-path lives in
+[`../INSTALL.md`](../INSTALL.md). This section covers only the **configuration**
+that install references: environment variables, the database, and authorized
+users. If you would rather be walked through all of it interactively, jump to
+[Quick Setup with Init Script](#quick-setup-with-init-script).
 
-```bash
-git clone https://github.com/btli/remote-dev.git
-cd remote-dev
-```
-
-### 2. Install Dependencies
-
-```bash
-bun install
-```
-
-This installs all Node.js dependencies including:
-- Next.js and React
-- xterm.js for terminal emulation
-- node-pty for PTY support
-- Drizzle ORM for database
-- shadcn/ui components
-
-### 3. Configure Environment
+### Configure Environment
 
 Create `.env.local` with your settings:
 
@@ -100,7 +91,7 @@ Or use the init script for guided setup (recommended):
 ./scripts/init.sh
 ```
 
-### 4. Initialize Database
+### Initialize the Database
 
 Push the schema to create tables:
 
@@ -108,7 +99,7 @@ Push the schema to create tables:
 bun run db:push
 ```
 
-### 5. Add Authorized Users
+### Add Authorized Users
 
 Set the `AUTHORIZED_USERS` environment variable with comma-separated emails and run the seed script:
 
@@ -122,13 +113,13 @@ For multiple users:
 AUTHORIZED_USERS="user1@example.com,user2@example.com" bun run db:seed
 ```
 
-### 6. Start the Application
+### Start the Servers
 
-```bash
-bun run dev
-```
+Starting the app (`bun run dev`, or the production/process-manager variants) is
+covered in [`../INSTALL.md`](../INSTALL.md) and under
+[Development Workflow](#development-workflow) below. `bun run dev` brings up both
+servers using the ports from `.env.local`:
 
-This starts both servers using ports from `.env.local`:
 - Next.js on http://localhost:6001 (or `$PORT`)
 - Terminal server on ws://localhost:6002 (or `$TERMINAL_PORT`)
 
@@ -507,11 +498,14 @@ GITHUB_CLIENT_SECRET=<if-using-github>
 RDV_BASE_PATH=
 RDV_INSTANCE_SLUG=
 
-# Claude usage-limit poller (optional). Set to "1" to enable the PROACTIVE
-# Anthropic usage poller that refreshes each Claude profile's usage-limit state
-# on a timer. OFF by default — reactive detection (session-output scan + a Stop
-# hook) works without it. The poll sweep runs on a fixed ~10-minute interval
-# (not configurable). See API.md → "Claude usage limits & pools".
+# Claude usage-limit poller (EXPERIMENTAL — optional, OFF by default). Set to "1"
+# to enable the proactive Anthropic usage poller that refreshes each Claude
+# profile's usage-limit state on a timer. The shipped default path is REACTIVE
+# scrollback detection (a Claude session's recent output is scanned for the
+# usage-limit phrase when it goes idle), which works without this flag. The poll
+# sweep interval is always registered but is a no-op unless this is "1"; it runs
+# on a fixed ~10-minute interval (not configurable). See API.md → "Claude usage
+# limits & pools".
 RDV_CLAUDE_USAGE_POLL_ENABLED=
 ```
 

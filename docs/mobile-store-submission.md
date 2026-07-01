@@ -109,7 +109,7 @@ For App Links (`docs/mobile-deep-links.md`'s `assetlinks.json`), use the **app s
 }]
 ```
 
-Deploy to `https://dev.bryanli.net/.well-known/assetlinks.json` (server change — out of mobile scope, document in the platform team's deployment runbook).
+Deploy to `https://dev.example.com/.well-known/assetlinks.json` (server change — out of mobile scope, document in the platform team's deployment runbook).
 
 ### Screenshots required
 
@@ -153,8 +153,8 @@ After 1-2 weeks of internal testing, promote to Production.
 - [ ] `.github/workflows/mobile-release.yml` uses the right secrets for both Android (`RDV_ANDROID_*`) and iOS (`APPLE_CERT_*`, `KEYCHAIN_PASSWORD`).
 - [ ] `mobile/ios/Runner/PrivacyInfo.xcprivacy` exists and is included in the Runner target.
 - [ ] `mobile/ios/Runner/Info.plist` has `NSFaceIDUsageDescription` + `UIBackgroundModes: [remote-notification]`.
-- [ ] `mobile/ios/Runner/Runner.entitlements` has `aps-environment`, `applinks:dev.bryanli.net`, `com.apple.developer.associated-domains`.
+- [ ] `mobile/ios/Runner/Runner.entitlements` has `aps-environment`, `applinks:dev.example.com`, `com.apple.developer.associated-domains`.
 - [ ] `docs/mobile-firebase-setup.md` has been run by the team owner; real `google-services.json` and `GoogleService-Info.plist` are in place locally.
-- [ ] `docs/mobile-deep-links.md`'s server-side `apple-app-site-association` and `assetlinks.json` are deployed to `https://dev.bryanli.net/.well-known/`.
+- [ ] `docs/mobile-deep-links.md`'s server-side `apple-app-site-association` and `assetlinks.json` are deployed to `https://dev.example.com/.well-known/`.
 
-After all of the above, the first `git tag mobile-v0.1.0 && git push origin mobile-v0.1.0` should kick off CI which produces signed Android `.aab` + iOS `.ipa` artifacts ready for store submission.
+The build pipeline is already live: pushing a `mobile-v*` tag (e.g. `git tag mobile-v0.3.19 && git push origin mobile-v0.3.19`) kicks off [`.github/workflows/mobile-release.yml`](../.github/workflows/mobile-release.yml), which produces signed Android `.aab` + iOS `.ipa` artifacts. The latest cut so far is `mobile-v0.3.16`. The checklist above is therefore about standing up the **store accounts and listings**, not the CI — once those are in place, an existing tagged build's artifacts are what you upload.

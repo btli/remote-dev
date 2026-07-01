@@ -106,9 +106,11 @@ interface in [`src/types/agent.ts`](../src/types/agent.ts)):
 - **Git identity** is stored per profile and written into the profile's `.gitconfig`
   (`setProfileGitIdentity()`), with all values sanitized to prevent git-config
   injection and a `[credential]` section appended to suppress macOS keychain prompts.
-- **Profile secrets** can be fetched from a configured secrets provider and merged
-  into the profile environment (`fetchProfileSecrets()` /
-  `updateProfileSecretsConfig()`); provider config is encrypted at rest.
+- **Profile secrets** can be fetched from a configured secrets provider
+  (currently **Phase.dev only** — `SecretsProviderType = "phase"`, which shells
+  out to the `phase` CLI) and merged into the profile environment
+  (`fetchProfileSecrets()` / `updateProfileSecretsConfig()`); provider config is
+  encrypted at rest.
 
 ### Profile model & linking
 
@@ -131,10 +133,19 @@ pool can be set at the group level and inherited by its projects. When a `claude
 session is created **without an explicit profile**, the project's profile is now
 resolved server-side (primary → pool rotation to the first available profile) and
 injected as `RDV_PROFILE_ID` — previously the project→profile link existed but was
-never applied at session creation. Reactive detection (session-output scan + a
-`Stop` hook) marks a profile limited; on a limit the default is notify + 1-click
-relaunch, with an optional per-project auto-relaunch that spawns a parallel
-session under an available profile (it never force-kills the running one). See
+never applied at session creation.
+
+**Detecting a limit is reactive by default.** When a Claude session goes idle or
+ends, its recent scrollback is scanned for the usage-limit phrase
+(`ReactiveOutputDetector`); a hit marks the profile limited. A proactive
+Anthropic usage poller also exists but is **experimental and OFF by default**
+behind `RDV_CLAUDE_USAGE_POLL_ENABLED` — it is not the shipped default, and the
+once-planned `rdv` Stop-hook limit detector was never built. **On a limit**, the
+default `notify` mode records the limit and posts a notification; the
+notification payload carries a relaunch CTA, **but no client renders an inline
+"relaunch" button yet** — so today `notify` mode surfaces a notification only. An
+optional per-project **`auto`** mode does work: it spawns a *parallel* session
+under an available profile (it never force-kills the running one). See
 [`API.md`](./API.md) → "Claude usage limits & pools" and the
 `RDV_CLAUDE_USAGE_POLL_ENABLED` flag in [`SETUP.md`](./SETUP.md).
 
@@ -187,32 +198,51 @@ Agents in the **same project** can discover each other and coordinate. **bd
 — who's-active-right-now, gotchas, heads-ups, and overlap warnings that bd does
 not hold. Do **not** duplicate task state in chat.
 
-**Reliable delivery (every message reaches the agent exactly once).** Each
-message gets a per-recipient **durable inbox** row (`message_delivery`) that
-advances `pending → delivered → acked`:
+**Durable delivery — but automatic only for Claude Code.** Each message gets a
+per-recipient **durable inbox** row (`message_delivery`) that advances
+`pending → delivered → acked`. How an agent *drains* that inbox depends on its
+provider, and **automatic delivery is gated to Claude Code**: both the MCP push
+and the poll hook are installed only when `provider === "claude"`
+(`ensureAgentConfig` in `src/services/session-service.ts` and `installAgentHooks`
+in `src/services/agent-profile-service.ts` return early for every other
+provider).
 
-- **Long-lived MCP subscription** — the `rdv` MCP server keeps a persistent Unix
+- **Claude Code — automatic (push + poll).** Only Claude profiles get the `rdv`
+  MCP server and the lifecycle hooks. The MCP server keeps a persistent Unix
   socket and surfaces pushed messages instantly, **acking** each so the server
-  marks it delivered. On (re)connect it requests a **replay** of anything it
+  marks it delivered; on (re)connect it requests a **replay** of anything it
   missed (compaction, brief disconnect), driven by a durable per-session cursor.
-- **Poll fallback** — the four non-MCP providers (Codex, Gemini, OpenCode,
-  Antigravity) have no MCP server, so they rely on `rdv peer messages`, which
-  now reads the same durable delivery state and auto-acks the batch it returns.
-  This gives MCP and poll providers **exactly-once parity**.
+  The PreToolUse hook additionally drains the inbox as a poll fallback. This is
+  the only provider with hands-off delivery.
+- **Codex, Gemini, OpenCode, Antigravity — manual pull.** These providers have
+  **no MCP server and no hooks**, so nothing is pushed to them. They must poll
+  their own inbox by running `rdv peer messages` (which reads the same durable
+  cursor and auto-acks the batch it returns). Until an agent calls it, queued
+  messages simply wait in the durable inbox — there is no automatic delivery.
+- **At-least-once, not exactly-once.** Delivery is **at-least-once with
+  idempotent de-duplication**: an in-process dedup set (capped at 500 ids,
+  `peer-server.ts`) plus the durable cursor prevent re-surfacing, but a
+  delivered-but-unacked message can briefly appear twice (see the note below).
+  De-dup by message id / timestamp.
 - **Channel subscriptions** — a channel's broadcasts auto-deliver only to
-  subscribed sessions (`#general` is auto-subscribe for all; opt out with
-  `direct_only`). Non-subscribers still get **@mentions** and replies-to-them.
+  subscribed *Claude* sessions (`#general` is auto-subscribe for all; opt out
+  with `direct_only`). Non-subscribers still get **@mentions** and
+  replies-to-them; non-Claude providers see channel traffic when they poll.
 - **TTL** — awareness chat is ephemeral; messages prune after
   `RDV_CHAT_TTL_DAYS` (default 14), but **never** while an unacked delivery
   remains, so a long-disconnected agent never loses something it hasn't seen.
 
-The `rdv` MCP server is auto-registered into each Claude Code profile's
+The `rdv` MCP server is auto-registered into each **Claude Code** profile's
 `.claude/settings.json` at session creation (`installAgentHooks()`), alongside
 the lifecycle hooks (PreToolUse, PreCompact, Notification, Stop, SubagentStop,
 PostToolUse, SessionEnd). MCP tools handle the **write** side (`send_message`,
-`send_to_channel`, `set_summary`); read paths go through the `rdv` CLI.
+`send_to_channel`, `set_summary`); read paths go through the `rdv` CLI. Non-Claude
+providers use the `rdv peer` / `rdv channel` CLI for both reading and writing.
 
-**Coordination discipline (check in → read peers → check out).**
+**Coordination discipline (check in → read peers → check out).** The
+*automatic* steps below fire from the lifecycle hooks, so they run hands-off
+**only for Claude Code**; agents on the other providers perform the equivalent
+by hand (e.g. `rdv peer note`, `rdv peer messages`, `rdv peer summary`).
 
 1. **Check in** (automatic, first PreToolUse) — a structured post to the
    per-project `#agents` channel: *"checked in — branch …, working on …"*.
