@@ -936,7 +936,7 @@ bun run test:run src/lib/agent-resume src/server/__tests__/agent-relaunch.test.t
 
 ## Risks & Open Questions
 
-1. **Providers lacking confirmed resume (antigravity, possibly gemini/opencode flag names).** The registry marks `antigravity.supportsResume = false` → graceful fresh relaunch + UI "Fresh (unsupported)". For gemini/opencode, the **flag spelling is version-dependent**; hgwo.6's `verifyResumeFlag()` probe catches drift, but if a provider's `--help` does not advertise the token we must fall back to `--continue` (most-recent) or fresh. **Open:** confirm exact flags against the installed CLI versions on dev.bryanli.net before shipping hgwo.6; adjust the registry only (no resolver change).
+1. **Providers lacking confirmed resume (antigravity, possibly gemini/opencode flag names).** The registry marks `antigravity.supportsResume = false` → graceful fresh relaunch + UI "Fresh (unsupported)". For gemini/opencode, the **flag spelling is version-dependent**; hgwo.6's `verifyResumeFlag()` probe catches drift, but if a provider's `--help` does not advertise the token we must fall back to `--continue` (most-recent) or fresh. **Open:** confirm exact flags against the installed CLI versions on dev.example.com before shipping hgwo.6; adjust the registry only (no resolver change).
 
 2. **Codex resume is a subcommand, not a flag.** Handled via `argvOverride` (`["codex","resume","<id>"]`). Risk: `codex resume` may open an interactive picker if the id is wrong; mitigate by validating the id exists on disk (discovery) before building the override; if absent, fall back to `codex resume --last` or fresh.
 

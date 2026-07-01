@@ -7,8 +7,13 @@ See also: [Architecture](./ARCHITECTURE.md) · [Setup](./SETUP.md) · [OpenAPI s
 For a machine-readable contract, see [openapi.yaml](./openapi.yaml) (OpenAPI 3.1).
 
 > **Scope.** Every endpoint documented here is served by the **Next.js** app
-> (default port **6001**) under `/api/*`. The codebase exposes **53 route
-> groups** / **309 method×path operations** as of this writing.
+> (default port **6001**) under `/api/*`. As of v0.3.18 the codebase exposes
+> **53 route groups** (top-level directories under `src/app/api`, excluding the
+> non-routable `_lib/` helper directory), **196 `route.ts` files**, and **312
+> method×path operations** (138 GET · 96 POST · 41 DELETE · 25 PATCH · 12 PUT).
+> The path-based [port proxy](#port-proxy) adds one more route at the app root
+> (`/<basePath>/proxy/<port>/…`, exporting all seven HTTP methods) outside
+> `/api/*`.
 >
 > The **terminal server** (default port **6002**) additionally exposes
 > `/internal/*` routes (`/internal/peers/*`, `/internal/channels/*`,
@@ -22,10 +27,17 @@ For a machine-readable contract, see [openapi.yaml](./openapi.yaml) (OpenAPI 3.1
 
 ## Authentication
 
-Remote Dev uses a **dual authentication model**. Route protection is enforced
-by `src/proxy.ts` (the Next.js 16 proxy, formerly `middleware.ts`), and most
-API handlers additionally wrap themselves with one of two helpers from
-`src/lib/api.ts`.
+Remote Dev uses a **layered authentication model** with **three credential
+types**:
+
+1. a **localhost email-only NextAuth** session (local dev),
+2. a **remote Cloudflare Access** JWT session (LAN/remote deployments), and
+3. an **API-key bearer token** (programmatic access, coding agents).
+
+Route protection is enforced at the boundary by `src/proxy.ts` (the Next.js 16
+proxy, formerly `middleware.ts`), and most API handlers additionally wrap
+themselves with one of two helpers from `src/lib/api.ts` — `withAuth` (session
+only) or `withApiAuth` (session **or** API key).
 
 ### 1. Session cookies (browser)
 
@@ -112,6 +124,7 @@ by session/key auth:
 | Ports | `/api/ports` | [Ports](#ports) |
 | Port proxy | `/<basePath>/proxy/<port>/*` | [Port proxy](#port-proxy) |
 | LiteLLM | `/api/litellm` | [LiteLLM](#litellm) |
+| Model proxy (experimental) | `/api/model-proxy` | [Model proxy](#model-proxy) |
 | Beads (issue tracker) | `/api/beads` | [Beads](#beads) |
 | Trash | `/api/trash` | [Trash](#trash) |
 | Appearance | `/api/appearance` | [Appearance](#appearance) |
@@ -123,6 +136,7 @@ by session/key auth:
 | Git | `/api/git/validate` | [Git](#git) |
 | Images | `/api/images` | [Images](#images) |
 | Config | `/api/config` | [Config](#config) |
+| Control token | `/api/control-token` | [Control token](#control-token) |
 | Setup | `/api/setup` | [Setup](#setup) |
 | Health probes | `/api/healthz`, `/api/readyz` | [Health probes](#health-probes) |
 | Deploy webhook | `/api/deploy` | [Deploy webhook](#deploy-webhook) |
@@ -604,7 +618,7 @@ DELETE /api/notifications/push-token                  # unregister FCM push toke
 ```
 
 - **GET** returns `{ notifications, unreadCount }`; `limit` clamped 1–200.
-- **POST** create requires `title`; `type` defaults to `"info"`. Debounced creation may return `{ "debounced": true }`.
+- **POST** create requires `title`; `type` defaults to `"info"`. Creation is **coalesced** into a recent matching notification within a ~60 s window (`upsertCoalesced`); when it merges instead of inserting a new row, the response is `{ "suppressed": true }` rather than the notification object.
 - **PATCH/DELETE** require either `ids` (non-empty) or `all: true`.
 
 ---
@@ -689,6 +703,14 @@ reports overwrites/clone issues as conflicts.
 ## GitHub
 
 Repository integration. Base path `/api/github`.
+
+> **Write scope.** The **only** write to the GitHub API is **issue creation**
+> ([`POST /api/github/issues`](#issues-create-and-stats)). Issues, comments,
+> branches, folders and repo metadata are **read-only** (all `GET`). Everything
+> else that mutates state — cloning a repo to disk, creating/removing worktrees,
+> account linking/binding, and the `stats`/`mark-seen` endpoints — operates on
+> **local** state, not GitHub. There is no comment, close, edit, or pull-request
+> write endpoint.
 
 ### Repositories
 
@@ -1313,6 +1335,30 @@ process and authenticated with the `x-webhook-secret` header
 
 ---
 
+## Model proxy
+
+> **Experimental — feature-flagged OFF by default.** The provider passthrough
+> returns **404** unless `RDV_MODEL_PROXY_ENABLED=1` (see [SETUP.md](./SETUP.md)).
+> Token/cost accounting currently covers **Claude models only**.
+
+An authenticating pass-through proxy for model-provider APIs, plus the tokens
+that authorize callers. Base path `/api/model-proxy`.
+
+```http
+GET    /api/model-proxy/tokens            # [session | key] list issued proxy tokens
+POST   /api/model-proxy/tokens            # [session | key] issue a proxy token → 201 { id, token }
+DELETE /api/model-proxy/tokens/:id        # [session | key] revoke a proxy token
+POST   /api/model-proxy/:provider/*       # proxy a request upstream (auth: proxy-token bearer; flag-gated)
+```
+
+The token routes (`withApiAuth`) mint and manage bearer tokens; `POST` returns
+the plaintext `token` **once** (`201 { id, token }`). The passthrough
+(`/:provider/<...path>`) authenticates with one of those proxy tokens, swaps in
+the real upstream key server-side, and forwards the request — and is **inert
+until the flag is set**.
+
+---
+
 ## Beads
 
 Read-only bridge to the project's [Beads](https://github.com/steveyegge/beads)
@@ -1481,6 +1527,23 @@ tests. Requires auth (the `instanceSlug` is treated as semi-sensitive).
 | `basePath` | `RDV_BASE_PATH` (empty string when unset) |
 | `instanceSlug` | `RDV_INSTANCE_SLUG`, defaulted to the last basePath segment |
 | `version` | `npm_package_version` at process start, or `"unknown"` |
+
+---
+
+## Control token
+
+```http
+GET /api/control-token
+```
+
+**[session | key]**. Mints a short-lived token for a **control-mode** WebSocket
+(`?control=1`) that subscribes to broadcast events (`agent_activity_status`,
+`session_metadata`) so the sidebar stays live even when no terminal is attached.
+The token binds to **no** real session — it is issued with the reserved
+`CONTROL_SESSION_SENTINEL` session id, scoped to the caller's `userId`, and
+verified by the terminal server via the same HMAC machinery as terminal tokens.
+
+**Response:** `{ "token": "jwt", "expiresIn": 300 }`.
 
 ---
 

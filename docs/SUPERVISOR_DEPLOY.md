@@ -7,7 +7,10 @@ Supervisor provisions/suspends/deletes instances itself — there are **no
 per-instance manifests** to apply.
 
 > Design reference: [`docs/plans/2026-05-30-k3s-supervisor-platform.md`](./plans/2026-05-30-k3s-supervisor-platform.md).
-> This runbook delivers Phase 1 (RBAC + Deployments + Dockerfiles).
+> This runbook covers the Phase 1 deploy artifacts (RBAC + Deployments +
+> Dockerfiles) for the shipped **Phase 0–2** control plane; see
+> [Maturity and scope](#maturity-and-scope) below for exactly what is shipped,
+> experimental, and planned.
 >
 > Manifests live in [`deploy/k8s/supervisor/`](../deploy/k8s/supervisor/):
 > `namespace.yaml`, `rbac.yaml`, `secrets.example.yaml` (template),
@@ -20,6 +23,24 @@ per-instance manifests** to apply.
 > this runbook: the Supervisor + the router as the **single external front door**
 > — one hostname, one Cloudflare Access app, `/` → the dashboard and `/<slug>/*`
 > → instances.
+
+## Maturity and scope
+
+This platform is **Phase 0–2**: real, but with hard edges. Read this before you
+build a fleet on it.
+
+| Component | Status | Honest caveat |
+|---|---|---|
+| Supervisor control plane — real k8s provisioner + reconciler, CF Access auth, RBAC roles, dual SQLite/PostgreSQL backend | **Shipped** | Provisioning is exercised only by **unit tests against a mocked Kubernetes API**. There is **no real-cluster end-to-end gate in CI** — the sole CI test job ([`supervisor-router-e2e.yml`](../.github/workflows/supervisor-router-e2e.yml)) is a containerized *router* smoke, not a live-cluster provisioning test. Do a careful staging rollout on your actual k3s cluster. |
+| Router single front door (`/` → dashboard, `/<slug>/*` → instances, WebSocket-aware) | **Shipped** | — |
+| Manual provision / suspend / delete of a fixed set of instances | **Shipped** | This is the supported operating mode. |
+| **Warm pool** (pre-provisioned instances claimed on demand) | **Experimental — inert** | Scaffolding only. Off by default (`SUPERVISOR_WARM_POOL_SIZE=0`); the claim path (`claimReady`) has **no callers**, so nothing is ever served from the pool. Do **not** rely on it. |
+| **Scale-to-zero** (reap idle instances) | **Experimental — inert** | The idle reaper only evaluates warm-pool rows, and with the pool disabled it has **no candidates**. It does not scale live instances down. |
+| k3s **worker machines** + **capacity controller** (node inventory, autoscaling) — **Phase 3–4** | **Planned** | `GET /api/nodes` returns `501 PHASE1_PENDING`; there is no `MachineProvider` and no capacity/node tables. |
+
+**Bottom line:** treat this as a control plane for **operator-driven** instance
+lifecycle. **Autoscaling is not operational** — the warm-pool and scale-to-zero
+knobs exist but are dormant, and node/capacity management is not built yet.
 
 ## Topology
 

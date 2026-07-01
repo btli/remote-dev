@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make the Flutter mobile multi-workspace bootstrap work on an OIDC/Authentik supervisor host (rdv.joyful.house, no Cloudflare Access) without regressing CF hosts (dev.bryanli.net).
+**Goal:** Make the Flutter mobile multi-workspace bootstrap work on an OIDC/Authentik supervisor host (rdv.example.com, no Cloudflare Access) without regressing CF hosts (dev.example.com).
 
 **Architecture:** Generalize the app's hard-coded `CF_Authorization` credential into a list of named auth cookies `{name,value,path}`. The two `mobile-callback` routes (identity already resolved CF *or* OIDC) return a CF cookie on CF hosts and the NextAuth session cookie on OIDC hosts. The app replays them on Dio and seeds them into terminal WebViews. Terminal WebSocket stays HMAC-token-based.
 
@@ -348,9 +348,9 @@ Replace `baseUrl.replace(path: '/auth/mobile-callback')` with `buildCallbackUrl(
 ## Task 11: Ship + homelab deploy + on-device E2E
 
 - [ ] **Step 1:** From the worktree, run the full TS gate (`bun run typecheck && bun run lint && bun run build && bun run test:run`) and the mobile gate. Move the spec + this plan into the branch so they ship with the PR.
-- [ ] **Step 2:** `/ship` (PR → review → merge → auto-deploy dev.bryanli.net → canary). CF canary 302s are expected.
-- [ ] **Step 3:** Homelab: rebuild supervisor + instance images via the **Forgejo** pipeline (NOT GitHub) → Harbor → ArgoCD rollout; confirm `AUTH_URL=https://rdv.joyful.house` on the supervisor. Confirm rollout green before E2E.
-- [ ] **Step 4:** Build the debug APK (`flutter build apk --debug`; Android SDK `/opt/homebrew/share/android-commandlinetools`), install on the Pixel, and E2E: add rdv.joyful.house → OIDC login → discover instances → add workspace → REST → open terminal (assert token fetch + WS connect). Capture adb logcat.
+- [ ] **Step 2:** `/ship` (PR → review → merge → auto-deploy dev.example.com → canary). CF canary 302s are expected.
+- [ ] **Step 3:** Homelab: rebuild supervisor + instance images via the **Forgejo** pipeline (NOT GitHub) → Harbor → ArgoCD rollout; confirm `AUTH_URL=https://rdv.example.com` on the supervisor. Confirm rollout green before E2E.
+- [ ] **Step 4:** Build the debug APK (`flutter build apk --debug`; Android SDK `/opt/homebrew/share/android-commandlinetools`), install on the Pixel, and E2E: add rdv.example.com → OIDC login → discover instances → add workspace → REST → open terminal (assert token fetch + WS connect). Capture adb logcat.
 - [ ] **Step 5:** Close remote-dev-8erx (`--reason="Shipped in PR #NNN"`), `bd dolt push`, file any follow-ups (deep-link PKCE state).
 
 ---

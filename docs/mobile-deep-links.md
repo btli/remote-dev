@@ -1,18 +1,18 @@
 # Mobile Deep Links
 
-The Remote Dev mobile app supports deep linking from `https://dev.bryanli.net/m/*` URLs into the native Flutter app on both iOS and Android. When a user taps such a link in Mail, Slack, Messages, etc., the OS opens the native app directly (rather than the browser) and routes to the appropriate screen.
+The Remote Dev mobile app supports deep linking from `https://dev.example.com/m/*` URLs into the native Flutter app on both iOS and Android. When a user taps such a link in Mail, Slack, Messages, etc., the OS opens the native app directly (rather than the browser) and routes to the appropriate screen.
 
 URL scheme:
 
 ```
-https://dev.bryanli.net/m/<route>
+https://dev.example.com/m/<route>
 ```
 
 Examples:
 
-- `https://dev.bryanli.net/m/channels/<channelId>` — open a channel
-- `https://dev.bryanli.net/m/notifications` — open notifications
-- `https://dev.bryanli.net/m/sessions/<sessionId>` — open a session
+- `https://dev.example.com/m/channels/<channelId>` — open a channel
+- `https://dev.example.com/m/notifications` — open notifications
+- `https://dev.example.com/m/sessions/<sessionId>` — open a session
 
 For the OS to route the link to the app (rather than the browser), the server must publish two static JSON files under `/.well-known/`:
 
@@ -23,7 +23,7 @@ Both files must be served over HTTPS, with `Content-Type: application/json`, and
 
 ## iOS — Universal Links
 
-iOS uses the `Associated Domains` entitlement together with the `apple-app-site-association` (AASA) file at `https://dev.bryanli.net/.well-known/apple-app-site-association`.
+iOS uses the `Associated Domains` entitlement together with the `apple-app-site-association` (AASA) file at `https://dev.example.com/.well-known/apple-app-site-association`.
 
 ### App-side configuration
 
@@ -32,7 +32,7 @@ The iOS app declares the associated domain in the Xcode project / `Runner.entitl
 ```xml
 <key>com.apple.developer.associated-domains</key>
 <array>
-    <string>applinks:dev.bryanli.net</string>
+    <string>applinks:dev.example.com</string>
 </array>
 ```
 
@@ -43,7 +43,7 @@ The iOS app declares the associated domain in the Xcode project / `Runner.entitl
   "applinks": {
     "details": [
       {
-        "appIDs": ["<TEAM_ID>.net.bryanli.dev.remoteDev"],
+        "appIDs": ["<TEAM_ID>.com.remotedev.app"],
         "components": [
           {
             "/": "/m/*",
@@ -57,12 +57,12 @@ The iOS app declares the associated domain in the Xcode project / `Runner.entitl
 ```
 
 - `<TEAM_ID>` is the 10-character Apple Developer Team ID. This is obtained in Phase 5 once the app is registered on App Store Connect.
-- The bundle identifier (`net.bryanli.dev.remoteDev`) must match the iOS app's `PRODUCT_BUNDLE_IDENTIFIER`.
+- The bundle identifier (`com.remotedev.app`) must match the iOS app's `PRODUCT_BUNDLE_IDENTIFIER`.
 - iOS fetches and caches AASA on app install; updates require a reinstall (or use of the CDN-served variant on iOS 14+).
 
 ## Android — App Links
 
-Android uses the `<intent-filter android:autoVerify="true">` directive together with an `assetlinks.json` file at `https://dev.bryanli.net/.well-known/assetlinks.json`.
+Android uses the `<intent-filter android:autoVerify="true">` directive together with an `assetlinks.json` file at `https://dev.example.com/.well-known/assetlinks.json`.
 
 ### App-side configuration
 
@@ -74,7 +74,7 @@ The Flutter app's `mobile/android/app/src/main/AndroidManifest.xml` adds an auto
     <category android:name="android.intent.category.DEFAULT" />
     <category android:name="android.intent.category.BROWSABLE" />
     <data android:scheme="https"
-          android:host="dev.bryanli.net"
+          android:host="dev.example.com"
           android:pathPrefix="/m/" />
 </intent-filter>
 ```
@@ -89,7 +89,7 @@ The Flutter app's `mobile/android/app/src/main/AndroidManifest.xml` adds an auto
     "relation": ["delegate_permission/common.handle_all_urls"],
     "target": {
       "namespace": "android_app",
-      "package_name": "net.bryanli.dev.remote_dev",
+      "package_name": "com.remotedev.app",
       "sha256_cert_fingerprints": [
         "<APP_SIGNING_SHA256>"
       ]
@@ -98,7 +98,7 @@ The Flutter app's `mobile/android/app/src/main/AndroidManifest.xml` adds an auto
 ]
 ```
 
-- `package_name` must match the Android app's `applicationId` from `mobile/android/app/build.gradle`.
+- `package_name` must match the Android app's `applicationId` from `mobile/android/app/build.gradle.kts` (currently `com.remotedev.app`).
 - `<APP_SIGNING_SHA256>` is the SHA-256 fingerprint of the certificate that signs the APK installed on devices. For Play-Store-distributed apps this is the **Play App Signing** certificate (visible in Play Console → App integrity), not the upload certificate. For sideload/dev builds, it's the local debug or release keystore fingerprint.
 - Multiple fingerprints can be listed (e.g., debug + release + Play App Signing) — Android verifies if **any** match.
 - Get a local fingerprint via:
@@ -110,12 +110,12 @@ The Flutter app's `mobile/android/app/src/main/AndroidManifest.xml` adds an auto
 - Verify the configuration with Google's validator:
 
   ```
-  https://digitalassetlinks.googleapis.com/v1/statements:list?source.web.site=https://dev.bryanli.net&relation=delegate_permission/common.handle_all_urls
+  https://digitalassetlinks.googleapis.com/v1/statements:list?source.web.site=https://dev.example.com&relation=delegate_permission/common.handle_all_urls
   ```
 
 ### Troubleshooting verification
 
-- `adb shell pm get-app-links net.bryanli.dev.remote_dev` shows the verification state for an installed build.
+- `adb shell pm get-app-links com.remotedev.app` shows the verification state for an installed build.
 - If status is `verified`, App Links route directly. If `legacy_failure` or anything else, links fall back to the chooser.
 - Fix: ensure no redirects on the JSON file, correct `Content-Type: application/json`, correct package name, and a fingerprint that matches whatever signs the installed APK.
 
@@ -123,5 +123,5 @@ The Flutter app's `mobile/android/app/src/main/AndroidManifest.xml` adds an auto
 
 - [ ] Obtain Apple Team ID once the app is registered, finalize AASA.
 - [ ] Obtain Play App Signing SHA-256 once the app is uploaded to Play Console, finalize `assetlinks.json`.
-- [ ] Land both files on `dev.bryanli.net` under `/.well-known/`.
+- [ ] Land both files on `dev.example.com` under `/.well-known/`.
 - [ ] Re-test on physical devices that links open the app directly (not the browser).

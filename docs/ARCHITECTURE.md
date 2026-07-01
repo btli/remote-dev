@@ -5,6 +5,7 @@ canonical home for the service-layer, database, plugin, and subsystem detail tha
 used to live in the root `CLAUDE.md`.
 
 > **See also:** [`docs/README.md`](./README.md) (docs index) ·
+> [`docs/DEVELOPMENT.md`](./DEVELOPMENT.md) ·
 > [`docs/SETUP.md`](./SETUP.md) · [`docs/API.md`](./API.md) ·
 > [`docs/RDV_CLI.md`](./RDV_CLI.md) · [`docs/AGENTS.md`](./AGENTS.md) ·
 > [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md) ·
@@ -20,9 +21,9 @@ Remote Dev (v0.3.18) is a web-based terminal interface built with **Next.js 16**
 - Multi-GitHub-account integration with per-project account binding and worktree support
 - Multi-agent CLI support (Claude Code, Codex, Gemini, Antigravity, OpenCode) with isolated profiles
 - Two-level project group + project organization with preference inheritance
-- Session recording and playback, reusable session templates
-- Project tasks, channels, and inter-agent peer messaging
-- An extensible terminal-type plugin system (shell, agent, SSH, file viewer, browser, and rich panels)
+- Session recording (desktop capture) and playback; reusable session templates
+- Project tasks, channels, and inter-agent peer messaging (durable delivery for Claude Code; other agents pull via `rdv peer`)
+- An extensible terminal-type plugin system — five session kinds (shell, agent, SSH, file, browser) plus utility/admin panels (17 built-in types in total)
 - Self-hosted Nerd Fonts with mobile optimization, glassmorphism UI on a Tokyo Night theme
 
 The stack is delivered three ways: the **web app** (PWA-capable), an **Electron
@@ -67,7 +68,7 @@ desktop app**, and **native mobile clients** (see
 │  - groups        │  │  - Detachable    │
 │  - projects      │  │                  │
 │  - node_prefs    │  │                  │
-│  - …59 tables    │  │                  │
+│  - …81 tables    │  │                  │
 └──────────────────┘  └──────────────────┘
 ```
 
@@ -242,6 +243,14 @@ for back-compat). Built-in plugins are wired in
 `src/lib/terminal-plugins/init.ts` →
 `init-server.ts` / `init-client.ts`.
 
+The registry hosts **17 built-in types** (`init-server.ts` registers 17 server
+plugins). Only **five are canonical *session kinds*** — `shell`, `agent`, `ssh`,
+`file`, `browser` — that spawn a PTY or own a document view. The remaining twelve
+are a `loop-agent` variant plus eleven **utility/admin panels** that render in-app
+management UIs (settings, recordings, PRs, issues, profiles, ports, trash, project
+prefs, group prefs, secrets, GitHub maintenance). When the docs say "5 terminal
+types," they mean the five session kinds, not the full registry.
+
 ```
 src/lib/terminal-plugins/
 ├── registry.ts        # legacy combined TerminalTypeRegistry (deprecated)
@@ -264,7 +273,7 @@ src/lib/terminal-plugins/
 | `agent` | AgentPlugin | AI coding agent as a shell process, with an exit screen + restart |
 | `ssh` | SshPlugin | Remote shell over SSH (tmux-backed), using saved connections |
 | `file` | FileViewerPlugin | File viewer/editor (rendered markdown + CodeMirror), no PTY |
-| `browser` | BrowserPlugin | Headless browser automation (navigate/click/type/screenshot) |
+| `browser` | BrowserPlugin | Screenshot-based headless browser automation (navigate/click/type; ~1 fps screenshot polling) |
 | `loop-agent` | LoopAgentPlugin | Long-running looping agent variant |
 
 **Panel plugins** (rich non-terminal panes registered server-side):
@@ -285,8 +294,10 @@ command, env, metadata), `renderContent()`, `onSessionExit()`,
 
 ## Service Layer
 
-54 service modules live in `src/services/`. They are plain service classes/functions
-(the Clean-Architecture use cases call into a subset of them). Grouped by domain:
+Roughly **87 service modules** live under `src/services/` (about 80 at the top level
+plus a handful in subdirectories). They are plain service classes/functions (the
+Clean-Architecture use cases call into a subset of them). The table below is a
+representative map, not an exhaustive listing. Grouped by domain:
 
 ### Sessions, projects & preferences
 
@@ -300,7 +311,7 @@ command, env, metadata), `renderContent()`, `onSessionExit()`,
 | `project-service` | Project CRUD, group placement, sort order, move |
 | `group-scope-service` | Resolve a node ref to its descendant project IDs (group roll-up) |
 | `preferences-service` | User settings + polymorphic node preferences + inheritance |
-| `template-service` | Reusable session-template management |
+| `template-service` | Reusable session templates (currently restores name + working directory) |
 | `recording-service` | Terminal recording storage |
 | `trash-service` | Polymorphic trash management, cleanup scheduling |
 
@@ -338,7 +349,7 @@ command, env, metadata), `renderContent()`, `onSessionExit()`,
 | `task-service` | Project task CRUD, node-scoped queries, dependencies, bulk archival |
 | `channel-service` | Channel/group lifecycle, unread tracking, migration support |
 | `peer-service` | Project-scoped inter-agent peer discovery + messaging |
-| `notification-service` | Notification CRUD, debounced creation, read/delete |
+| `notification-service` | Notification CRUD, coalescing creation (60s window), read/delete |
 
 ### Ports, secrets, SSH & browser
 
@@ -347,9 +358,9 @@ command, env, metadata), `renderContent()`, `onSessionExit()`,
 | `port-registry-service` | Port-allocation tracking + conflict detection |
 | `port-monitoring-service` | Detect actively listening localhost ports (lsof/netstat) |
 | `framework-detection-service` | Detect frameworks/runtimes to suggest ports |
-| `secrets-service` | Secrets-provider abstraction + credential management |
+| `secrets-service` | Phase.dev secrets integration (single provider; shells to the `phase` CLI) |
 | `ssh-connection-service` | SSH connection CRUD, key files, ed25519 gen, password enc |
-| `browser-service` | Headless browser automation (navigate/click/type/screenshot) |
+| `browser-service` | Screenshot-based headless browser automation via Playwright (navigate/click/type) |
 
 ### Scheduling & auto-update
 
@@ -374,7 +385,7 @@ command, env, metadata), `renderContent()`, `onSessionExit()`,
 |---------|---------|
 | `api-key-service` | API key management + constant-time validation |
 | `appearance-service` | User appearance settings + color schemes |
-| `activity-dashboard-service` | Track/analyze agent session activity |
+| `activity-dashboard-service` | Track/analyze agent session activity (experimental; ingestion not yet wired) |
 | `beads-service` | Read the `bd` (beads) issue tracker DB (issues, comments, deps) |
 
 > Many services maintain their own data behind dedicated SQLite databases under
@@ -384,8 +395,9 @@ command, env, metadata), `renderContent()`, `onSessionExit()`,
 ## Database Layer
 
 - **Drizzle ORM**, defaulting to **libsql** (SQLite-compatible; runs under both Bun and Node.js).
-- Schema source of truth: `src/db/schema.def.ts` (**59 tables**); the runtime
+- Schema source of truth: `src/db/schema.def.ts` (**81 tables**); the runtime
   `src/db/schema.ts` is a generated barrel. See "Dual database backend" below.
+  (The separate `apps/supervisor` app has its own ~10-table schema.)
 - Primary database file: `sqlite.db` (gitignored). Logs and LiteLLM analytics use
   separate databases under `~/.remote-dev/`.
 - Optionally runs on **PostgreSQL** instead — opt-in via `DATABASE_URL` (see
@@ -538,19 +550,30 @@ model.
   schemas inside the *same* Postgres database. The buffer never blocks the
   request path and drops (never blocks) under a Postgres outage.
 
+The PostgreSQL backend is **supported and shipped**, not experimental — the same
+codegen, migrations, and sidecars all have Postgres paths. One honest caveat: its
+Testcontainers suites (`bun run test:pg`) run **locally, not in CI** (see
+[`docs/DEVELOPMENT.md`](./DEVELOPMENT.md)).
+
 ## Agent Peer Communication
 
 Project-scoped inter-agent messaging lets agents in the same project discover one
-another and coordinate. **Push-first** architecture: messages arrive instantly via
-MCP push notifications, with a PreToolUse hook as a reliable fallback.
+another and coordinate. Delivery is **not uniform across providers** — automatic
+push/poll delivery is currently a **Claude Code** capability; every other agent
+pulls its inbox on demand.
 
-- An `rdv` MCP server is auto-registered in each agent's `settings.json` at session
-  creation.
-- The terminal server pushes events over a Unix socket
-  (`/tmp/rdv-mcp-{sessionId}.sock`) to the MCP server, which relays them to the
-  agent via `sendLoggingMessage()`.
-- The PreToolUse hook polls for messages as a fallback (dedup via a sentinel file).
-- Read operations (list peers, read channels) go through the `rdv` CLI.
+- **Claude Code — durable push + poll.** An `rdv` MCP server is auto-registered in
+  the profile's `settings.json` at session creation *only when the provider is
+  Claude* (`session-service.ts` gates registration on `provider === "claude"`). The
+  terminal server pushes events over a Unix socket (`/tmp/rdv-mcp-{sessionId}.sock`)
+  to that MCP server, which relays them to the agent via `sendLoggingMessage()`; a
+  poll hook is the fallback path.
+- **All other agents (Codex, Gemini, Antigravity, OpenCode) — pull only.** They are
+  not auto-wired for push/poll delivery; they read peer messages by running
+  `rdv peer` (via Bash) themselves.
+- **Delivery is at-least-once with idempotent de-duplication** (a bounded in-memory
+  dedup cache), not exactly-once. Read operations (list peers, read channels) always
+  go through the `rdv` CLI.
 
 | File | Purpose |
 |------|---------|
@@ -660,6 +683,17 @@ Default: JetBrainsMono Nerd Font Mono. Fonts are declared via `@font-face` in
 Self-hosting avoids external-font-service failures on mobile, works offline,
 compresses well (WOFF2 ≈ 30% smaller than WOFF), and provides full Nerd Font glyphs.
 
+## Testing and Continuous Integration
+
+The codebase carries a large Vitest suite (unit + integration, `bun run test:run`)
+plus a Postgres-only suite (`bun run test:pg`, Testcontainers). **Neither runs in
+GitHub Actions today.** The CI workflows are build/release-oriented: `release.yml`
+builds and publishes, `deploy.yml` / `dev-env-image.yml` / `mobile-release.yml`
+build artifacts, and `supervisor-router-e2e.yml` is the *only* workflow that
+executes tests — a Docker E2E smoke of the supervisor + router front door. Treat the
+local quality gates (`lint`, `typecheck`, `test:run`) as the authoritative checks
+before merging; see [`docs/DEVELOPMENT.md`](./DEVELOPMENT.md).
+
 ## Deployment, Hosting & Clients
 
 The detailed operational docs are kept separate; this section summarizes and links.
@@ -731,5 +765,7 @@ active Flutter app) and `packages/mobile/` (an Expo/React Native app). See
 
 ### REST API
 
-The full HTTP surface is documented in [`docs/API.md`](./API.md), with an OpenAPI 3.0
-spec at [`docs/openapi.yaml`](./openapi.yaml).
+The HTTP surface spans **53 route groups** and **196 `route.ts` files**
+under `src/app/api` (312 exported handlers). It is documented in
+[`docs/API.md`](./API.md), with an OpenAPI spec at
+[`docs/openapi.yaml`](./openapi.yaml).

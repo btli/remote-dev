@@ -2,9 +2,9 @@
 
 > **Status:** Approved design (2026-06-03), **revised per Codex review (2026-06-03)** — integrated 2 blockers + 4 improvements (see §14). Next step: implementation plan (`superpowers:writing-plans`) → `superpowers:subagent-driven-development`.
 > **Tracking:** remote-dev-8erx
-> **Approach:** #1 — generalize the edge-credential into a named auth cookie. **Scope:** full end-to-end (discovery + REST + terminals on rdv.joyful.house, deployed to homelab + verified on-device).
+> **Approach:** #1 — generalize the edge-credential into a named auth cookie. **Scope:** full end-to-end (discovery + REST + terminals on rdv.example.com, deployed to homelab + verified on-device).
 
-**Goal:** Make the Flutter mobile multi-workspace bootstrap work on an **OIDC/Authentik supervisor host** (rdv.joyful.house) that has **no Cloudflare Access**, without regressing CF-Access hosts (dev.bryanli.net).
+**Goal:** Make the Flutter mobile multi-workspace bootstrap work on an **OIDC/Authentik supervisor host** (rdv.example.com) that has **no Cloudflare Access**, without regressing CF-Access hosts (dev.example.com).
 
 **Architecture:** The mobile app already holds a portable credential it replays on Dio requests and seeds into terminal WebViews. Today that credential is hard-coded to the `CF_Authorization` cookie. We generalize it to a **list of named auth cookies** (`{name, value, path}`). The two `mobile-callback` server routes — whose identity resolution already supports both CF and OIDC — return a CF cookie on CF hosts and the **NextAuth session cookie** on OIDC hosts. No new auth backends, no new tables, no new mint endpoints.
 
@@ -16,8 +16,8 @@
 
 The mobile multi-workspace feature (PR #336) assumed every supervisor host sits behind **Cloudflare Access**, which issues a host-wide `CF_Authorization` cookie. The mobile app replays that cookie on Dio calls (`Cookie: CF_Authorization=…`) and seeds it into the terminal WebView cookie jar.
 
-rdv.joyful.house authenticates via **Authentik OIDC** (NextAuth), proven by:
-- `GET https://rdv.joyful.house/ → 307 → /login?callbackUrl=%2F`
+rdv.example.com authenticates via **Authentik OIDC** (NextAuth), proven by:
+- `GET https://rdv.example.com/ → 307 → /login?callbackUrl=%2F`
 - `GET /api/auth/providers → {"oidc":{"name":"Authentik",…}}` (supervisor: **oidc only**)
 - `GET /demo → 307 → /demo/login`; `/demo/api/auth/providers → github + credentials + oidc`
 
@@ -30,8 +30,8 @@ There is **no CF cookie** to read, replay, or seed.
 
 ## 2. Success Criteria
 
-1. On rdv.joyful.house, the app can: add the host → OIDC login (system browser) → **discover** instances via `/api/instances` → add a workspace → **REST** calls succeed → open a **terminal/session** WebView. (The seeded session cookie authenticates the WebView *page* and its `GET /<slug>/api/sessions/:id/token` fetch; the terminal **WebSocket** keeps using the existing short-lived HMAC token — see §7.1. No cookie change to the WS path.)
-2. dev.bryanli.net (CF Access) continues to work **unchanged** for both updated and un-updated app installs.
+1. On rdv.example.com, the app can: add the host → OIDC login (system browser) → **discover** instances via `/api/instances` → add a workspace → **REST** calls succeed → open a **terminal/session** WebView. (The seeded session cookie authenticates the WebView *page* and its `GET /<slug>/api/sessions/:id/token` fetch; the terminal **WebSocket** keeps using the existing short-lived HMAC token — see §7.1. No cookie change to the WS path.)
+2. dev.example.com (CF Access) continues to work **unchanged** for both updated and un-updated app installs.
 3. Existing installed-app credentials are **not** invalidated (no forced re-login).
 4. New backend logic is unit-tested; mobile parse/store/interceptor/seeder/launcher logic is unit-tested.
 5. Supervisor + instance images deployed to the homelab (Forgejo→Harbor→ArgoCD); flow verified on-device.
@@ -175,7 +175,7 @@ The xterm terminal does **not** authenticate the WebSocket with a cookie. `useTe
 - Instance session cookies are slug-named (`rdv-<slug>-…`) **and** path-scoped, so there is no name collision with the supervisor's `__Secure-authjs.session-token@/` even on the shared homelab domain. Strict per-scope separation is kept regardless (host cookie never seeded into an instance WebView).
 
 ## 8. Compatibility / Non-Regression
-- CF callbacks emit **both** legacy params (`apiKey`,`cfToken`) and new `authCookies` → updated apps prefer `authCookies`, un-updated apps use legacy. dev.bryanli.net unaffected.
+- CF callbacks emit **both** legacy params (`apiKey`,`cfToken`) and new `authCookies` → updated apps prefer `authCookies`, un-updated apps use legacy. dev.example.com unaffected.
 - Mobile read-compat falls back to legacy stored keys → no forced re-login.
 - `buildScopedCookies()` returns `undefined` when `RDV_BASE_PATH` is unset → single-server/localhost behavior byte-identical. The §5.3 proxy change must preserve the unscoped path exactly.
 
@@ -190,11 +190,11 @@ The xterm terminal does **not** authenticate the WebSocket with a cookie. `useTe
 - **Proxy** (`src/__tests__/proxy.test.ts`): chunk-only request (`.0`/`.1`) is treated logged-in; unscoped path unchanged.
 - **Supervisor backend** (extend `apps/supervisor/src/app/auth/mobile-callback/__tests__/page.test.tsx`): OIDC branch + chunked + `authCookies`; keep CF.
 - **Mobile** (`mobile/test/...`): `parseMobileCallback` (host/instance/legacy/chunked/malformed b64); **launcher base-path** construction (host/workspace/picker/refresh); credentials read-compat; interceptor (multi-cookie + Bearer gating); seeder (per-path + sameSite); cleanup (per-workspace vs last). `flutter test` may hang at `_dyld_start` — attempt, fall back to skipping the gate for the sideload APK if it recurs.
-- **E2E (on-device):** rdv.joyful.house host add → discover → workspace → REST → terminal (token fetch + WS); capture adb logcat.
+- **E2E (on-device):** rdv.example.com host add → discover → workspace → REST → terminal (token fetch + WS); capture adb logcat.
 
 ## 11. Deployment (two tracks)
-1. **GitHub `/ship`:** lands instance + mobile + proxy changes to master → auto-deploy to **dev.bryanli.net** (CF) → canary. (Supervisor change inert there.)
-2. **Homelab (Forgejo→Harbor→ArgoCD):** rebuild **supervisor** + **instance** images, ArgoCD rollout. Source = **Forgejo, not GitHub** (known gotcha). Distinct operational step; may require pushing the Forgejo remote / triggering CI and confirming rollout before on-device verification. Set/confirm `AUTH_URL=https://rdv.joyful.house` on the supervisor (§5.4).
+1. **GitHub `/ship`:** lands instance + mobile + proxy changes to master → auto-deploy to **dev.example.com** (CF) → canary. (Supervisor change inert there.)
+2. **Homelab (Forgejo→Harbor→ArgoCD):** rebuild **supervisor** + **instance** images, ArgoCD rollout. Source = **Forgejo, not GitHub** (known gotcha). Distinct operational step; may require pushing the Forgejo remote / triggering CI and confirming rollout before on-device verification. Set/confirm `AUTH_URL=https://rdv.example.com` on the supervisor (§5.4).
 
 ## 12. File Map
 **Create**

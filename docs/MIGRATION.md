@@ -42,7 +42,7 @@ most "I can't migrate" problems are a missing one of these:
    login page. On-LAN destinations that bypass Access don't need one.
 4. **Shape B base URL includes the instance slug.** For an instance hosted
    behind the supervisor router, the base URL must include its path prefix,
-   e.g. `https://rdv.joyful.house/homelab` (not just `https://rdv.joyful.house`).
+   e.g. `https://rdv.example.com/homelab` (not just `https://rdv.example.com`).
 
 Use **Test** (Settings → Instances, or the Migrate dialog) to confirm all of
 the above before starting a transfer — it runs a live capability check with
@@ -114,6 +114,12 @@ destination has the same repo/account linked.
   host-bound state outside the profile directory.
 - **GitHub tokens.** Only relink hints travel; link the GitHub account on
   the destination if it isn't already.
+- **Project-group placement.** A migrated project always lands at the
+  destination's **tree root** — its source **project group is not recreated**.
+  If the source project was inside a group, the import records a
+  `group_not_migrated` note in the job's **conflict report** (visible in the
+  result step and in Settings → Instances → Recent migrations). Re-file the
+  project into a group on the destination by hand if you want one.
 
 **Arrives disabled:** imported **triggers and agent schedules** land disabled
 (schedules also paused) so nothing double-fires while both copies of the
@@ -153,7 +159,7 @@ Map the message to the fix:
 | Message contains… | Cause | Fix |
 |-------------------|-------|-----|
 | **rejected the API key (401)** | The destination didn't accept the key | Create an API key **on the destination** (its Settings → Mobile → New API Key) for **your** user and paste it exactly — no stray whitespace. |
-| **not found (404) … instance path prefix** | Base URL is missing the Shape B slug | Set the base URL to include the instance prefix, e.g. `https://rdv.joyful.house/homelab`. |
+| **not found (404) … instance path prefix** | Base URL is missing the Shape B slug | Set the base URL to include the instance prefix, e.g. `https://rdv.example.com/homelab`. |
 | **unexpected redirect … Cloudflare Access** / **expected JSON but got text/html … login page** | The request hit a Cloudflare Access / OIDC login wall instead of the API | Add a **CF Access service token** (Client ID + Secret) to the peer (off-LAN destinations), or verify the base URL points at the instance and not a login page. |
 | **Client ID is set but the Client Secret is missing** (or vice-versa) | Only one half of the CF service token was saved | Re-save the peer with **both** the Client ID and Secret, or clear both. |
 | **API key cannot be decrypted** | `AUTH_SECRET` on the source changed since the peer was registered | Re-register the peer (re-enter its API key). |

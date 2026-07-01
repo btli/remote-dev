@@ -240,7 +240,7 @@ feat(mobile/channels): native channels list with unread badges + swipe-to-archiv
 
 ### Goals
 
-- `applinks:dev.bryanli.net` (or whatever the project's default Remote Dev domain is) listed in `com.apple.developer.associated-domains`.
+- `applinks:dev.example.com` (or whatever the project's default Remote Dev domain is) listed in `com.apple.developer.associated-domains`.
 - Non-allowlisted servers fall back to `remotedev://`.
 
 ---
@@ -251,7 +251,7 @@ feat(mobile/channels): native channels list with unread badges + swipe-to-archiv
 
 ### Files
 
-- Modify: `mobile/android/app/src/main/AndroidManifest.xml` — `<intent-filter>` for `https://dev.bryanli.net/m/*` with `android:autoVerify="true"`
+- Modify: `mobile/android/app/src/main/AndroidManifest.xml` — `<intent-filter>` for `https://dev.example.com/m/*` with `android:autoVerify="true"`
 - Document: server-side `/.well-known/assetlinks.json`
 
 ---

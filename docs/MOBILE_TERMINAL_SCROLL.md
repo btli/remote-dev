@@ -3,6 +3,12 @@
 How swipe-to-scroll on the xterm.js terminal is implemented, why it took
 three iterations to land, and what xterm v6 internals are load-bearing.
 
+Scope: this is the **web / PWA** terminal (`xterm.js`, `@xterm/xterm@^6`). It is
+doubly load-bearing for mobile because the `mobile/` Flutter app renders this same
+web terminal inside an embedded WebView (see
+[`docs/MOBILE_ARCHITECTURE.md`](./MOBILE_ARCHITECTURE.md)), so touch scrolling
+inside the native app runs through exactly this code path. Shipped and unit-tested.
+
 Code: [`src/components/terminal/touch-scroll.ts`](../src/components/terminal/touch-scroll.ts).
 Driver: [`src/components/terminal/Terminal.tsx`](../src/components/terminal/Terminal.tsx) (touch listeners only).
 Tests: [`src/components/terminal/Terminal.touch-scroll.test.ts`](../src/components/terminal/Terminal.touch-scroll.test.ts).

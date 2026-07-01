@@ -1,5 +1,14 @@
 # Native App Research: Terminal Rendering Options
 
+> **Status: Exploratory research, not a committed roadmap.** This memo weighs
+> options for accelerating *desktop* terminal rendering (it predates and is
+> unrelated to the mobile app's WebView architecture). Only one option was
+> acted on: **Option B (WebGL) shipped** — `@xterm/addon-webgl@^0.19.0` is a
+> dependency and the web terminal uses it (with canvas fallback). **Options A
+> (full native Swift/libghostty) and C (Electron + libghostty via XPC) were not
+> pursued** and remain speculative. Effort/performance figures below are
+> unvalidated estimates. Read it as background, not a plan of record.
+
 ## What is libghostty
 
 libghostty is a GPU-accelerated terminal rendering library extracted from [Ghostty](https://ghostty.org/), a modern terminal emulator written in Zig. Key characteristics:
@@ -106,17 +115,17 @@ Keep the Electron shell for UI but offload terminal rendering to a native libgho
 
 ## Recommendation
 
-**Start with Option B (WebGL upgrade) immediately.** This is low-risk, high-reward, and ships in 1-2 weeks. The WebGL renderer in xterm.js provides a significant performance improvement for the terminal rendering path.
+**Option B (WebGL upgrade) — DONE.** This was the low-risk, high-reward path, and it shipped: `@xterm/addon-webgl` is a dependency and the web terminal renders through it with canvas fallback.
 
-**Plan Option C for medium-term (Q2-Q3).** The hybrid approach gives native rendering quality where it matters most (the terminal) while preserving the existing React UI investment. Start with macOS, use WebGL as the cross-platform fallback.
+**Option C (Electron + libghostty via XPC) — not pursued.** The hybrid approach would give native rendering quality for the terminal while preserving the React UI, but it was never started. Left here as a medium-term idea only.
 
-**Defer Option A indefinitely.** The cost of maintaining two complete UI codebases is not justified unless Remote Dev pivots to a terminal-first product where the web UI is secondary.
+**Option A (full native) — not pursued.** The cost of maintaining two complete UI codebases isn't justified unless Remote Dev pivots to a terminal-first product where the web UI is secondary.
 
-### Immediate next steps for Option B:
-1. Install `@xterm/addon-webgl`
-2. Update `Terminal.tsx` to initialize the WebGL renderer with canvas fallback
-3. Test on macOS, Linux, and mobile browsers
-4. Measure frame times and memory usage before/after
+### Option B, as executed
+
+1. `@xterm/addon-webgl` was added as a dependency.
+2. `Terminal.tsx` initializes the WebGL renderer with a canvas fallback.
+3. Left open: no formal cross-platform frame-time / memory benchmark was recorded before/after, so the "3-5x" figure remains an estimate rather than a measured result.
 
 ## Key Differences: Web vs Native Terminal Rendering
 

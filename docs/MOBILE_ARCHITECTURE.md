@@ -1,21 +1,47 @@
-# Mobile App Architecture: Multi-Server Terminal Client
+# Mobile App Architecture (Superseded Design Proposal)
 
-> **Mobile surface reconciliation.** Remote Dev has more than one mobile-ish
-> surface; this document covers only the **Flutter** one:
+> **Status: Superseded design proposal — retained for history, not a
+> description of the shipped app.** This document proposes a **native
+> `xterm.dart` terminal-rendering** architecture (native `TerminalView` +
+> `disableStdin` + a `MobileInputBar`, `Isar` local storage, `flutter_inappwebview`
+> removed). **That is not the path the app took.** The `mobile/` Flutter app
+> shipped a **hybrid native + WebView** architecture instead: native widgets own
+> the chrome (lists, sheets, session-view shell), and an embedded **WebView
+> hosts the terminal canvas** via the PWA's `/m/*` routes. `flutter_inappwebview`
+> is the *core* runtime dependency, and the app carries **no `xterm` or `isar`
+> package** at all.
 >
-> - **`mobile/`** — the **active Flutter app** (this document's subject).
-> - **`packages/mobile/`** — an **Expo / React Native** app (separate codebase,
->   not covered here).
-> - **`archive/mobile-flutter/`** — a **deprecated** earlier Flutter app, kept
->   for reference only; do not build on it.
-> - **PWA** — there is no separate PWA project: the **web app itself** is
->   installable, via `public/manifest.json` + the service worker at
->   `src/app/sw.js/route.ts`, with mobile-web routes under `src/app/m/`. See
->   [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) → "Mobile & PWA".
+> For the architecture that actually ships, read:
+> - [`docs/superpowers/specs/2026-05-08-flutter-app-redesign-design.md`](./superpowers/specs/2026-05-08-flutter-app-redesign-design.md)
+>   — the accepted hybrid native + WebView design.
+> - [`docs/claude/mobile-bridge-spike-test-plan.md`](./claude/mobile-bridge-spike-test-plan.md)
+>   — the native ↔ WebView bridge validation that gated it.
+> - [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) → "Mobile & PWA" — the current summary.
 >
-> The rest of this document describes the **Flutter** architecture.
+> **What did carry over** from this proposal into the shipped app: the
+> multi-server model (`ServerConfig`, an active-server switch), QR-code server
+> onboarding (`mobile_scanner`), deep links, and glassmorphic theming. **What did
+> not**: native `xterm.dart` rendering, `disableStdin` + `MobileInputBar`, `Isar`
+> (server configs persist as JSON in `flutter_secure_storage`, not Isar), and the
+> "`flutter_inappwebview` removed" decision (it is now central). Treat every
+> `xterm.dart` / `Isar` / dependency-version detail below as *proposal-era*, not
+> current fact.
 
-Technical architecture for the Remote Dev Flutter mobile app, migrating from a single-server model to multi-server support while preserving the existing clean architecture, Riverpod state management, and terminal integration patterns.
+## The mobile surfaces (reconciliation)
+
+Remote Dev has several mobile-adjacent surfaces. Only the **Flutter** app is a
+native client; the others are a superseded experiment, an abandoned app, and the
+mobile web UI.
+
+| Surface | What it is | Status |
+|---|---|---|
+| **`mobile/`** (Flutter) | The native mobile app. `pubspec` `remote_dev` v`0.3.18+1`, tag `mobile-v0.3.16`, 132 Dart files; CI builds signed AAB + IPA ([`.github/workflows/mobile-release.yml`](../.github/workflows/mobile-release.yml)). | **Shipped** — the mobile app. A few secondary tabs (channels/notifications/github-accounts) still carry TODO stubs. |
+| **`packages/mobile/`** (Expo / React Native) | An earlier `@remote-dev/mobile` v0.1.0 RN experiment (~18 source files, a checked-in debug APK). | **Superseded** — not a shipping client; do not build on it. |
+| **`archive/mobile-flutter/`** | An earlier Flutter app. | **Abandoned** — see its `DEPRECATED.md` (2026-05-08); not CI-built. Reference only. |
+| **`src/components/mobile/`** | The mobile **web / PWA** UI (bottom tab bar, touch input, tabs). The web app is itself installable via `public/manifest.json` + `src/app/sw.js/route.ts`; mobile-web routes live under `src/app/m/`. | **Shipped** — a few context-menu actions ("Rename", "Move", "Recordings") are "coming soon" placeholders. |
+
+The rest of this document describes the proposed **Flutter native-terminal**
+architecture (superseded, per the banner above).
 
 ---
 
@@ -217,11 +243,15 @@ dev_dependencies:
   isar_generator: ^4.0.0-dev.14  # NEW
 ```
 
-**Dependency rationale:**
+**Dependency rationale (proposal-era — two of these reversed in the shipped app):**
 
-- **Isar over Hive/Drift**: Isar provides embedded NoSQL with zero-config, async queries, composite indexes, and automatic schema migration. Server configs are document-shaped (nested auth, optional fields), which fits NoSQL better than SQLite. Isar also provides offline session caching without defining a relational schema.
-- **mobile_scanner over qr_code_scanner**: `mobile_scanner` uses CameraX (Android) and AVFoundation (iOS) directly. The older `qr_code_scanner` is archived. `mobile_scanner` supports barcode + QR, has better lifecycle handling, and is actively maintained.
-- **flutter_inappwebview REMOVED**: The existing CF Access auth flow already uses `url_launcher` to open Chrome Custom Tabs / Safari, then receives credentials back via `app_links` deep link. InAppWebView was listed as a dependency but unused. Removing it saves approximately 2MB from the binary.
+> The shipped `mobile/pubspec.yaml` does **not** depend on `xterm` or `isar`, and
+> `flutter_inappwebview` was **kept and made central** (it hosts the terminal
+> WebView) rather than removed. `mobile_scanner` did ship, at `^7.2.0`.
+
+- **Isar over Hive/Drift** *(not adopted)*: The proposal favored embedded NoSQL for document-shaped server configs. In the shipped app, server configs persist as JSON in `flutter_secure_storage` (`server_config_store_impl.dart`) — no Isar, no offline session cache in v1.
+- **mobile_scanner over qr_code_scanner** *(adopted)*: `mobile_scanner` uses CameraX (Android) and AVFoundation (iOS) directly. The older `qr_code_scanner` is archived. Shipped at `^7.2.0`, which is why the toolchain floor is Dart 3.7 / Flutter 3.29.
+- **flutter_inappwebview REMOVED** *(reversed — it is now the core runtime)*: The proposal planned to drop InAppWebView in favor of native `xterm.dart`. The shipped hybrid design does the opposite: `flutter_inappwebview` renders the PWA terminal inside the app, and the CF Access auth flow runs through that same WebView's cookie jar.
 
 ---
 
@@ -653,7 +683,7 @@ iOS `Info.plist` additions:
 <array>
     <dict>
         <key>CFBundleURLName</key>
-        <string>com.remotedev.mobile</string>
+        <string>com.remotedev.app</string>
         <key>CFBundleURLSchemes</key>
         <array>
             <string>remotedev</string>
@@ -665,6 +695,17 @@ iOS `Info.plist` additions:
 ---
 
 ## 5. Terminal Data Flow
+
+> **Superseded.** This section is the heart of the proposal that did not ship.
+> The app does **not** render the terminal with native `xterm.dart`,
+> `disableStdin`, or a native `MobileInputBar`. Instead, an embedded WebView runs
+> the PWA terminal (xterm.js in the browser) and a narrow JS bridge
+> (`window.rdvBridge`) crosses input/ready/resize between Dart and the page. See
+> [`docs/claude/mobile-bridge-spike-test-plan.md`](./claude/mobile-bridge-spike-test-plan.md)
+> for the bridge contract, and
+> [`docs/MOBILE_TERMINAL_SCROLL.md`](./MOBILE_TERMINAL_SCROLL.md) for how the
+> web terminal handles touch. The carriage-return (`\r`) requirement below is
+> still real — it just applies at the WebView bridge boundary now.
 
 ### 5.1 Current Flow (Preserved)
 
@@ -974,11 +1015,11 @@ if (result.isSuccess) {
 
 ```groovy
 android {
-    namespace = "com.remotedev.mobile"
+    namespace = "com.remotedev.app"
     compileSdk = 35  // Android 15
 
     defaultConfig {
-        applicationId = "com.remotedev.mobile"
+        applicationId = "com.remotedev.app"
         minSdk = 26        // Android 8.0 (Oreo) -- covers 97%+ of devices
         targetSdk = 35     // Android 15
         versionCode = 1
@@ -1046,7 +1087,7 @@ android {
         <key>CFBundleTypeRole</key>
         <string>Viewer</string>
         <key>CFBundleURLName</key>
-        <string>com.remotedev.mobile</string>
+        <string>com.remotedev.app</string>
         <key>CFBundleURLSchemes</key>
         <array>
             <string>remotedev</string>

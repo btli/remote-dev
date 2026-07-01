@@ -1,186 +1,161 @@
-# Platform Capabilities & Roadmap
+# Capabilities & Roadmap
 
-Remote Dev started as a web terminal and grew into a workspace for running and coordinating
-multiple AI coding agents. This document summarizes **what has shipped** and **what is planned
-next**. It is a narrative overview, not a status board.
+Remote Dev started as a web terminal and grew into a workspace for running and coordinating multiple
+AI coding agents. This document is an **honest capabilities ledger**: it groups every notable feature
+by maturity — what is production-ready, what is partial, what is flag-gated or inert, what is planned,
+and what has been removed. When in doubt, entries under-claim.
 
-> **Authoritative status lives in beads (`bd`), not here.** For what is in-flight, ready, or
-> blocked at any moment, run `bd ready` / `bd list` or `bd show <id>`. This file is a map of the
-> territory; beads is the live tracker.
+> **Live status lives in beads (`bd`), not here.** For what is in-flight, ready, or blocked right
+> now, run `bd ready` / `bd list` / `bd show <id>`. This file maps the territory; beads is the tracker.
 
-See also: [Documentation index](./README.md) · [Architecture](./ARCHITECTURE.md)
+See also: [Documentation index](./README.md) · [Architecture](./ARCHITECTURE.md) ·
+[Automation](./AUTOMATION.md) · [Agents](./AGENTS.md)
+
+_Last updated: 2026-07-01 (v0.3.18)._
+
+Status vocabulary:
+
+- **Delivered** — implemented, wired end to end, in use.
+- **Partial** — works, but incomplete or rough in a way the Notes make explicit.
+- **Experimental** — flag-gated off by default, or scaffolding not yet wired to a UI or caller.
+- **Planned** — skeleton or unbuilt.
+- **Deprecated / removed** — dead, superseded, or intentionally removed.
 
 ---
 
-## Delivered
+## Delivered (production-ready)
 
-Everything in this section is implemented and in the product today.
+### Agents & sessions
 
-### Multi-agent CLI support
+| Capability | Notes |
+|------------|-------|
+| Persistent tmux sessions | Multiple terminals backed by tmux; survive refreshes, disconnects, and server restarts. |
+| Suspend / resume | Detach and reattach with full scrollback. |
+| Multi-agent CLI support (5) | Claude Code, OpenAI Codex, Gemini CLI, Antigravity, OpenCode — installation detection, version checks, and per-provider config templates. Antigravity has no public installer and no session resume. |
+| Agent profiles & isolation | Fully isolated `HOME` + agent config directories per profile: own credentials, git identity, and appearance/theming; per-project profile binding. |
+| Live status & exit handling | Agent sessions expose a running/exited/restarting state machine, exit codes, restart counts, and a custom exit screen. |
+| Session resume | Reattach to prior agent sessions for four of five providers (Antigravity relaunches fresh). |
+| Claude usage-limit management | Per-profile 5h/7d limit state, **reactive** limit detection from terminal output, group-inherited primary + fallback pools with auto-rotation, and server-side auto-apply of the resolved profile at session creation. |
+| Recording & playback | Capture on desktop web; play recordings back on any client. |
+| Terminal types | Five session kinds — `shell`, `agent`, `file` (a real CodeMirror editor across many languages, path-jailed), `ssh` (tmux-backed remote shells), and `browser`. The `browser` type is functional but thin — screenshot-based (~1fps poll), click/type/navigate only (tracked under Partial). |
+| Trash & restore | Soft-delete with 30-day retention for **worktree** sessions, with worktree-aware restore. |
 
-First-class, unified management for five AI coding agents:
+### Organization & collaboration
 
-| Agent | CLI | Config file |
-|-------|-----|-------------|
-| Claude Code | `claude` | `CLAUDE.md` |
-| OpenAI Codex | `codex` | `AGENTS.md` |
-| Gemini CLI | `gemini` | `GEMINI.md` |
-| Antigravity | `agy` | `ANTIGRAVITY.md` |
-| OpenCode | `opencode` | `OPENCODE.md` |
+| Capability | Notes |
+|------------|-------|
+| Project group + project tree | Two-level hierarchy; groups are nestable containers, projects own sessions/tasks/channels/secrets/bindings. |
+| Preference inheritance | Default → User → Group chain → Project; group-active views aggregate across descendant projects. |
+| Tasks (manual) | Priorities, labels, subtasks, dependencies (blocked-by), due dates, and group roll-ups via UI/API/CLI. There is **no** automatic agent-TodoWrite sync (see Deprecated). |
+| Channels | Slack-style channel groups, channels, and DMs with GitHub-flavored markdown, threads, and per-user unread tracking. |
+| Notifications | **Coalescing** (60s window), actionable notifications with toast integration and FCM push; `rdv notification` CLI access. |
 
-- CLI installation detection and version checking per provider (`AgentCLIService`), surfaced in
-  the settings UI.
-- Config-file templates per provider and project type (`AgentConfigTemplateService`).
-- Agent sessions run as a dedicated terminal type with a state machine
-  (running / exited / restarting / closed), exit codes, restart counts, and a custom exit screen
-  with a one-click restart.
-- Resumable Claude Code session discovery from on-disk `.jsonl` history.
+### Git, GitHub & SSH
 
-### Agent profiles & isolation
+| Capability | Notes |
+|------------|-------|
+| Multi-account GitHub | Link multiple accounts, bind one per project. Browse/clone repos and branches; **view and create issues**. Write scope is create-issue only — no commenting, issue editing, or PR writes. |
+| Git worktrees | Isolated worktrees for branch-per-task workflows, with trash/restore and `git worktree repair`. |
+| SSH connections | User-scoped saved targets with paste/upload key, generated ed25519 keypair, password/agent/system auth, encrypted password storage, strict key permissions, a rate-limited connectivity probe, and public-key export. The best-tested operational area. |
 
-- Profiles provide fully isolated agent environments by overlaying `HOME` and the agent-specific
-  config directories, so each profile carries its own credentials, agent config, and git identity.
-- Per-profile **git identity** via an isolated `.gitconfig` (including a `[credential]` section).
-- Per-profile **appearance/theming** (mode toggle, color schemes, terminal settings).
-- Per-project profile binding, so opening an agent in a project uses the right identity
-  automatically.
+### Model routing & MCP
 
-### Agent peer communication
+These were previously filed as "planned" — an undersell. They are implemented and, in two cases,
+have a settings UI.
 
-Project-scoped, push-first messaging that lets agents in the same project find each other and
-coordinate:
-
-- An `rdv` MCP server is auto-registered into each agent's settings at session creation.
-- The terminal server pushes events over a per-session Unix socket; the MCP server relays them to
-  the agent as push notifications.
-- A `PreToolUse` hook polls as a reliable fallback (deduplicated via a sentinel file).
-- Direct and broadcast messages, work summaries visible to peers, and channel posts, all stored in
-  SQLite with a short TTL. Read operations are also available through the `rdv` CLI.
-
-### Tasks, channels & notifications
-
-- **Tasks** — Per-project task tracking with priorities, labels, subtasks, dependencies
-  (blocked-by relationships), and due dates. Group-level views roll up tasks across all descendant
-  projects. Agent `TodoWrite`/task tools sync into project tasks via a `PostToolUse` hook.
-- **Channels** — Slack-style channel groups, channels, and DMs with GitHub-flavored markdown,
-  threaded replies, and per-user unread tracking.
-- **Notifications** — Debounced, actionable notifications with toast integration, plus
-  read/delete management (and `rdv notification …` CLI access).
-
-### Project organization & preferences
-
-- A two-level **project group + project** tree: groups are nestable containers; projects are the
-  leaves that own sessions, tasks, channels, secrets, and repo bindings.
-- **Preference inheritance**: Default → User settings → Group preferences (walking up the group
-  tree) → Project preferences.
-- An **active node** (group or project); when a group is active, project-scoped views aggregate
-  across every descendant project.
-
-### Terminal types
-
-A pluggable terminal-type system powers several session kinds beyond a plain shell:
-
-- `shell` — standard bash/zsh terminal.
-- `agent` — an AI agent as a managed process (see above).
-- `file` — a file viewer/editor (rendered markdown + CodeMirror) for editing config files.
-- `browser` — headless browser automation (navigate, click, type, screenshot, snapshot, evaluate).
-- `ssh` — tmux-backed remote shells over saved SSH connections.
-
-### Sessions
-
-- Persistent tmux-backed sessions that survive disconnects, refreshes, and server restarts.
-- Suspend/resume, reorder, recording & playback, and reusable session templates.
-- Soft-delete **trash** with 30-day retention and restore (including worktree-aware restore).
-
-### Git & GitHub
-
-- **Multi-GitHub-account** linking with per-project account binding.
-- Repository listing, cloning, branch/folder browsing, and issue/comment viewing.
-- **Git worktrees** for branch-per-task isolation, with worktree-aware trash.
-
-### SSH connections
-
-- User-scoped SSH connection definitions with host/port/user and multiple auth types
-  (paste/upload key, generated ed25519 keypair, password, agent, or system).
-- Encrypted password storage, strict key-file permissions, a connectivity probe (rate-limited),
-  and public-key export for `authorized_keys`. Connections can optionally be pinned to a project.
-
-### Secrets
-
-- Per-project secrets provider configuration that fetches credentials and injects them into agent
-  session environments, with a header status indicator for connection state.
+| Capability | Notes |
+|------------|-------|
+| External MCP server management | Database-backed registry for **external** MCP servers with per-project/global inheritance and a settings UI (`MCPServersSection`). "Lifecycle" here means enable/disable, spawn-for-tool-discovery, and health timestamps — not a long-running supervised daemon. (Separate from the built-in `rdv` MCP server used for peer messaging.) |
+| LiteLLM proxy & analytics | Opt-in managed LiteLLM process (auto-starts when enabled in the DB) with a settings panel — the closest thing to a usage/analytics dashboard today. |
 
 ### Operations & deployment
 
-- **Multi-instance hosting** — Run several isolated instances behind one domain. `RDV_BASE_PATH`
-  is a runtime URL prefix, so one image can serve many slugs (see
-  [MULTI_INSTANCE.md](./MULTI_INSTANCE.md)).
-- **Blue/green production deploys** — A slot-based deploy script with active/inactive swapping,
-  rollback, and an optional HMAC-signed deploy webhook (see [DEPLOYMENT.md](./DEPLOYMENT.md)).
-- **Structured logging** — Server-side structured logs with level gating, stored in a separate
-  SQLite database with retention, viewable in an in-app Logs tab.
+| Capability | Notes |
+|------------|-------|
+| Multi-instance hosting (Shape A) | `RDV_BASE_PATH` is a runtime URL prefix, so one image serves many slugs from root. See [MULTI_INSTANCE.md](./MULTI_INSTANCE.md). |
+| Blue/green deploys | Slot-based active/inactive swap with rollback and an optional HMAC-signed deploy webhook. See [DEPLOYMENT.md](./DEPLOYMENT.md). |
+| PostgreSQL backend | Optional dual backend via `DATABASE_URL` (SQLite default); migrate-on-boot. PostgreSQL test suites run locally via testcontainers — **not in CI**. |
+| Server-to-server migration | `rdv migrate` moves an instance between servers via a state machine. Caveat: migrated projects land at the tree root — group structure is not preserved. |
+| Structured logging | Server-side structured logs in a separate SQLite database with retention, viewable in an in-app Logs tab. |
+
+### Automation & multi-tenant control plane
+
+| Capability | Notes |
+|------------|-------|
+| Triggered agent runs | HMAC-verified GitHub webhook runs with per-head-SHA de-duplication and a settings UI (`TriggersSection`). The most complete automation tier. |
+| Supervisor platform (Phase 0–2) | Standalone control plane (`apps/supervisor`) + stateless data-plane router (`apps/supervisor-router`) for multi-tenant hosting (**Shape B**): slug-aware image materialization, provisioning, live storage-target discovery, RBAC + Deployments, lifecycle depth (suspend/resume, logs/events, image rollout, PVC resize), and an audit UI. Kubernetes is **mocked in tests** — there is no real-cluster e2e yet. Deploy with [SUPERVISOR_DEPLOY.md](./SUPERVISOR_DEPLOY.md). |
+| Supervisor agent-launch & delegation | Real HTTP `dispatchAgentRun` and `rdv delegate`. API/CLI only — no dedicated UI. |
 
 ### Clients
 
-- **Web + installable PWA** — A standalone-capable progressive web app.
-- **Desktop (Electron)** — Native tray, auto-updater, embedded process manager, and Cloudflare
-  tunnel integration for remote access (macOS, Linux, Windows).
-- **Mobile** — A touch-friendly terminal with a native input bar (autocorrect, predictive text,
-  voice dictation) and dedicated mobile app projects.
-- **rdv CLI** — A Rust CLI that lets agents (and humans) drive sessions, agents, groups/projects,
-  worktrees, tasks, channels, peers, notifications, and the browser from the shell, plus the hook
-  handlers that report agent lifecycle status.
+| Capability | Notes |
+|------------|-------|
+| Web + installable PWA | Standalone-capable PWA with a genuine offline shell (service worker) and maskable icons. |
+| Mobile app — `mobile/` (Flutter) | The primary, most-developed mobile client (CI builds AAB + IPA). A few secondary tabs (channels/notifications/GitHub accounts) still carry TODOs. |
+| Mobile web UI | Touch-friendly terminal with a native-style input bar (autocorrect, predictive text, voice dictation); a few context-menu actions are still placeholders. |
+| Desktop (Electron) | Native tray, auto-updater, embedded process manager, and Cloudflare-tunnel integration (macOS, Linux, Windows). Maintained but not actively iterated; CI does **not** build the installers. |
+| `rdv` CLI | Rust CLI with ~25 command groups covering sessions, agents, groups/projects, worktrees, tasks, channels, peers, notifications, and the browser, plus the hook handlers that report agent lifecycle status. The flagship agent client. |
 
-### Authentication & access
+### Authentication
 
-- Dual auth: localhost email credentials, Cloudflare Access JWT validation for remote/LAN, and API
-  keys for programmatic access (SHA-256 hashed, constant-time comparison, optional expiry).
+| Capability | Notes |
+|------------|-------|
+| Dual / triple auth | Localhost email credentials, Cloudflare Access JWT validation for remote/LAN, and API keys (SHA-256 hashed, constant-time comparison, optional expiry) for programmatic access. |
 
 ---
 
-## In progress / Planned
+## Partial / in progress
 
-These items are **in progress or planned** (the k3s supervisor platform below has shipped Phases
-0–2; everything else here is forward-looking). Consult beads for current status.
+Works today, but with the specific gaps noted. Do not describe these as finished.
 
-### k3s "supervisor platform" (Phase 0–2 shipped; Phase 3–4 planned)
+| Capability | Where it stands |
+|------------|-----------------|
+| Agent peer messaging | Durable **push + poll** delivery is wired **for Claude Code only** — an `rdv` MCP server is auto-registered and a hook polls as a fallback. Other agents (Codex, Gemini, OpenCode, Antigravity) get no automatic delivery and must pull messages with `rdv peer`. Delivery is **at-least-once with idempotent de-duplication** (not exactly-once). |
+| Session templates | Saves and restores only a session's **name and working directory**. Startup command is dropped; theme/font/icon are saved but never re-applied. |
+| Claude auto-relaunch on limit | Opt-in `auto` relaunch is real; `notify` mode raises a notification but the advertised inline "one-click relaunch" CTA is not wired on the client. |
+| Secrets | **Phase.dev only** (single provider), shelling out to a `phase` CLI. Known issue: profile-scoped secret injection can silently fall back to the environment due to a decrypt bug — flagged to engineering. |
+| Browser terminal type | Functional but thin: screenshot-based (~1fps poll), click/type/navigate only, no service-level tests. |
+| Crown (best-of-N + judge + auto-PR) | Full pipeline with a real judge and `gh pr create`, but **every run waits the full timeout before judging** (candidates are never marked complete). No UI. See [AUTOMATION.md](./AUTOMATION.md). |
+| Scheduled agent runs | Cron-driven launch works, but run **completion state is never written**, so history can read as stuck "running." API/CLI only, no UI. |
+| Mobile-web context actions | Several context-menu actions are "coming soon" placeholders. |
 
-The largest platform initiative is a multi-tenant **control plane** that provisions and manages many
-single-tenant Remote Dev instances from one slug-aware image. This is **Shape B** of the two
-deployment shapes (Shape A is the original single-instance / "routerless" app at root).
+---
 
-- **Status:** **Phase 0 + 1 + 2 have shipped.** The standalone control-plane service
-  (`apps/supervisor`) and the stateless data-plane **router** (`apps/supervisor-router`) exist:
-  slug-aware image materialization, instance provisioning, live storage-target discovery, RBAC +
-  Deployments, and lifecycle depth (suspend/resume, logs/events, image rollout, PVC resize, audit
-  UI). Deploy it with [`docs/SUPERVISOR_DEPLOY.md`](./SUPERVISOR_DEPLOY.md); design in
-  [`docs/plans/2026-05-30-k3s-supervisor-platform.md`](./plans/2026-05-30-k3s-supervisor-platform.md).
-  Phases **3–4** (on-demand k3s worker **machines** + a capacity controller) remain planned.
-- **Shape:** deploy Remote Dev on **k3s** as N independent single-tenant instances. The
-  supervisor-owned router is the **single external front door** (Option C): **one hostname, one
-  Cloudflare Access app**. It routes `dev.example.com/<slug>/…` to the matching instance with **no**
-  prefix stripping (the image materializes its base path at runtime), and proxies every
-  **non-instance** path — `/`, `/login`, `/api/*`, assets — to the **Supervisor dashboard** on the
-  same host (so the dashboard needs no separate hostname or second CF Access app). A **Supervisor**
-  service (its own auth, roles, and DB) talks to the Kubernetes API to provision, suspend, and
-  delete instances, with an operator dashboard and a storage-target selector populated from live
-  cluster discovery.
-- **Remaining phasing:** Phases 3–4 add on-demand k3s worker **machines** with a capacity
-  controller. The runtime base-path materialization this builds on (Phase 0) is the foundation
-  described under multi-instance hosting above.
+## Experimental (flag-gated / inert)
 
-### Other forward-looking ideas
+Present in the codebase but **off by default, inert, or unwired**. Not product features.
 
-Earlier roadmap drafts and design notes describe additional directions that are partly explored or
-proposed but not delivered as product features. Treat these as candidates, not commitments:
+| Capability | Why it's not usable yet |
+|------------|-------------------------|
+| Claude usage poller | Proactive Anthropic poller behind `RDV_CLAUDE_USAGE_POLL_ENABLED` (default off); the api-key path is unwired. Reactive detection is the shipped default. |
+| Warm pool | Gated by `SUPERVISOR_WARM_POOL_SIZE=0`; the `claimReady` path has zero callers — scaffolding, not yet wired to launch instances. |
+| Scale-to-zero | The reaper only evaluates claimed warm-pool rows, so there are never any candidates — planned/scaffolded. |
+| Generic agent-activity dashboard | Service, tables, and `/api/dashboard` exist, but the `trackSession*` ingest path is never called and there is no UI. |
+| Model-key proxy + token/cost | Fully implemented (real token/cost metering; cost table covers Claude models only), but **disabled by default** behind `RDV_MODEL_PROXY_ENABLED` — returns 404 when off, and env-only (no UI). |
 
-- **MCP server management** — a database-backed registry and lifecycle manager for arbitrary MCP
-  servers (per-project/global inheritance, start/stop/health, tool discovery). Note: the built-in
-  `rdv` MCP server for peer communication already ships; this is about managing *external* servers.
-- **Usage & cost insight** — token-budget tracking, per-provider cost estimation, and an agent
-  activity dashboard.
-- **Deeper editor/IDE integration** and event-driven outbound webhooks (session/agent lifecycle
-  events to external systems).
+---
+
+## Planned
+
+Skeleton or unbuilt — candidates, not commitments.
+
+| Capability | Notes |
+|------------|-------|
+| k3s worker machines + capacity controller | Supervisor **Phase 3–4**: on-demand k3s worker machines with a capacity controller. Tables are intentionally omitted and `/api/nodes` returns `501`. |
+| Outbound lifecycle webhooks | Webhooks are inbound only today; emitting session/agent lifecycle events to external systems is not built. |
+| Deeper editor / IDE integration | Beyond the current in-app file editor. |
+
+---
+
+## Deprecated / removed
+
+| Item | Status |
+|------|--------|
+| `archive/mobile-flutter/` | Abandoned; superseded by `mobile/` (`DEPRECATED.md`, 2026-05-08). Reference only, not CI-built. |
+| `packages/mobile/` (Expo / React Native) | Superseded experiment — no active product work; not a shipping client. |
+| TodoWrite → project-task sync | Removed. The agent hook now only broadcasts git pushes; tasks are manual. |
+| Sentinel-file peer de-duplication | Written but never read; superseded by in-DB idempotent de-duplication. |
+| `message_replay_cursor` table | Removed. |
 
 ---
 

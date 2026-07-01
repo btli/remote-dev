@@ -243,9 +243,12 @@ The first positional argument is always the target `<session-id>`.
 ## peer
 
 Inter-agent communication scoped to the current project (see [`AGENTS.md`](./AGENTS.md)
-§5). **bd tracks the work; chat tracks awareness.** Read paths use the CLI; the
-push/write paths also flow through the `rdv` MCP server with a durable
-per-recipient inbox (exactly-once across MCP push and poll).
+§5). **bd tracks the work; chat tracks awareness.** Delivery uses a durable
+per-recipient inbox, but **automatic** delivery (the `rdv` MCP push + the poll
+hook) is wired only for **Claude Code**. Codex, Gemini, OpenCode, and Antigravity
+agents receive nothing automatically — they must drain their inbox by running
+`rdv peer messages` themselves. Delivery is **at-least-once with idempotent
+de-duplication**, not exactly-once.
 
 | Subcommand | Purpose |
 |------------|---------|
@@ -260,10 +263,12 @@ Without `--since`, `rdv peer messages` uses the **durable delivery cursor** and
 (this is the poll-fallback path for non-MCP providers). Pass `--since <iso-ts>`
 for an ad-hoc timestamp scan that does not advance the cursor.
 
-Lifecycle posts to `#agents` happen automatically: a **check-in** (branch +
-claimed bd issue) on session start and a **check-out** on Stop. The **start
-digest** printed at session start lists who's-working-on-what, recent gotchas,
-and collisions (another active session on your branch / worktree / claimed issue).
+Lifecycle posts to `#agents` happen automatically **for Claude Code sessions**
+(they are driven by the lifecycle hooks, which only Claude profiles get): a
+**check-in** (branch + claimed bd issue) on session start and a **check-out** on
+Stop. The **start digest** printed at session start lists who's-working-on-what,
+recent gotchas, and collisions (another active session on your branch / worktree
+/ claimed issue).
 
 ## channel
 
@@ -317,6 +322,12 @@ Server-to-server project migration: push a project (DB rows + working tree +
 profile/agent settings) to another Remote Dev instance registered in the peer
 registry. See [`MIGRATION.md`](./MIGRATION.md) for what travels and the
 destination-side import lifecycle.
+
+> **Caveat — project groups are not preserved.** A migrated project lands at the
+> **tree root** on the destination. If the source project was inside a group, the
+> import records a `group_not_migrated` conflict and sets the new project's group
+> to none (`groupId: null` in `migration-import-service.ts`); re-file it into a
+> group by hand afterward.
 
 | Subcommand | Purpose |
 |------------|---------|
