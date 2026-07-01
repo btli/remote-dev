@@ -10,7 +10,7 @@
  * the basePath before the handler runs, so the handler only ever sees
  * `/proxy/<port>/...`. When we rewrite redirects/cookies/`<base>` for the
  * BROWSER, however, we must put the basePath BACK on, because the browser talks
- * to the public origin (`https://rdv.joyful.house/dev/...`). We derive the
+ * to the public origin (`https://rdv.example.com/dev/...`). We derive the
  * basePath from the slug the caller passes in (rather than reading `BASE_PATH`
  * directly) so these helpers stay pure and testable across slug states.
  */

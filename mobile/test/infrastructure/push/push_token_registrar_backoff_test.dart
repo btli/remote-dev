@@ -65,7 +65,7 @@ void main() {
   HostConfig host(String id) => HostConfig(
         id: id,
         label: id,
-        origin: 'https://rdv.joyful.house',
+        origin: 'https://rdv.example.com',
         kind: HostKind.multiWorkspace,
         createdAt: now,
         lastUsedAt: now,

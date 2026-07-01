@@ -55,7 +55,7 @@ const CONFIG = {
     terminalSocket: join(SOCKET_DIR, "terminal.sock"),
     nextCmd: ["node", "scripts/standalone-server.js"],
     // Production URL - accessed via Cloudflare tunnel
-    nextAuthUrl: process.env.AUTH_URL || "https://dev.bryanli.net",
+    nextAuthUrl: process.env.AUTH_URL || "https://dev.example.com",
   },
 } as const;
 

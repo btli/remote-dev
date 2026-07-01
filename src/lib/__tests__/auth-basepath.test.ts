@@ -79,32 +79,32 @@ afterEach(() => {
 describe("reconcileAuthUrlWithBasePath", () => {
   it("strips the redundant slug path from AUTH_URL and seeds NEXTAUTH_URL with the full slugged URL", async () => {
     const reconcile = await loadReconcile("/alpha");
-    const out = reconcile({ AUTH_URL: "https://rdv.joyful.house/alpha" }, "/alpha");
+    const out = reconcile({ AUTH_URL: "https://rdv.example.com/alpha" }, "/alpha");
 
     // Core sees origin-only so its pathname is "/" → no mismatch warning.
-    expect(out.authUrl).toBe("https://rdv.joyful.house");
+    expect(out.authUrl).toBe("https://rdv.example.com");
     // Direct-path consumers (github/link, signout) still get the slugged URL.
-    expect(out.nextAuthUrl).toBe("https://rdv.joyful.house/alpha");
+    expect(out.nextAuthUrl).toBe("https://rdv.example.com/alpha");
   });
 
   it("preserves an explicitly-set NEXTAUTH_URL rather than overwriting it", async () => {
     const reconcile = await loadReconcile("/alpha");
     const out = reconcile(
       {
-        AUTH_URL: "https://rdv.joyful.house/alpha",
-        NEXTAUTH_URL: "https://rdv.joyful.house/alpha",
+        AUTH_URL: "https://rdv.example.com/alpha",
+        NEXTAUTH_URL: "https://rdv.example.com/alpha",
       },
       "/alpha",
     );
-    expect(out.authUrl).toBe("https://rdv.joyful.house");
-    expect(out.nextAuthUrl).toBe("https://rdv.joyful.house/alpha");
+    expect(out.authUrl).toBe("https://rdv.example.com");
+    expect(out.nextAuthUrl).toBe("https://rdv.example.com/alpha");
   });
 
   it("falls back to NEXTAUTH_URL when AUTH_URL is unset", async () => {
     const reconcile = await loadReconcile("/alpha");
-    const out = reconcile({ NEXTAUTH_URL: "https://rdv.joyful.house/alpha" }, "/alpha");
-    expect(out.authUrl).toBe("https://rdv.joyful.house");
-    expect(out.nextAuthUrl).toBe("https://rdv.joyful.house/alpha");
+    const out = reconcile({ NEXTAUTH_URL: "https://rdv.example.com/alpha" }, "/alpha");
+    expect(out.authUrl).toBe("https://rdv.example.com");
+    expect(out.nextAuthUrl).toBe("https://rdv.example.com/alpha");
   });
 
   it("handles nested base paths (e.g. /team/alpha)", async () => {
@@ -125,8 +125,8 @@ describe("reconcileAuthUrlWithBasePath", () => {
     // Defensive: if AUTH_URL somehow has no path, there's nothing to strip and
     // core already agrees with the origin contract.
     const reconcile = await loadReconcile("/alpha");
-    const out = reconcile({ AUTH_URL: "https://rdv.joyful.house" }, "/alpha");
-    expect(out.authUrl).toBe("https://rdv.joyful.house");
+    const out = reconcile({ AUTH_URL: "https://rdv.example.com" }, "/alpha");
+    expect(out.authUrl).toBe("https://rdv.example.com");
   });
 
   it("leaves an unparseable AUTH_URL untouched (don't mask a config error)", async () => {
@@ -177,7 +177,7 @@ describe("createActionURL no longer warns after reconciliation (real @auth/core)
 
   it("the raw slugged AUTH_URL would trigger env-url-basepath-mismatch (proves the bug)", () => {
     const { warned } = runCreateActionURL(
-      "https://rdv.joyful.house/alpha",
+      "https://rdv.example.com/alpha",
       "/alpha/api/auth",
     );
     expect(warned).toBe(true);
@@ -186,13 +186,13 @@ describe("createActionURL no longer warns after reconciliation (real @auth/core)
   it("the reconciled (origin-only) AUTH_URL does NOT trigger the warning", async () => {
     const reconcile = await loadReconcile("/alpha");
     const { authUrl } = reconcile(
-      { AUTH_URL: "https://rdv.joyful.house/alpha" },
+      { AUTH_URL: "https://rdv.example.com/alpha" },
       "/alpha",
     );
     const { warned, url } = runCreateActionURL(authUrl!, "/alpha/api/auth");
     expect(warned).toBe(false);
     // Outbound URL still carries the full external path: origin + basePath + action.
-    expect(url).toBe("https://rdv.joyful.house/alpha/api/auth/signin");
+    expect(url).toBe("https://rdv.example.com/alpha/api/auth/signin");
   });
 
   it("single-server (empty base) AUTH_URL produces no warning and a clean action URL", () => {

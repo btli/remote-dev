@@ -3,7 +3,7 @@
  *
  * Serves whatever is listening on `127.0.0.1:<port>` INSIDE this instance's pod,
  * at `<basePath>/proxy/<port>/<...path>`. The k3s router forwards
- * `https://rdv.joyful.house/<slug>/*` to this instance's Next.js app (`:6001`)
+ * `https://rdv.example.com/<slug>/*` to this instance's Next.js app (`:6001`)
  * UNCHANGED; Next strips the `basePath=/<slug>` prefix, so this handler sees
  * `/proxy/<port>/<...path>`. We then `fetch` the loopback upstream (loopback
  * works even for localhost-bound dev servers, which a pod-IP proxy can't reach),

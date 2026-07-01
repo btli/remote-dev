@@ -76,7 +76,7 @@ ResponseBody _json200() => ResponseBody.fromString(
     );
 
 const _cfLoginRedirect =
-    'https://joyfulhouse.cloudflareaccess.com/cdn-cgi/access/login/x';
+    'https://example.cloudflareaccess.com/cdn-cgi/access/login/x';
 
 /// Count how many times a cookie [name] appears in a `Cookie` header value
 /// (`a=1; b=2; a=3` → name `a` → 2). Used to prove composition is idempotent
