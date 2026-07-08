@@ -121,34 +121,34 @@ describe("isAllowedProxyOrigin (remote-dev-kn0q)", () => {
   const noHeaders = () => undefined;
 
   it("rejects a missing Origin (browsers always send one)", async () => {
-    process.env.AUTH_URL = "https://rdv.joyful.house";
+    process.env.AUTH_URL = "https://rdv.example.com";
     const { isAllowedProxyOrigin } = await loadBridge("");
     expect(isAllowedProxyOrigin(undefined, noHeaders)).toBe(false);
   });
 
   it("accepts an Origin matching AUTH_URL", async () => {
-    process.env.AUTH_URL = "https://rdv.joyful.house";
+    process.env.AUTH_URL = "https://rdv.example.com";
     const { isAllowedProxyOrigin } = await loadBridge("");
-    expect(isAllowedProxyOrigin("https://rdv.joyful.house", noHeaders)).toBe(
+    expect(isAllowedProxyOrigin("https://rdv.example.com", noHeaders)).toBe(
       true,
     );
   });
 
   it("rejects a cross-origin Origin (different host)", async () => {
-    process.env.AUTH_URL = "https://rdv.joyful.house";
+    process.env.AUTH_URL = "https://rdv.example.com";
     const { isAllowedProxyOrigin } = await loadBridge("");
     expect(isAllowedProxyOrigin("https://evil.example", noHeaders)).toBe(false);
   });
 
   it("rejects a scheme/port mismatch against AUTH_URL", async () => {
-    process.env.AUTH_URL = "https://rdv.joyful.house";
+    process.env.AUTH_URL = "https://rdv.example.com";
     const { isAllowedProxyOrigin } = await loadBridge("");
     // http vs https, and an explicit port, both differ from the https origin.
-    expect(isAllowedProxyOrigin("http://rdv.joyful.house", noHeaders)).toBe(
+    expect(isAllowedProxyOrigin("http://rdv.example.com", noHeaders)).toBe(
       false,
     );
     expect(
-      isAllowedProxyOrigin("https://rdv.joyful.house:8443", noHeaders),
+      isAllowedProxyOrigin("https://rdv.example.com:8443", noHeaders),
     ).toBe(false);
   });
 
@@ -157,10 +157,10 @@ describe("isAllowedProxyOrigin (remote-dev-kn0q)", () => {
     const { isAllowedProxyOrigin } = await loadBridge("");
     const headers = (name: string): string | undefined =>
       ({
-        "x-forwarded-host": "rdv.joyful.house",
+        "x-forwarded-host": "rdv.example.com",
         "x-forwarded-proto": "https",
       })[name];
-    expect(isAllowedProxyOrigin("https://rdv.joyful.house", headers)).toBe(true);
+    expect(isAllowedProxyOrigin("https://rdv.example.com", headers)).toBe(true);
     expect(isAllowedProxyOrigin("https://evil.example", headers)).toBe(false);
   });
 
@@ -174,7 +174,7 @@ describe("isAllowedProxyOrigin (remote-dev-kn0q)", () => {
   });
 
   it("rejects an unparseable Origin value", async () => {
-    process.env.AUTH_URL = "https://rdv.joyful.house";
+    process.env.AUTH_URL = "https://rdv.example.com";
     const { isAllowedProxyOrigin } = await loadBridge("");
     expect(isAllowedProxyOrigin("null", noHeaders)).toBe(false);
     expect(isAllowedProxyOrigin("not a url", noHeaders)).toBe(false);

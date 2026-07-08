@@ -102,7 +102,7 @@ const RUNTIME_NODE =
   process.env.DEPLOY_RUNTIME_NODE || "/opt/homebrew/bin/node";
 
 const EXTERNAL_URL =
-  process.env.DEPLOY_EXTERNAL_URL || "https://dev.bryanli.net";
+  process.env.DEPLOY_EXTERNAL_URL || "https://dev.example.com";
 const HEALTH_CHECK_TIMEOUT_MS = 90_000;
 const HEALTH_CHECK_INTERVAL_MS = 3_000;
 const SSR_PROBE_TIMEOUT_MS = 30_000;
@@ -1250,7 +1250,7 @@ async function healthCheckExternal(): Promise<boolean> {
 // Deploy orchestration
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Keep the in-cluster Forgejo mirror (joyfulhouse/remote-dev) current with the
+// Keep the in-cluster Forgejo mirror (example-org/remote-dev) current with the
 // commit we just shipped, so the homelab build-rdv-platform pipeline — which now
 // clones Forgejo instead of GitHub (no GitHub PAT) — builds the same master.
 // Best-effort: a mirror-push failure must NEVER affect a green deploy. SSH-key

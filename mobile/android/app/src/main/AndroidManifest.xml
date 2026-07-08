@@ -42,7 +42,10 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            <!-- App Links: https://dev.bryanli.net/m/* (P4.6) -->
+            <!-- App Links (P4.6): the android:host below is deployment-specific.
+                 It must match this deployment's public domain, which serves a
+                 matching /.well-known/assetlinks.json. Forks should change it to
+                 their own domain (baked into the shipped app at build time). -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

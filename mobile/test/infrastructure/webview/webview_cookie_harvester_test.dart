@@ -53,7 +53,7 @@ void main() {
             value: 'cf-jwt-value',
             path: '/',
             isHttpOnly: true,
-            domain: 'rdv.joyful.house',
+            domain: 'rdv.example.com',
           ),
           // An unrelated cookie that must be ignored.
           Cookie(name: 'other', value: 'x', path: '/'),
@@ -62,7 +62,7 @@ void main() {
 
       final harvester = WebViewCookieHarvester(cookieManager: cm);
       final harvested = await harvester.harvestCfAuthorization(
-        serverOrigin: Uri.parse('https://rdv.joyful.house'),
+        serverOrigin: Uri.parse('https://rdv.example.com'),
       );
 
       expect(harvested, isNotNull);
@@ -87,7 +87,7 @@ void main() {
 
       final harvester = WebViewCookieHarvester(cookieManager: cm);
       final harvested = await harvester.harvestCfAuthorization(
-        serverOrigin: Uri.parse('https://rdv.joyful.house'),
+        serverOrigin: Uri.parse('https://rdv.example.com'),
       );
 
       expect(harvested, isNull);
@@ -101,7 +101,7 @@ void main() {
       final harvester = WebViewCookieHarvester(cookieManager: cm);
       expect(
         await harvester.harvestCfAuthorization(
-          serverOrigin: Uri.parse('https://rdv.joyful.house'),
+          serverOrigin: Uri.parse('https://rdv.example.com'),
         ),
         isNull,
       );
@@ -116,7 +116,7 @@ void main() {
       final harvester = WebViewCookieHarvester(cookieManager: cm);
       expect(
         await harvester.harvestCfAuthorization(
-          serverOrigin: Uri.parse('https://rdv.joyful.house'),
+          serverOrigin: Uri.parse('https://rdv.example.com'),
         ),
         isNull,
       );
@@ -142,7 +142,7 @@ void main() {
       final harvester = WebViewCookieHarvester(cookieManager: cm);
       expect(
         await harvester.harvestCfAuthorization(
-          serverOrigin: Uri.parse('https://rdv.joyful.house'),
+          serverOrigin: Uri.parse('https://rdv.example.com'),
         ),
         isNull,
       );
@@ -166,7 +166,7 @@ void main() {
 
       final harvester = WebViewCookieHarvester(cookieManager: cm);
       final harvested = await harvester.harvestCfAuthorization(
-        serverOrigin: Uri.parse('https://rdv.joyful.house'),
+        serverOrigin: Uri.parse('https://rdv.example.com'),
       );
       expect(harvested?.value, 'live-jwt');
     });
@@ -181,7 +181,7 @@ void main() {
 
       final harvester = WebViewCookieHarvester(cookieManager: cm);
       final harvested = await harvester.harvestCfAuthorization(
-        serverOrigin: Uri.parse('https://rdv.joyful.house'),
+        serverOrigin: Uri.parse('https://rdv.example.com'),
       );
       expect(harvested?.path, '/');
     });
@@ -195,7 +195,7 @@ void main() {
       // Must not throw.
       expect(
         await harvester.harvestCfAuthorization(
-          serverOrigin: Uri.parse('https://rdv.joyful.house'),
+          serverOrigin: Uri.parse('https://rdv.example.com'),
         ),
         isNull,
       );
@@ -218,7 +218,7 @@ void main() {
       final store = MobileCredentialsStore(_FakeStorage());
 
       final harvested = await harvester.harvestCfAuthorization(
-        serverOrigin: Uri.parse('https://rdv.joyful.house'),
+        serverOrigin: Uri.parse('https://rdv.example.com'),
       );
       expect(harvested, isNotNull);
       await store.upsertHostAuthCookie('host-1', harvested!);

@@ -31,7 +31,7 @@ function makePeer(overrides: Partial<PeerTarget> = {}): PeerTarget {
   return {
     id: "peer-1",
     name: "homelab",
-    baseUrl: "https://rdv.joyful.house/homelab",
+    baseUrl: "https://rdv.example.com/homelab",
     encryptedApiKey: encrypt(API_KEY),
     cfAccessClientId: null,
     encryptedCfAccessSecret: null,
@@ -61,8 +61,8 @@ function fakeFetch(response = new Response("{}", { status: 200 })) {
 describe("peerUrl", () => {
   it("composes baseUrl + path, preserving a Shape-B slug", () => {
     expect(
-      peerUrl({ baseUrl: "https://rdv.joyful.house/homelab" }, "/api/migration/capabilities"),
-    ).toBe("https://rdv.joyful.house/homelab/api/migration/capabilities");
+      peerUrl({ baseUrl: "https://rdv.example.com/homelab" }, "/api/migration/capabilities"),
+    ).toBe("https://rdv.example.com/homelab/api/migration/capabilities");
   });
 
   it("trims a trailing slash and tolerates a path without a leading slash", () => {
@@ -79,7 +79,7 @@ describe("peerFetch", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toBe(
-      "https://rdv.joyful.house/homelab/api/migration/capabilities",
+      "https://rdv.example.com/homelab/api/migration/capabilities",
     );
     const headers = new Headers(calls[0].init?.headers);
     expect(headers.get("authorization")).toBe(`Bearer ${API_KEY}`);

@@ -8,7 +8,7 @@ import '../../domain/auth_cookie.dart';
 /// [WebViewCookieSeeder], which only ever writes store→WebView.
 ///
 /// Why this exists (remote-dev off-LAN CF Access): the homelab host
-/// `rdv.joyful.house` is dual-path. On-LAN it is fronted by Traefik with no
+/// `rdv.example.com` is dual-path. On-LAN it is fronted by Traefik with no
 /// edge gate, so the OIDC session cookie alone authenticates. Off-LAN it is
 /// fronted by the Cloudflare edge + **Cloudflare Access**: every request must
 /// also carry `CF_Authorization` (the CF edge JWT) or it is bounced with a

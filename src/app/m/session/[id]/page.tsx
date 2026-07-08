@@ -80,7 +80,7 @@ export default async function MobileSessionPage({ params }: PageProps) {
   // Behind the supervisor-router the inbound `Host` is the INTERNAL upstream
   // (`rdv.<ns>.svc.cluster.local:6001`); derive the WS URL from the
   // edge-forwarded host (same precedence as the proxy) so the WebView connects
-  // back to the public origin (e.g. wss://rdv.joyful.house/<slug>/ws).
+  // back to the public origin (e.g. wss://rdv.example.com/<slug>/ws).
   const h = await headers();
   const wsUrl = resolveTerminalWsUrlFromHeaders((name) => h.get(name), BASE_PATH);
 

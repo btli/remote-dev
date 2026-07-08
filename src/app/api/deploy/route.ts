@@ -166,7 +166,7 @@ export async function POST(request: Request) {
     LANG: process.env.LANG ?? "en_US.UTF-8",
     TERM: process.env.TERM ?? "xterm-256color",
     DEPLOY_EXTERNAL_URL:
-      process.env.DEPLOY_EXTERNAL_URL || "https://dev.bryanli.net",
+      process.env.DEPLOY_EXTERNAL_URL || "https://dev.example.com",
     DEPLOY_WEBHOOK_SECRET: process.env.DEPLOY_WEBHOOK_SECRET ?? "",
     DEPLOY_REQUESTED_COMMIT: body.after ?? "",
     // Pin deploy.ts's notion of the LIVE serving dir explicitly (the deploy-src

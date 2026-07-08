@@ -16,8 +16,8 @@
  * it into an actionable error ("destination behind Cloudflare Access…").
  *
  * Public DNS for CF-fronted peers — why: when the source host sits on the SAME
- * LAN as a Cloudflare-fronted peer (e.g. dev.bryanli.net beside
- * rdv.joyful.house), the host's split-horizon DNS resolves the peer hostname to
+ * LAN as a Cloudflare-fronted peer (e.g. dev.example.com beside
+ * rdv.example.com), the host's split-horizon DNS resolves the peer hostname to
  * a PRIVATE LAN IP. A launchd-detached daemon on macOS Sequoia is then silently
  * denied local-subnet access (Local Network privacy) → `fetch failed` /
  * PEER_UNREACHABLE — even though the daemon can reach the public internet fine.
@@ -283,7 +283,7 @@ export async function readPeerJson<T = unknown>(
     if (response.status === 404) {
       throw new Error(
         `Peer ${context}: not found (404) — check the Base URL includes the instance path ` +
-          "prefix, e.g. https://rdv.joyful.house/homelab" +
+          "prefix, e.g. https://rdv.example.com/homelab" +
           (snippet ? ` · ${snippet}` : ""),
       );
     }

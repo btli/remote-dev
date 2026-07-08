@@ -209,7 +209,7 @@ export function pathWithRuntimeNodeFirst(
 // Forgejo mirror push (after a green deploy)
 //
 // The homelab `build-rdv-platform` pipeline now CLONES the in-cluster Forgejo
-// mirror of this repo (joyfulhouse/remote-dev) rather than GitHub, so it doesn't
+// mirror of this repo (example-org/remote-dev) rather than GitHub, so it doesn't
 // need a GitHub PAT. To keep that mirror current with whatever we just shipped,
 // the deploy success path pushes the deployed commit to the mirror — best-effort:
 // a mirror-push failure must NEVER fail or roll back a green deploy. The URL
@@ -217,9 +217,13 @@ export function pathWithRuntimeNodeFirst(
 // touching git or the network.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Default in-cluster Forgejo mirror push URL (SSH-key auth). */
+/**
+ * Default in-cluster Forgejo mirror push URL (SSH-key auth). This is a generic
+ * placeholder — real deployments MUST set `RDV_FORGEJO_MIRROR_URL` to their own
+ * mirror URL (or to an empty string to disable the best-effort mirror push).
+ */
 export const FORGEJO_MIRROR_URL_DEFAULT =
-  "ssh://git@git.joyful.house/joyfulhouse/remote-dev.git";
+  "ssh://git@git.example.com/example-org/remote-dev.git";
 
 /**
  * Resolve the Forgejo mirror push URL. `RDV_FORGEJO_MIRROR_URL` overrides the

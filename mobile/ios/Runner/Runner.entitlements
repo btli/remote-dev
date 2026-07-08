@@ -5,6 +5,10 @@
 	<key>aps-environment</key>
 	<string>production</string>
 	<key>com.apple.developer.associated-domains</key>
+	<!-- Deployment-specific: the Universal Links domain below must match this
+	     deployment's public host, which serves a matching
+	     apple-app-site-association file. Forks should change it to their own
+	     domain (this value is baked into the shipped app at build time). -->
 	<array>
 		<string>applinks:dev.bryanli.net</string>
 	</array>

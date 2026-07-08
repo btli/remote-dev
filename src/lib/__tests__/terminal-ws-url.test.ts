@@ -36,8 +36,8 @@ describe("resolveTerminalWsUrlFromHost", () => {
       // forwards `/ws` to the terminal server. Direct port hits would
       // be unreachable through the tunnel.
       name: "production CF tunnel → wss://host/ws",
-      input: { host: "dev.bryanli.net", protocol: "https" },
-      expected: "wss://dev.bryanli.net/ws",
+      input: { host: "dev.example.com", protocol: "https" },
+      expected: "wss://dev.example.com/ws",
     },
     {
       // Local dev: the Next.js host (port 6001) and terminal server
@@ -68,8 +68,8 @@ describe("resolveTerminalWsUrlFromHost", () => {
       // happy-path: trailing colon accepted (some frameworks pass the
       // protocol in window.location form even server-side).
       name: "accepts trailing-colon protocol form",
-      input: { host: "dev.bryanli.net", protocol: "https:" },
-      expected: "wss://dev.bryanli.net/ws",
+      input: { host: "dev.example.com", protocol: "https:" },
+      expected: "wss://dev.example.com/ws",
     },
     {
       // 127.0.0.1 must be treated the same as the literal "localhost"
@@ -92,8 +92,8 @@ describe("resolveTerminalWsUrlFromHost", () => {
       // Multi-instance remote: prefix is appended before /ws on the
       // remote branch too.
       name: "remote with basePath → wss://host{basePath}/ws",
-      input: { host: "dev.bryanli.net", protocol: "https", basePath: "/alpha" },
-      expected: "wss://dev.bryanli.net/alpha/ws",
+      input: { host: "dev.example.com", protocol: "https", basePath: "/alpha" },
+      expected: "wss://dev.example.com/alpha/ws",
     },
   ];
 
@@ -145,20 +145,20 @@ describe("resolveTerminalWsUrlFromHeaders", () => {
 
   it("prefers x-forwarded-host over the internal Host (supervisor-router) → wss://public/dev/ws", () => {
     const getHeader = makeGetHeader({
-      "x-forwarded-host": "rdv.joyful.house",
+      "x-forwarded-host": "rdv.example.com",
       "x-forwarded-proto": "https",
       host: "rdv.rdv-dev.svc.cluster.local:6001",
     });
-    expect(resolveTerminalWsUrlFromHeaders(getHeader, "/dev")).toBe("wss://rdv.joyful.house/dev/ws");
+    expect(resolveTerminalWsUrlFromHeaders(getHeader, "/dev")).toBe("wss://rdv.example.com/dev/ws");
   });
 
   it("uses the first value of a comma-separated forwarded chain", () => {
     const getHeader = makeGetHeader({
-      "x-forwarded-host": "rdv.joyful.house, internal",
+      "x-forwarded-host": "rdv.example.com, internal",
       "x-forwarded-proto": "https",
       host: "rdv.rdv-dev.svc.cluster.local:6001",
     });
-    expect(resolveTerminalWsUrlFromHeaders(getHeader, "/dev")).toBe("wss://rdv.joyful.house/dev/ws");
+    expect(resolveTerminalWsUrlFromHeaders(getHeader, "/dev")).toBe("wss://rdv.example.com/dev/ws");
   });
 
   it("falls back to Host and defaults a non-loopback host to wss", () => {

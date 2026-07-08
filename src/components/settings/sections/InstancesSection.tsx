@@ -289,7 +289,7 @@ export function MigrationRequirements({
         <li>
           For a Shape B instance behind the supervisor router, the Base URL must
           include the <strong>instance slug</strong>, e.g.{" "}
-          <code>https://rdv.joyful.house/homelab</code>.
+          <code>https://rdv.example.com/homelab</code>.
         </li>
       </ul>
       <p className="px-3 pb-3 text-xs text-muted-foreground">

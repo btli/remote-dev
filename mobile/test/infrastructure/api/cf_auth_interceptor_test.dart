@@ -404,7 +404,7 @@ void main() {
             if (idx == 0) {
               return _redirectBody(
                 302,
-                'https://joyfulhouse.cloudflareaccess.com/cdn-cgi/access/login/x',
+                'https://example.cloudflareaccess.com/cdn-cgi/access/login/x',
               );
             }
             return _jsonBody(200, {'sessions': <dynamic>[]});
