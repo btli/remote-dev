@@ -7,20 +7,23 @@
  * is off, `supports()` returns false and `fetchLimitState()` returns null, so
  * the poller never touches the network. When on, it resolves the profile's
  * account kind, loads the matching credential (subscription → OAuth token from
- * `.claude/.credentials.json`; api_key → not yet wired, see below), delegates
- * the HTTP probe to `anthropic-usage-adapter.fetchClaudeUsage`, and normalizes
- * the snapshot into a `LimitDetectionResult`.
+ * `.claude/.credentials.json`; api_key → the profile's encrypted Anthropic key
+ * via the shared secret resolver, see below), delegates the HTTP probe to
+ * `anthropic-usage-adapter.fetchClaudeUsage`, and normalizes the snapshot into a
+ * `LimitDetectionResult`.
  *
  *   subscription → 5h/7d rolling-window utilization + reset.
  *   api_key      → a single rate/credit "org" dimension (worst-case rate-limit
  *                  utilization + soonest replenish/retry-after), mapped onto the
  *                  5h slot of the LimitDetectionResult (the use-case/repo carry
  *                  5h/7d only). The adapter parses the api_key headers for real;
- *                  loading + decrypting the raw key lives in the account-login /
- *                  secrets path (a separate change), so this poller does not
- *                  reach into profile_secrets_config — when no key is available
- *                  it returns null (a safe no-op) rather than crossing that
- *                  boundary.
+ *                  the raw key is resolved here through the SAME precedence the
+ *                  model-key proxy uses — the profile's encrypted
+ *                  `profileSecretsConfig` (`ANTHROPIC_API_KEY`, decrypted by
+ *                  `fetchProfileSecrets`) first, then the `ANTHROPIC_API_KEY`
+ *                  env fallback. When no key is resolvable it returns null (a
+ *                  safe no-op). The key is the request credential only — never
+ *                  logged, persisted, or returned.
  *
  * Best-effort throughout: any failure (no token, read error, adapter error)
  * logs and returns null — it must never throw.
@@ -40,6 +43,8 @@ import {
   fetchClaudeUsage,
   type ClaudeUsageSnapshot,
 } from "@/infrastructure/external/anthropic-usage-adapter";
+import { fetchProfileSecrets } from "@/services/agent-profile-service";
+import { PROVIDERS } from "@/lib/model-proxy/providers";
 import { isUsagePollEnabled } from "./poll-config";
 import { createLogger } from "@/lib/logger";
 
@@ -63,7 +68,7 @@ export class UsageEndpointPoller implements UsageLimitGateway {
       const token =
         kind === "subscription"
           ? await this.loadOAuthToken(profileId)
-          : null; // api_key: raw key lives in the secrets path (not wired here)
+          : await this.loadApiKey(profileId);
       if (!token) {
         log.debug("No credential for profile; skipping poll", { profileId, kind });
         return null;
@@ -124,6 +129,25 @@ export class UsageEndpointPoller implements UsageLimitGateway {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Resolve the profile's raw Anthropic API key for the api_key probe, using the
+   * SAME precedence as the model-key proxy's `resolveProviderKey`:
+   *   1. the profile's encrypted `profileSecretsConfig` (`ANTHROPIC_API_KEY`,
+   *      decrypted server-side by `fetchProfileSecrets` — we never re-implement
+   *      decryption), then
+   *   2. the `ANTHROPIC_API_KEY` env fallback.
+   * Returns null when no key is resolvable (a safe no-op). The key is handed
+   * straight to the adapter as the request credential and is never logged or
+   * persisted.
+   */
+  private async loadApiKey(profileId: string): Promise<string | null> {
+    const { secretKey, keyEnv } = PROVIDERS.anthropic;
+    const secrets = await fetchProfileSecrets(profileId);
+    const fromProfile = secrets?.[secretKey];
+    if (fromProfile) return fromProfile;
+    return process.env[keyEnv] ?? null;
   }
 }
 

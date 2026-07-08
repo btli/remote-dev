@@ -27,6 +27,10 @@ vi.mock("@/infrastructure/external/anthropic-usage-adapter", () => ({
   fetchClaudeUsage: vi.fn(),
 }));
 
+vi.mock("@/services/agent-profile-service", () => ({
+  fetchProfileSecrets: vi.fn(),
+}));
+
 const pollEnabled = { value: true };
 vi.mock("./poll-config", () => ({
   isUsagePollEnabled: () => pollEnabled.value,
@@ -35,6 +39,7 @@ vi.mock("./poll-config", () => ({
 import { db } from "@/db";
 import { readFile } from "node:fs/promises";
 import { fetchClaudeUsage } from "@/infrastructure/external/anthropic-usage-adapter";
+import { fetchProfileSecrets } from "@/services/agent-profile-service";
 import { UsageEndpointPoller } from "./UsageEndpointPoller";
 
 const claudeAccountsFindFirst = db.query.claudeAccounts.findFirst as ReturnType<
@@ -45,6 +50,9 @@ const agentProfilesFindFirst = db.query.agentProfiles.findFirst as ReturnType<
 >;
 const readFileMock = readFile as unknown as ReturnType<typeof vi.fn>;
 const fetchUsageMock = fetchClaudeUsage as unknown as ReturnType<typeof vi.fn>;
+const fetchSecretsMock = fetchProfileSecrets as unknown as ReturnType<
+  typeof vi.fn
+>;
 
 const OAUTH_CREDS = JSON.stringify({
   claudeAiOauth: { accessToken: "oauth-access-token" },
@@ -53,6 +61,8 @@ const OAUTH_CREDS = JSON.stringify({
 beforeEach(() => {
   vi.clearAllMocks();
   pollEnabled.value = true;
+  delete process.env.ANTHROPIC_API_KEY;
+  fetchSecretsMock.mockResolvedValue(null);
 });
 
 describe("UsageEndpointPoller.supports", () => {
@@ -160,26 +170,9 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
   });
 
   describe("api_key", () => {
-    it("returns null without probing — the raw key isn't wired in this path", async () => {
+    it("resolves the profile's encrypted key, probes, and folds the org snapshot into the 5h slot", async () => {
       claudeAccountsFindFirst.mockResolvedValue({ accountKind: "api_key" });
-
-      const poller = new UsageEndpointPoller();
-      const result = await poller.fetchLimitState("profile-1");
-
-      expect(result).toBeNull();
-      // No OAuth file read and no probe for api_key (credential not available).
-      expect(agentProfilesFindFirst).not.toHaveBeenCalled();
-      expect(fetchUsageMock).not.toHaveBeenCalled();
-    });
-
-    it("folds an org-dimension snapshot into the 5h slot when given one", async () => {
-      // Drive the mapping directly: an api_key-shaped snapshot (org only) maps
-      // its org pct/reset onto the result's 5h slot. (The poller's own api_key
-      // credential path is not yet wired, so we exercise the mapping via a
-      // subscription-kind probe returning an org-only snapshot.)
-      claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
-      agentProfilesFindFirst.mockResolvedValue({ configDir: "/cfg/dir" });
-      readFileMock.mockResolvedValue(OAUTH_CREDS);
+      fetchSecretsMock.mockResolvedValue({ ANTHROPIC_API_KEY: "sk-ant-profile" });
       const orgReset = new Date("2025-06-13T16:00:00Z");
       fetchUsageMock.mockResolvedValue({
         window5hPct: null,
@@ -193,9 +186,98 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
       const poller = new UsageEndpointPoller();
       const result = await poller.fetchLimitState("profile-1");
 
+      // The adapter is invoked with the profile key + the api_key kind.
+      expect(fetchUsageMock).toHaveBeenCalledWith("sk-ant-profile", "api_key");
+      // No OAuth credentials file is read on the api_key path.
+      expect(readFileMock).not.toHaveBeenCalled();
+      // The org dimension folds onto the 5h slot of the result.
       expect(result?.window5hPct).toBe(100);
       expect(result?.resetAt5h).toBe(orgReset);
       expect(result?.isLimited).toBe(true);
+    });
+
+    it("falls back to the ANTHROPIC_API_KEY env var when the profile has no secret", async () => {
+      claudeAccountsFindFirst.mockResolvedValue({ accountKind: "api_key" });
+      fetchSecretsMock.mockResolvedValue(null);
+      process.env.ANTHROPIC_API_KEY = "sk-ant-env";
+      fetchUsageMock.mockResolvedValue({
+        window5hPct: null,
+        window7dPct: null,
+        resetAt5h: null,
+        resetAt7d: null,
+        orgPct: 20,
+        resetAtOrg: null,
+      });
+
+      const poller = new UsageEndpointPoller();
+      const result = await poller.fetchLimitState("profile-1");
+
+      expect(fetchUsageMock).toHaveBeenCalledWith("sk-ant-env", "api_key");
+      expect(result?.window5hPct).toBe(20);
+      expect(result?.isLimited).toBe(false);
+    });
+
+    it("prefers the profile secret over the env fallback", async () => {
+      claudeAccountsFindFirst.mockResolvedValue({ accountKind: "api_key" });
+      fetchSecretsMock.mockResolvedValue({ ANTHROPIC_API_KEY: "sk-ant-profile" });
+      process.env.ANTHROPIC_API_KEY = "sk-ant-env";
+      fetchUsageMock.mockResolvedValue({
+        window5hPct: null,
+        window7dPct: null,
+        resetAt5h: null,
+        resetAt7d: null,
+        orgPct: 10,
+        resetAtOrg: null,
+      });
+
+      const poller = new UsageEndpointPoller();
+      await poller.fetchLimitState("profile-1");
+
+      expect(fetchUsageMock).toHaveBeenCalledWith("sk-ant-profile", "api_key");
+    });
+
+    it("returns null (no probe) when no key is resolvable", async () => {
+      claudeAccountsFindFirst.mockResolvedValue({ accountKind: "api_key" });
+      fetchSecretsMock.mockResolvedValue(null); // no profile secret, no env var
+
+      const poller = new UsageEndpointPoller();
+      const result = await poller.fetchLimitState("profile-1");
+
+      expect(result).toBeNull();
+      expect(fetchUsageMock).not.toHaveBeenCalled();
+    });
+
+    it("never logs the resolved api key", async () => {
+      const consoleSpies = [
+        vi.spyOn(console, "log").mockImplementation(() => {}),
+        vi.spyOn(console, "info").mockImplementation(() => {}),
+        vi.spyOn(console, "warn").mockImplementation(() => {}),
+        vi.spyOn(console, "error").mockImplementation(() => {}),
+        vi.spyOn(console, "debug").mockImplementation(() => {}),
+      ];
+      try {
+        claudeAccountsFindFirst.mockResolvedValue({ accountKind: "api_key" });
+        fetchSecretsMock.mockResolvedValue({ ANTHROPIC_API_KEY: "sk-ant-secret" });
+        fetchUsageMock.mockResolvedValue({
+          window5hPct: null,
+          window7dPct: null,
+          resetAt5h: null,
+          resetAt7d: null,
+          orgPct: 50,
+          resetAtOrg: null,
+        });
+
+        const poller = new UsageEndpointPoller();
+        await poller.fetchLimitState("profile-1");
+
+        for (const spy of consoleSpies) {
+          for (const call of spy.mock.calls) {
+            expect(JSON.stringify(call)).not.toContain("sk-ant-secret");
+          }
+        }
+      } finally {
+        for (const spy of consoleSpies) spy.mockRestore();
+      }
     });
   });
 
