@@ -417,6 +417,74 @@ class MobileCallbackLoginLauncher {
     return result;
   }
 
+  /// FIRE-AND-FORGET launch of the system-browser login for the
+  /// STATE-INDEPENDENT add-host flow.
+  ///
+  /// Unlike [loginAny] / [loginInstance] / [loginHost], this does NOT subscribe
+  /// to the deep-link stream and does NOT await the callback: it only opens
+  /// `<origin>/auth/mobile-callback?state=<state>` in the system browser and
+  /// returns whether the launch succeeded. The returning
+  /// `remotedev://auth/callback` is instead handled by the app-global
+  /// `AddHostLoginCompleter`, so the flow completes even if the triggering
+  /// screen is rebuilt/disposed while the browser is open.
+  ///
+  /// [state] is the caller-generated anti-forgery nonce (see [generateLoginState]),
+  /// which the caller ALSO persisted in the pending-login record; the completer
+  /// requires the returned callback's `state` to match it. Passing the nonce in
+  /// here (rather than generating it internally like [_awaitCallback]) is what
+  /// lets the durable pending record and the launched URL share one nonce.
+  Future<bool> launchInteractiveLogin({
+    required Uri origin,
+    required String state,
+  }) {
+    final callbackUrl = appendStateParam(buildCallbackUrl(origin), state);
+    return _launch(callbackUrl);
+  }
+
+  /// SCOPE-AGNOSTIC login for the Add-host bootstrap.
+  ///
+  /// Opens the system browser at `<origin>/auth/mobile-callback` and resolves
+  /// with whatever the server's `remotedev://auth/callback` deep link parses to
+  /// — a [HostCallback] (a Supervisor, `scope=host`) OR an [InstanceCallback] (a
+  /// plain single instance, `scope=instance`). This is what makes "Add host"
+  /// work for BOTH server shapes: unlike [loginHost] (which throws
+  /// [MobileCallbackShapeException] on an instance callback) and [loginInstance]
+  /// (which rejects a host callback), this method accepts either shape and lets
+  /// the caller branch on the runtime type.
+  ///
+  /// Returns `null` — never throws — on browser launch failure, timeout, user
+  /// cancel, or an unparseable callback, mirroring [loginInstance]'s
+  /// null-on-failure contract so the Add-host UI can surface one friendly
+  /// "Sign-in failed/cancelled" message regardless of the cause.
+  ///
+  /// Shares all of [loginHost]/[loginInstance]'s plumbing via [_awaitCallback]:
+  /// the anti-forgery `state` nonce, single-in-flight enforcement, and the
+  /// launch/timeout handling.
+  Future<MobileCallbackResult?> loginAny({required Uri origin}) async {
+    final Uri callbackUri;
+    try {
+      callbackUri = await _awaitCallback(origin);
+    } on _LaunchFailed {
+      return null;
+    } on TimeoutException {
+      debugPrint('[MobileCallbackLogin] loginAny timed out after $_timeout');
+      return null;
+    } catch (e, st) {
+      debugPrint('[MobileCallbackLogin] loginAny failed: $e\n$st');
+      return null;
+    }
+
+    final result = parseMobileCallback(callbackUri);
+    if (result == null) {
+      // Not a callback URI at all (wrong scheme/host/path) — treat as a cancel.
+      debugPrint(
+        '[MobileCallbackLogin] loginAny got an unparseable callback at '
+        '${callbackUri.path}',
+      );
+    }
+    return result;
+  }
+
   /// Shared browser-launch + deep-link-await plumbing for [login] and
   /// [loginHost]. Subscribes to the deep-link stream BEFORE launching (so a
   /// fast callback is never missed), opens `<baseUrl>/auth/mobile-callback`

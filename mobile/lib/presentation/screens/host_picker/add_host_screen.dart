@@ -1,80 +1,51 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:uuid/uuid.dart';
 
 import '../../../domain/host_config.dart';
-import '../../../domain/instance_summary.dart';
 import '../../../domain/qr_payload.dart';
-import '../../../domain/workspace_config.dart';
-import '../../../infrastructure/api/instances_api.dart';
-import '../../../infrastructure/auth/mobile_callback_login_launcher.dart';
+import '../../../infrastructure/auth/mobile_callback_login_launcher.dart'
+    show MobileCallbackLoginLauncher, generateLoginState;
+import '../../../infrastructure/auth/pending_add_host_login.dart';
 import '../../../infrastructure/deep_link/deep_link_stream_provider.dart';
 import '../scan/qr_scan_screen.dart';
 import '../webview_host/session_route_host.dart'
-    show
-        activeWorkspaceProvider,
-        hostWorkspaceStoreProvider,
-        mobileCredentialsStoreProvider,
-        secureStorageProvider;
+    show pendingAddHostLoginStoreProvider;
 
-/// Test seam — replaces the host (Supervisor) system-browser login
-/// (`launcher.loginHost`). Returns the [HostCallback] (host-wide CF token), or
-/// throws on launch/timeout/shape failure (mirroring the real launcher).
-typedef HostLoginLauncher = Future<HostCallback> Function(Uri origin);
+/// Test seam — fires the system browser at `<origin>/auth/mobile-callback` with
+/// the given anti-forgery [state]. Returns whether the browser launched. The
+/// returning `remotedev://auth/callback` is completed by the app-global
+/// `AddHostLoginCompleter`, NOT by this screen.
+typedef InteractiveLoginLauncher = Future<bool> Function(Uri origin, String state);
 
-/// Test seam — replaces the per-workspace system-browser login
-/// (`launcher.loginInstance`) used on the single-workspace branch. Returns the
-/// [InstanceCallback], or `null` if the user cancelled.
-typedef InstanceLoginLauncher = Future<InstanceCallback?> Function(
-  Uri serverUrl,
-);
-
-/// Test seam — builds an [InstancesApi] for the freshly-bootstrapped host so
-/// the kind-detection `list()` call can be faked in widget tests.
-typedef InstancesApiFactory = InstancesApi Function(HostConfig host);
-
-/// Adds a connection target by ORIGIN + label, then detects whether it is a
-/// single-workspace Remote Dev server or a multi-workspace Supervisor:
+/// Adds a connection target by ORIGIN + label.
 ///
-/// 1. Bootstrap the host CF token via the system browser (`loginHost`),
-///    persist the [HostConfig] + token.
-/// 2. Probe `GET /api/instances`:
-///    - 200 (Supervisor) → mark the host `multiWorkspace` and push the
-///      [WorkspacePickerScreen] with the discovered instances.
-///    - 404 ([NotASupervisorException]) → mark the host `singleWorkspace`,
-///      mint its API key (`login`), persist + activate a single
-///      [WorkspaceConfig] (empty slug/basePath), and navigate `/home`.
-///    - other errors → inline error + retry (the detect step alone re-runs;
-///      the harmless host row + CF token are kept).
+/// STATE-INDEPENDENT design (remote-dev): the returning `remotedev://auth/callback`
+/// deep link recreates the Android activity / rebuilds this GoRouter page, which
+/// disposes this screen's `State`. So this screen is now only a THIN TRIGGER:
+///
+///   1. validate the form,
+///   2. write a persistent [PendingAddHostLogin] record (origin, label,
+///      anti-forgery `state` nonce) to secure storage BEFORE launching, then
+///   3. fire the system browser (fire-and-forget).
+///
+/// The WHOLE remainder — persist host + cookies, probe `GET /api/instances`,
+/// activate the single workspace (or route to the supervisor picker), and
+/// NAVIGATE to the session — runs in the app-global `AddHostLoginCompleter`,
+/// which survives this screen's disposal. Only a callback whose echoed `state`
+/// matches the pending record's nonce completes the add (anti-forgery).
 class AddHostScreen extends ConsumerStatefulWidget {
   const AddHostScreen({
-    required this.onSingleWorkspaceActivated,
-    required this.onSupervisorDetected,
-    this.hostLoginLauncher,
-    this.instanceLoginLauncher,
-    this.instancesApiFactory,
+    this.launchLogin,
+    this.stateGenerator,
     super.key,
   });
 
-  /// Invoked after a single-workspace host's workspace is minted, persisted,
-  /// and activated. The router navigates to `/home`.
-  final void Function(WorkspaceConfig) onSingleWorkspaceActivated;
+  /// Test seam — replaces the system-browser launch.
+  final InteractiveLoginLauncher? launchLogin;
 
-  /// Invoked once a Supervisor host is detected, carrying the host and the
-  /// instances discovered. The router pushes [WorkspacePickerScreen].
-  final void Function(HostConfig host, List<InstanceSummary> instances)
-      onSupervisorDetected;
-
-  /// Test seam — replaces the host system-browser login.
-  final HostLoginLauncher? hostLoginLauncher;
-
-  /// Test seam — replaces the single-workspace system-browser login.
-  final InstanceLoginLauncher? instanceLoginLauncher;
-
-  /// Test seam — replaces the [InstancesApi] construction.
-  final InstancesApiFactory? instancesApiFactory;
+  /// Test seam — replaces the anti-forgery nonce generator (so a test can assert
+  /// the exact nonce persisted in the pending record).
+  final String Function()? stateGenerator;
 
   @override
   ConsumerState<AddHostScreen> createState() => _AddHostScreenState();
@@ -85,50 +56,32 @@ class _AddHostScreenState extends ConsumerState<AddHostScreen> {
   final _originCtrl = TextEditingController();
   final _labelCtrl = TextEditingController();
   bool _busy = false;
+
+  /// True once the browser has been launched and we are waiting for the global
+  /// completer to finish (which navigates away). Shown so the user isn't left
+  /// staring at the form; a Cancel affordance clears the pending record.
+  bool _waiting = false;
   String? _error;
 
-  /// Set once [_bootstrapHost] succeeds. When present, the failed-detect path
-  /// surfaces a "Retry" button that re-runs ONLY the detect step against this
-  /// already-persisted host (no second browser round-trip).
-  HostConfig? _bootstrappedHost;
-
-  Future<HostCallback> _runHostLogin(Uri origin) {
-    final override = widget.hostLoginLauncher;
-    if (override != null) return override(origin);
+  Future<bool> _runLaunch(Uri origin, String state) {
+    final override = widget.launchLogin;
+    if (override != null) return override(origin, state);
     final launcher = MobileCallbackLoginLauncher(
       deepLinkStream: ref.read(deepLinkStreamProvider),
     );
-    return launcher.loginHost(origin: origin);
+    return launcher.launchInteractiveLogin(origin: origin, state: state);
   }
 
-  Future<InstanceCallback?> _runInstanceLogin(Uri serverUrl) {
-    final override = widget.instanceLoginLauncher;
-    if (override != null) return override(serverUrl);
-    final launcher = MobileCallbackLoginLauncher(
-      deepLinkStream: ref.read(deepLinkStreamProvider),
-    );
-    return launcher.loginInstance(serverUrl: serverUrl);
-  }
-
-  InstancesApi _buildApi(HostConfig host) {
-    final override = widget.instancesApiFactory;
-    if (override != null) return override(host);
-    return InstancesApi(
-      origin: host.origin,
-      hostId: host.id,
-      storage: ref.read(secureStorageProvider),
-    );
-  }
+  String _generateState() =>
+      (widget.stateGenerator ?? generateLoginState).call();
 
   /// Scan a provisioning QR code to speed up adding a host.
   ///
   /// The add flow signs in through the system browser (OIDC / CF Access) and
   /// mints its own key, so a LEGACY `{url, port, apiKey}` QR can't inject its
   /// key here — but we can prefill the Host URL so the user just taps Add to
-  /// continue through the normal login (this is what makes the web panel's
-  /// "Add Server → Scan QR Code" instruction real). A CF service-token QR
-  /// belongs to an EXISTING host, so we point the user to add the host first
-  /// and apply the token from Edit Host.
+  /// continue through the normal login. A CF service-token QR belongs to an
+  /// EXISTING host, so we point the user to add the host first.
   Future<void> _scanQr() async {
     final payload = await QrScanScreen.push(context);
     if (!mounted || payload == null) return;
@@ -138,22 +91,16 @@ class _AddHostScreenState extends ConsumerState<AddHostScreen> {
         setState(() {
           _originCtrl.text = url;
           if (_labelCtrl.text.trim().isEmpty) {
-            // Seed a friendly default label from the host so the form is ready
-            // to submit; the user can edit it.
             _labelCtrl.text = Uri.tryParse(url)?.host ?? '';
           }
           _error = null;
         });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'Scanned server URL. Tap Add to sign in and finish.',
-            ),
+            content: Text('Scanned server URL. Tap Add to sign in and finish.'),
           ),
         );
       case CfServiceTokenPayload(:final host):
-        // A service token applies to an existing host's edge, not a brand-new
-        // add. Keep it simple: tell the user the right place to use it.
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -171,178 +118,56 @@ class _AddHostScreenState extends ConsumerState<AddHostScreen> {
       _busy = true;
       _error = null;
     });
-    try {
-      final host = await _bootstrapHost();
-      if (host == null) return; // error already surfaced
-      await _detect(host);
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
 
-  /// Retry path: skip the browser bootstrap and re-run detection against the
-  /// host we already persisted.
-  Future<void> _retryDetect() async {
-    final host = _bootstrappedHost;
-    if (host == null) return;
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      await _detect(host);
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  /// Step 1: normalise the origin, run the host CF-token browser bootstrap,
-  /// persist the [HostConfig] + token. Returns the host on success; on launch/
-  /// timeout/shape failure surfaces an inline error and returns null.
-  Future<HostConfig?> _bootstrapHost() async {
     final origin = HostConfig.normalizeOrigin(_originCtrl.text.trim());
     final label = _labelCtrl.text.trim();
-    final HostCallback hostCb;
-    try {
-      hostCb = await _runHostLogin(Uri.parse(origin));
-    } on MobileCallbackException catch (e) {
-      // Browser-launch / wrong-callback-shape failures already carry a
-      // user-facing message.
-      if (mounted) setState(() => _error = e.message);
-      return null;
-    } on TimeoutException {
-      // No `remotedev://auth/callback` arrived within the launcher's window —
-      // surface a friendly message instead of the raw
-      // `Instance of 'TimeoutException'` toString.
-      if (mounted) {
-        setState(
-          () => _error = 'Sign-in timed out. Please try again.',
-        );
-      }
-      return null;
-    } catch (e) {
-      // Any other unexpected failure. Keep it generic but non-raw.
-      if (mounted) setState(() => _error = 'Sign-in failed. Please try again.');
-      return null;
-    }
-    if (!mounted) return null;
+    final state = _generateState();
+    final store = ref.read(pendingAddHostLoginStoreProvider);
 
-    final now = DateTime.now();
-    // Default kind is single; the detect step upgrades it to multi if the host
-    // answers /api/instances. Either way it is overwritten by an upsert.
-    final host = HostConfig(
-      id: const Uuid().v4(),
-      label: label,
-      origin: origin,
-      kind: HostKind.singleWorkspace,
-      createdAt: now,
-      lastUsedAt: now,
+    // Persist the pending record BEFORE launching, so the app-global completer
+    // can finish the flow even if this screen is disposed on the callback
+    // return. The record carries the anti-forgery nonce the completer matches.
+    await store.save(
+      PendingAddHostLogin(
+        origin: origin,
+        label: label,
+        state: state,
+        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
     );
+    debugPrint('[AddHostFlow] pending record written origin=$origin');
 
-    final store = ref.read(hostWorkspaceStoreProvider);
-    final credentials = ref.read(mobileCredentialsStoreProvider);
-    await store.upsertHost(host);
-    // Persist host-wide auth cookies (OIDC session-token, CF JWT, etc.).
-    await credentials.setHostAuthCookies(host.id, hostCb.authCookies);
-    // Legacy compat: also persist cfToken individually so older code paths
-    // that read getHostCfToken() directly remain functional.
-    if (hostCb.cfToken.isNotEmpty) {
-      await credentials.setHostCfToken(host.id, hostCb.cfToken);
-    }
-    _bootstrappedHost = host;
-    return host;
-  }
-
-  /// Step 2: probe `/api/instances` to branch single vs multi.
-  Future<void> _detect(HostConfig host) async {
-    final List<InstanceSummary> instances;
+    bool launched;
     try {
-      instances = await _buildApi(host).list();
-    } on NotASupervisorException {
-      // Single-workspace server.
-      await _activateSingleWorkspace(host);
-      return;
+      launched = await _runLaunch(Uri.parse(origin), state);
     } catch (e) {
-      // Transient (network/timeout/401). Keep the host row + CF token; offer a
-      // retry of just the detect step.
-      if (mounted) {
-        setState(
-          () => _error = "Couldn't reach this host's workspaces: $e",
-        );
-      }
-      return;
+      debugPrint('[AddHostFlow] launch threw: $e');
+      launched = false;
     }
-
-    // Multi-workspace (Supervisor): persist the upgraded kind, hand off to the
-    // workspace picker.
-    final store = ref.read(hostWorkspaceStoreProvider);
-    final upgraded = HostConfig(
-      id: host.id,
-      label: host.label,
-      origin: host.origin,
-      kind: HostKind.multiWorkspace,
-      createdAt: host.createdAt,
-      lastUsedAt: host.lastUsedAt,
-    );
-    await store.upsertHost(upgraded);
-    _bootstrappedHost = upgraded;
-    if (mounted) widget.onSupervisorDetected(upgraded, instances);
-  }
-
-  /// Single-workspace branch: mint the API key, persist + activate a single
-  /// [WorkspaceConfig] with empty slug/basePath, navigate `/home`.
-  Future<void> _activateSingleWorkspace(HostConfig host) async {
-    final store = ref.read(hostWorkspaceStoreProvider);
-    // Mark the kind explicitly (it bootstrapped as single, but be defensive in
-    // case a prior detect upgraded it).
-    if (host.kind != HostKind.singleWorkspace) {
-      host = HostConfig(
-        id: host.id,
-        label: host.label,
-        origin: host.origin,
-        kind: HostKind.singleWorkspace,
-        createdAt: host.createdAt,
-        lastUsedAt: host.lastUsedAt,
-      );
-      await store.upsertHost(host);
-      _bootstrappedHost = host;
-    }
-
-    final instanceCb = await _runInstanceLogin(Uri.parse(host.origin));
     if (!mounted) return;
-    if (instanceCb == null) {
-      setState(() => _error = 'Sign-in cancelled.');
+    if (!launched) {
+      // Roll back the pending record so a stale one can't shadow a later add.
+      await store.clear();
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = 'Could not open the browser to sign in. Please try again.';
+      });
       return;
     }
+    debugPrint('[AddHostFlow] browser launched; awaiting global completion');
+    setState(() {
+      _busy = false;
+      _waiting = true;
+    });
+  }
 
-    final ws = WorkspaceConfig(
-      id: const Uuid().v4(),
-      hostId: host.id,
-      slug: '',
-      basePath: '',
-      displayName: host.label,
-      status: null,
-      lastUsedAt: DateTime.now(),
-    );
-
-    final credentials = ref.read(mobileCredentialsStoreProvider);
-    // Persist credentials BEFORE the workspace row + active pointer.
-    // authCookies is always persisted (OIDC session-token or CF JWT).
-    await credentials.setWorkspaceAuthCookies(ws.id, instanceCb.authCookies);
-    // apiKey is optional (null for OIDC callbacks).
-    final apiKey = instanceCb.apiKey;
-    if (apiKey != null && apiKey.isNotEmpty) {
-      await credentials.setWorkspaceApiKey(ws.id, apiKey);
-    }
-    // Legacy compat: refresh host cfToken when present in callback.
-    final cf = instanceCb.cfToken;
-    if (cf.isNotEmpty) {
-      await credentials.setHostCfToken(host.id, cf);
-    }
-    await store.upsertWorkspace(ws);
-    await store.setActiveWorkspace(ws.id);
-    ref.invalidate(activeWorkspaceProvider);
-    if (mounted) widget.onSingleWorkspaceActivated(ws);
+  /// Cancel a launched-but-not-yet-completed sign-in: clear the pending record
+  /// (so it can't be honoured later) and return to the form.
+  Future<void> _cancelWaiting() async {
+    await ref.read(pendingAddHostLoginStoreProvider).clear();
+    if (!mounted) return;
+    setState(() => _waiting = false);
   }
 
   @override
@@ -354,7 +179,6 @@ class _AddHostScreenState extends ConsumerState<AddHostScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final canRetry = _bootstrappedHost != null && !_busy;
     return Scaffold(
       backgroundColor: const Color(0xFF1A1B26),
       appBar: AppBar(
@@ -365,67 +189,92 @@ class _AddHostScreenState extends ConsumerState<AddHostScreen> {
           IconButton(
             icon: const Icon(Icons.qr_code_scanner, color: Colors.white),
             tooltip: 'Scan QR code',
-            onPressed: _busy ? null : _scanQr,
+            onPressed: (_busy || _waiting) ? null : _scanQr,
           ),
         ],
       ),
-      body: Form(
-        key: _formKey,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextFormField(
-                controller: _originCtrl,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                  labelText: 'Host URL',
-                  hintText: 'https://dev.example.com',
-                ),
-                validator: (v) {
-                  final uri = Uri.tryParse((v ?? '').trim());
-                  if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
-                    return 'Enter a valid URL with scheme and host';
-                  }
-                  return null;
-                },
+      body: _waiting ? _buildWaiting() : _buildForm(),
+    );
+  }
+
+  Widget _buildWaiting() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 24),
+            const Text(
+              'Complete sign-in in your browser…',
+              style: TextStyle(color: Colors.white, fontSize: 16),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              "You'll return here automatically.",
+              style: TextStyle(color: Colors.white54),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            OutlinedButton(
+              onPressed: _cancelWaiting,
+              child: const Text('Cancel'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildForm() {
+    return Form(
+      key: _formKey,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextFormField(
+              controller: _originCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Host URL',
+                hintText: 'https://dev.example.com',
               ),
+              validator: (v) {
+                final uri = Uri.tryParse((v ?? '').trim());
+                if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
+                  return 'Enter a valid URL with scheme and host';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _labelCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(labelText: 'Label'),
+              validator: (v) =>
+                  (v == null || v.trim().isEmpty) ? 'Required' : null,
+            ),
+            if (_error != null) ...[
               const SizedBox(height: 16),
-              TextFormField(
-                controller: _labelCtrl,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(labelText: 'Label'),
-                validator: (v) =>
-                    (v == null || v.trim().isEmpty) ? 'Required' : null,
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: 16),
-                Text(
-                  _error!,
-                  style: const TextStyle(color: Colors.redAccent),
-                ),
-              ],
-              const SizedBox(height: 32),
-              ElevatedButton(
-                onPressed: _busy ? null : _submit,
-                child: _busy
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Add'),
-              ),
-              if (canRetry) ...[
-                const SizedBox(height: 12),
-                OutlinedButton(
-                  onPressed: _retryDetect,
-                  child: const Text('Retry'),
-                ),
-              ],
+              Text(_error!, style: const TextStyle(color: Colors.redAccent)),
             ],
-          ),
+            const SizedBox(height: 32),
+            ElevatedButton(
+              onPressed: _busy ? null : _submit,
+              child: _busy
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Add'),
+            ),
+          ],
         ),
       ),
     );

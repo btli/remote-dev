@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../../domain/auth_cookie.dart';
+import 'cf_identity_jwt.dart';
 
 /// Holds the auth material attached by [CfAuthInterceptor] on each
 /// outbound request.
@@ -33,14 +34,31 @@ import '../../domain/auth_cookie.dart';
 /// cookie — which expires with the CF Access session and so leaves headless
 /// work (e.g. the push registrar) unauthenticated off-LAN until the next
 /// interactive open — a service token is a permanent credential validated by
-/// Cloudflare at the edge with no session and no expiry. When BOTH are present
-/// the interceptor attaches them as headers AND omits the now-redundant
-/// `CF_Authorization` cookie from the outbound `Cookie:` header (see
-/// [_cookiesFor]); all other cookies (the instance's OIDC session cookies) are
-/// still required behind the edge and are retained. The exclusion is keyed on
-/// whether the token is ACTUALLY attached to a given request, not merely
-/// present — a refresh replay or a tripped breaker suppresses both the headers
-/// and the exclusion so the cookie path can recover.
+/// Cloudflare at the edge with no session and no expiry.
+///
+/// IMPORTANT (remote-dev-2w1o follow-up): the service token is an EDGE-ONLY,
+/// NON-IDENTITY credential. It clears the Cloudflare perimeter, but the JWT
+/// Cloudflare then injects toward the origin carries `common_name` and NO
+/// `email`, so it can NEVER establish a user session — `validateAccessJWT`
+/// rejects it and identity-dependent surfaces fall back to `/login`.
+///
+/// The interceptor therefore NEVER sends the service token alongside a valid
+/// identity cookie. Cloudflare Access evaluates **Service Auth policies FIRST**
+/// and stops at the first match, so a request carrying both would be admitted by
+/// the Service Auth policy and the origin would get the NON-identity JWT — the
+/// exact regression this guards against. Instead the interceptor makes a
+/// deterministic, client-side, per-request choice (see [cfIdentityCookieValue] /
+/// `cfCookieIsFreshIdentity`):
+///   * `CF_Authorization` present AND unexpired → send ONLY the cookie, attach
+///     NO service headers (the edge admits WITH identity → pages + identity API
+///     routes work — this is the branch that fixes the off-LAN reauth loop).
+///   * `CF_Authorization` absent / expired / undecodable → attach the service
+///     headers and DROP `CF_Authorization` from the cookies (a stale cookie sent
+///     next to the service token only muddies the edge and can never help); the
+///     origin still authenticates via the Bearer API key.
+/// Either way EVERY OTHER cookie (the instance's OIDC session) is retained. The
+/// service HEADERS are additionally suppressed on a refresh replay or a tripped
+/// breaker so a revoked/misconfigured token can't defeat cookie-path recovery.
 class AuthMaterial {
   const AuthMaterial({
     this.apiKey,
@@ -79,37 +97,47 @@ class AuthMaterial {
 
   /// Whether this material has any usable credential, ignoring any per-request
   /// suppression (the interceptor decides attachment per request). A complete
-  /// service token counts even though its cookie-exclusion only applies when
-  /// actually attached — the token alone is sufficient auth material.
+  /// service token counts on its own — it is sufficient edge auth material.
   bool get isEmpty =>
       (apiKey == null || apiKey!.isEmpty) &&
       _baseCookies.isEmpty &&
       !hasServiceToken;
 
+  /// The value of the `CF_Authorization` identity cookie, or `null` when none is
+  /// present. Used by the interceptor to decide (via `cfCookieIsFreshIdentity`)
+  /// whether a still-valid identity cookie should be preferred over the
+  /// non-identity service token for THIS request.
+  String? get cfIdentityCookieValue {
+    for (final c in _baseCookies) {
+      if (c.name == 'CF_Authorization') return c.value;
+    }
+    return null;
+  }
+
   /// The cookies to send for a request, given whether the service token is
   /// actually being attached to THAT request ([includeServiceToken]).
   ///
   /// When the service token IS attached the `CF_Authorization` edge cookie is
-  /// filtered out: the service-token headers already satisfy the Cloudflare
-  /// edge, so the cookie is redundant, and a stale `CF_Authorization` sent
-  /// ALONGSIDE valid service headers creates ambiguity at the edge (two
-  /// competing edge credentials). Every OTHER cookie is preserved — the
-  /// instance behind the edge still authenticates via its OIDC session cookies,
-  /// which the service token does not replace.
+  /// filtered out: the interceptor only attaches the service token when the
+  /// identity cookie is absent or EXPIRED (see the class doc), so a lingering
+  /// stale `CF_Authorization` sent alongside the service headers can never help
+  /// — it would only add a second, dead edge credential. Every OTHER cookie is
+  /// preserved — the instance behind the edge still authenticates via its OIDC
+  /// session cookies, which the service token does not replace.
   ///
-  /// When the service token is NOT attached (absent, suppressed on a refresh
-  /// replay, or disabled by the breaker) the cookie list is returned intact,
-  /// including any `CF_Authorization` — that cookie is then the only edge
-  /// credential and must ride along for recovery.
-  List<AuthCookie> _cookiesFor({required bool includeServiceToken}) {
+  /// When the service token is NOT attached (absent, a FRESH identity cookie was
+  /// preferred instead, suppressed on a refresh replay, or disabled by the
+  /// breaker) the cookie list is returned intact, including any
+  /// `CF_Authorization` — that cookie is then the edge identity credential and
+  /// must ride along.
+  List<AuthCookie> cookiesFor({required bool includeServiceToken}) {
     final base = _baseCookies;
     if (!includeServiceToken) return base;
     return base.where((c) => c.name != 'CF_Authorization').toList();
   }
 
-  /// The cookie list before any service-token filtering: [cookies] when
-  /// non-empty; otherwise synthesise from legacy [cfCookie] for backwards
-  /// compatibility.
+  /// The cookie list: [cookies] when non-empty; otherwise synthesise from legacy
+  /// [cfCookie] for backwards compatibility.
   List<AuthCookie> get _baseCookies {
     if (cookies.isNotEmpty) return cookies;
     final cf = cfCookie;
@@ -125,9 +153,11 @@ class AuthMaterial {
 /// request:
 /// - `Authorization: Bearer <apiKey>` when an API key is stored
 /// - `CF-Access-Client-Id` / `CF-Access-Client-Secret` when a complete
-///   per-host service token is stored (the permanent off-LAN edge credential);
-///   the redundant `CF_Authorization` cookie is then dropped, while every
-///   other cookie (the instance's OIDC session) is kept
+///   per-host service token is stored (the permanent off-LAN edge credential)
+///   AND no fresh `CF_Authorization` identity cookie is available for this
+///   request. When a fresh identity cookie IS available the service headers are
+///   NOT attached — the identity cookie is preferred so the origin receives a
+///   real user identity (see [AuthMaterial] for why both must never be sent).
 /// - `Cookie: CF_Authorization=<cfCookie>` (plus any other auth cookies)
 ///   appended to any existing `Cookie` header so upstream interceptors are
 ///   preserved
@@ -302,13 +332,16 @@ class CfAuthInterceptor extends Interceptor {
     final material = await authReader(serverId);
 
     // Decide whether the service token applies to THIS request. It is suppressed
-    // when either:
+    // when any of:
+    //   - a FRESH `CF_Authorization` identity cookie is available — the edge
+    //     admits WITH identity, so we must NOT also send the non-identity service
+    //     token (Service Auth policies match first and would strip the identity);
     //   - this is a refresh replay of a request whose service headers already
     //     failed at the CF edge (the per-request skip flag), or
     //   - the in-session circuit breaker has tripped for the SAME pair.
-    // In both cases we behave as if no service token existed: no headers, and
-    // CF_Authorization is NOT excluded from the cookies (see [_cookiesFor]), so
-    // the freshly-harvested cookie path can recover.
+    // In all cases we behave as if no service token existed: no service headers
+    // are attached, and `CF_Authorization` is NOT dropped from the cookies (see
+    // [cookiesFor]) so the identity/cookie path is used and can recover.
     //
     // If the breaker is tripped but [authReader] now returns a DIFFERENT pair,
     // the user re-saved the token: reset the breaker and let the new token ride.
@@ -317,9 +350,14 @@ class CfAuthInterceptor extends Interceptor {
           material.serviceClientSecret == _breakerClientSecret;
       if (!samePair) _resetServiceTokenBreaker();
     }
-    final skipThisRequest =
+    // Prefer a still-valid identity cookie over the non-identity service token.
+    // Decoded locally (public `exp` claim only — no verification) so the choice
+    // is deterministic and never depends on Cloudflare's policy-evaluation order.
+    final hasFreshIdentityCookie =
+        cfCookieIsFreshIdentity(material.cfIdentityCookieValue);
+    final skipThisRequest = hasFreshIdentityCookie ||
         options.extra[_skipServiceTokenKey] == true ||
-            _serviceTokenBreakerTripped;
+        _serviceTokenBreakerTripped;
     final useServiceToken = material.hasServiceToken && !skipThisRequest;
 
     final apiKey = material.apiKey;
@@ -328,11 +366,12 @@ class CfAuthInterceptor extends Interceptor {
     }
 
     // Cloudflare Access service token: when a complete pair is present AND not
-    // suppressed, attach both headers so Cloudflare admits the request at the
-    // edge with no session and no expiry (the permanent off-LAN credential).
-    // [_cookiesFor] separately drops the now-redundant `CF_Authorization`
-    // cookie. SECURITY: only a boolean "present" fact is ever logged below —
-    // never the values.
+    // suppressed (no fresh identity cookie / replay / breaker), attach both
+    // headers so Cloudflare admits the request at the edge with no session and no
+    // expiry (the permanent off-LAN credential). In this branch any stale
+    // `CF_Authorization` is dropped from the cookies (see [cookiesFor]); the
+    // origin re-authenticates via the Bearer API key. SECURITY: only a boolean
+    // "present" fact is ever logged below — never the values.
     if (useServiceToken) {
       options.headers[_serviceClientIdHeader] = material.serviceClientId;
       options.headers[_serviceClientSecretHeader] = material.serviceClientSecret;
@@ -358,7 +397,8 @@ class CfAuthInterceptor extends Interceptor {
       _removeServiceHeaders(options);
     }
 
-    final effectiveCookies = material._cookiesFor(includeServiceToken: useServiceToken);
+    final effectiveCookies =
+        material.cookiesFor(includeServiceToken: useServiceToken);
     if (effectiveCookies.isNotEmpty) {
       // Build the cookie string from all auth cookies: "name=value; name=value".
       final newPart = effectiveCookies.map((c) => '${c.name}=${c.value}').join('; ');

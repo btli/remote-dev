@@ -21,10 +21,24 @@
         android:label="RemoteDev"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!--
+          launchMode=singleTask (was singleTop): the system-browser CF Access /
+          OIDC login returns via a `remotedev://auth/callback` deep link. Chrome
+          delivers that VIEW intent with FLAG_ACTIVITY_NEW_TASK; under singleTop
+          the intent would land in (and RE-CREATE) the activity + Flutter engine,
+          disposing the AddHostScreen State that is `await`-ing the login — the
+          successful callback was then dropped at `if (!mounted) return`.
+          singleTask routes the callback to the EXISTING activity via
+          onNewIntent, preserving the Flutter engine + widget state so the
+          awaiting login flow resumes and completes. Combined with
+          taskAffinity="" the activity is the single root of its task; the https
+          App Links (autoVerify) and remotedev VIEW intent-filters below continue
+          to resolve to this same instance.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:taskAffinity=""
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"

@@ -81,11 +81,12 @@ class RemoteDevClient implements ApiClientPort {
         final cookies =
             await _credentials.getInstanceCookies(hostId, workspaceId);
         // The host-wide CF Access service token (permanent edge credential).
-        // When present, [AuthMaterial] attaches the CF-Access-Client-* headers
-        // and drops the redundant CF_Authorization cookie that
-        // getInstanceCookies may have included from the host — the OIDC session
-        // cookies it also returns stay, authenticating the instance behind the
-        // edge.
+        // The interceptor picks ONE edge credential per request: when the
+        // CF_Authorization identity cookie getInstanceCookies returns is still
+        // fresh it is sent alone (identity preferred, service headers withheld);
+        // once it expires the service headers are attached instead and the stale
+        // cookie is dropped. The OIDC session cookies that authenticate behind
+        // the edge ride along in both cases.
         final service = await _credentials.getHostServiceToken(hostId);
         return AuthMaterial(
           apiKey: apiKey,

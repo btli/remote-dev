@@ -150,31 +150,26 @@ class AppRouter {
       // on route pop-back (remote-dev-u5q5.2). GoRouter forwards this list to
       // the underlying root Navigator.
       observers: [routeObserver],
-      // The system-browser CF Access login (see MobileCallbackLoginLauncher)
-      // returns to the app via `remotedev://auth/callback?...`. The OS
-      // Flutter engine forwards that URI to MaterialApp.router's route
-      // information provider, which would otherwise hand it to GoRouter
-      // and throw `GoException: no routes for location: remotedev://...`.
+      // The system-browser CF Access / OIDC login returns to the app via
+      // `remotedev://auth/callback?...`. The OS Flutter engine forwards that URI
+      // to MaterialApp.router's route information provider, which would otherwise
+      // hand it to GoRouter and throw `GoException: no routes for location:
+      // remotedev://...`. The Android engine ALSO re-fires a bare-`/` URI on
+      // return from a Chrome Custom Tab, for which no `/` route exists.
       //
-      // The launcher's own broadcast-stream subscription (via
-      // `deepLinkStreamProvider`) consumes the URI for credentials in
-      // parallel. We must NOT navigate away from the current screen here:
-      // `AddHostScreen._bootstrapHost()` (and the single-workspace
-      // `_runInstanceLogin`) is `await`-ing the system-browser login, and if
-      // GoRouter swaps in a different page the State is disposed, the
-      // post-await `if (!mounted) return;` aborts, and the new host/workspace
-      // is never persisted (v0.3.12-class regression: CF Access succeeds, but
-      // nothing appears).
+      // This redirect's ONLY remaining job is to ABSORB those stray URIs as a
+      // no-op by returning the last-known-good location (go_router treats
+      // "redirect to the current location" as a no-op — no Page swap).
       //
-      // The trick is to return the LAST-KNOWN-GOOD location from the
-      // redirect. go_router treats "redirect to the current location" as
-      // a no-op (no Page swap, no State.dispose). So the AddServer page
-      // stays mounted, its mounted check passes, the credentials are
-      // persisted, and `widget.onSaved` drives the post-save nav.
-      //
-      // Same trick covers the bare-`/` URI the Android engine re-fires
-      // when returning from a Chrome Custom Tab — no registered `/`
-      // route exists.
+      // NOTE (remote-dev state-independent add-host): completion NO LONGER
+      // depends on any screen staying mounted. The add-host flow is driven by
+      // the app-global `AddHostLoginCompleter` off a durable pending-login
+      // record + the `deepLinkStreamProvider` broadcast stream; it persists the
+      // host, detects single-vs-supervisor, activates, and navigates itself. So
+      // this redirect no longer needs to preserve `AddHostScreen`'s State — it
+      // only prevents GoRouter from throwing on the unknown callback/`/` URI.
+      // (Non-add-host launchers — reauth / workspace open — still consume their
+      // own callback via their in-flight stream subscription in parallel.)
       redirect: (context, state) {
         final uri = state.uri;
         final isAuthCallback = uri.scheme == 'remotedev' &&
@@ -255,27 +250,13 @@ class AppRouter {
         // --- D2: host / workspace onboarding ---------------------------------
         GoRoute(
           path: '/hosts/add',
-          builder: (context, state) => Consumer(
-            builder: (context, ref, _) => AddHostScreen(
-              onSingleWorkspaceActivated: (_) {
-                // A single-workspace host minted + activated its workspace.
-                // The activeWorkspaceProvider was already invalidated inside
-                // the screen; just land on home.
-                context.go('/home');
-              },
-              onSupervisorDetected: (host, instances) {
-                // Multi-workspace host: push the workspace picker on top so the
-                // user can back out to the server list.
-                context.push(
-                  '/hosts/workspaces',
-                  extra: WorkspacePickerArgs(
-                    host: host,
-                    instances: instances,
-                  ),
-                );
-              },
-            ),
-          ),
+          // Thin trigger: writes a durable pending-login record + launches the
+          // browser. The whole persist/detect/activate/navigate flow runs in the
+          // app-global AddHostLoginCompleter (wired in app.dart), which survives
+          // this page being rebuilt/disposed on the `remotedev://auth/callback`
+          // return — so navigation to /home (single) or the workspace picker
+          // (supervisor) happens there, not here.
+          builder: (context, state) => const AddHostScreen(),
         ),
         GoRoute(
           path: '/hosts/workspaces',

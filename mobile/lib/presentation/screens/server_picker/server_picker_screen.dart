@@ -23,12 +23,18 @@ class HostEntry {
   final HostConfig host;
   final List<WorkspaceConfig> workspaces;
 
-  /// A host is rendered as a single tappable row (no group header) when it has
-  /// exactly one workspace AND that workspace is the implicit single-workspace
-  /// one (empty slug). Multi-workspace hosts — or a single host that somehow
-  /// owns several workspaces — render as a group with a header.
+  /// A host is rendered as a single tappable row (no group header) that opens
+  /// its workspace/session DIRECTLY — never the multi-workspace (supervisor)
+  /// picker.
+  ///
+  /// Keyed on the authoritative [HostConfig.kind]: a `singleWorkspace` host with
+  /// its one workspace is ALWAYS a direct row (even if that workspace carries a
+  /// non-empty slug), so a plain single instance opens `/home` instead of the
+  /// empty "No ready workspaces yet" supervisor picker. A `multiWorkspace`
+  /// (Supervisor) host — or a single host in a transient 0- or multi-workspace
+  /// state — renders as a group header instead.
   bool get isSingleWorkspaceRow =>
-      workspaces.length == 1 && workspaces.single.slug.isEmpty;
+      host.kind == HostKind.singleWorkspace && workspaces.length == 1;
 }
 
 /// The picker's view of the Host/Workspace store: every host paired with its
@@ -434,7 +440,13 @@ class ServerPickerScreen extends ConsumerWidget {
           entry.host.origin,
           style: const TextStyle(color: Colors.white54),
         ),
-        trailing: onOpenAnotherWorkspace == null
+        // The "open another workspace" affordance re-lists instances via the
+        // Supervisor and pushes the workspace picker — only valid for a
+        // multiWorkspace host. A singleWorkspace host that fell through here
+        // (e.g. a transient zero-workspace state) must NOT offer it, or the user
+        // is sent to the empty supervisor picker.
+        trailing: (onOpenAnotherWorkspace == null ||
+                entry.host.kind != HostKind.multiWorkspace)
             ? null
             : IconButton(
                 icon: const Icon(Icons.add, color: Colors.white70),

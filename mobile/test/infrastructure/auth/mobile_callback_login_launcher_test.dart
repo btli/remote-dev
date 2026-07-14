@@ -240,6 +240,125 @@ void main() {
     });
   });
 
+  group('MobileCallbackLoginLauncher.loginAny (scope-agnostic bootstrap)', () {
+    test('resolves an InstanceCallback for a scope=instance callback', () async {
+      final stream = StreamController<Uri>.broadcast();
+      Uri? launchedAt;
+      final launcher = MobileCallbackLoginLauncher(
+        deepLinkStream: stream.stream,
+        urlLauncher: (uri) async {
+          launchedAt = uri;
+          scheduleMicrotask(() {
+            stream.add(
+              callbackEchoingState(
+                uri,
+                'remotedev://auth/callback?scope=instance&apiKey=sk-inst'
+                    '&cfToken=id-jwt&userId=u1&email=a%40b.com',
+              ),
+            );
+          });
+          return true;
+        },
+      );
+
+      final result = await launcher.loginAny(
+        origin: Uri.parse('https://dev.example.com'),
+      );
+
+      expect(launchedAt!.path, '/auth/mobile-callback');
+      expect(launchedAt!.queryParameters['state'], isNotEmpty);
+      expect(result, isA<InstanceCallback>());
+      final instance = result! as InstanceCallback;
+      expect(instance.apiKey, 'sk-inst');
+      expect(instance.cfToken, 'id-jwt');
+      expect(instance.email, 'a@b.com');
+
+      await stream.close();
+    });
+
+    test(
+        'resolves an InstanceCallback for a LEGACY (no scope) apiKey-bearing '
+        'callback', () async {
+      final stream = StreamController<Uri>.broadcast();
+      final launcher = MobileCallbackLoginLauncher(
+        deepLinkStream: stream.stream,
+        urlLauncher: (uri) async {
+          scheduleMicrotask(() {
+            stream.add(
+              callbackEchoingState(
+                uri,
+                'remotedev://auth/callback?apiKey=sk-legacy&cfToken=jwt',
+              ),
+            );
+          });
+          return true;
+        },
+      );
+
+      final result = await launcher.loginAny(
+        origin: Uri.parse('https://dev.example.com'),
+      );
+      expect(result, isA<InstanceCallback>());
+      expect((result! as InstanceCallback).apiKey, 'sk-legacy');
+      await stream.close();
+    });
+
+    test('resolves a HostCallback for a scope=host callback', () async {
+      final stream = StreamController<Uri>.broadcast();
+      final launcher = MobileCallbackLoginLauncher(
+        deepLinkStream: stream.stream,
+        urlLauncher: (uri) async {
+          scheduleMicrotask(() {
+            stream.add(
+              callbackEchoingState(
+                uri,
+                'remotedev://auth/callback?scope=host&cfToken=host-jwt'
+                    '&userId=u9&email=h%40b.com',
+              ),
+            );
+          });
+          return true;
+        },
+      );
+
+      final result = await launcher.loginAny(
+        origin: Uri.parse('https://sup.example.com'),
+      );
+      expect(result, isA<HostCallback>());
+      expect((result! as HostCallback).cfToken, 'host-jwt');
+      await stream.close();
+    });
+
+    test('returns null (NOT throws) when the browser fails to open', () async {
+      final stream = StreamController<Uri>.broadcast();
+      final launcher = MobileCallbackLoginLauncher(
+        deepLinkStream: stream.stream,
+        urlLauncher: (_) async => false,
+      );
+
+      expect(
+        await launcher.loginAny(origin: Uri.parse('https://dev.example.com')),
+        isNull,
+      );
+      await stream.close();
+    });
+
+    test('returns null (NOT throws) on timeout', () async {
+      final stream = StreamController<Uri>.broadcast();
+      final launcher = MobileCallbackLoginLauncher(
+        deepLinkStream: stream.stream,
+        urlLauncher: (_) async => true,
+        timeout: const Duration(milliseconds: 50),
+      );
+
+      expect(
+        await launcher.loginAny(origin: Uri.parse('https://dev.example.com')),
+        isNull,
+      );
+      await stream.close();
+    });
+  });
+
   test('MobileCredentials default constructor preserves fields', () {
     const c = MobileCredentials(
       apiKey: 'k',

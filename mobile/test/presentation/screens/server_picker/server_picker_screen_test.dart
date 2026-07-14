@@ -128,6 +128,115 @@ Future<void> _pumpPicker(
 }
 
 void main() {
+  group('HostEntry.isSingleWorkspaceRow (single-instance routing decision)', () {
+    test('singleWorkspace host with one empty-slug workspace → direct row', () {
+      final entry = HostEntry(
+        host: _host(kind: HostKind.singleWorkspace),
+        workspaces: [_ws(id: 'w1', hostId: 'h1')],
+      );
+      expect(entry.isSingleWorkspaceRow, isTrue);
+    });
+
+    test(
+      'singleWorkspace host with a NON-empty-slug workspace is STILL a direct '
+      'row (kind is authoritative — opens /home, never the supervisor picker)',
+      () {
+        final entry = HostEntry(
+          host: _host(kind: HostKind.singleWorkspace),
+          workspaces: [_ws(id: 'w1', hostId: 'h1', slug: 'demo')],
+        );
+        expect(entry.isSingleWorkspaceRow, isTrue);
+      },
+    );
+
+    test('multiWorkspace host with one empty-slug workspace → NOT a direct row',
+        () {
+      final entry = HostEntry(
+        host: _host(kind: HostKind.multiWorkspace),
+        workspaces: [_ws(id: 'w1', hostId: 'h1')],
+      );
+      expect(entry.isSingleWorkspaceRow, isFalse);
+    });
+
+    test('multiWorkspace host with several workspaces → NOT a direct row', () {
+      final entry = HostEntry(
+        host: _host(kind: HostKind.multiWorkspace),
+        workspaces: [
+          _ws(id: 'w1', hostId: 'h1', slug: 'demo'),
+          _ws(id: 'w2', hostId: 'h1', slug: 'staging'),
+        ],
+      );
+      expect(entry.isSingleWorkspaceRow, isFalse);
+    });
+  });
+
+  testWidgets(
+    'single-instance host with a non-empty slug opens DIRECTLY (/home) on tap '
+    'and shows no "Open another workspace" affordance',
+    (tester) async {
+      final storage = _FakeStorage();
+      final store = HostWorkspaceStoreImpl(storage);
+      // A plain single instance whose sole workspace happens to carry a slug.
+      await store.upsertHost(_host(id: 'h1', kind: HostKind.singleWorkspace));
+      await store.upsertWorkspace(
+        _ws(id: 'w1', hostId: 'h1', slug: 'demo', displayName: 'My Work'),
+      );
+      await store.setActiveWorkspace('w1');
+
+      var openAnotherCalls = 0;
+      final router = GoRouter(
+        initialLocation: '/servers',
+        routes: [
+          GoRoute(
+            path: '/servers',
+            builder: (context, state) => Consumer(
+              builder: (context, ref, _) => ServerPickerScreen(
+                onSelectWorkspace: (ws) async {
+                  await ref
+                      .read(hostWorkspaceStoreProvider)
+                      .setActiveWorkspace(ws.id);
+                  ref.invalidate(activeWorkspaceProvider);
+                  ref.invalidate(serverPickerDataProvider);
+                  if (context.mounted) context.go('/home');
+                },
+                onAddHost: () {},
+                onOpenAnotherWorkspace: (_) => openAnotherCalls += 1,
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/home',
+            builder: (_, __) =>
+                const Scaffold(body: Center(child: Text('HOME'))),
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            secureStorageProvider
+                .overrideWith((_) => throw UnimplementedError()),
+            hostWorkspaceStoreProvider.overrideWithValue(store),
+          ],
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Rendered as a direct single row (workspace name), not a supervisor
+      // header with the "Open another workspace" picker button.
+      expect(find.text('My Work'), findsOneWidget);
+      expect(find.byTooltip('Open another workspace'), findsNothing);
+
+      // Tapping opens the session directly (/home), not the workspace picker.
+      await tester.tap(find.text('My Work'));
+      await tester.pumpAndSettle();
+      expect(find.text('HOME'), findsOneWidget);
+      expect(openAnotherCalls, 0);
+    },
+  );
+
   testWidgets('empty state shows add CTA', (tester) async {
     final store = HostWorkspaceStoreImpl(_FakeStorage());
 

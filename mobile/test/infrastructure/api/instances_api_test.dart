@@ -203,7 +203,7 @@ void main() {
 
     test(
       'attaches the host CF Access service token to host-root discovery '
-      '(headers set, redundant CF_Authorization cookie dropped) — finding 3',
+      '(headers set, expired CF_Authorization cookie dropped) — finding 3',
       () async {
         final storage = _FakeStorage();
         final creds = MobileCredentialsStore(storage);
@@ -227,9 +227,11 @@ void main() {
         // after the harvested cookie expires.
         expect(sent.headers['CF-Access-Client-Id'], 'cid.public');
         expect(sent.headers['CF-Access-Client-Secret'], 'csecret.value');
-        // The now-redundant CF_Authorization cookie is excluded (the headers
-        // are the edge credential); there is no other host cookie here, so no
-        // Cookie header is sent at all.
+        // 'host-jwt' is not a decodable JWT → the interceptor treats it as
+        // expired and prefers the service token, dropping the dead
+        // CF_Authorization. There is no other host cookie, so no Cookie header
+        // is sent at all. (A FRESH identity cookie would instead be sent alone —
+        // exercised in cf_auth_interceptor_service_token_test.dart.)
         expect(sent.headers.containsKey(HttpHeaders.cookieHeader), isFalse);
       },
     );

@@ -59,9 +59,11 @@ class InstancesApi {
         // CF Access service token when one is saved — without it, host-root
         // discovery (workspace picker refresh, "Open another workspace") would
         // still die behind CF Access once the harvested CF_Authorization cookie
-        // expires, even though the user saved a permanent token. When the token
-        // is attached the interceptor drops the redundant CF_Authorization
-        // cookie and keeps the OIDC session cookie.
+        // expires, even though the user saved a permanent token. The interceptor
+        // picks ONE edge credential: while CF_Authorization is still a fresh
+        // identity JWT it is sent alone (service headers withheld); once it
+        // expires the service headers are attached and the stale cookie dropped.
+        // The OIDC session cookie is kept either way.
         authReader: (id) async {
           final hostCookies = await credentials.getHostAuthCookies(id);
           final service = await credentials.getHostServiceToken(id);

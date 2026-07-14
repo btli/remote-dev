@@ -260,6 +260,10 @@ void main() async {
 
   // Read for side effect — kicks off AppLinkListener.start().
   container.read(appLinkListenerProvider);
+  // Read for side effect — starts the app-global AddHostLoginCompleter so the
+  // interactive add-host flow completes even when its screen is disposed on the
+  // `remotedev://auth/callback` return (state-independent completion).
+  container.read(addHostLoginCompleterProvider);
   // Read for side effect — wires FirebaseMessaging.onMessageOpenedApp and
   // getInitialMessage so notification taps navigate to the correct surface
   // and sync read-state with the server.

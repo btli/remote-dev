@@ -1,10 +1,15 @@
 // Tests for the Cloudflare Access service-token support in CfAuthInterceptor /
-// AuthMaterial (remote-dev-2j8g):
+// AuthMaterial (remote-dev-2j8g + remote-dev-2w1o follow-up):
 //   - both CF-Access-Client-* headers attached when a complete pair is present
-//   - the redundant CF_Authorization cookie is EXCLUDED while every other
-//     cookie (the instance's OIDC session) is retained
+//   - DETERMINISTIC edge-credential selection: the interceptor decodes the
+//     CF_Authorization JWT's `exp` locally and picks ONE credential per request
+//     (Cloudflare evaluates Service Auth policies FIRST, so sending both would
+//     let the non-identity service token win):
+//       * FRESH identity cookie  → cookie sent, NO service headers, no reauth
+//       * EXPIRED / MALFORMED / absent cookie → service headers attached,
+//         CF_Authorization dropped, OIDC session cookie kept
 //   - behaviour is unchanged when service creds are absent
-//   - a half-populated pair attaches nothing and does not exclude the cookie
+//   - a half-populated pair attaches nothing and keeps the cookie
 //   - isEmpty / hasServiceToken semantics
 //   - revoked-token recovery: a CF-302 on a service-token request trips the
 //     in-session breaker, the replay falls back to the CF cookie (no service
@@ -13,6 +18,13 @@
 //   - idempotent cookie composition across replays: each cookie name appears
 //     exactly once on the replay, the refreshed CF value (not a stale
 //     duplicate) rides, and an upstream-set Cookie survives both passes
+//
+// NOTE: the placeholder cookie values below ('jwt', 'harvested-jwt', …) are NOT
+// decodable JWTs, so cfCookieIsFreshIdentity treats them as expired → the
+// service-token branch (headers attached, CF_Authorization dropped). The
+// dedicated "identity cookie freshness" group uses REAL exp-bearing JWTs built
+// by [_jwtWithExp] to exercise the fresh vs expired split.
+import 'dart:convert';
 import 'dart:io' show HttpHeaders;
 import 'dart:typed_data';
 
@@ -21,6 +33,23 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:remote_dev/domain/auth_cookie.dart';
 import 'package:remote_dev/infrastructure/api/cf_auth_interceptor.dart';
+
+/// Seconds-since-epoch [offset] away from now (negative = in the past).
+int _epochOffset(Duration offset) =>
+    DateTime.now().add(offset).millisecondsSinceEpoch ~/ 1000;
+
+/// Build a decodable, UNSIGNED JWT (`header.payload.`) whose payload carries the
+/// given [expSeconds] `exp` claim. cfCookieIsFreshIdentity only reads the public
+/// `exp`, so the empty signature segment is irrelevant. base64url segments are
+/// emitted WITHOUT `=` padding, exactly as a real JWT does — proving the decoder
+/// re-pads correctly.
+String _jwtWithExp(int expSeconds, {String email = 'user@example.com'}) {
+  String seg(Map<String, dynamic> m) =>
+      base64Url.encode(utf8.encode(jsonEncode(m))).replaceAll('=', '');
+  final header = seg(<String, dynamic>{'alg': 'RS256', 'typ': 'JWT'});
+  final payload = seg(<String, dynamic>{'email': email, 'exp': expSeconds});
+  return '$header.$payload.';
+}
 
 class _MockRequestHandler extends Mock implements RequestInterceptorHandler {}
 
@@ -127,11 +156,14 @@ void main() {
     );
 
     test(
-      'excludes CF_Authorization but KEEPS other cookies when service creds set',
+      'with an EXPIRED (undecodable) CF_Authorization, drops it but KEEPS other '
+      'cookies when service creds set',
       () async {
         final handler = _MockRequestHandler();
         when(() => handler.next(any())).thenAnswer((_) {});
 
+        // 'stale-jwt' is not a decodable JWT → treated as expired → the service
+        // token is preferred and the dead CF_Authorization is dropped.
         final interceptor = build(
           const AuthMaterial(
             serviceClientId: 'cid',
@@ -151,20 +183,20 @@ void main() {
         await interceptor.onRequest(options, handler);
 
         final cookie = options.headers['cookie'] as String;
-        // The redundant edge cookie is dropped (service headers supersede it).
+        // The dead edge cookie is dropped (service headers are the credential).
         expect(cookie, isNot(contains('CF_Authorization')));
         expect(cookie, isNot(contains('stale-jwt')));
         // The OIDC session cookie — still required behind the edge — is kept.
         expect(cookie, contains('__Secure-next-auth.session-token=oidc-tok'));
-        // Headers still attached alongside the retained cookie.
+        // Headers attached because the identity cookie was not fresh.
         expect(options.headers['CF-Access-Client-Id'], 'cid');
         expect(options.headers['CF-Access-Client-Secret'], 'csecret');
       },
     );
 
     test(
-      'when service creds set and CF_Authorization is the only cookie, no Cookie '
-      'header is emitted',
+      'when service creds set and an EXPIRED CF_Authorization is the only '
+      'cookie, no Cookie header is emitted',
       () async {
         final handler = _MockRequestHandler();
         when(() => handler.next(any())).thenAnswer((_) {});
@@ -182,7 +214,8 @@ void main() {
         final options = RequestOptions(path: '/api/sessions');
         await interceptor.onRequest(options, handler);
 
-        // The sole cookie was CF_Authorization → excluded → no Cookie header.
+        // The sole cookie was an expired CF_Authorization → dropped → no Cookie
+        // header, and the service token carries the request past the edge.
         expect(options.headers.containsKey('cookie'), isFalse);
         expect(options.headers['CF-Access-Client-Id'], 'cid');
       },
@@ -282,6 +315,159 @@ void main() {
     });
   });
 
+  group('CfAuthInterceptor — deterministic identity-vs-service selection', () {
+    test(
+      '(a) FRESH CF_Authorization + service creds → cookie sent, NO '
+      'CF-Access-Client-* headers, no reauth bounce (remote-dev-2w1o loop fix)',
+      () async {
+        final dio = Dio();
+        // Edge admits WITH identity (fresh cookie) → the origin sees a real user
+        // → 200 on the FIRST try (no 302, no refresh, no reauth).
+        final adapter = _SeqAdapter((options, idx) => _json200());
+        dio.httpClientAdapter = adapter;
+
+        final freshJwt = _jwtWithExp(_epochOffset(const Duration(hours: 1)));
+        var reauthCalls = 0;
+        dio.interceptors.add(
+          CfAuthInterceptor(
+            dio: dio,
+            serverId: 'host-1',
+            authReader: (_) async => AuthMaterial(
+              serviceClientId: 'cid',
+              serviceClientSecret: 'csecret',
+              cookies: [
+                AuthCookie(
+                  name: 'CF_Authorization',
+                  value: freshJwt,
+                  path: '/',
+                ),
+              ],
+            ),
+            refreshAuth: (_) async => fail('no auth failure → no refresh'),
+            onReauthNeeded: () => reauthCalls += 1,
+          ),
+        );
+
+        final response = await dio.get<dynamic>('/api/sessions');
+        expect(response.statusCode, 200);
+        expect(reauthCalls, 0, reason: 'identity cookie authenticates → no loop');
+        expect(adapter.captured.length, 1, reason: 'no replay needed');
+
+        final sent = adapter.capturedHeaders.single;
+        // The identity cookie is on the wire and the service token is WITHHELD
+        // (sending both would let Cloudflare's Service-Auth-first policy strip
+        // the identity).
+        expect(sent['cookie'], contains('CF_Authorization=$freshJwt'));
+        expect(sent.containsKey('CF-Access-Client-Id'), isFalse);
+        expect(sent.containsKey('CF-Access-Client-Secret'), isFalse);
+      },
+    );
+
+    test(
+      '(b) EXPIRED CF_Authorization + service creds → headers attached, '
+      'CF_Authorization dropped, OIDC cookie kept',
+      () async {
+        final handler = _MockRequestHandler();
+        when(() => handler.next(any())).thenAnswer((_) {});
+
+        final expiredJwt = _jwtWithExp(_epochOffset(const Duration(hours: -1)));
+        final interceptor = build(
+          AuthMaterial(
+            serviceClientId: 'cid',
+            serviceClientSecret: 'csecret',
+            cookies: [
+              AuthCookie(
+                name: 'CF_Authorization',
+                value: expiredJwt,
+                path: '/',
+              ),
+              const AuthCookie(
+                name: '__Secure-next-auth.session-token',
+                value: 'oidc-tok',
+                path: '/',
+              ),
+            ],
+          ),
+        );
+
+        final options = RequestOptions(path: '/api/sessions');
+        await interceptor.onRequest(options, handler);
+
+        final cookie = options.headers['cookie'] as String;
+        // Expired identity → service token wins, dead cookie dropped…
+        expect(cookie, isNot(contains('CF_Authorization')));
+        expect(cookie, isNot(contains(expiredJwt)));
+        // …OIDC session cookie kept; service headers attached.
+        expect(cookie, contains('__Secure-next-auth.session-token=oidc-tok'));
+        expect(options.headers['CF-Access-Client-Id'], 'cid');
+        expect(options.headers['CF-Access-Client-Secret'], 'csecret');
+      },
+    );
+
+    test(
+      '(b2) an identity cookie within the 30s skew window is treated as expired '
+      '→ service token wins',
+      () async {
+        final handler = _MockRequestHandler();
+        when(() => handler.next(any())).thenAnswer((_) {});
+
+        // exp is in the future but inside the skew guard (10s < 30s) → stale.
+        final almostExpired =
+            _jwtWithExp(_epochOffset(const Duration(seconds: 10)));
+        final interceptor = build(
+          AuthMaterial(
+            serviceClientId: 'cid',
+            serviceClientSecret: 'csecret',
+            cookies: [
+              AuthCookie(
+                name: 'CF_Authorization',
+                value: almostExpired,
+                path: '/',
+              ),
+            ],
+          ),
+        );
+
+        final options = RequestOptions(path: '/api/sessions');
+        await interceptor.onRequest(options, handler);
+
+        expect(options.headers.containsKey('cookie'), isFalse);
+        expect(options.headers['CF-Access-Client-Id'], 'cid');
+      },
+    );
+
+    test(
+      '(c) MALFORMED CF_Authorization + service creds → treated as expired '
+      '(service token wins, cookie dropped)',
+      () async {
+        final handler = _MockRequestHandler();
+        when(() => handler.next(any())).thenAnswer((_) {});
+
+        // Not a JWT at all (no exp to decode) → treated as expired.
+        final interceptor = build(
+          const AuthMaterial(
+            serviceClientId: 'cid',
+            serviceClientSecret: 'csecret',
+            cookies: [
+              AuthCookie(
+                name: 'CF_Authorization',
+                value: 'not-a-jwt',
+                path: '/',
+              ),
+            ],
+          ),
+        );
+
+        final options = RequestOptions(path: '/api/sessions');
+        await interceptor.onRequest(options, handler);
+
+        expect(options.headers.containsKey('cookie'), isFalse);
+        expect(options.headers['CF-Access-Client-Id'], 'cid');
+        expect(options.headers['CF-Access-Client-Secret'], 'csecret');
+      },
+    );
+  });
+
   group('CfAuthInterceptor — revoked service-token recovery (finding 1)', () {
     test(
       'bad service token → refresh returns CF cookie → replay sends CF cookie '
@@ -343,7 +529,10 @@ void main() {
         // Use the per-call header SNAPSHOTS (not the aliased live RequestOptions
         // — see _SeqAdapter doc) so each assertion reflects what that specific
         // call transmitted.
-        // Original request: service headers attached, CF cookie excluded.
+        // Original request: the harvested CF cookie is an undecodable placeholder
+        // → treated as expired → the service token is preferred, its headers are
+        // attached, and the dead CF_Authorization is dropped. The OIDC session
+        // cookie is kept.
         final first = adapter.capturedHeaders[0];
         expect(first['CF-Access-Client-Id'], 'cid');
         expect(first['CF-Access-Client-Secret'], 'csecret');
@@ -485,7 +674,13 @@ void main() {
         expect(response.statusCode, 200);
 
         for (final headers in adapter.capturedHeaders) {
-          final cookie = headers['cookie'] as String;
+          // The upstream interceptor set a capital-`Cookie` key and the
+          // interceptor preserves that casing, so look the header up
+          // case-insensitively rather than assuming a lowercase key.
+          final cookieKey = headers.keys.firstWhere(
+            (k) => k.toLowerCase() == 'cookie',
+          );
+          final cookie = headers[cookieKey] as String;
           // Upstream cookie preserved, exactly once, on BOTH passes…
           expect(_cookieNameCount(cookie, 'upstream'), 1);
           expect(cookie, contains('upstream=keep'));
@@ -605,7 +800,8 @@ void main() {
         final fresh = adapter.capturedHeaders.last;
         expect(fresh['CF-Access-Client-Id'], 'cid-B');
         expect(fresh['CF-Access-Client-Secret'], 'secret-B');
-        // Service token attached again → CF_Authorization excluded once more.
+        // Service token attached again (the 'jwt' placeholder is undecodable →
+        // treated as expired) → CF_Authorization dropped once more.
         expect(
           (fresh['cookie'] as String?) ?? '',
           isNot(contains('CF_Authorization')),

@@ -7,6 +7,7 @@ import '../../../application/ports/server_config_store.dart';
 import '../../../application/state/active_connection.dart';
 import '../../../domain/server_config.dart';
 import '../../../infrastructure/auth/mobile_credentials.dart';
+import '../../../infrastructure/auth/pending_add_host_login.dart';
 import '../../../infrastructure/storage/flutter_secure_storage_port.dart';
 import '../../../infrastructure/storage/host_workspace_store_impl.dart';
 import '../../../infrastructure/storage/server_config_store_impl.dart';
@@ -40,6 +41,14 @@ final hostWorkspaceStoreProvider = Provider<HostWorkspaceStore>(
 /// by `MobileCallbackLoginLauncher`.
 final mobileCredentialsStoreProvider = Provider<MobileCredentialsStore>(
   (ref) => MobileCredentialsStore(ref.watch(secureStorageProvider)),
+);
+
+/// Durable store for the single in-flight interactive add-host login. Written
+/// by `AddHostScreen` before launching the browser and read back by the
+/// app-global `AddHostLoginCompleter` after the `remotedev://auth/callback`
+/// return — so the flow completes even though the screen was disposed.
+final pendingAddHostLoginStoreProvider = Provider<PendingAddHostLoginStore>(
+  (ref) => PendingAddHostLoginStore(ref.watch(secureStorageProvider)),
 );
 
 /// Seeds the in-app WebView's `CookieManager` with the persisted CF
