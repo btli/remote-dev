@@ -408,15 +408,18 @@ export async function updateSchedule(
     }
   }
 
-  // Log every enabled-state transition so disables are never traceless
-  // (a silent PATCH {enabled:false} previously left no info-level record).
-  if (updates.enabled !== undefined) {
-    log.info("Schedule enabled-state transition", {
-      scheduleId,
-      enabled: updates.enabled,
-      previousEnabled: existing.enabled,
-      status: updates.status ?? existing.status,
-    });
+  // Re-enabling a schedule whose status is a terminal marker re-arms it:
+  // 'cancelled' (session closed — e.g. later restored from trash) and
+  // 'missed' (fire time passed while the scheduler was down) must reset to
+  // 'active', or the row keeps rendering "Cancelled (session closed)" /
+  // "Missed" forever while croner actively fires it. An explicit status in
+  // the same update always wins.
+  if (
+    updates.enabled === true &&
+    updates.status === undefined &&
+    (existing.status === "cancelled" || existing.status === "missed")
+  ) {
+    updates.status = "active";
   }
 
   // Build update object
@@ -442,6 +445,19 @@ export async function updateSchedule(
       )
     )
     .returning();
+
+  // Log every enabled-state transition so disables are never traceless
+  // (a silent PATCH {enabled:false} previously left no info-level record).
+  // Logged after the write so a failed update cannot leave a phantom
+  // transition in the audit trail.
+  if (updates.enabled !== undefined) {
+    log.info("Schedule enabled-state transition", {
+      scheduleId,
+      enabled: updates.enabled,
+      previousEnabled: existing.enabled,
+      status: updates.status ?? existing.status,
+    });
+  }
 
   return mapDbScheduleToSchedule(updated);
 }

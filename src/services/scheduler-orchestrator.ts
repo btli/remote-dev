@@ -57,6 +57,14 @@ class SchedulerOrchestrator {
   private jobs: Map<string, ActiveJob> = new Map();
   private isRunning = false;
   private startupComplete = false;
+  /**
+   * Schedule ids with an execution currently in flight. Guards against
+   * concurrent double-injection of keystrokes for the same schedule — e.g. a
+   * PATCH re-entering registration's grace-window catch-up while the fire it
+   * caught up on is still executing (the row is still enabled until
+   * post-execution bookkeeping lands).
+   */
+  private executing: Set<string> = new Set();
 
   /**
    * Start the orchestrator - load all enabled schedules
@@ -108,6 +116,7 @@ class SchedulerOrchestrator {
     }
 
     this.jobs.clear();
+    this.executing.clear();
     this.isRunning = false;
     this.startupComplete = false;
 
@@ -177,6 +186,33 @@ class SchedulerOrchestrator {
         const now = new Date();
         const action = classifyOneTimeRegistration(schedule.scheduledAt, now);
         if (action !== "register") {
+          // Both past-due outcomes are destructive (inject keystrokes now or
+          // disable the row), and start()'s boot loop classifies a snapshot
+          // read before the loop began — while the notify endpoint is already
+          // live, so a concurrent user PATCH may have rescheduled or disabled
+          // this row in the meantime. Re-read and act on fresh data before
+          // doing anything irreversible.
+          const fresh = await ScheduleService.getScheduleWithCommands(
+            schedule.id,
+            schedule.userId
+          );
+          if (!fresh || !fresh.enabled || fresh.status === "completed") {
+            log.info("One-time schedule disabled or gone since snapshot; skipping past-due handling", {
+              scheduleId: schedule.id,
+            });
+            return;
+          }
+          if (
+            fresh.scheduleType !== schedule.scheduleType ||
+            !fresh.scheduledAt ||
+            fresh.scheduledAt.getTime() !== schedule.scheduledAt.getTime()
+          ) {
+            log.info("One-time schedule changed since snapshot; re-registering from fresh data", {
+              scheduleId: schedule.id,
+            });
+            await this.registerSchedule(fresh);
+            return;
+          }
           const latenessMs = now.getTime() - schedule.scheduledAt.getTime();
           if (action === "fire-now") {
             log.warn("One-time schedule past due within grace window; firing immediately", {
@@ -297,6 +333,11 @@ class SchedulerOrchestrator {
     tmuxSessionName: string,
     isOneTime = false
   ): Promise<void> {
+    if (this.executing.has(scheduleId)) {
+      log.warn("Skipping schedule fire: an execution is already in flight", { scheduleId });
+      return;
+    }
+
     log.info("Executing schedule", { scheduleId, isOneTime });
 
     const job = this.jobs.get(scheduleId);
@@ -305,6 +346,7 @@ class SchedulerOrchestrator {
       return;
     }
 
+    this.executing.add(scheduleId);
     try {
       // Reload schedule data to get latest commands
       const schedule = await ScheduleService.getScheduleWithCommands(
@@ -344,6 +386,8 @@ class SchedulerOrchestrator {
         this.removeJobInternal(scheduleId);
         log.info("One-time schedule removed after failed execution", { scheduleId });
       }
+    } finally {
+      this.executing.delete(scheduleId);
     }
   }
 

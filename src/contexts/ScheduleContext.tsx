@@ -195,6 +195,11 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
 
       const schedule = await response.json();
 
+      // Bump the mutation counter so an in-flight background poll that
+      // started before this create cannot clobber the refetch below with
+      // pre-create data (the new row would vanish until the next poll).
+      mutationSeqRef.current += 1;
+
       // Add to state with session info (we'll need to refresh for full data)
       await refreshSchedules();
 
@@ -297,6 +302,11 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
       }
 
       const data = await response.json();
+
+      // Bump the mutation counter so an in-flight background poll that
+      // started before this execution cannot clobber the refetch below with
+      // pre-execution data (re-rendering "Overdue" until the next poll).
+      mutationSeqRef.current += 1;
 
       // Refresh schedules to sync nextRunAt and status after execution
       await refreshSchedules();

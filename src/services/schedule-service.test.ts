@@ -34,6 +34,7 @@ import {
   markScheduleMissed,
   markScheduleCancelled,
   persistNextRunAt,
+  updateSchedule,
 } from "./schedule-service";
 import { projects, sessionSchedules, terminalSessions, users } from "@/db/schema";
 import type { ScheduleStatus } from "@/types/schedule";
@@ -193,6 +194,80 @@ describe("ScheduleService lifecycle", () => {
       const row = await getScheduleRow("cancelled-1");
       expect(row.enabled).toBe(false);
       expect(row.status).toBe("cancelled");
+    });
+  });
+
+  describe("updateSchedule re-enable status reset", () => {
+    it("resets 'cancelled' to 'active' when re-enabling (e.g. after a trash-restore)", async () => {
+      await seedSchedule({
+        id: "reenable-cancelled",
+        sessionId: SESSION_A,
+        enabled: false,
+        status: "cancelled",
+      });
+
+      const updated = await updateSchedule("reenable-cancelled", USER, {
+        enabled: true,
+      });
+      expect(updated.enabled).toBe(true);
+      expect(updated.status).toBe("active");
+
+      const row = await getScheduleRow("reenable-cancelled");
+      expect(row.enabled).toBe(true);
+      expect(row.status).toBe("active");
+    });
+
+    it("resets 'missed' to 'active' when re-enabling", async () => {
+      await seedSchedule({
+        id: "reenable-missed",
+        sessionId: SESSION_A,
+        enabled: false,
+        status: "missed",
+      });
+
+      const updated = await updateSchedule("reenable-missed", USER, {
+        enabled: true,
+      });
+      expect(updated.status).toBe("active");
+    });
+
+    it("keeps an explicitly provided status on re-enable", async () => {
+      await seedSchedule({
+        id: "reenable-explicit",
+        sessionId: SESSION_A,
+        enabled: false,
+        status: "cancelled",
+      });
+
+      const updated = await updateSchedule("reenable-explicit", USER, {
+        enabled: true,
+        status: "paused",
+      });
+      expect(updated.status).toBe("paused");
+    });
+
+    it("does not reset 'completed' on re-enable (one-time completion is sticky)", async () => {
+      await seedSchedule({
+        id: "reenable-completed",
+        sessionId: SESSION_A,
+        enabled: false,
+        status: "completed",
+      });
+
+      const updated = await updateSchedule("reenable-completed", USER, {
+        enabled: true,
+      });
+      expect(updated.status).toBe("completed");
+    });
+
+    it("leaves status alone when disabling", async () => {
+      await seedSchedule({ id: "disable-active", sessionId: SESSION_A });
+
+      const updated = await updateSchedule("disable-active", USER, {
+        enabled: false,
+      });
+      expect(updated.enabled).toBe(false);
+      expect(updated.status).toBe("active");
     });
   });
 
