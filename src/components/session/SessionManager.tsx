@@ -275,14 +275,17 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // Schedule lookups for the close-session pending-schedule warning
   const { getSchedulesForSession } = useScheduleContext();
 
-  // Surface pending keystroke schedules that closing a session cancels.
-  // There is no close-confirmation dialog in this flow, so a post-close
-  // toast is the minimal truthful signal (the server marks the pending
-  // rows status='cancelled'). Returns the count captured BEFORE the close.
+  // Surface pending keystroke schedules that closing/trashing a session
+  // cancels. There is no close-confirmation dialog in this flow, so a
+  // post-close toast is the minimal truthful signal (both the close and
+  // trash server paths mark the pending rows status='cancelled'). The
+  // filter matches the server's predicate — disableSessionSchedules
+  // cancels every enabled row regardless of informational status (e.g.
+  // 'failed' rows are still armed) — so the count never understates.
   const notifySchedulesCancelledOnClose = useCallback(
     (sessionId: string) => {
       const pendingCount = getSchedulesForSession(sessionId).filter(
-        (s) => s.enabled && s.status === "active"
+        (s) => s.enabled
       ).length;
       if (pendingCount > 0) {
         toast.info(

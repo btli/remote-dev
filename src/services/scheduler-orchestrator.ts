@@ -138,11 +138,13 @@ class SchedulerOrchestrator {
       where: eq(terminalSessions.id, schedule.sessionId),
     });
 
-    if (!session || session.status === "closed") {
-      // The session is gone forever (applies to recurring schedules too), so
-      // persist the cancellation instead of leaving the row rendering as
-      // armed. This also self-heals orphans left by close paths that bypass
-      // disableSessionSchedules (trash, PATCH {status:'closed'}, reconcile).
+    if (!session || session.status === "closed" || session.status === "trashed") {
+      // The session's tmux is gone forever — closed, trashed (trashing kills
+      // tmux too; restore never resurrects schedules), or the row is missing
+      // entirely — so persist the cancellation (recurring included) instead
+      // of leaving the row rendering as armed. This also self-heals orphans
+      // left by close paths that bypass disableSessionSchedules (PATCH
+      // {status:'closed'}, reconcile, pre-fix trashed sessions).
       log.warn("Session not found or closed for schedule; cancelling schedule", {
         sessionId: schedule.sessionId,
         scheduleId: schedule.id,

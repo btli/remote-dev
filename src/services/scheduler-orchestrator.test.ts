@@ -1,8 +1,8 @@
 // @vitest-environment node
 /**
  * SchedulerOrchestrator tests — missed-fire persistence, the bounded
- * grace-window catch-up for past-due one-time schedules, closed-session
- * cancellation, and stale-nextRunAt healing at registration.
+ * grace-window catch-up for past-due one-time schedules, closed/trashed-
+ * session cancellation, and stale-nextRunAt healing at registration.
  *
  * The registration decisions write DB state, so `@/db` is backed by a REAL
  * libsql database with the full generated schema (migration-test-db helper).
@@ -189,6 +189,45 @@ describe("SchedulerOrchestrator registration", () => {
     expect(schedulerOrchestrator.getJobCount()).toBe(0);
   });
 
+  it("cancels schedules whose session is trashed (tmux killed, never re-arms)", async () => {
+    // Trashing kills the tmux session just like closing does; the trash path
+    // previously bypassed disableSessionSchedules, so boot-time registration
+    // must treat 'trashed' like 'closed' to heal pre-fix orphans instead of
+    // re-arming croner against dead tmux.
+    await seedSession("trashed-session", "trashed");
+    await seedSchedule({
+      id: "orphan-trashed",
+      sessionId: "trashed-session",
+      scheduleType: "recurring",
+      cronExpression: "0 * * * *",
+    });
+
+    await schedulerOrchestrator.start();
+
+    const row = await getScheduleRow("orphan-trashed");
+    expect(row.enabled).toBe(false);
+    expect(row.status).toBe("cancelled");
+    expect(schedulerOrchestrator.getJobCount()).toBe(0);
+    expect(mockedSendKeys).not.toHaveBeenCalled();
+  });
+
+  it("cancels a past-due one-time schedule of a trashed session instead of firing or marking it missed", async () => {
+    await seedSession("trashed-session-2", "trashed");
+    await seedSchedule({
+      id: "orphan-trashed-late",
+      sessionId: "trashed-session-2",
+      scheduleType: "one-time",
+      scheduledAt: new Date(Date.now() - 60_000), // within grace window
+    });
+
+    await schedulerOrchestrator.start();
+
+    const row = await getScheduleRow("orphan-trashed-late");
+    expect(row.enabled).toBe(false);
+    expect(row.status).toBe("cancelled");
+    expect(mockedSendKeys).not.toHaveBeenCalled();
+  });
+
   it("cancels schedules whose session row is missing entirely", async () => {
     // A dangling sessionId can exist in prod (FK enforcement is off on the
     // default SQLite backend); relax FKs for this seed to reproduce it.
@@ -243,11 +282,16 @@ describe("SchedulerOrchestrator registration", () => {
     await schedulerOrchestrator.start();
 
     // The catch-up fire is intentionally fire-and-forget so it cannot block
-    // startup registration; wait for the completion write.
-    await vi.waitFor(async () => {
-      const row = await getScheduleRow("late-but-ok");
-      expect(row.status).toBe("completed");
-    });
+    // startup registration; wait for the completion write. Generous timeout:
+    // the fire path includes a built-in 100ms settle plus several real
+    // libsql writes, which can stretch on loaded CI runners.
+    await vi.waitFor(
+      async () => {
+        const row = await getScheduleRow("late-but-ok");
+        expect(row.status).toBe("completed");
+      },
+      { timeout: 5000 }
+    );
 
     const row = await getScheduleRow("late-but-ok");
     expect(row.enabled).toBe(false);

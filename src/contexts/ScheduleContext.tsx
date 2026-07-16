@@ -7,6 +7,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   type ReactNode,
 } from "react";
 import type {
@@ -42,6 +43,10 @@ function scheduleReducer(state: ScheduleState, action: ScheduleAction): Schedule
       return { ...state, loading: true, error: null };
     case "LOAD_SUCCESS":
       return { ...state, loading: false, schedules: action.schedules };
+    case "LOAD_STALE":
+      // A refetch resolved after a newer client mutation — keep the
+      // optimistically-updated schedules, just clear the loading flag.
+      return { ...state, loading: false };
     case "LOAD_ERROR":
       return { ...state, loading: false, error: action.error };
     case "CREATE":
@@ -113,8 +118,16 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
   const [state, dispatch] = useReducer(scheduleReducer, initialState);
   const { activeSessionId } = useSessionContext();
 
+  // Monotonic mutation counter: a background refetch that started before the
+  // latest client mutation would otherwise clobber the optimistic dispatch
+  // with pre-mutation data (a visible revert for up to one poll interval).
+  // Mutations bump the counter; a refetch whose fetch began at an older
+  // counter value drops its payload.
+  const mutationSeqRef = useRef(0);
+
   // Fetch all user schedules
   const refreshSchedules = useCallback(async () => {
+    const seqAtStart = mutationSeqRef.current;
     dispatch({ type: "LOAD_START" });
     try {
       const response = await apiFetch("/api/schedules");
@@ -122,6 +135,12 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
         throw new Error("Failed to load schedules");
       }
       const data = await response.json();
+      if (mutationSeqRef.current !== seqAtStart) {
+        // A mutation landed while this fetch was in flight, so the response
+        // predates it — drop it; the next refetch re-syncs.
+        dispatch({ type: "LOAD_STALE" });
+        return;
+      }
       dispatch({ type: "LOAD_SUCCESS", schedules: data.schedules || [] });
     } catch (error) {
       dispatch({
@@ -205,6 +224,7 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
       const schedule = await response.json();
 
       // Use the returned schedule data for state update (properly typed)
+      mutationSeqRef.current += 1;
       dispatch({
         type: "UPDATE",
         scheduleId,
@@ -240,6 +260,7 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
       throw new Error(error.message || "Failed to delete schedule");
     }
 
+    mutationSeqRef.current += 1;
     dispatch({ type: "DELETE", scheduleId });
   }, []);
 
@@ -257,6 +278,7 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
         throw new Error(error.message || "Failed to toggle schedule");
       }
 
+      mutationSeqRef.current += 1;
       dispatch({ type: "TOGGLE_ENABLED", scheduleId, enabled });
     },
     []

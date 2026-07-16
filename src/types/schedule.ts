@@ -238,6 +238,8 @@ export interface ScheduleState {
 export type ScheduleAction =
   | { type: "LOAD_START" }
   | { type: "LOAD_SUCCESS"; schedules: SessionScheduleWithSession[] }
+  /** A refetch resolved after a newer client mutation; drop its payload. */
+  | { type: "LOAD_STALE" }
   | { type: "LOAD_ERROR"; error: string }
   | { type: "CREATE"; schedule: SessionScheduleWithSession }
   | { type: "UPDATE"; scheduleId: string; updates: Partial<SessionSchedule> }

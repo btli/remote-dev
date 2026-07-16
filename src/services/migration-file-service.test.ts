@@ -278,6 +278,9 @@ describe("MigrationFileService", () => {
     await execFile("git", ["init", "-q", repo]);
     await git("config", "user.email", "t@example.com");
     await git("config", "user.name", "T");
+    // Fixture repos must not inherit the host's signing config — a global
+    // commit.gpgsign=true with no key in the keyring would fail the commit.
+    await git("config", "commit.gpgsign", "false");
     writeFileSync(join(repo, "tracked.txt"), "base\n");
     await git("add", "tracked.txt");
     await git("commit", "-q", "-m", "init");
