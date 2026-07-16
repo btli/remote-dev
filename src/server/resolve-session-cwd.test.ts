@@ -21,7 +21,7 @@ vi.mock("@/lib/logger", () => ({
 const statSync = vi.fn();
 vi.mock("node:fs", () => ({ statSync: (p: string) => statSync(p) }));
 
-import { resolveSessionCwd } from "./resolve-session-cwd";
+import { resolveSessionCwd, rowProjectPathForCwd } from "./resolve-session-cwd";
 
 /** Make statSync accept exactly the given directories and ENOENT everything else. */
 function dirsExist(...dirs: string[]): void {
@@ -91,5 +91,32 @@ describe("resolveSessionCwd", () => {
     const result = resolveSessionCwd(undefined, undefined, "");
     expect(result.cwd).toBe("/");
     expect(result.tier).toBe("home");
+  });
+});
+
+describe("rowProjectPathForCwd", () => {
+  // The WS connect handler's ownership lookup was widened to also select
+  // project_path solely to feed resolveSessionCwd's tier 2; these pin that
+  // mapping (the handler itself needs node-pty and can't be unit-tested).
+  beforeEach(() => {
+    statSync.mockReset();
+  });
+
+  it("returns null for the session-creation path (no owning row)", () => {
+    expect(rowProjectPathForCwd(null)).toBeNull();
+    expect(rowProjectPathForCwd(undefined)).toBeNull();
+  });
+
+  it("returns null when the row's project_path column is NULL", () => {
+    expect(rowProjectPathForCwd({ projectPath: null })).toBeNull();
+  });
+
+  it("feeds a populated project_path through to tier 2 of resolveSessionCwd", () => {
+    dirsExist("/projects/app", HOME);
+    const rowProjectPath = rowProjectPathForCwd({ projectPath: "/projects/app" });
+    expect(rowProjectPath).toBe("/projects/app");
+    const result = resolveSessionCwd(undefined, rowProjectPath, HOME);
+    expect(result.cwd).toBe("/projects/app");
+    expect(result.tier).toBe("session-row");
   });
 });

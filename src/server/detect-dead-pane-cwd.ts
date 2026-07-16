@@ -50,6 +50,7 @@ const HEALABLE_SHELL_COMMANDS = new Set([
   "-zsh",
   "-bash",
   "-sh",
+  "-fish",
 ]);
 
 /**

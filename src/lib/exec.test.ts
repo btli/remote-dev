@@ -10,22 +10,36 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import { existsSync } from "node:fs";
-import * as os from "node:os";
 
 type ExecCallback = (
   err: unknown,
   result: { stdout: string; stderr: string },
 ) => void;
 
-const { execFileMock, spawnMock } = vi.hoisted(() => ({
-  execFileMock: vi.fn(),
-  spawnMock: vi.fn(),
-}));
+const FAKE_HOME = "/home/spawn-tester";
+
+const { execFileMock, spawnMock, homedirMock, existsSyncMock } = vi.hoisted(() => {
+  const homedirMock = vi.fn(() => "/home/spawn-tester");
+  const existsSyncMock = vi.fn(() => true);
+  return { execFileMock: vi.fn(), spawnMock: vi.fn(), homedirMock, existsSyncMock };
+});
 
 vi.mock("node:child_process", () => ({
   execFile: execFileMock,
   spawn: spawnMock,
+}));
+
+// STABLE_SPAWN_CWD is computed once at module load from os.homedir() +
+// existsSync, so pin both: the tests below assert the invariant (homedir when
+// non-empty and existing, "/" otherwise) instead of mirroring the real
+// environment's branch.
+vi.mock("node:os", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:os")>()),
+  homedir: homedirMock,
+}));
+vi.mock("node:fs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:fs")>()),
+  existsSync: existsSyncMock,
 }));
 
 import { execFile, execFileCapped, spawnProcess, STABLE_SPAWN_CWD } from "./exec";
@@ -48,14 +62,28 @@ function fakeProc(): EventEmitter & {
 }
 
 describe("STABLE_SPAWN_CWD", () => {
-  it("is the (existing) home directory, or root as the fallback", () => {
-    const home = os.homedir();
-    if (home && existsSync(home)) {
-      expect(STABLE_SPAWN_CWD).toBe(home);
-    } else {
-      expect(STABLE_SPAWN_CWD).toBe("/");
-    }
+  it("is the home directory when it is non-empty and exists", () => {
+    expect(STABLE_SPAWN_CWD).toBe(FAKE_HOME);
+  });
+
+  it("is a non-empty absolute path", () => {
     expect(STABLE_SPAWN_CWD.length).toBeGreaterThan(0);
+    expect(STABLE_SPAWN_CWD.startsWith("/")).toBe(true);
+  });
+
+  it("falls back to '/' when the home directory does not exist", async () => {
+    // Recomputed at module load — re-evaluate the module under the scenario.
+    vi.resetModules();
+    existsSyncMock.mockReturnValueOnce(false);
+    const mod = await import("./exec");
+    expect(mod.STABLE_SPAWN_CWD).toBe("/");
+  });
+
+  it("falls back to '/' when the homedir is empty", async () => {
+    vi.resetModules();
+    homedirMock.mockReturnValueOnce("");
+    const mod = await import("./exec");
+    expect(mod.STABLE_SPAWN_CWD).toBe("/");
   });
 });
 

@@ -29,6 +29,23 @@ export interface ResolvedSessionCwd {
 }
 
 /**
+ * [remote-dev-ipbo] Map the WS connect-time ownership-lookup row to the tier-2
+ * (`rowProjectPath`) argument of {@link resolveSessionCwd}.
+ *
+ * The connect handler widened its ownership lookup to also select
+ * `project_path` purely to feed tier 2. This mapping is trivially small, but
+ * extracting it here pins the step with unit tests (terminal.ts itself cannot
+ * be exercised without node-pty): no row (the session-creation path) and a row
+ * whose `project_path` column is NULL both yield null, and a populated column
+ * passes through untouched.
+ */
+export function rowProjectPathForCwd(
+  owningRow: { projectPath: string | null } | null | undefined,
+): string | null {
+  return owningRow?.projectPath ?? null;
+}
+
+/**
  * Resolve the working directory for a new tmux session.
  *
  * Tier 1: the client-supplied `?cwd=` query value (validated).

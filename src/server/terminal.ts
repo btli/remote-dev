@@ -10,7 +10,7 @@ import * as os from "node:os";
 import { promisify } from "node:util";
 import { STABLE_SPAWN_CWD } from "../lib/exec.js";
 import { validatePath, sanitizeCwdForDisplay } from "./validate-cwd.js";
-import { resolveSessionCwd } from "./resolve-session-cwd.js";
+import { resolveSessionCwd, rowProjectPathForCwd } from "./resolve-session-cwd.js";
 import { classifyPaneCwd, computeServerAppDirMarkers } from "./detect-dead-pane-cwd.js";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
 // [oyej] Agent-run scheduler (REAL agent launches; epic remote-dev-oyej).
@@ -882,9 +882,10 @@ function attachToTmuxSession(
 /**
  * [remote-dev-ipbo] Tmux sessions already audited for a dead pane cwd this
  * server lifetime. One audit per tmux session is enough — the classification
- * can't get worse, and the heal (if any) already ran. A session whose PROBE
- * failed (transient tmux contention) is removed again so the next attach
- * retries instead of skipping the audit forever.
+ * can't get worse, and the heal (if any) already ran. A session whose audit
+ * FAILED (probe contention, or a heal send-keys that threw and left the pane
+ * broken) is removed again so the next attach retries instead of skipping the
+ * audit forever.
  */
 const auditedPaneCwdSessions = new Set<string>();
 
@@ -982,15 +983,28 @@ async function auditPaneCwdOnAttach(
     }
 
     if (ws.readyState === WebSocket.OPEN) {
+      // "in-server-app-dir" is the deploy-incident signature; "stat-failed"
+      // just means the directory vanished — don't blame a redeploy for it.
+      const cause =
+        classification.reason === "in-server-app-dir"
+          ? "This session's working directory no longer exists (the server was redeployed)"
+          : "This session's working directory no longer exists";
       const data = healTarget
-        ? "\r\n\x1b[33m⚠ This session's working directory no longer exists (the server was redeployed).\x1b[0m" +
+        ? "\r\n\x1b[33m⚠ " + cause + ".\x1b[0m" +
           "\r\n\x1b[33m  → moved to " + sanitizeCwdForDisplay(healTarget) + "\x1b[0m\r\n"
-        : "\r\n\x1b[33m⚠ This session's working directory no longer exists (the server was redeployed) — cd to a valid directory.\x1b[0m\r\n";
+        : "\r\n\x1b[33m⚠ " + cause + " — cd to a valid directory.\x1b[0m\r\n";
       ws.send(JSON.stringify({ type: "output", data }));
     }
   } catch (error) {
-    // Best-effort: a failed audit must never break the attach.
-    log.debug("Pane cwd audit failed", { sessionId, tmuxSessionName, error: String(error) });
+    // Best-effort: a failed audit must never break the attach. Un-mark so the
+    // NEXT attach retries (a failed heal left the pane broken; retrying a
+    // completed heal is a harmless no-op — the pane re-classifies healthy).
+    auditedPaneCwdSessions.delete(tmuxSessionName);
+    log.debug("Pane cwd audit failed; will retry on next attach", {
+      sessionId,
+      tmuxSessionName,
+      error: String(error),
+    });
   }
 }
 
@@ -3057,7 +3071,9 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         return;
       }
 
-      rowProjectPath = owningRow?.projectPath ?? null;
+      // Tiny mapping extracted to resolve-session-cwd.ts so the "widened
+      // ownership lookup feeds tier 2" step is unit-tested without node-pty.
+      rowProjectPath = rowProjectPathForCwd(owningRow);
     }
 
     // SECURITY + [remote-dev-ipbo]: Resolve the working directory with a
@@ -3075,7 +3091,11 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     const tmuxExists = tmuxSessionExists(tmuxSessionName);
 
     if (resolved.tier !== "query") {
-      const fallbackDetails = {
+      // Warn on BOTH branches: on CREATE the fallback decides where the new
+      // tmux session is born; on reattach it is what a later restart_agent
+      // would use. The incident class was invisible in logs precisely because
+      // fallbacks stayed below prod LOG_LEVEL=warn (remote-dev-ipbo).
+      log.warn("Session cwd fell back", {
         sessionId,
         tmuxSessionName,
         tier: resolved.tier,
@@ -3084,17 +3104,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         rowRejectedReason: resolved.rowRejectedReason ?? null,
         rowProjectPathPresent: rowProjectPath !== null,
         tmuxExists,
-      };
-      if (tmuxExists) {
-        // Reattach: the fallback cwd is only consulted by a later
-        // restart_agent — a reconnect-heavy client that never sends ?cwd=
-        // must not emit a warn per reconnect at prod LOG_LEVEL=warn.
-        log.debug("Session cwd fell back", fallbackDetails);
-      } else {
-        // The incident class was invisible in logs — a fallback that decides
-        // where a NEW tmux session is born must be loud.
-        log.warn("Session cwd fell back", fallbackDetails);
-      }
+      });
     }
 
     log.debug("Connection request", { connectionId, sessionId, tmuxSessionName, tmuxExists });
@@ -3144,13 +3154,27 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         // (the attach branch reuses the existing session's dir, nothing was
         // chosen).
         if (resolved.tier !== "query" && ws.readyState === WebSocket.OPEN) {
-          const data = rawCwd
-            ? "\r\n\x1b[33m⚠ Working directory not found:\x1b[0m " +
-              sanitizeCwdForDisplay(rawCwd) +
-              "\r\n\x1b[33m  Started in the default directory instead — fix it in the project's Preferences → Working Directory.\x1b[0m\r\n"
-            : "\r\n\x1b[33m⚠ No working directory was provided — started in " +
+          let data: string;
+          if (!rawCwd) {
+            data =
+              "\r\n\x1b[33m⚠ No working directory was provided — started in " +
               sanitizeCwdForDisplay(cwd) +
               ".\x1b[0m\r\n";
+          } else if (resolved.tier === "session-row") {
+            // Tier 2 rescued the session: it sits in the row's PROJECT
+            // directory, not the default one — the banner must say so.
+            data =
+              "\r\n\x1b[33m⚠ Working directory not found:\x1b[0m " +
+              sanitizeCwdForDisplay(rawCwd) +
+              "\r\n\x1b[33m  Started in the project directory instead: " +
+              sanitizeCwdForDisplay(cwd) +
+              "\x1b[0m\r\n";
+          } else {
+            data =
+              "\r\n\x1b[33m⚠ Working directory not found:\x1b[0m " +
+              sanitizeCwdForDisplay(rawCwd) +
+              "\r\n\x1b[33m  Started in the default directory instead — fix it in the project's Preferences → Working Directory.\x1b[0m\r\n";
+          }
           ws.send(JSON.stringify({ type: "output", data }));
         }
 

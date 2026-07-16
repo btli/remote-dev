@@ -148,7 +148,7 @@ describe("classifyPaneCwd", () => {
   });
 
   it("marks broken panes healable only for plain shells", () => {
-    for (const shell of ["zsh", "bash", "sh", "fish", "-zsh", "-bash", "-sh"]) {
+    for (const shell of ["zsh", "bash", "sh", "fish", "-zsh", "-bash", "-sh", "-fish"]) {
       expect(classify("/deleted", shell, statFail).healable).toBe(true);
     }
     for (const nonShell of ["claude", "vim", "node"]) {
