@@ -408,6 +408,17 @@ export async function updateSchedule(
     }
   }
 
+  // Log every enabled-state transition so disables are never traceless
+  // (a silent PATCH {enabled:false} previously left no info-level record).
+  if (updates.enabled !== undefined) {
+    log.info("Schedule enabled-state transition", {
+      scheduleId,
+      enabled: updates.enabled,
+      previousEnabled: existing.enabled,
+      status: updates.status ?? existing.status,
+    });
+  }
+
   // Build update object
   const updateData: Record<string, unknown> = {
     ...updates,
@@ -1001,18 +1012,90 @@ export async function getEnabledSchedules(): Promise<SessionScheduleWithCommands
 }
 
 /**
- * Disable all schedules for a session (called on session close)
+ * Disable all PENDING schedules for a session (called on session close).
+ *
+ * Only touches rows that are still enabled — completed/disabled rows keep
+ * their original status and updatedAt (previously every row was re-stamped,
+ * destroying forensics). Pending rows are marked `cancelled` so the UI can
+ * distinguish "cancelled because the session closed" from user-paused rows.
  */
 export async function disableSessionSchedules(sessionId: string): Promise<number> {
+  const pending = await db.query.sessionSchedules.findMany({
+    where: and(
+      eq(sessionSchedules.sessionId, sessionId),
+      eq(sessionSchedules.enabled, true)
+    ),
+    columns: { id: true },
+  });
+
+  if (pending.length === 0) return 0;
+
+  const scheduleIds = pending.map((s) => s.id);
+
   const result = await db
     .update(sessionSchedules)
     .set({
       enabled: false,
+      status: "cancelled",
       updatedAt: new Date(),
     })
-    .where(eq(sessionSchedules.sessionId, sessionId));
+    .where(inArray(sessionSchedules.id, scheduleIds));
 
-  return affectedRows(result);
+  const count = affectedRows(result);
+  log.info("Cancelled pending schedules for closing session", {
+    sessionId,
+    count,
+    scheduleIds,
+  });
+
+  return count;
+}
+
+/**
+ * Mark a schedule as missed: its fire time passed while the scheduler was
+ * down and it was beyond the catch-up grace window. Direct DB write —
+ * intentionally does NOT route through updateSchedule's notify path.
+ */
+export async function markScheduleMissed(scheduleId: string): Promise<void> {
+  await db
+    .update(sessionSchedules)
+    .set({
+      enabled: false,
+      status: "missed",
+      updatedAt: new Date(),
+    })
+    .where(eq(sessionSchedules.id, scheduleId));
+}
+
+/**
+ * Mark a schedule as cancelled: its session is gone (closed/deleted) so it
+ * can never fire. Direct DB write — intentionally does NOT route through
+ * updateSchedule's notify path.
+ */
+export async function markScheduleCancelled(scheduleId: string): Promise<void> {
+  await db
+    .update(sessionSchedules)
+    .set({
+      enabled: false,
+      status: "cancelled",
+      updatedAt: new Date(),
+    })
+    .where(eq(sessionSchedules.id, scheduleId));
+}
+
+/**
+ * Persist the scheduler's computed next fire time for a recurring schedule.
+ * Direct DB bookkeeping write: no notify loop, and updatedAt is left alone
+ * so it keeps meaning "last config/state change".
+ */
+export async function persistNextRunAt(
+  scheduleId: string,
+  nextRunAt: Date
+): Promise<void> {
+  await db
+    .update(sessionSchedules)
+    .set({ nextRunAt })
+    .where(eq(sessionSchedules.id, scheduleId));
 }
 
 /**

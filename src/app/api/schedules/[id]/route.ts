@@ -71,6 +71,16 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
       log.warn("Failed to notify scheduler of schedule update", { error: String(err) })
     );
 
+    // Success-path audit log: which fields changed and by whom, so state
+    // transitions (especially enabled=false) are never traceless.
+    log.info("Schedule updated", {
+      scheduleId,
+      userId,
+      changedFields: Object.keys(updates),
+      commandsUpdated: Boolean(commands && commands.length > 0),
+      ...(updates.enabled !== undefined ? { enabled: updates.enabled } : {}),
+    });
+
     // Return updated schedule with commands
     const updated = await ScheduleService.getScheduleWithCommands(scheduleId, userId);
     return NextResponse.json(updated);

@@ -27,6 +27,9 @@ import { useSessionContext } from "@/contexts/SessionContext";
 
 import { apiFetch } from "@/lib/api-fetch";
 
+/** Poll cadence for keeping schedule rows fresh while the tab is visible. */
+const SCHEDULE_POLL_INTERVAL_MS = 60_000;
+
 const initialState: ScheduleState = {
   schedules: [],
   loading: false,
@@ -131,6 +134,30 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
   // Load schedules on mount
   useEffect(() => {
     refreshSchedules();
+  }, [refreshSchedules]);
+
+  // Keep long-lived tabs fresh: schedules execute in the terminal server
+  // process with no push channel into this context, so a tab left open
+  // renders stale rows (e.g. "Overdue" for schedules that actually fired).
+  // Refetch when the tab becomes visible and poll every 60s while visible.
+  // (The status-control WebSocket only carries agent-activity /
+  // session-metadata pushes; wiring schedule-execution events through it
+  // would require terminal-server broadcast changes, so lightweight polling
+  // is used instead.)
+  useEffect(() => {
+    const refetchIfVisible = () => {
+      if (document.visibilityState === "visible") {
+        void refreshSchedules();
+      }
+    };
+
+    document.addEventListener("visibilitychange", refetchIfVisible);
+    const interval = setInterval(refetchIfVisible, SCHEDULE_POLL_INTERVAL_MS);
+
+    return () => {
+      document.removeEventListener("visibilitychange", refetchIfVisible);
+      clearInterval(interval);
+    };
   }, [refreshSchedules]);
 
   // Create a new schedule

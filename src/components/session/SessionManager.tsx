@@ -21,6 +21,8 @@ import { usePWA } from "@/hooks/usePWA";
 import { useProjectTree } from "@/contexts/ProjectTreeContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useTrashContext } from "@/contexts/TrashContext";
+import { useScheduleContext } from "@/contexts/ScheduleContext";
+import { toast } from "sonner";
 import { useGitHubStats } from "@/contexts/GitHubStatsContext";
 import { useSecretsContext } from "@/contexts/SecretsContext";
 import { useBeadsContext } from "@/contexts/BeadsContext";
@@ -269,6 +271,28 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // Trash state from context
   const { count: trashCount, trashSession } = useTrashContext();
+
+  // Schedule lookups for the close-session pending-schedule warning
+  const { getSchedulesForSession } = useScheduleContext();
+
+  // Surface pending keystroke schedules that closing a session cancels.
+  // There is no close-confirmation dialog in this flow, so a post-close
+  // toast is the minimal truthful signal (the server marks the pending
+  // rows status='cancelled'). Returns the count captured BEFORE the close.
+  const notifySchedulesCancelledOnClose = useCallback(
+    (sessionId: string) => {
+      const pendingCount = getSchedulesForSession(sessionId).filter(
+        (s) => s.enabled && s.status === "active"
+      ).length;
+      if (pendingCount > 0) {
+        toast.info(
+          `${pendingCount} pending schedule${pendingCount === 1 ? "" : "s"} cancelled`,
+          { description: "Schedules for a closed session no longer run." }
+        );
+      }
+    },
+    [getSchedulesForSession]
+  );
 
   // Resume Session modal state (multi-provider, defaults to the folder's agent)
   const [isResumeModalOpen, setIsResumeModalOpen] = useState(false);
@@ -735,11 +759,19 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           // Regular close for non-worktree sessions
           await closeSession(sessionId);
         }
+        notifySchedulesCancelledOnClose(sessionId);
       } catch (error) {
         logSessionError("close session", error);
       }
     },
-    [sessions, trashSession, closeSession, refreshSessions, logSessionError]
+    [
+      sessions,
+      trashSession,
+      closeSession,
+      refreshSessions,
+      logSessionError,
+      notifySchedulesCancelledOnClose,
+    ]
   );
 
   const handleRenameSession = useCallback(
@@ -1556,6 +1588,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           if (success) {
             // Refresh sessions to remove trashed session from sidebar
             await refreshSessions();
+            notifySchedulesCancelledOnClose(session.id);
             return;
           }
           // Fallback to regular close if trash fails
@@ -1567,11 +1600,18 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       // Regular close for non-worktree sessions or if trash failed
       try {
         await closeSession(session.id);
+        notifySchedulesCancelledOnClose(session.id);
       } catch (error) {
         logSessionError("close session", error);
       }
     },
-    [closeSession, trashSession, refreshSessions, logSessionError]
+    [
+      closeSession,
+      trashSession,
+      refreshSessions,
+      logSessionError,
+      notifySchedulesCancelledOnClose,
+    ]
   );
 
   // Select a session — on mobile the sidebar stays open so users can browse freely
