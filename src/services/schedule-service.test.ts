@@ -62,6 +62,7 @@ interface SeedScheduleOptions {
   status?: ScheduleStatus;
   updatedAt?: Date;
   nextRunAt?: Date | null;
+  scheduledAt?: Date;
 }
 
 async function seedSchedule(opts: SeedScheduleOptions): Promise<void> {
@@ -71,7 +72,7 @@ async function seedSchedule(opts: SeedScheduleOptions): Promise<void> {
     sessionId: opts.sessionId,
     name: `schedule ${opts.id}`,
     scheduleType: "one-time",
-    scheduledAt: new Date(Date.now() + 3_600_000),
+    scheduledAt: opts.scheduledAt ?? new Date(Date.now() + 3_600_000),
     timezone: "UTC",
     enabled: opts.enabled ?? true,
     status: opts.status ?? "active",
@@ -177,23 +178,74 @@ describe("ScheduleService lifecycle", () => {
 
   describe("markScheduleMissed / markScheduleCancelled", () => {
     it("markScheduleMissed disables the row and sets status=missed", async () => {
-      await seedSchedule({ id: "missed-1", sessionId: SESSION_A });
+      const scheduledAt = new Date(Date.now() - 60_000);
+      await seedSchedule({ id: "missed-1", sessionId: SESSION_A, scheduledAt });
 
-      await markScheduleMissed("missed-1");
+      expect(await markScheduleMissed("missed-1", scheduledAt)).toBe(1);
 
       const row = await getScheduleRow("missed-1");
       expect(row.enabled).toBe(false);
       expect(row.status).toBe("missed");
     });
 
+    it("markScheduleMissed does not stamp a row the user disabled concurrently", async () => {
+      const scheduledAt = new Date(Date.now() - 60_000);
+      await seedSchedule({
+        id: "missed-disabled",
+        sessionId: SESSION_A,
+        enabled: false,
+        status: "paused",
+        scheduledAt,
+      });
+
+      expect(await markScheduleMissed("missed-disabled", scheduledAt)).toBe(0);
+
+      const row = await getScheduleRow("missed-disabled");
+      expect(row.enabled).toBe(false);
+      expect(row.status).toBe("paused");
+    });
+
+    it("markScheduleMissed does not stamp a row rescheduled since the snapshot", async () => {
+      const snapshotScheduledAt = new Date(Date.now() - 60_000);
+      await seedSchedule({
+        id: "missed-rescheduled",
+        sessionId: SESSION_A,
+        // User moved the fire time forward after the snapshot was read.
+        scheduledAt: new Date(Date.now() + 3_600_000),
+      });
+
+      expect(
+        await markScheduleMissed("missed-rescheduled", snapshotScheduledAt)
+      ).toBe(0);
+
+      const row = await getScheduleRow("missed-rescheduled");
+      expect(row.enabled).toBe(true);
+      expect(row.status).toBe("active");
+    });
+
     it("markScheduleCancelled disables the row and sets status=cancelled", async () => {
       await seedSchedule({ id: "cancelled-1", sessionId: SESSION_A });
 
-      await markScheduleCancelled("cancelled-1");
+      expect(await markScheduleCancelled("cancelled-1")).toBe(1);
 
       const row = await getScheduleRow("cancelled-1");
       expect(row.enabled).toBe(false);
       expect(row.status).toBe("cancelled");
+    });
+
+    it("markScheduleCancelled does not stamp a row the user disabled concurrently", async () => {
+      await seedSchedule({
+        id: "cancelled-disabled",
+        sessionId: SESSION_A,
+        enabled: false,
+        status: "paused",
+      });
+
+      expect(await markScheduleCancelled("cancelled-disabled")).toBe(0);
+
+      const row = await getScheduleRow("cancelled-disabled");
+      expect(row.enabled).toBe(false);
+      expect(row.status).toBe("paused");
     });
   });
 

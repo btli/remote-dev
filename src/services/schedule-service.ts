@@ -1071,32 +1071,55 @@ export async function disableSessionSchedules(sessionId: string): Promise<number
  * Mark a schedule as missed: its fire time passed while the scheduler was
  * down and it was beyond the catch-up grace window. Direct DB write —
  * intentionally does NOT route through updateSchedule's notify path.
+ * The WHERE re-checks enabled + the expected fire time so a row the user
+ * disabled or rescheduled between the caller's read and this write is never
+ * stamped; returns the affected-row count (0 = changed concurrently).
  */
-export async function markScheduleMissed(scheduleId: string): Promise<void> {
-  await db
+export async function markScheduleMissed(
+  scheduleId: string,
+  expectedScheduledAt: Date
+): Promise<number> {
+  const result = await db
     .update(sessionSchedules)
     .set({
       enabled: false,
       status: "missed",
       updatedAt: new Date(),
     })
-    .where(eq(sessionSchedules.id, scheduleId));
+    .where(
+      and(
+        eq(sessionSchedules.id, scheduleId),
+        eq(sessionSchedules.enabled, true),
+        eq(sessionSchedules.scheduledAt, expectedScheduledAt)
+      )
+    );
+
+  return affectedRows(result);
 }
 
 /**
  * Mark a schedule as cancelled: its session is gone (closed/deleted) so it
  * can never fire. Direct DB write — intentionally does NOT route through
- * updateSchedule's notify path.
+ * updateSchedule's notify path. The WHERE re-checks enabled so a row the
+ * user disabled/paused between the caller's read and this write keeps their
+ * state; returns the affected-row count (0 = changed concurrently).
  */
-export async function markScheduleCancelled(scheduleId: string): Promise<void> {
-  await db
+export async function markScheduleCancelled(scheduleId: string): Promise<number> {
+  const result = await db
     .update(sessionSchedules)
     .set({
       enabled: false,
       status: "cancelled",
       updatedAt: new Date(),
     })
-    .where(eq(sessionSchedules.id, scheduleId));
+    .where(
+      and(
+        eq(sessionSchedules.id, scheduleId),
+        eq(sessionSchedules.enabled, true)
+      )
+    );
+
+  return affectedRows(result);
 }
 
 /**
@@ -1112,21 +1135,6 @@ export async function persistNextRunAt(
     .update(sessionSchedules)
     .set({ nextRunAt })
     .where(eq(sessionSchedules.id, scheduleId));
-}
-
-/**
- * Re-enable schedules for a session (called on worktree restore)
- */
-export async function reEnableSessionSchedules(sessionId: string): Promise<number> {
-  const result = await db
-    .update(sessionSchedules)
-    .set({
-      enabled: true,
-      updatedAt: new Date(),
-    })
-    .where(eq(sessionSchedules.sessionId, sessionId));
-
-  return affectedRows(result);
 }
 
 // =============================================================================

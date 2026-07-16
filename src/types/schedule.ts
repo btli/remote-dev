@@ -243,8 +243,7 @@ export type ScheduleAction =
   | { type: "LOAD_ERROR"; error: string }
   | { type: "CREATE"; schedule: SessionScheduleWithSession }
   | { type: "UPDATE"; scheduleId: string; updates: Partial<SessionSchedule> }
-  | { type: "DELETE"; scheduleId: string }
-  | { type: "TOGGLE_ENABLED"; scheduleId: string; enabled: boolean };
+  | { type: "DELETE"; scheduleId: string };
 
 // =============================================================================
 // UI Types

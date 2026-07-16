@@ -63,13 +63,6 @@ function scheduleReducer(state: ScheduleState, action: ScheduleAction): Schedule
         ...state,
         schedules: state.schedules.filter((s) => s.id !== action.scheduleId),
       };
-    case "TOGGLE_ENABLED":
-      return {
-        ...state,
-        schedules: state.schedules.map((s) =>
-          s.id === action.scheduleId ? { ...s, enabled: action.enabled } : s
-        ),
-      };
     default:
       return state;
   }
@@ -283,8 +276,31 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
         throw new Error(error.message || "Failed to toggle schedule");
       }
 
+      const schedule = await response.json();
+
+      // Apply the server's returned row, not just the flipped flag: re-enable
+      // resets a 'cancelled'/'missed' status to 'active' server-side, and a
+      // bare enabled flip would keep rendering the stale terminal label until
+      // the next poll.
       mutationSeqRef.current += 1;
-      dispatch({ type: "TOGGLE_ENABLED", scheduleId, enabled });
+      dispatch({
+        type: "UPDATE",
+        scheduleId,
+        updates: {
+          name: schedule.name,
+          scheduleType: schedule.scheduleType,
+          cronExpression: schedule.cronExpression,
+          scheduledAt: schedule.scheduledAt ? new Date(schedule.scheduledAt) : null,
+          timezone: schedule.timezone,
+          enabled: schedule.enabled,
+          status: schedule.status,
+          maxRetries: schedule.maxRetries,
+          retryDelaySeconds: schedule.retryDelaySeconds,
+          timeoutSeconds: schedule.timeoutSeconds,
+          nextRunAt: schedule.nextRunAt ? new Date(schedule.nextRunAt) : null,
+          updatedAt: schedule.updatedAt ? new Date(schedule.updatedAt) : new Date(),
+        },
+      });
     },
     []
   );

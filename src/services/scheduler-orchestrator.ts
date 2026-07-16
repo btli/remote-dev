@@ -160,7 +160,14 @@ class SchedulerOrchestrator {
         sessionStatus: session?.status ?? "missing",
       });
       try {
-        await ScheduleService.markScheduleCancelled(schedule.id);
+        const stamped = await ScheduleService.markScheduleCancelled(schedule.id);
+        if (stamped === 0) {
+          // The guarded write matched nothing: the user disabled/changed the
+          // row after this snapshot was read — their state wins.
+          log.info("Schedule changed concurrently; skipping cancelled stamp", {
+            scheduleId: schedule.id,
+          });
+        }
       } catch (error) {
         log.error("Failed to mark schedule cancelled", { scheduleId: schedule.id, error: String(error) });
       }
@@ -258,7 +265,17 @@ class SchedulerOrchestrator {
             graceMs: MISSED_FIRE_GRACE_MS,
           });
           try {
-            await ScheduleService.markScheduleMissed(schedule.id);
+            const stamped = await ScheduleService.markScheduleMissed(
+              schedule.id,
+              schedule.scheduledAt
+            );
+            if (stamped === 0) {
+              // The guarded write matched nothing: the user disabled or
+              // rescheduled the row after the fresh re-read — their state wins.
+              log.info("Schedule changed concurrently; skipping missed stamp", {
+                scheduleId: schedule.id,
+              });
+            }
           } catch (error) {
             log.error("Failed to mark schedule missed", { scheduleId: schedule.id, error: String(error) });
           }
