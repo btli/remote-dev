@@ -103,7 +103,9 @@ describe("MigrationFileService", () => {
     expect(chunkCountFor(CHUNK_SIZE_BYTES + 1)).toBe(2);
   });
 
-  it("full_tar excludes dependency/build dirs at any depth", async () => {
+  // 30s timeout: spawns several real tar/shasum children; observed >10s under
+  // cold-cache full-suite parallel load (pre-existing flake, not logic).
+  it("full_tar excludes dependency/build dirs at any depth", { timeout: 30_000 }, async () => {
     write("tree/src/index.ts", "code");
     write("tree/.beads/issues.jsonl", "{}");
     write("tree/node_modules/pkg/index.js", "junk");

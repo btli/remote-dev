@@ -7,12 +7,11 @@ import { execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { resolve as pathResolve } from "node:path";
 import { promisify } from "node:util";
 import { STABLE_SPAWN_CWD } from "../lib/exec.js";
 import { validatePath, sanitizeCwdForDisplay } from "./validate-cwd.js";
 import { resolveSessionCwd } from "./resolve-session-cwd.js";
-import { classifyPaneCwd } from "./detect-dead-pane-cwd.js";
+import { classifyPaneCwd, computeServerAppDirMarkers } from "./detect-dead-pane-cwd.js";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
 // [oyej] Agent-run scheduler (REAL agent launches; epic remote-dev-oyej).
 import { agentSchedulerOrchestrator } from "../services/agent-scheduler-orchestrator.js";
@@ -883,7 +882,9 @@ function attachToTmuxSession(
 /**
  * [remote-dev-ipbo] Tmux sessions already audited for a dead pane cwd this
  * server lifetime. One audit per tmux session is enough — the classification
- * can't get worse, and the heal (if any) already ran.
+ * can't get worse, and the heal (if any) already ran. A session whose PROBE
+ * failed (transient tmux contention) is removed again so the next attach
+ * retries instead of skipping the audit forever.
  */
 const auditedPaneCwdSessions = new Set<string>();
 
@@ -912,6 +913,7 @@ async function auditPaneCwdOnAttach(
   if (auditedPaneCwdSessions.has(tmuxSessionName)) return;
   auditedPaneCwdSessions.add(tmuxSessionName);
 
+  let probeOutput: string;
   try {
     const { stdout } = await execFileAsync(
       "tmux",
@@ -924,15 +926,34 @@ async function auditPaneCwdOnAttach(
       ],
       { cwd: STABLE_SPAWN_CWD },
     );
-    const firstLine = stdout.split("\n")[0] ?? "";
+    probeOutput = stdout;
+  } catch (error) {
+    // Transient probe failure (tmux contention) — un-mark so the NEXT attach
+    // retries the audit instead of skipping it for the server's lifetime.
+    auditedPaneCwdSessions.delete(tmuxSessionName);
+    log.debug("Pane cwd audit probe failed; will retry on next attach", {
+      sessionId,
+      tmuxSessionName,
+      error: String(error),
+    });
+    return;
+  }
+
+  try {
+    const firstLine = probeOutput.split("\n")[0] ?? "";
     const [panePath = "", paneCommand = ""] = firstLine.split("\t");
+
+    // Validated once; doubles as the equality/suffix-exemption guard in the
+    // classifier AND the heal target (undefined when missing/nonexistent).
+    const sessionProjectPath = validatePath(rowProjectPath ?? undefined);
 
     const classification = classifyPaneCwd(panePath, paneCommand, {
       statFn: (p) => fs.statSync(p),
-      serverAppDirMarkers: [
-        pathResolve(process.cwd()),
-        pathResolve(process.cwd(), ".next/standalone"),
-      ],
+      // NOT process.cwd() itself: the terminal server runs from the repo
+      // checkout, which is a legitimate user project when dogfooding — only
+      // the deploy-rebuilt .next/standalone dir is the poison signature.
+      serverAppDirMarkers: computeServerAppDirMarkers(process.cwd()),
+      sessionProjectPath,
     });
     if (!classification.broken) return;
 
@@ -945,9 +966,7 @@ async function auditPaneCwdOnAttach(
       healable: classification.healable,
     });
 
-    const healTarget = classification.healable
-      ? validatePath(rowProjectPath ?? undefined)
-      : undefined;
+    const healTarget = classification.healable ? sessionProjectPath : undefined;
 
     if (healTarget) {
       // POSIX single-quote escaping so the typed path survives the shell.
@@ -3056,8 +3075,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     const tmuxExists = tmuxSessionExists(tmuxSessionName);
 
     if (resolved.tier !== "query") {
-      // The incident class was invisible in logs — a fallback must be loud.
-      log.warn("Session cwd fell back", {
+      const fallbackDetails = {
         sessionId,
         tmuxSessionName,
         tier: resolved.tier,
@@ -3066,7 +3084,17 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         rowRejectedReason: resolved.rowRejectedReason ?? null,
         rowProjectPathPresent: rowProjectPath !== null,
         tmuxExists,
-      });
+      };
+      if (tmuxExists) {
+        // Reattach: the fallback cwd is only consulted by a later
+        // restart_agent — a reconnect-heavy client that never sends ?cwd=
+        // must not emit a warn per reconnect at prod LOG_LEVEL=warn.
+        log.debug("Session cwd fell back", fallbackDetails);
+      } else {
+        // The incident class was invisible in logs — a fallback that decides
+        // where a NEW tmux session is born must be loud.
+        log.warn("Session cwd fell back", fallbackDetails);
+      }
     }
 
     log.debug("Connection request", { connectionId, sessionId, tmuxSessionName, tmuxExists });
