@@ -25,11 +25,21 @@ export type ScheduleType = "one-time" | "recurring";
  * - paused: Schedule is temporarily paused (enabled=false)
  * - failed: Schedule has failed multiple times (informational)
  * - completed: All scheduled executions are done (for one-time schedules)
+ * - missed: A one-time schedule's fire time passed while the scheduler was
+ *   down and it was beyond the catch-up grace window; it never executed
+ * - cancelled: The schedule was cancelled because its session was closed
+ *   (or otherwise disappeared) before it could fire
  *
  * Note: The `enabled` boolean controls whether the schedule runs.
  * The `status` field is informational and reflects the schedule's health.
  */
-export type ScheduleStatus = "active" | "paused" | "failed" | "completed";
+export type ScheduleStatus =
+  | "active"
+  | "paused"
+  | "failed"
+  | "completed"
+  | "missed"
+  | "cancelled";
 
 /**
  * Execution status for schedules and commands
@@ -228,11 +238,12 @@ export interface ScheduleState {
 export type ScheduleAction =
   | { type: "LOAD_START" }
   | { type: "LOAD_SUCCESS"; schedules: SessionScheduleWithSession[] }
+  /** A refetch resolved after a newer client mutation; drop its payload. */
+  | { type: "LOAD_STALE" }
   | { type: "LOAD_ERROR"; error: string }
   | { type: "CREATE"; schedule: SessionScheduleWithSession }
   | { type: "UPDATE"; scheduleId: string; updates: Partial<SessionSchedule> }
-  | { type: "DELETE"; scheduleId: string }
-  | { type: "TOGGLE_ENABLED"; scheduleId: string; enabled: boolean };
+  | { type: "DELETE"; scheduleId: string };
 
 // =============================================================================
 // UI Types

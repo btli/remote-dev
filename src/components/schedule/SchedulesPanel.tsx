@@ -85,6 +85,18 @@ function ScheduleStatusLabel({
   if (schedule.status === "failed") {
     return <span className="text-[10px] text-red-400">Failed</span>;
   }
+  // Checked before the paused/!enabled branch so a missed fire or a
+  // session-close cancellation never masquerades as user-paused.
+  if (schedule.status === "missed") {
+    return <span className="text-[10px] text-amber-400">Missed</span>;
+  }
+  if (schedule.status === "cancelled") {
+    return (
+      <span className="text-[10px] text-muted-foreground">
+        Cancelled (session closed)
+      </span>
+    );
+  }
   if (schedule.status === "paused" || !schedule.enabled) {
     return <span className="text-[10px] text-muted-foreground">Paused</span>;
   }

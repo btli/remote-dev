@@ -7,6 +7,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   type ReactNode,
 } from "react";
 import type {
@@ -27,6 +28,9 @@ import { useSessionContext } from "@/contexts/SessionContext";
 
 import { apiFetch } from "@/lib/api-fetch";
 
+/** Poll cadence for keeping schedule rows fresh while the tab is visible. */
+const SCHEDULE_POLL_INTERVAL_MS = 60_000;
+
 const initialState: ScheduleState = {
   schedules: [],
   loading: false,
@@ -39,6 +43,10 @@ function scheduleReducer(state: ScheduleState, action: ScheduleAction): Schedule
       return { ...state, loading: true, error: null };
     case "LOAD_SUCCESS":
       return { ...state, loading: false, schedules: action.schedules };
+    case "LOAD_STALE":
+      // A refetch resolved after a newer client mutation — keep the
+      // optimistically-updated schedules, just clear the loading flag.
+      return { ...state, loading: false };
     case "LOAD_ERROR":
       return { ...state, loading: false, error: action.error };
     case "CREATE":
@@ -54,13 +62,6 @@ function scheduleReducer(state: ScheduleState, action: ScheduleAction): Schedule
       return {
         ...state,
         schedules: state.schedules.filter((s) => s.id !== action.scheduleId),
-      };
-    case "TOGGLE_ENABLED":
-      return {
-        ...state,
-        schedules: state.schedules.map((s) =>
-          s.id === action.scheduleId ? { ...s, enabled: action.enabled } : s
-        ),
       };
     default:
       return state;
@@ -110,8 +111,16 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
   const [state, dispatch] = useReducer(scheduleReducer, initialState);
   const { activeSessionId } = useSessionContext();
 
+  // Monotonic mutation counter: a background refetch that started before the
+  // latest client mutation would otherwise clobber the optimistic dispatch
+  // with pre-mutation data (a visible revert for up to one poll interval).
+  // Mutations bump the counter; a refetch whose fetch began at an older
+  // counter value drops its payload.
+  const mutationSeqRef = useRef(0);
+
   // Fetch all user schedules
   const refreshSchedules = useCallback(async () => {
+    const seqAtStart = mutationSeqRef.current;
     dispatch({ type: "LOAD_START" });
     try {
       const response = await apiFetch("/api/schedules");
@@ -119,6 +128,12 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
         throw new Error("Failed to load schedules");
       }
       const data = await response.json();
+      if (mutationSeqRef.current !== seqAtStart) {
+        // A mutation landed while this fetch was in flight, so the response
+        // predates it — drop it; the next refetch re-syncs.
+        dispatch({ type: "LOAD_STALE" });
+        return;
+      }
       dispatch({ type: "LOAD_SUCCESS", schedules: data.schedules || [] });
     } catch (error) {
       dispatch({
@@ -131,6 +146,30 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
   // Load schedules on mount
   useEffect(() => {
     refreshSchedules();
+  }, [refreshSchedules]);
+
+  // Keep long-lived tabs fresh: schedules execute in the terminal server
+  // process with no push channel into this context, so a tab left open
+  // renders stale rows (e.g. "Overdue" for schedules that actually fired).
+  // Refetch when the tab becomes visible and poll every 60s while visible.
+  // (The status-control WebSocket only carries agent-activity /
+  // session-metadata pushes; wiring schedule-execution events through it
+  // would require terminal-server broadcast changes, so lightweight polling
+  // is used instead.)
+  useEffect(() => {
+    const refetchIfVisible = () => {
+      if (document.visibilityState === "visible") {
+        void refreshSchedules();
+      }
+    };
+
+    document.addEventListener("visibilitychange", refetchIfVisible);
+    const interval = setInterval(refetchIfVisible, SCHEDULE_POLL_INTERVAL_MS);
+
+    return () => {
+      document.removeEventListener("visibilitychange", refetchIfVisible);
+      clearInterval(interval);
+    };
   }, [refreshSchedules]);
 
   // Create a new schedule
@@ -148,6 +187,11 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
       }
 
       const schedule = await response.json();
+
+      // Bump the mutation counter so an in-flight background poll that
+      // started before this create cannot clobber the refetch below with
+      // pre-create data (the new row would vanish until the next poll).
+      mutationSeqRef.current += 1;
 
       // Add to state with session info (we'll need to refresh for full data)
       await refreshSchedules();
@@ -178,6 +222,7 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
       const schedule = await response.json();
 
       // Use the returned schedule data for state update (properly typed)
+      mutationSeqRef.current += 1;
       dispatch({
         type: "UPDATE",
         scheduleId,
@@ -213,6 +258,7 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
       throw new Error(error.message || "Failed to delete schedule");
     }
 
+    mutationSeqRef.current += 1;
     dispatch({ type: "DELETE", scheduleId });
   }, []);
 
@@ -230,7 +276,31 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
         throw new Error(error.message || "Failed to toggle schedule");
       }
 
-      dispatch({ type: "TOGGLE_ENABLED", scheduleId, enabled });
+      const schedule = await response.json();
+
+      // Apply the server's returned row, not just the flipped flag: re-enable
+      // resets a 'cancelled'/'missed' status to 'active' server-side, and a
+      // bare enabled flip would keep rendering the stale terminal label until
+      // the next poll.
+      mutationSeqRef.current += 1;
+      dispatch({
+        type: "UPDATE",
+        scheduleId,
+        updates: {
+          name: schedule.name,
+          scheduleType: schedule.scheduleType,
+          cronExpression: schedule.cronExpression,
+          scheduledAt: schedule.scheduledAt ? new Date(schedule.scheduledAt) : null,
+          timezone: schedule.timezone,
+          enabled: schedule.enabled,
+          status: schedule.status,
+          maxRetries: schedule.maxRetries,
+          retryDelaySeconds: schedule.retryDelaySeconds,
+          timeoutSeconds: schedule.timeoutSeconds,
+          nextRunAt: schedule.nextRunAt ? new Date(schedule.nextRunAt) : null,
+          updatedAt: schedule.updatedAt ? new Date(schedule.updatedAt) : new Date(),
+        },
+      });
     },
     []
   );
@@ -248,6 +318,11 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
       }
 
       const data = await response.json();
+
+      // Bump the mutation counter so an in-flight background poll that
+      // started before this execution cannot clobber the refetch below with
+      // pre-execution data (re-rendering "Overdue" until the next poll).
+      mutationSeqRef.current += 1;
 
       // Refresh schedules to sync nextRunAt and status after execution
       await refreshSchedules();

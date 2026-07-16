@@ -120,6 +120,27 @@ async function resolveMainRepoPath(
 }
 
 /**
+ * Cancel any pending schedules for a session that is being closed or trashed
+ * and notify the terminal server's scheduler to drop the armed jobs. Every
+ * DELETE variant must go through this — trashing kills the tmux session just
+ * like closing does, so a schedule left armed would fire into dead tmux
+ * forever. Failures are logged but never block the close/trash itself.
+ */
+async function cancelSessionSchedules(sessionId: string): Promise<void> {
+  try {
+    const disabledCount = await ScheduleService.disableSessionSchedules(sessionId);
+    if (disabledCount > 0) {
+      notifySessionJobsRemoved(sessionId).catch((err) =>
+        log.warn("Failed to notify scheduler of session job removal", { error: String(err) })
+      );
+      log.info("Disabled schedules for session", { disabledCount, sessionId });
+    }
+  } catch (scheduleError) {
+    log.error("Failed to disable schedules", { error: String(scheduleError), sessionId });
+  }
+}
+
+/**
  * DELETE /api/sessions/:id - Close a session
  *
  * Query params:
@@ -150,6 +171,11 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
         "worktree",
         id
       );
+      // Trashing killed the tmux session, so pending schedules can never
+      // fire — cancel them like every other close path. (Restoring the
+      // worktree from trash does not resurrect cancelled schedules; the
+      // client surfaces the cancellation in a toast.)
+      await cancelSessionSchedules(id);
       broadcastSidebarChanged(userId);
       return NextResponse.json({ success: true, trashItemId: trashItem.id });
     }
@@ -182,17 +208,7 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
       });
 
       // Disable any scheduled commands for this session
-      try {
-        const disabledCount = await ScheduleService.disableSessionSchedules(id);
-        if (disabledCount > 0) {
-          notifySessionJobsRemoved(id).catch((err) =>
-            log.warn("Failed to notify scheduler of session job removal", { error: String(err) })
-          );
-          log.info("Disabled schedules for session", { disabledCount, sessionId: id });
-        }
-      } catch (scheduleError) {
-        log.error("Failed to disable schedules", { error: String(scheduleError) });
-      }
+      await cancelSessionSchedules(id);
 
       // Close the session after successful cleanup.
       // If this fails, the worktree/branches are already cleaned up
@@ -229,19 +245,7 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
     }
 
     // Disable any scheduled commands for this session
-    try {
-      const disabledCount = await ScheduleService.disableSessionSchedules(id);
-      if (disabledCount > 0) {
-        // Notify terminal server's scheduler to remove the jobs
-        notifySessionJobsRemoved(id).catch((err) =>
-          log.warn("Failed to notify scheduler of session job removal", { error: String(err) })
-        );
-        log.info("Disabled schedules for session", { disabledCount, sessionId: id });
-      }
-    } catch (scheduleError) {
-      log.error("Failed to disable schedules", { error: String(scheduleError) });
-      // Continue with session closure even if schedule cleanup fails
-    }
+    await cancelSessionSchedules(id);
 
     await SessionService.closeSession(id, userId);
     broadcastSidebarChanged(userId);

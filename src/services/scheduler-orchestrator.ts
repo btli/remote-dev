@@ -21,6 +21,32 @@ import { createLogger } from "@/lib/logger";
 
 const log = createLogger("Scheduler");
 
+/**
+ * Maximum lateness for firing a past-due one-time schedule at registration.
+ * A one-time schedule whose fire time passed while the scheduler was down is
+ * fired immediately if it is at most this late; otherwise it is persisted as
+ * status "missed" (enabled=false) so the miss is visible instead of silently
+ * rendering as armed forever.
+ */
+export const MISSED_FIRE_GRACE_MS = 10 * 60_000;
+
+export type OneTimeRegistrationAction = "register" | "fire-now" | "mark-missed";
+
+/**
+ * Pure decision for what to do with a one-time schedule at registration time.
+ * Factored out of registerSchedule so the grace-window logic is testable
+ * without wall-clock flakiness.
+ */
+export function classifyOneTimeRegistration(
+  scheduledAt: Date,
+  now: Date,
+  graceMs: number = MISSED_FIRE_GRACE_MS
+): OneTimeRegistrationAction {
+  const latenessMs = now.getTime() - scheduledAt.getTime();
+  if (latenessMs < 0) return "register";
+  return latenessMs <= graceMs ? "fire-now" : "mark-missed";
+}
+
 interface ActiveJob {
   scheduleId: string;
   cronJob: Cron;
@@ -31,6 +57,14 @@ class SchedulerOrchestrator {
   private jobs: Map<string, ActiveJob> = new Map();
   private isRunning = false;
   private startupComplete = false;
+  /**
+   * Schedule ids with an execution currently in flight. Guards against
+   * concurrent double-injection of keystrokes for the same schedule — e.g. a
+   * PATCH re-entering registration's grace-window catch-up while the fire it
+   * caught up on is still executing (the row is still enabled until
+   * post-execution bookkeeping lands).
+   */
+  private executing: Set<string> = new Set();
 
   /**
    * Start the orchestrator - load all enabled schedules
@@ -82,6 +116,7 @@ class SchedulerOrchestrator {
     }
 
     this.jobs.clear();
+    this.executing.clear();
     this.isRunning = false;
     this.startupComplete = false;
 
@@ -112,8 +147,30 @@ class SchedulerOrchestrator {
       where: eq(terminalSessions.id, schedule.sessionId),
     });
 
-    if (!session || session.status === "closed") {
-      log.warn("Session not found or closed for schedule", { sessionId: schedule.sessionId, scheduleId: schedule.id });
+    if (!session || session.status === "closed" || session.status === "trashed") {
+      // The session's tmux is gone forever — closed, trashed (trashing kills
+      // tmux too; restore never resurrects schedules), or the row is missing
+      // entirely — so persist the cancellation (recurring included) instead
+      // of leaving the row rendering as armed. This also self-heals orphans
+      // left by close paths that bypass disableSessionSchedules (PATCH
+      // {status:'closed'}, reconcile, pre-fix trashed sessions).
+      log.warn("Session not found or closed for schedule; cancelling schedule", {
+        sessionId: schedule.sessionId,
+        scheduleId: schedule.id,
+        sessionStatus: session?.status ?? "missing",
+      });
+      try {
+        const stamped = await ScheduleService.markScheduleCancelled(schedule.id);
+        if (stamped === 0) {
+          // The guarded write matched nothing: the user disabled/changed the
+          // row after this snapshot was read — their state wins.
+          log.info("Schedule changed concurrently; skipping cancelled stamp", {
+            scheduleId: schedule.id,
+          });
+        }
+      } catch (error) {
+        log.error("Failed to mark schedule cancelled", { scheduleId: schedule.id, error: String(error) });
+      }
       return;
     }
 
@@ -130,9 +187,98 @@ class SchedulerOrchestrator {
           log.error("One-time schedule has no scheduledAt", { scheduleId: schedule.id });
           return;
         }
-        // Check if the scheduled time is in the past
-        if (schedule.scheduledAt <= new Date()) {
-          log.warn("One-time schedule scheduled time is in the past", { scheduleId: schedule.id });
+        // Past-due handling: fire immediately within the grace window,
+        // otherwise persist the miss so it is visible instead of silently
+        // rendering as armed forever.
+        const now = new Date();
+        const action = classifyOneTimeRegistration(schedule.scheduledAt, now);
+        if (action !== "register") {
+          // Both past-due outcomes are destructive (inject keystrokes now or
+          // disable the row), and start()'s boot loop classifies a snapshot
+          // read before the loop began — while the notify endpoint is already
+          // live, so a concurrent user PATCH may have rescheduled or disabled
+          // this row in the meantime. Re-read and act on fresh data before
+          // doing anything irreversible.
+          const fresh = await ScheduleService.getScheduleWithCommands(
+            schedule.id,
+            schedule.userId
+          );
+          if (!fresh || !fresh.enabled || fresh.status === "completed") {
+            log.info("One-time schedule disabled or gone since snapshot; skipping past-due handling", {
+              scheduleId: schedule.id,
+            });
+            return;
+          }
+          if (
+            fresh.scheduleType !== schedule.scheduleType ||
+            !fresh.scheduledAt ||
+            fresh.scheduledAt.getTime() !== schedule.scheduledAt.getTime()
+          ) {
+            log.info("One-time schedule changed since snapshot; re-registering from fresh data", {
+              scheduleId: schedule.id,
+            });
+            await this.registerSchedule(fresh);
+            return;
+          }
+          const latenessMs = now.getTime() - schedule.scheduledAt.getTime();
+          if (action === "fire-now") {
+            log.warn("One-time schedule past due within grace window; firing immediately", {
+              scheduleId: schedule.id,
+              scheduledAt: schedule.scheduledAt.toISOString(),
+              latenessMs,
+              graceMs: MISSED_FIRE_GRACE_MS,
+            });
+            // Register a PAUSED croner job keyed on the (past) scheduledAt so
+            // executeJob's in-memory bookkeeping (map lookup, stop, delete)
+            // stays identical to the normal path. Croner never fires a past
+            // Date pattern — even if resumed — so it cannot double-fire.
+            const placeholderJob = new Cron(
+              schedule.scheduledAt,
+              {
+                timezone: schedule.timezone,
+                paused: true,
+                catch: (error: unknown) => {
+                  log.error("Schedule cron error", { scheduleId: schedule.id, error: String(error) });
+                },
+              },
+              async () => {
+                await this.executeJob(schedule.id, tmuxSessionName, true);
+              }
+            );
+            this.jobs.set(schedule.id, {
+              scheduleId: schedule.id,
+              cronJob: placeholderJob,
+              scheduleData: schedule,
+            });
+            // Fire through the exact same execution path croner would use
+            // (execution-row insert, one-time completion marking, and job
+            // removal all happen inside executeJob). Fire-and-forget so a
+            // slow catch-up run does not block startup registration.
+            void this.executeJob(schedule.id, tmuxSessionName, true);
+            return;
+          }
+          // action === "mark-missed"
+          log.warn("One-time schedule fire time missed beyond grace window; marking missed", {
+            scheduleId: schedule.id,
+            scheduledAt: schedule.scheduledAt.toISOString(),
+            latenessMs,
+            graceMs: MISSED_FIRE_GRACE_MS,
+          });
+          try {
+            const stamped = await ScheduleService.markScheduleMissed(
+              schedule.id,
+              schedule.scheduledAt
+            );
+            if (stamped === 0) {
+              // The guarded write matched nothing: the user disabled or
+              // rescheduled the row after the fresh re-read — their state wins.
+              log.info("Schedule changed concurrently; skipping missed stamp", {
+                scheduleId: schedule.id,
+              });
+            }
+          } catch (error) {
+            log.error("Failed to mark schedule missed", { scheduleId: schedule.id, error: String(error) });
+          }
           return;
         }
         // Croner accepts Date objects for one-time scheduling
@@ -170,6 +316,27 @@ class SchedulerOrchestrator {
 
       const nextRun = cronJob.nextRun();
       log.info("Registered schedule", { name: schedule.name, scheduleId: schedule.id, type: scheduleTypeLabel, timezone: schedule.timezone, nextRun: nextRun?.toISOString() ?? "never" });
+
+      // Persist the armed next fire time for recurring schedules so the row
+      // never shows a stale (past) nextRunAt while a valid croner job is
+      // armed. nextRunAt was previously only written at create/update/post-
+      // execution, so a restart could leave it pointing into the past.
+      if (
+        schedule.scheduleType === "recurring" &&
+        nextRun &&
+        schedule.nextRunAt?.getTime() !== nextRun.getTime()
+      ) {
+        try {
+          await ScheduleService.persistNextRunAt(schedule.id, nextRun);
+          log.debug("Persisted recurring nextRunAt at registration", {
+            scheduleId: schedule.id,
+            previousNextRunAt: schedule.nextRunAt?.toISOString() ?? null,
+            nextRunAt: nextRun.toISOString(),
+          });
+        } catch (error) {
+          log.error("Failed to persist nextRunAt at registration", { scheduleId: schedule.id, error: String(error) });
+        }
+      }
     } catch (error) {
       log.error("Failed to create cron job", { scheduleId: schedule.id, error: String(error) });
     }
@@ -183,6 +350,11 @@ class SchedulerOrchestrator {
     tmuxSessionName: string,
     isOneTime = false
   ): Promise<void> {
+    if (this.executing.has(scheduleId)) {
+      log.warn("Skipping schedule fire: an execution is already in flight", { scheduleId });
+      return;
+    }
+
     log.info("Executing schedule", { scheduleId, isOneTime });
 
     const job = this.jobs.get(scheduleId);
@@ -191,6 +363,7 @@ class SchedulerOrchestrator {
       return;
     }
 
+    this.executing.add(scheduleId);
     try {
       // Reload schedule data to get latest commands
       const schedule = await ScheduleService.getScheduleWithCommands(
@@ -199,7 +372,7 @@ class SchedulerOrchestrator {
       );
 
       if (!schedule || !schedule.enabled) {
-        log.debug("Schedule is disabled or removed", { scheduleId });
+        log.info("Schedule is disabled or removed; skipping fire", { scheduleId });
         this.removeJobInternal(scheduleId);
         return;
       }
@@ -230,6 +403,8 @@ class SchedulerOrchestrator {
         this.removeJobInternal(scheduleId);
         log.info("One-time schedule removed after failed execution", { scheduleId });
       }
+    } finally {
+      this.executing.delete(scheduleId);
     }
   }
 
@@ -252,6 +427,8 @@ class SchedulerOrchestrator {
 
       if (schedule) {
         await this.registerSchedule(schedule);
+      } else {
+        log.warn("Schedule not registered: disabled or not found", { scheduleId });
       }
     } catch (error) {
       log.error("Failed to add job", { scheduleId, error: String(error) });
