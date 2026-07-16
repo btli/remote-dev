@@ -18,6 +18,9 @@ import {
   shouldRunSqlitePush,
   resolveForgejoMirrorUrl,
   FORGEJO_MIRROR_URL_DEFAULT,
+  parseLsRemoteHeadSha,
+  mirrorArchiveRef,
+  mirrorPushPlan,
 } from "../scripts/deploy-lib";
 
 describe("isAcceptableSsrStatus", () => {
@@ -321,5 +324,70 @@ describe("resolveForgejoMirrorUrl (remote-dev-xz2j)", () => {
   it("DISABLES the push (null) when set to an empty or whitespace-only string", () => {
     expect(resolveForgejoMirrorUrl({ RDV_FORGEJO_MIRROR_URL: "" })).toBeNull();
     expect(resolveForgejoMirrorUrl({ RDV_FORGEJO_MIRROR_URL: "   " })).toBeNull();
+  });
+});
+
+describe("parseLsRemoteHeadSha", () => {
+  const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+  it("extracts the sha from `<sha>\\t<ref>` ls-remote output", () => {
+    expect(parseLsRemoteHeadSha(`${SHA}\trefs/heads/master`)).toBe(SHA);
+    // Trailing newline (as spawnSync stdout usually carries) is tolerated.
+    expect(parseLsRemoteHeadSha(`${SHA}\trefs/heads/master\n`)).toBe(SHA);
+  });
+  it("returns null for empty output — the branch does not exist on the mirror", () => {
+    expect(parseLsRemoteHeadSha("")).toBeNull();
+    expect(parseLsRemoteHeadSha("\n")).toBeNull();
+    expect(parseLsRemoteHeadSha("   \n")).toBeNull();
+  });
+});
+
+describe("mirrorArchiveRef", () => {
+  it("builds a UTC minute-stamped archive ref with no colon (invalid in ref names)", () => {
+    expect(mirrorArchiveRef(new Date("2026-07-16T09:12:34.567Z"))).toBe(
+      "refs/heads/archive/master-diverged-2026-07-16T0912Z",
+    );
+  });
+  it("stamps in UTC regardless of the local timezone of the input", () => {
+    // 2026-07-16T01:05+02:00 is 2026-07-15T23:05Z — the ref must say the 15th.
+    expect(mirrorArchiveRef(new Date("2026-07-16T01:05:00+02:00"))).toBe(
+      "refs/heads/archive/master-diverged-2026-07-15T2305Z",
+    );
+  });
+  it("distinct incidents (different minutes) never collide on the same ref", () => {
+    const a = mirrorArchiveRef(new Date("2026-07-16T09:12:00Z"));
+    const b = mirrorArchiveRef(new Date("2026-07-16T09:13:00Z"));
+    expect(a).not.toBe(b);
+  });
+});
+
+describe("mirrorPushPlan", () => {
+  const HEAD = "a".repeat(40);
+  const OTHER = "b".repeat(40);
+  const mustNotRun = (): number => {
+    throw new Error("ancestry check must not run for this plan");
+  };
+
+  it("mirror at HEAD → up-to-date, WITHOUT running the ancestry check", () => {
+    expect(mirrorPushPlan(HEAD, HEAD, mustNotRun)).toBe("up-to-date");
+  });
+  it("branch absent on the mirror (null) → fast-forward (plain push creates it)", () => {
+    expect(mirrorPushPlan(null, HEAD, mustNotRun)).toBe("fast-forward");
+  });
+  it("mirror head is an ancestor of HEAD (exit 0) → fast-forward", () => {
+    expect(mirrorPushPlan(OTHER, HEAD, () => 0)).toBe("fast-forward");
+  });
+  it("mirror head NOT an ancestor (exit 1) → diverged", () => {
+    expect(mirrorPushPlan(OTHER, HEAD, () => 1)).toBe("diverged");
+  });
+  it("mirror head unknown locally (exit 128) → diverged — a foreign object cannot be in HEAD's history", () => {
+    expect(mirrorPushPlan(OTHER, HEAD, () => 128)).toBe("diverged");
+  });
+  it("passes the observed sha to the ancestry check", () => {
+    let seen: string | null = null;
+    mirrorPushPlan(OTHER, HEAD, (sha) => {
+      seen = sha;
+      return 0;
+    });
+    expect(seen).toBe(OTHER);
   });
 });

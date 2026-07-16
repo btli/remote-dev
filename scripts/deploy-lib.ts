@@ -238,6 +238,61 @@ export function resolveForgejoMirrorUrl(
 }
 
 /**
+ * Extract the sha from `git ls-remote <url> refs/heads/master` output
+ * (`<sha>\t<ref>` per line). Returns null when the ref does not exist on the
+ * remote (ls-remote exits 0 with empty output for a repo with no master yet) —
+ * the caller then knows a plain push will simply create the branch. Pure.
+ */
+export function parseLsRemoteHeadSha(stdout: string): string | null {
+  const firstLine = stdout.split("\n").find((l) => l.trim() !== "");
+  if (!firstLine) return null;
+  const sha = firstLine.split("\t")[0].trim();
+  return sha === "" ? null : sha;
+}
+
+/**
+ * The server-side ref that preserves a diverged mirror head before we
+ * force-converge master back to GitHub. Timestamped (UTC, minute precision,
+ * e.g. `refs/heads/archive/master-diverged-2026-07-16T0912Z`) so repeated
+ * divergence incidents never collide or overwrite each other's archive. Pure.
+ */
+export function mirrorArchiveRef(now: Date): string {
+  // ISO minus seconds/millis, colon stripped: branch names cannot contain ":".
+  const stamp = `${now.toISOString().slice(0, 16).replace(":", "")}Z`;
+  return `refs/heads/archive/master-diverged-${stamp}`;
+}
+
+/**
+ * How the Forgejo mirror's master must be converged to the deployed HEAD.
+ * GitHub is canonical; the mirror must always end up at HEAD.
+ *
+ *   - "up-to-date"   → mirror already at HEAD: nothing to push.
+ *   - "fast-forward" → mirror head is an ancestor of HEAD (or the branch does
+ *                      not exist yet): a plain push suffices.
+ *   - "diverged"     → the mirror has commits GitHub doesn't (someone committed
+ *                      directly on Forgejo): the caller must archive the mirror
+ *                      head server-side, then force-with-lease.
+ *
+ * `isAncestorExitCode(sha)` runs `git merge-base --is-ancestor <sha> HEAD` —
+ * injected so the (only effectful) check is both lazy (skipped entirely when
+ * the shas already match) and testable. Any non-zero exit means diverged:
+ * exit 1 is "not an ancestor", and exit 128 ("unknown object") is proof of
+ * divergence too, because every ancestor of a locally-held HEAD is itself
+ * held — an object we don't have cannot be in HEAD's history.
+ */
+export type MirrorPushPlan = "up-to-date" | "fast-forward" | "diverged";
+
+export function mirrorPushPlan(
+  observedSha: string | null,
+  headSha: string,
+  isAncestorExitCode: (observedSha: string) => number,
+): MirrorPushPlan {
+  if (observedSha === null) return "fast-forward";
+  if (observedSha === headSha) return "up-to-date";
+  return isAncestorExitCode(observedSha) === 0 ? "fast-forward" : "diverged";
+}
+
+/**
  * Defense-in-depth guard for self-healing a pruned/corrupt deploy-src: only a
  * path that is EXACTLY the derived `<dataDir>/deploy-src` may be recursively
  * removed. This stops a future refactor that mis-wires `DATA_DIR` (e.g. to `""`,
