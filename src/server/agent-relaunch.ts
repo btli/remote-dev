@@ -14,6 +14,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { STABLE_SPAWN_CWD } from "@/lib/exec";
 import { createLogger } from "@/lib/logger";
 
 const execFileAsync = promisify(execFile);
@@ -87,7 +88,7 @@ export async function relaunchAgentInTmux(
     // agent re-resolves API keys from its own profile credential store.
     for (const [k, v] of Object.entries(env)) {
       try {
-        await execFileAsync("tmux", ["set-environment", "-t", tmuxName, k, v]);
+        await execFileAsync("tmux", ["set-environment", "-t", tmuxName, k, v], { cwd: STABLE_SPAWN_CWD });
       } catch (error) {
         log.warn("Failed to set tmux env on relaunch", { sessionId, key: k, error: String(error) });
       }
@@ -96,8 +97,8 @@ export async function relaunchAgentInTmux(
     // Send the command literally (-l), then a separate Enter (C-m) to submit.
     // Mirrors TmuxService.sendKeys: literal text avoids tmux interpreting
     // special chars, and C-m is the canonical carriage-return keypress.
-    await execFileAsync("tmux", ["send-keys", "-t", tmuxName, "-l", cmd]);
-    await execFileAsync("tmux", ["send-keys", "-t", tmuxName, "C-m"]);
+    await execFileAsync("tmux", ["send-keys", "-t", tmuxName, "-l", cmd], { cwd: STABLE_SPAWN_CWD });
+    await execFileAsync("tmux", ["send-keys", "-t", tmuxName, "C-m"], { cwd: STABLE_SPAWN_CWD });
 
     log.info("Relaunched agent in tmux", {
       sessionId,

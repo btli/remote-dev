@@ -12,10 +12,21 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  * dynamically inside the function body.
  */
 
-// Capture every tmux call. execFile(cmd, args, cb) → cb(null, {stdout,stderr}).
+// Capture every tmux call. Accepts both call shapes: (cmd, args, cb) and
+// (cmd, args, opts, cb) — the relaunch sites pass { cwd: STABLE_SPAWN_CWD }
+// (remote-dev-ipbo). cb(null, {stdout,stderr}).
 const execFileCalls: string[][] = [];
 const execFile = vi.fn(
-  (_cmd: string, args: string[], cb: (e: unknown, r: unknown) => void) => {
+  (
+    _cmd: string,
+    args: string[],
+    optsOrCb: unknown,
+    maybeCb?: (e: unknown, r: unknown) => void,
+  ) => {
+    const cb = (typeof optsOrCb === "function" ? optsOrCb : maybeCb) as (
+      e: unknown,
+      r: unknown,
+    ) => void;
     execFileCalls.push(args);
     cb(null, { stdout: "", stderr: "" });
   },

@@ -129,7 +129,7 @@ describe("Environment Persistence Integration", () => {
       const sessionName = generateTestSessionName();
 
       // Create a tmux session
-      await TmuxService.createSession(sessionName);
+      await TmuxService.createSession(sessionName, homedir());
 
       // Set session-level environment variables using tmux set-environment
       await TmuxService.setSessionEnvironment(sessionName, {
@@ -201,7 +201,7 @@ describe("Environment Persistence Integration", () => {
       const sessionName = generateTestSessionName();
 
       // Create session simulating an agent session
-      await TmuxService.createSession(sessionName);
+      await TmuxService.createSession(sessionName, homedir());
 
       // Set up agent environment (API keys, etc.)
       await TmuxService.setSessionEnvironment(sessionName, {
@@ -230,7 +230,7 @@ describe("Environment Persistence Integration", () => {
       const sessionName = generateTestSessionName();
 
       // Create session
-      await TmuxService.createSession(sessionName);
+      await TmuxService.createSession(sessionName, homedir());
 
       // Set session environment
       await TmuxService.setSessionEnvironment(sessionName, {
@@ -311,7 +311,7 @@ describe("Environment Persistence Integration", () => {
       const sessionName = generateTestSessionName();
 
       // Create session (shell will load normally)
-      await TmuxService.createSession(sessionName);
+      await TmuxService.createSession(sessionName, homedir());
 
       // Set XDG paths for isolation (not HOME)
       await TmuxService.setSessionEnvironment(sessionName, {
@@ -469,7 +469,7 @@ describe("Environment Persistence Integration", () => {
       const sessionName = generateTestSessionName();
 
       // Create session
-      await TmuxService.createSession(sessionName);
+      await TmuxService.createSession(sessionName, homedir());
 
       // Simulate environment stack merge
       const profileEnv = { PROFILE_VAR: "profile" };
@@ -490,7 +490,7 @@ describe("Environment Persistence Integration", () => {
     it("handles empty environment gracefully", async () => {
       const sessionName = generateTestSessionName();
 
-      await TmuxService.createSession(sessionName);
+      await TmuxService.createSession(sessionName, homedir());
 
       // Set empty environment
       await TmuxService.setSessionEnvironment(sessionName, {});
@@ -503,7 +503,7 @@ describe("Environment Persistence Integration", () => {
     it("handles special characters in environment values", async () => {
       const sessionName = generateTestSessionName();
 
-      await TmuxService.createSession(sessionName);
+      await TmuxService.createSession(sessionName, homedir());
 
       // Set values with special characters
       await TmuxService.setSessionEnvironment(sessionName, {

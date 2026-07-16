@@ -1,7 +1,17 @@
 // @vitest-environment node
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 
-import { resolveStartupEnv } from "./tmux-service";
+vi.mock("@/lib/exec", () => ({
+  execFile: vi.fn(async () => ({ stdout: "", stderr: "", exitCode: 0 })),
+  execFileCheck: vi.fn(async () => true),
+  // exitCode 1 = `tmux has-session` says the session does NOT exist yet.
+  execFileNoThrow: vi.fn(async () => ({ stdout: "", stderr: "", exitCode: 1 })),
+}));
+
+import { execFile } from "@/lib/exec";
+import { createSession, resolveStartupEnv } from "./tmux-service";
+
+const execFileMock = vi.mocked(execFile);
 
 describe("resolveStartupEnv", () => {
   it("returns suppression vars when startup command is present and no caller env", () => {
@@ -40,5 +50,42 @@ describe("resolveStartupEnv", () => {
   it("returns env unchanged when startup command is whitespace only", () => {
     const result = resolveStartupEnv("   ", undefined);
     expect(result).toBeUndefined();
+  });
+});
+
+describe("createSession", () => {
+  beforeEach(() => {
+    execFileMock.mockClear();
+  });
+
+  // [remote-dev-ipbo] `cwd` is a required parameter — omitting it is a compile
+  // error — and `-c <cwd>` must ALWAYS reach tmux: without it, panes inherit
+  // the tmux daemon's own cwd, which a deploy may have deleted.
+  it("always passes -c with the given cwd to tmux new-session", async () => {
+    await createSession("rdv-test-session", "/projects/app");
+
+    const newSessionCall = execFileMock.mock.calls.find(
+      ([, args]) => args?.[0] === "new-session",
+    );
+    expect(newSessionCall).toBeDefined();
+    const [command, args] = newSessionCall!;
+    expect(command).toBe("tmux");
+    const cIndex = args!.indexOf("-c");
+    expect(cIndex).toBeGreaterThan(-1);
+    expect(args![cIndex + 1]).toBe("/projects/app");
+  });
+
+  it("passes -c alongside -e env injection", async () => {
+    await createSession("rdv-test-session", "/projects/app", undefined, {
+      FOO: "bar",
+    });
+
+    const newSessionCall = execFileMock.mock.calls.find(
+      ([, args]) => args?.[0] === "new-session",
+    );
+    const [, args] = newSessionCall!;
+    const cIndex = args!.indexOf("-c");
+    expect(args![cIndex + 1]).toBe("/projects/app");
+    expect(args).toContain("FOO=bar");
   });
 });
