@@ -52,6 +52,9 @@ import {
   NATIVE_MODULES_TO_REBUILD,
   shouldRunSqlitePush,
   resolveForgejoMirrorUrl,
+  parseLsRemoteHeadSha,
+  mirrorArchiveRef,
+  mirrorPushPlan,
 } from "./deploy-lib";
 import { parseLockContent } from "./deploy-lock";
 import {
@@ -1250,12 +1253,52 @@ async function healthCheckExternal(): Promise<boolean> {
 // Deploy orchestration
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Keep the in-cluster Forgejo mirror (joyfulhouse/remote-dev) current with the
+// Run git in DEPLOY_SRC with the mirror-safe env: SSH host key auto-accepted on
+// first contact with a connect timeout, and GH_TOKEN/GITHUB_TOKEN cleared so a
+// GitHub credential can't hijack the (SSH-key-authed) Forgejo remote.
+function runMirrorGit(args: string[]): {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+} {
+  const res = spawnSync(["git", "-C", DEPLOY_SRC, ...args], {
+    cwd: DEPLOY_SRC,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...process.env,
+      GIT_SSH_COMMAND:
+        "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10",
+      GH_TOKEN: "",
+      GITHUB_TOKEN: "",
+    },
+  });
+  return {
+    exitCode: res.exitCode,
+    stdout: res.stdout?.toString().trim() ?? "",
+    stderr: res.stderr?.toString().trim() ?? "",
+  };
+}
+
+// Keep the in-cluster Forgejo mirror (joyfulhouse/remote-dev) CONVERGED to the
 // commit we just shipped, so the homelab build-rdv-platform pipeline — which now
 // clones Forgejo instead of GitHub (no GitHub PAT) — builds the same master.
-// Best-effort: a mirror-push failure must NEVER affect a green deploy. SSH-key
-// auth; GH_TOKEN/GITHUB_TOKEN are cleared so a GitHub credential can't hijack the
-// push, and the Forgejo host key is auto-accepted on first contact.
+//
+// GitHub is canonical. A plain push alone is not enough: one direct commit on
+// the Forgejo repo makes every subsequent mirror push a non-fast-forward reject
+// forever (the mirror sat diverged for a month this way). Convergence semantics
+// (decision logic: mirrorPushPlan in deploy-lib):
+//   - mirror master == HEAD              → nothing to do.
+//   - mirror master ancestor of HEAD (or
+//     branch absent)                     → plain fast-forward push.
+//   - mirror master diverged             → fetch the foreign head, archive it
+//     server-side under refs/heads/archive/master-diverged-<UTC stamp>, then
+//     force-with-lease master to HEAD pinned to the exact sha we observed
+//     (TOCTOU-safe: a racing Forgejo-side push makes the lease fail rather than
+//     be silently destroyed). If the archive push fails we ABORT the overwrite —
+//     Forgejo-side work is never clobbered without a preserved copy.
+//
+// Best-effort throughout: a mirror failure must NEVER affect a green deploy.
 function pushToForgejoMirror(): void {
   const url = resolveForgejoMirrorUrl();
   if (!url) {
@@ -1263,27 +1306,89 @@ function pushToForgejoMirror(): void {
     return;
   }
   try {
-    const res = spawnSync(
-      ["git", "-C", DEPLOY_SRC, "push", url, "HEAD:refs/heads/master"],
-      {
-        cwd: DEPLOY_SRC,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: {
-          ...process.env,
-          GIT_SSH_COMMAND:
-            "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10",
-          GH_TOKEN: "",
-          GITHUB_TOKEN: "",
-        },
-      },
+    const lsRemote = runMirrorGit(["ls-remote", url, "refs/heads/master"]);
+    if (lsRemote.exitCode !== 0) {
+      logDeploy(
+        `Forgejo mirror ls-remote failed (non-fatal): ${lsRemote.stderr || `exit ${lsRemote.exitCode}`}`,
+      );
+      return;
+    }
+    const observed = parseLsRemoteHeadSha(lsRemote.stdout);
+    const head = getGitCommitFull(DEPLOY_SRC);
+
+    const plan = mirrorPushPlan(
+      observed,
+      head,
+      (sha) => runMirrorGit(["merge-base", "--is-ancestor", sha, "HEAD"]).exitCode,
     );
-    if (res.exitCode === 0) {
+
+    if (plan === "up-to-date") {
+      logDeploy(
+        `Forgejo mirror already up to date at ${getGitCommit(DEPLOY_SRC)} (${url}).`,
+      );
+      return;
+    }
+
+    if (plan === "diverged") {
+      // git can only push objects it holds: both the archive push (source sha)
+      // and the overwritten-commit count need the mirror's foreign head locally.
+      const fetch = runMirrorGit(["fetch", url, "refs/heads/master"]);
+      if (fetch.exitCode !== 0) {
+        logDeploy(
+          `Forgejo mirror fetch of diverged head ${observed} failed (non-fatal, mirror left diverged): ` +
+            `${fetch.stderr || `exit ${fetch.exitCode}`}`,
+        );
+        return;
+      }
+
+      // Archive BEFORE overwriting: the force push below discards the mirror's
+      // commits from master, so a server-side archive ref is the only thing
+      // preserving them. No successful archive → no overwrite.
+      const archiveRef = mirrorArchiveRef(new Date());
+      const archive = runMirrorGit(["push", url, `${observed}:${archiveRef}`]);
+      if (archive.exitCode !== 0) {
+        logDeploy(
+          `WARNING: Forgejo mirror is DIVERGED at ${observed} and the archive push to ${archiveRef} failed — ` +
+            `ABORTING convergence rather than clobbering unpreserved commits (non-fatal): ` +
+            `${archive.stderr || `exit ${archive.exitCode}`}`,
+        );
+        return;
+      }
+
+      const count = runMirrorGit(["rev-list", "--count", `HEAD..${observed}`]);
+      const overwritten = count.exitCode === 0 ? count.stdout : "an unknown number of";
+
+      // Lease pinned to the observed sha, not just --force-with-lease: if the
+      // mirror moved again since ls-remote, the push fails instead of clobbering.
+      const force = runMirrorGit([
+        "push",
+        url,
+        "HEAD:refs/heads/master",
+        `--force-with-lease=refs/heads/master:${observed}`,
+      ]);
+      if (force.exitCode !== 0) {
+        logDeploy(
+          `Forgejo mirror force-with-lease push failed (non-fatal, mirror head archived at ${archiveRef}): ` +
+            `${force.stderr || `exit ${force.exitCode}`}`,
+        );
+        return;
+      }
+
+      logDeploy(
+        `WARNING: Forgejo mirror had diverged from GitHub (canonical) — overwrote ${overwritten} ` +
+          `mirror-only commit(s) on master, preserved at ${archiveRef}. ` +
+          `Commits must land on GitHub, not the Forgejo mirror.`,
+      );
+      logDeploy(`Mirrored ${getGitCommit(DEPLOY_SRC)} to Forgejo (${url}).`);
+      return;
+    }
+
+    const push = runMirrorGit(["push", url, "HEAD:refs/heads/master"]);
+    if (push.exitCode === 0) {
       logDeploy(`Mirrored ${getGitCommit(DEPLOY_SRC)} to Forgejo (${url}).`);
     } else {
-      const err = res.stderr?.toString().trim();
       logDeploy(
-        `Forgejo mirror push failed (non-fatal): ${err || `exit ${res.exitCode}`}`,
+        `Forgejo mirror push failed (non-fatal): ${push.stderr || `exit ${push.exitCode}`}`,
       );
     }
   } catch (err) {
