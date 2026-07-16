@@ -1,6 +1,7 @@
 /**
  * SessionService - Manages terminal session lifecycle and persistence
  */
+import * as os from "node:os";
 import { db } from "@/db";
 import { terminalSessions, githubRepositories, apiKeys } from "@/db/schema";
 import { eq, and, asc, desc, inArray } from "drizzle-orm";
@@ -22,6 +23,7 @@ import * as GitHubService from "./github-service";
 import * as AgentProfileService from "./agent-profile-service";
 import { getResolvedPreferences, getFolderPreferences, getEnvironmentForSession, getFolderGitIdentity } from "./preferences-service";
 import { SessionServiceError } from "@/lib/errors";
+import { validatePath } from "@/server/validate-cwd";
 import { TerminalTypeServerRegistry } from "@/lib/terminal-plugins/server";
 import { initializeServerPlugins } from "@/lib/terminal-plugins/init-server";
 import { githubAccountRepository, gitCredentialManager } from "@/infrastructure/container";
@@ -825,7 +827,11 @@ export async function createSessionWithDedupFlag(
     // the session exits when it exits. Fall back to the resolved user
     // startup command otherwise.
     const effectiveStartupCommand = sessionConfig.shellCommand ?? startupCommand;
-    const effectiveCwd = sessionConfig.cwd ?? workingPath ?? undefined;
+    // [remote-dev-ipbo] Validate every candidate (the old HOME string fallback
+    // was never checked) and always end on a real directory — createSession
+    // now requires a cwd so `-c` is unconditionally passed to tmux.
+    const effectiveCwd =
+      validatePath(sessionConfig.cwd) ?? validatePath(workingPath) ?? os.homedir();
 
     // [hgwo] Persist a durable resume binding for agent sessions: the sanitized
     // env (secrets stripped) + provider + initial flags. The native session id
@@ -851,7 +857,10 @@ export async function createSessionWithDedupFlag(
       }
     }
 
-    // Create the tmux session with initial environment for PTY spawn
+    // Create the tmux session with initial environment for PTY spawn.
+    // Info-level on purpose (remote-dev-ipbo): the dead-cwd incident was
+    // invisible in logs — the cwd handed to tmux must be reconstructable.
+    log.info("Creating tmux session", { sessionId, tmuxSessionName, cwd: effectiveCwd });
     try {
       await TmuxService.createSession(
         tmuxSessionName,

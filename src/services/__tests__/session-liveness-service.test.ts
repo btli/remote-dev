@@ -41,13 +41,20 @@ function isSuspendedQuery(where: unknown): boolean {
 const createNotification =
   vi.fn<(input: Record<string, unknown>) => Promise<{ id: string }>>(async () => ({ id: "n1" }));
 
-// tmux pane-pid probe: execFileAsync("tmux", ["list-panes", "-t", name, "-F", "#{pane_pid}"])
+// tmux pane-pid probe: execFileAsync("tmux", ["list-panes", "-t", name, "-F",
+// "#{pane_pid}"], { cwd }) — accept both the (cmd, args, cb) and
+// (cmd, args, opts, cb) call shapes (remote-dev-ipbo added the opts).
 vi.mock("node:child_process", () => ({
   execFile: (
     _cmd: string,
     args: string[],
-    cb: (err: Error | null, out: { stdout: string; stderr: string }) => void,
+    optsOrCb: unknown,
+    maybeCb?: (err: Error | null, out: { stdout: string; stderr: string }) => void,
   ) => {
+    const cb = (typeof optsOrCb === "function" ? optsOrCb : maybeCb) as (
+      err: Error | null,
+      out: { stdout: string; stderr: string },
+    ) => void;
     const tIdx = args.indexOf("-t");
     const name = tIdx >= 0 ? args[tIdx + 1] : "";
     const pid = state.tmuxPid[name];

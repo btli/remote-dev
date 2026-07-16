@@ -540,6 +540,7 @@ export function EmbeddedSessionView({
         sessionId={session.id}
         tmuxSessionName={session.tmuxSessionName}
         sessionName={session.name}
+        projectPath={session.projectPath ?? null}
         session={terminalSession}
         wsUrl={wsUrl}
         fontSize={fontSize}

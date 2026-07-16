@@ -5,6 +5,7 @@
  * This allows gradual migration without rewriting the tmux integration.
  */
 
+import * as os from "node:os";
 import type {
   TmuxGateway,
   TmuxSessionInfo,
@@ -17,11 +18,13 @@ import * as TmuxService from "@/services/tmux-service";
 export class TmuxGatewayImpl implements TmuxGateway {
   /**
    * Create a new tmux session.
+   * TmuxService.createSession requires a cwd (remote-dev-ipbo) — fall back to
+   * home when the port's optional workingDirectory is absent.
    */
   async createSession(options: CreateTmuxSessionOptions): Promise<void> {
     await TmuxService.createSession(
       options.sessionName,
-      options.workingDirectory,
+      options.workingDirectory ?? os.homedir(),
       undefined,
       options.environment
     );

@@ -12,6 +12,7 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { STABLE_SPAWN_CWD } from "@/lib/exec";
 import { db } from "@/db";
 import { terminalSessions } from "@/db/schema";
 import { and, eq, inArray, ne } from "drizzle-orm";
@@ -44,7 +45,7 @@ async function tmuxPanePid(tmuxSessionName: string): Promise<number | null> {
       tmuxSessionName,
       "-F",
       "#{pane_pid}",
-    ]);
+    ], { cwd: STABLE_SPAWN_CWD });
     const first = stdout.split("\n").find((l) => l.trim().length > 0);
     const pid = first ? parseInt(first.trim(), 10) : NaN;
     return Number.isNaN(pid) ? null : pid;

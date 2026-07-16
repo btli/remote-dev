@@ -2,9 +2,29 @@
  * Safe execution utilities using execFile to prevent shell injection
  */
 import { execFile as execFileCallback, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import * as os from "node:os";
 import { promisify } from "node:util";
 
 const execFilePromise = promisify(execFileCallback);
+
+/**
+ * Default working directory for child processes whose callers don't pass one.
+ *
+ * A child that inherits `process.cwd()` can be born inside a directory a
+ * deploy later deletes (Next.js standalone chdirs into `.next/standalone`,
+ * which blue/green rebuilds). A long-lived daemon forked from such a child —
+ * the tmux server — then keeps the dead inode as its cwd forever, and tmux
+ * silently ignores `-c` for every new pane (remote-dev-ipbo). The home
+ * directory is never deleted by deploys, so it's the stable spawn point.
+ *
+ * Existence-checked once at load: os.homedir() reflects $HOME without
+ * stat'ing it, and spawning with a nonexistent cwd fails ENOENT (which would
+ * e.g. make checkTmuxInstalled() conclude tmux is missing on container hosts
+ * with a bogus $HOME). Fall back to "/", which always exists.
+ */
+const HOME_DIR = os.homedir();
+export const STABLE_SPAWN_CWD = HOME_DIR && existsSync(HOME_DIR) ? HOME_DIR : "/";
 
 /**
  * Get a clean environment with framework internal variables filtered out.
@@ -58,7 +78,7 @@ export async function execFile(
     // Use clean environment to prevent framework internal vars from leaking
     const cleanEnv = getCleanProcessEnv();
     const { stdout, stderr } = await execFilePromise(command, args, {
-      cwd: options?.cwd,
+      cwd: options?.cwd ?? STABLE_SPAWN_CWD,
       env: { ...cleanEnv, ...options?.env } as NodeJS.ProcessEnv,
       timeout: options?.timeout ?? 30000,
       maxBuffer: 10 * 1024 * 1024, // 10MB buffer
@@ -160,7 +180,7 @@ export function execFileCapped(
   return new Promise((resolve, reject) => {
     const cleanEnv = getCleanProcessEnv();
     const proc = spawn(command, args, {
-      cwd: options?.cwd,
+      cwd: options?.cwd ?? STABLE_SPAWN_CWD,
       env: { ...cleanEnv, ...options?.env } as NodeJS.ProcessEnv,
       // No shell: true - arguments are passed directly
     });
@@ -242,7 +262,7 @@ export function spawnProcess(
     // Use clean environment to prevent framework internal vars from leaking
     const cleanEnv = getCleanProcessEnv();
     const proc = spawn(command, args, {
-      cwd: options?.cwd,
+      cwd: options?.cwd ?? STABLE_SPAWN_CWD,
       env: { ...cleanEnv, ...options?.env } as NodeJS.ProcessEnv,
       // No shell: true - arguments are passed directly
     });

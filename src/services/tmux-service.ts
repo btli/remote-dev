@@ -141,14 +141,17 @@ export async function listSessions(): Promise<TmuxSessionInfo[]> {
  * different types of environment variables.
  *
  * @param sessionName - Unique session name (e.g., "rdv-abc123")
- * @param cwd - Working directory for the session
+ * @param cwd - Working directory for the session. REQUIRED (remote-dev-ipbo):
+ *   omitting `-c` makes the pane inherit the tmux SERVER daemon's own cwd,
+ *   which a deploy may have deleted — callers must resolve a real directory
+ *   (validated project path or home) before calling.
  * @param startupCommand - Optional command to run after session creation
  * @param env - Optional environment variables for PTY spawn (initial shell env)
  * @param historyLimit - Optional tmux history-limit (scrollback buffer, default: 50000)
  */
 export async function createSession(
   sessionName: string,
-  cwd?: string,
+  cwd: string,
   startupCommand?: string,
   env?: Record<string, string>,
   historyLimit: number = 50000
@@ -170,10 +173,8 @@ export async function createSession(
     sessionName,
   ];
 
-  // Set working directory
-  if (cwd) {
-    args.push("-c", cwd);
-  }
+  // Set working directory — ALWAYS passed (see @param cwd above).
+  args.push("-c", cwd);
 
   // Pass environment variables using tmux's -e flag (tmux 3.2+).
   // This injects vars directly into the new session's shell environment.

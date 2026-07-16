@@ -5,8 +5,13 @@ import type { IPty } from "node-pty";
 
 import { execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import { promisify } from "node:util";
-import { validatePathWithReason, sanitizeCwdForDisplay } from "./validate-cwd.js";
+import { STABLE_SPAWN_CWD } from "../lib/exec.js";
+import { validatePath, sanitizeCwdForDisplay } from "./validate-cwd.js";
+import { resolveSessionCwd, rowProjectPathForCwd } from "./resolve-session-cwd.js";
+import { classifyPaneCwd, computeServerAppDirMarkers } from "./detect-dead-pane-cwd.js";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
 // [oyej] Agent-run scheduler (REAL agent launches; epic remote-dev-oyej).
 import { agentSchedulerOrchestrator } from "../services/agent-scheduler-orchestrator.js";
@@ -128,10 +133,11 @@ export function isTmuxSessionAuthorized(
   return row.userId === token.userId;
 }
 
-// Working-directory validation (canonicalize + existence check, with a
-// rejection reason for user-facing feedback) lives in ./validate-cwd so it can
-// be unit-tested without pulling in node-pty. `validatePathWithReason` is
-// imported at the top of this file.
+// Working-directory validation (canonicalize + existence check) lives in
+// ./validate-cwd, the 3-tier connect-time cwd fallback in
+// ./resolve-session-cwd, and dead-pane classification in
+// ./detect-dead-pane-cwd — all extracted so they can be unit-tested without
+// pulling in node-pty. Imported at the top of this file.
 
 interface TerminalConnection {
   connectionId: string;
@@ -612,6 +618,7 @@ function runTmuxResize(tmuxSessionName: string, cols: number, rows: number): voi
   execFile(
     "tmux",
     ["resize-window", "-t", tmuxSessionName, "-x", String(cols), "-y", String(rows)],
+    { cwd: STABLE_SPAWN_CWD },
     (err) => {
       if (err) {
         log.warn("tmux resize-window failed", { error: String(err), tmuxSessionName, cols, rows });
@@ -781,7 +788,7 @@ function cleanupConnection(connectionId: string): void {
  */
 function checkTmuxInstalled(): boolean {
   try {
-    execFileSync("tmux", ["-V"], { stdio: "pipe" });
+    execFileSync("tmux", ["-V"], { stdio: "pipe", cwd: STABLE_SPAWN_CWD });
     return true;
   } catch {
     return false;
@@ -793,7 +800,7 @@ function checkTmuxInstalled(): boolean {
  */
 function tmuxSessionExists(sessionName: string): boolean {
   try {
-    execFileSync("tmux", ["has-session", "-t", sessionName], { stdio: "pipe" });
+    execFileSync("tmux", ["has-session", "-t", sessionName], { stdio: "pipe", cwd: STABLE_SPAWN_CWD });
     return true;
   } catch {
     return false;
@@ -801,37 +808,42 @@ function tmuxSessionExists(sessionName: string): boolean {
 }
 
 /**
- * Create a new tmux session with optimal settings
+ * Create a new tmux session with optimal settings.
+ *
+ * `cwd` is REQUIRED and always passed as `-c` (remote-dev-ipbo): without it,
+ * new panes inherit the tmux SERVER daemon's own cwd — which a deploy can have
+ * deleted — and tmux even silently ignores `-c` once the daemon's cwd is a
+ * dead inode. Every tmux client here also spawns from STABLE_SPAWN_CWD so a
+ * daemon we birth never holds a deploy-deleted cwd in the first place.
+ *
  * @param historyLimit - Scrollback buffer size (default: 50000 lines)
  */
 function createTmuxSession(
   sessionName: string,
   cols: number,
   rows: number,
-  cwd?: string,
+  cwd: string,
   historyLimit: number = 50000
 ): void {
   const args = ["new-session", "-d", "-s", sessionName, "-x", String(cols), "-y", String(rows)];
-  if (cwd) {
-    args.push("-c", cwd);
-  }
-  execFileSync("tmux", args, { stdio: "pipe" });
+  args.push("-c", cwd);
+  execFileSync("tmux", args, { stdio: "pipe", cwd: STABLE_SPAWN_CWD });
 
   // Enable mouse mode for scrolling in alternate screen apps (vim, less, claude code, etc.)
   // Use Shift+click to bypass and select text with xterm.js
-  execFileSync("tmux", ["set-option", "-t", sessionName, "mouse", "on"], { stdio: "pipe" });
+  execFileSync("tmux", ["set-option", "-t", sessionName, "mouse", "on"], { stdio: "pipe", cwd: STABLE_SPAWN_CWD });
 
   // Set scrollback buffer (history-limit) for performance tuning
   // Lower values reduce memory usage for long-running sessions
-  execFileSync("tmux", ["set-option", "-t", sessionName, "history-limit", String(historyLimit)], { stdio: "pipe" });
+  execFileSync("tmux", ["set-option", "-t", sessionName, "history-limit", String(historyLimit)], { stdio: "pipe", cwd: STABLE_SPAWN_CWD });
 
   // Prevent tmux from resizing window to smallest attached client
   // This fixes the issue where switching tabs causes resize
-  execFileSync("tmux", ["set-option", "-t", sessionName, "aggressive-resize", "off"], { stdio: "pipe" });
+  execFileSync("tmux", ["set-option", "-t", sessionName, "aggressive-resize", "off"], { stdio: "pipe", cwd: STABLE_SPAWN_CWD });
 
   // Disable tmux status bar — it consumes 1 row and causes the bottom line
   // of terminal content to be clipped. Session info is already shown in the app UI.
-  execFileSync("tmux", ["set-option", "-t", sessionName, "status", "off"], { stdio: "pipe" });
+  execFileSync("tmux", ["set-option", "-t", sessionName, "status", "off"], { stdio: "pipe", cwd: STABLE_SPAWN_CWD });
 }
 
 /**
@@ -848,7 +860,7 @@ function attachToTmuxSession(
   // last row of app content. Failures are non-fatal.
   for (const option of ["status", "aggressive-resize"] as const) {
     try {
-      execFileSync("tmux", ["set-option", "-t", sessionName, option, "off"], { stdio: "pipe" });
+      execFileSync("tmux", ["set-option", "-t", sessionName, option, "off"], { stdio: "pipe", cwd: STABLE_SPAWN_CWD });
     } catch (err) {
       log.warn("Failed to disable tmux option on attach", { error: String(err), sessionName, option });
     }
@@ -860,11 +872,140 @@ function attachToTmuxSession(
     name: "xterm-256color",
     cols,
     rows,
-    cwd: process.env.HOME || process.cwd(),
+    cwd: STABLE_SPAWN_CWD,
     env: getCleanEnvironment(),
   });
 
   return ptyProcess;
+}
+
+/**
+ * [remote-dev-ipbo] Tmux sessions already audited for a dead pane cwd this
+ * server lifetime. One audit per tmux session is enough — the classification
+ * can't get worse, and the heal (if any) already ran. A session whose audit
+ * FAILED (probe contention, or a heal send-keys that threw and left the pane
+ * broken) is removed again so the next attach retries instead of skipping the
+ * audit forever.
+ */
+const auditedPaneCwdSessions = new Set<string>();
+
+/**
+ * [remote-dev-ipbo] Attach-time dead-pane detection + gentle heal.
+ *
+ * A tmux daemon whose own cwd was deleted by a deploy silently ignores `-c`
+ * and births every pane inside its dead dir — for this server that dir is
+ * `.next/standalone`, which the NEXT deploy re-creates, so a plain existence
+ * check passes on an incident pane. `classifyPaneCwd` therefore also compares
+ * against the server-app-dir markers.
+ *
+ * Heal path: only when the pane's foreground process is a plain shell AND the
+ * session row has a valid project path — two literal send-keys (`cd '<p>'`,
+ * then Enter; same pattern as agent-relaunch). send-keys works on a poisoned
+ * daemon and an absolute `cd` succeeds from a deleted cwd, so this repairs
+ * existing broken panes on next attach even before the daemon is recycled.
+ * Never respawn-pane, never kill-session.
+ */
+async function auditPaneCwdOnAttach(
+  sessionId: string,
+  tmuxSessionName: string,
+  rowProjectPath: string | null,
+  ws: WebSocket,
+): Promise<void> {
+  if (auditedPaneCwdSessions.has(tmuxSessionName)) return;
+  auditedPaneCwdSessions.add(tmuxSessionName);
+
+  let probeOutput: string;
+  try {
+    const { stdout } = await execFileAsync(
+      "tmux",
+      [
+        "display-message",
+        "-p",
+        "-t",
+        tmuxSessionName,
+        "#{pane_current_path}\t#{pane_current_command}",
+      ],
+      { cwd: STABLE_SPAWN_CWD },
+    );
+    probeOutput = stdout;
+  } catch (error) {
+    // Transient probe failure (tmux contention) — un-mark so the NEXT attach
+    // retries the audit instead of skipping it for the server's lifetime.
+    auditedPaneCwdSessions.delete(tmuxSessionName);
+    log.debug("Pane cwd audit probe failed; will retry on next attach", {
+      sessionId,
+      tmuxSessionName,
+      error: String(error),
+    });
+    return;
+  }
+
+  try {
+    const firstLine = probeOutput.split("\n")[0] ?? "";
+    const [panePath = "", paneCommand = ""] = firstLine.split("\t");
+
+    // Validated once; doubles as the equality/suffix-exemption guard in the
+    // classifier AND the heal target (undefined when missing/nonexistent).
+    const sessionProjectPath = validatePath(rowProjectPath ?? undefined);
+
+    const classification = classifyPaneCwd(panePath, paneCommand, {
+      statFn: (p) => fs.statSync(p),
+      // NOT process.cwd() itself: the terminal server runs from the repo
+      // checkout, which is a legitimate user project when dogfooding — only
+      // the deploy-rebuilt .next/standalone dir is the poison signature.
+      serverAppDirMarkers: computeServerAppDirMarkers(process.cwd()),
+      sessionProjectPath,
+    });
+    if (!classification.broken) return;
+
+    log.warn("Attached pane has a dead working directory", {
+      sessionId,
+      tmuxSessionName,
+      panePath,
+      paneCommand,
+      reason: classification.reason,
+      healable: classification.healable,
+    });
+
+    const healTarget = classification.healable ? sessionProjectPath : undefined;
+
+    if (healTarget) {
+      // POSIX single-quote escaping so the typed path survives the shell.
+      const escaped = healTarget.replace(/'/g, "'\\''");
+      await execFileAsync(
+        "tmux",
+        ["send-keys", "-t", tmuxSessionName, "-l", "--", `cd '${escaped}'`],
+        { cwd: STABLE_SPAWN_CWD },
+      );
+      await execFileAsync("tmux", ["send-keys", "-t", tmuxSessionName, "Enter"], {
+        cwd: STABLE_SPAWN_CWD,
+      });
+    }
+
+    if (ws.readyState === WebSocket.OPEN) {
+      // "in-server-app-dir" is the deploy-incident signature; "stat-failed"
+      // just means the directory vanished — don't blame a redeploy for it.
+      const cause =
+        classification.reason === "in-server-app-dir"
+          ? "This session's working directory no longer exists (the server was redeployed)"
+          : "This session's working directory no longer exists";
+      const data = healTarget
+        ? "\r\n\x1b[33m⚠ " + cause + ".\x1b[0m" +
+          "\r\n\x1b[33m  → moved to " + sanitizeCwdForDisplay(healTarget) + "\x1b[0m\r\n"
+        : "\r\n\x1b[33m⚠ " + cause + " — cd to a valid directory.\x1b[0m\r\n";
+      ws.send(JSON.stringify({ type: "output", data }));
+    }
+  } catch (error) {
+    // Best-effort: a failed audit must never break the attach. Un-mark so the
+    // NEXT attach retries (a failed heal left the pane broken; retrying a
+    // completed heal is a harmless no-op — the pane re-classifies healthy).
+    auditedPaneCwdSessions.delete(tmuxSessionName);
+    log.debug("Pane cwd audit failed; will retry on next attach", {
+      sessionId,
+      tmuxSessionName,
+      error: String(error),
+    });
+  }
 }
 
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
@@ -1490,9 +1631,9 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       const mappedKey = TMUX_KEY_MAP[key];
 
       if (mappedKey) {
-        await execFileAsync("tmux", ["send-keys", "-t", tmuxName, mappedKey]);
+        await execFileAsync("tmux", ["send-keys", "-t", tmuxName, mappedKey], { cwd: STABLE_SPAWN_CWD });
       } else if (key.length === 1) {
-        await execFileAsync("tmux", ["send-keys", "-t", tmuxName, "-l", key]);
+        await execFileAsync("tmux", ["send-keys", "-t", tmuxName, "-l", key], { cwd: STABLE_SPAWN_CWD });
       } else {
         sendJson(res, 400, { error: `Unknown key: ${key}` });
         return true;
@@ -1526,7 +1667,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       }
       const { stdout } = await execFileAsync("tmux", [
         "capture-pane", "-t", conn.tmuxSessionName, "-p", "-J",
-      ]);
+      ], { cwd: STABLE_SPAWN_CWD });
       sendJson(res, 200, {
         sessionId,
         content: stdout,
@@ -2887,8 +3028,12 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     // session + its DB row), so it is ALLOWED — there is nothing to hijack and
     // the derived name is `rdv-${token.sessionId}`. A DB-error fails CLOSED
     // below (we reject rather than attach when ownership can't be verified).
+    //
+    // [remote-dev-ipbo] The lookup also loads the row's project_path — the
+    // tier-2 working-directory fallback when the client omits `?cwd=`.
+    let rowProjectPath: string | null = null;
     {
-      let owningRow: { id: string; userId: string } | null = null;
+      let owningRow: { id: string; userId: string; projectPath: string | null } | null = null;
       try {
         const { db } = await import("@/db");
         const { terminalSessions } = await import("@/db/schema");
@@ -2896,7 +3041,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         owningRow =
           (await db.query.terminalSessions.findFirst({
             where: eq(terminalSessions.tmuxSessionName, tmuxSessionName),
-            columns: { id: true, userId: true },
+            columns: { id: true, userId: true, projectPath: true },
           })) ?? null;
       } catch (error) {
         // Fail CLOSED: if we cannot verify ownership, do not attach.
@@ -2925,22 +3070,42 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         ws.close(4002, "Not authorized for this session");
         return;
       }
+
+      // Tiny mapping extracted to resolve-session-cwd.ts so the "widened
+      // ownership lookup feeds tier 2" step is unit-tested without node-pty.
+      rowProjectPath = rowProjectPathForCwd(owningRow);
     }
 
-    // SECURITY: Validate cwd to prevent path traversal
-    const { path: cwd, rejectedReason: cwdRejectedReason } =
-      validatePathWithReason(rawCwd);
-    // The user asked for a specific working directory that does not exist (or
-    // isn't a directory). tmux will silently fall back to its default dir, so
-    // flag it for a one-time user-facing banner in the CREATE branch below.
-    const cwdMissing =
-      cwdRejectedReason === "missing" || cwdRejectedReason === "not-dir";
+    // SECURITY + [remote-dev-ipbo]: Resolve the working directory with a
+    // 3-tier fallback (validated query cwd → session row's project_path →
+    // home). `cwd` is ALWAYS a non-empty string so tmux creation can never
+    // silently inherit the tmux daemon's own cwd — which a deploy may have
+    // deleted, at which point tmux even ignores a valid `-c`.
+    const resolved = resolveSessionCwd(rawCwd, rowProjectPath, os.homedir());
+    const cwd = resolved.cwd;
 
     // Generate a unique connection ID for multi-client support
     const connectionId = randomUUID();
 
     // Check if tmux session exists (for attach vs create decision)
     const tmuxExists = tmuxSessionExists(tmuxSessionName);
+
+    if (resolved.tier !== "query") {
+      // Warn on BOTH branches: on CREATE the fallback decides where the new
+      // tmux session is born; on reattach it is what a later restart_agent
+      // would use. The incident class was invisible in logs precisely because
+      // fallbacks stayed below prod LOG_LEVEL=warn (remote-dev-ipbo).
+      log.warn("Session cwd fell back", {
+        sessionId,
+        tmuxSessionName,
+        tier: resolved.tier,
+        rawCwdProvided: rawCwd !== undefined,
+        queryRejectedReason: resolved.queryRejectedReason ?? null,
+        rowRejectedReason: resolved.rowRejectedReason ?? null,
+        rowProjectPathPresent: rowProjectPath !== null,
+        tmuxExists,
+      });
+    }
 
     log.debug("Connection request", { connectionId, sessionId, tmuxSessionName, tmuxExists });
 
@@ -2957,9 +3122,22 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
           sessionId,
           tmuxSessionName,
         }));
+
+        // [remote-dev-ipbo] Fire-and-forget dead-pane audit: a pane created by
+        // a deploy-poisoned tmux daemon sits in a dead (or server-app) dir; on
+        // attach we detect it, warn, and gently heal plain shells via a typed
+        // `cd` back to the session's project path.
+        void auditPaneCwdOnAttach(sessionId, tmuxSessionName, rowProjectPath, ws);
       } else {
-        // Create new tmux session
-        log.debug("Creating new tmux session", { tmuxSessionName, historyLimit: tmuxHistoryLimit });
+        // Create new tmux session. Info-level on purpose (remote-dev-ipbo):
+        // the dead-cwd incident was invisible because creation only logged at
+        // debug — the cwd actually passed to tmux must be reconstructable.
+        log.info("Creating new tmux session", {
+          tmuxSessionName,
+          cwd,
+          cwdTier: resolved.tier,
+          historyLimit: tmuxHistoryLimit,
+        });
         createTmuxSession(tmuxSessionName, cols, rows, cwd, tmuxHistoryLimit);
 
         ptyProcess = attachToTmuxSession(tmuxSessionName, cols, rows);
@@ -2970,18 +3148,34 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
           tmuxSessionName,
         }));
 
-        // The configured working directory didn't exist, so the new tmux
-        // session started in the default dir instead. Surface that to the USER
-        // (a server-side warn alone gave zero feedback) — only on CREATE (the
-        // attach branch reuses the existing session's dir, nothing was chosen).
-        if (cwdMissing && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            type: "output",
-            data:
+        // The requested working directory wasn't usable (or none was sent), so
+        // the new tmux session started in a fallback dir. Surface that to the
+        // USER (a server-side warn alone gave zero feedback) — only on CREATE
+        // (the attach branch reuses the existing session's dir, nothing was
+        // chosen).
+        if (resolved.tier !== "query" && ws.readyState === WebSocket.OPEN) {
+          let data: string;
+          if (!rawCwd) {
+            data =
+              "\r\n\x1b[33m⚠ No working directory was provided — started in " +
+              sanitizeCwdForDisplay(cwd) +
+              ".\x1b[0m\r\n";
+          } else if (resolved.tier === "session-row") {
+            // Tier 2 rescued the session: it sits in the row's PROJECT
+            // directory, not the default one — the banner must say so.
+            data =
               "\r\n\x1b[33m⚠ Working directory not found:\x1b[0m " +
-              sanitizeCwdForDisplay(rawCwd ?? "") +
-              "\r\n\x1b[33m  Started in the default directory instead — fix it in the project's Preferences → Working Directory.\x1b[0m\r\n",
-          }));
+              sanitizeCwdForDisplay(rawCwd) +
+              "\r\n\x1b[33m  Started in the project directory instead: " +
+              sanitizeCwdForDisplay(cwd) +
+              "\x1b[0m\r\n";
+          } else {
+            data =
+              "\r\n\x1b[33m⚠ Working directory not found:\x1b[0m " +
+              sanitizeCwdForDisplay(rawCwd) +
+              "\r\n\x1b[33m  Started in the default directory instead — fix it in the project's Preferences → Working Directory.\x1b[0m\r\n";
+          }
+          ws.send(JSON.stringify({ type: "output", data }));
         }
 
         // [hgwo] We took the CREATE branch for an agent session, which means
@@ -3179,9 +3373,17 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
               // Use synchronous kill so the session is fully gone before we
               // recreate it — avoids a race between async kill and sync create.
               try {
-                execFileSync("tmux", ["kill-session", "-t", tmuxSessionName], { stdio: "pipe" });
+                execFileSync("tmux", ["kill-session", "-t", tmuxSessionName], { stdio: "pipe", cwd: STABLE_SPAWN_CWD });
               } catch { /* session may already be dead */ }
-              createTmuxSession(tmuxSessionName, connection.lastCols, connection.lastRows, cwd, tmuxHistoryLimit);
+              // Re-validate the connect-time cwd — the directory may have been
+              // deleted (e.g. a worktree removed) since this WS attached.
+              createTmuxSession(
+                tmuxSessionName,
+                connection.lastCols,
+                connection.lastRows,
+                validatePath(cwd) ?? os.homedir(),
+                tmuxHistoryLimit,
+              );
 
               const newPty = attachToTmuxSession(tmuxSessionName, connection.lastCols, connection.lastRows);
               connection.pty = newPty;

@@ -135,6 +135,15 @@ vi.mock("@/services/tmux-service", () => ({
   TmuxServiceError: class TmuxServiceError extends Error {},
 }));
 
+// [remote-dev-ipbo] effectiveCwd now validates candidates on the real
+// filesystem; accept any absolute path here so the fixture dirs
+// (/projects/my-app etc.) flow through — existence semantics are covered by
+// validate-cwd's own tests.
+vi.mock("@/server/validate-cwd", () => ({
+  validatePath: (p: string | undefined) =>
+    p && p.startsWith("/") ? p : undefined,
+}));
+
 vi.mock("@/services/worktree-service", () => ({
   isGitRepo: vi.fn(async () => false),
   createBranchWithWorktree: vi.fn(),
