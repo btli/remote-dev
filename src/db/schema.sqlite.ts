@@ -546,6 +546,8 @@ export const sessionSchedules = sqliteTable(
     scheduleType: text("schedule_type").$type<ScheduleType>().notNull().default("one-time"),
     cronExpression: text("cron_expression"),
     scheduledAt: integer("scheduled_at", { mode: "timestamp_ms" }),
+    intervalSeconds: integer("interval_seconds"),
+    anchorAt: integer("anchor_at", { mode: "timestamp_ms" }),
     timezone: text("timezone").notNull().default("America/Los_Angeles"),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     status: text("status").$type<ScheduleStatus>().notNull().default("active"),
@@ -563,6 +565,32 @@ export const sessionSchedules = sqliteTable(
     index("session_schedule_user_idx").on(table.userId),
     index("session_schedule_session_idx").on(table.sessionId),
     index("session_schedule_next_run_idx").on(table.enabled, table.nextRunAt),
+  ]
+);
+
+export const scheduleTemplates = sqliteTable(
+  "schedule_template",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    scheduleType: text("schedule_type").$type<ScheduleType>().notNull(),
+    cronExpression: text("cron_expression"),
+    intervalSeconds: integer("interval_seconds"),
+    timezone: text("timezone").notNull().default("America/Los_Angeles"),
+    maxRetries: integer("max_retries").notNull().default(0),
+    retryDelaySeconds: integer("retry_delay_seconds").notNull().default(60),
+    timeoutSeconds: integer("timeout_seconds").notNull().default(300),
+    commandsJson: text("commands_json").notNull(),
+    usageCount: integer("usage_count").notNull().default(0),
+    lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("schedule_template_user_idx").on(table.userId),
+    index("schedule_template_usage_idx").on(table.userId, table.usageCount),
   ]
 );
 

@@ -53,6 +53,8 @@ function makeSchedule(
     scheduleType: "recurring",
     cronExpression: "0 0 * * *",
     scheduledAt: null,
+    intervalSeconds: null,
+    anchorAt: null,
     timezone: "UTC",
     enabled: true,
     status: "active",

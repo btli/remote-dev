@@ -43,6 +43,9 @@ export const POST = withApiAuth(async (request, { userId }) => {
 
     // Validate schedule type-specific fields
     const scheduleType = input.scheduleType || "one-time";
+    if (!["one-time", "recurring", "interval"].includes(scheduleType)) {
+      return errorResponse("Invalid schedule type", 400, "INVALID_SCHEDULE_TYPE");
+    }
     if (scheduleType === "recurring") {
       if (!input.cronExpression) {
         return errorResponse("Cron expression is required for recurring schedules", 400, "CRON_REQUIRED");
@@ -58,6 +61,33 @@ export const POST = withApiAuth(async (request, { userId }) => {
       }
       if (scheduledDate <= new Date()) {
         return errorResponse("Scheduled time must be in the future", 400, "SCHEDULED_AT_IN_PAST");
+      }
+    } else {
+      if (
+        input.intervalSeconds === null ||
+        input.intervalSeconds === undefined ||
+        !Number.isInteger(input.intervalSeconds) ||
+        input.intervalSeconds < 60
+      ) {
+        return errorResponse(
+          "Interval must be at least 60 seconds",
+          400,
+          "INVALID_INTERVAL_SECONDS"
+        );
+      }
+      if (!input.anchorAt) {
+        return errorResponse(
+          "Anchor time is required for interval schedules",
+          400,
+          "ANCHOR_AT_REQUIRED"
+        );
+      }
+      if (isNaN(new Date(input.anchorAt).getTime())) {
+        return errorResponse(
+          "Invalid anchor time format",
+          400,
+          "INVALID_ANCHOR_AT"
+        );
       }
     }
 

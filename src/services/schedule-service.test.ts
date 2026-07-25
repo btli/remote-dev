@@ -28,9 +28,16 @@ vi.mock("@/lib/logger", () => ({
     trace: vi.fn(),
   }),
 }));
+vi.mock("./tmux-service", () => ({
+  sessionExists: vi.fn(async () => true),
+  sendKeys: vi.fn(async () => undefined),
+}));
 
 import {
+  calculateNextIntervalRun,
+  createSchedule,
   disableSessionSchedules,
+  executeSchedule,
   markScheduleMissed,
   markScheduleCancelled,
   persistNextRunAt,
@@ -339,6 +346,139 @@ describe("ScheduleService lifecycle", () => {
       const row = await getScheduleRow("recurring-1");
       expect(row.nextRunAt?.getTime()).toBe(next.getTime());
       expect(row.updatedAt.getTime()).toBe(originalUpdatedAt.getTime());
+    });
+  });
+
+  describe("interval schedules", () => {
+    it("calculates before-anchor, boundary, and missed-run cases", () => {
+      const anchor = new Date("2026-07-25T09:30:00.000Z");
+      expect(
+        calculateNextIntervalRun(
+          anchor,
+          5 * 3_600,
+          new Date("2026-07-25T08:00:00.000Z")
+        )
+      ).toEqual(anchor);
+      expect(
+        calculateNextIntervalRun(anchor, 300, anchor)
+      ).toEqual(new Date("2026-07-25T09:35:00.000Z"));
+      expect(
+        calculateNextIntervalRun(
+          anchor,
+          300,
+          new Date("2026-07-25T09:35:00.000Z")
+        )
+      ).toEqual(new Date("2026-07-25T09:40:00.000Z"));
+      expect(
+        calculateNextIntervalRun(
+          anchor,
+          5 * 3_600,
+          new Date("2026-07-28T12:00:00.000Z")
+        )
+      ).toEqual(new Date("2026-07-28T12:30:00.000Z"));
+    });
+
+    it("creates an interval schedule from a past anchor and skips missed ticks", async () => {
+      const anchorAt = new Date(Date.now() - 3 * 3_600_000);
+      const created = await createSchedule(USER, {
+        sessionId: SESSION_A,
+        name: "Every five hours",
+        scheduleType: "interval",
+        intervalSeconds: 5 * 3_600,
+        anchorAt: anchorAt.toISOString(),
+        timezone: "UTC",
+        commands: [{ command: "echo interval" }],
+      });
+
+      expect(created.intervalSeconds).toBe(18_000);
+      expect(created.anchorAt?.getTime()).toBe(anchorAt.getTime());
+      expect(created.nextRunAt!.getTime()).toBeGreaterThan(Date.now());
+      expect(created.nextRunAt!.getTime()).toBe(
+        calculateNextIntervalRun(anchorAt, 18_000).getTime()
+      );
+    });
+
+    it("rejects missing, short, and invalid interval configuration", async () => {
+      const base = {
+        sessionId: SESSION_A,
+        name: "Invalid interval",
+        scheduleType: "interval" as const,
+        timezone: "UTC",
+        commands: [{ command: "echo interval" }],
+      };
+      await expect(
+        createSchedule(USER, { ...base, anchorAt: new Date().toISOString() })
+      ).rejects.toMatchObject({ code: "INVALID_INTERVAL_SECONDS" });
+      await expect(
+        createSchedule(USER, {
+          ...base,
+          intervalSeconds: 59,
+          anchorAt: new Date().toISOString(),
+        })
+      ).rejects.toMatchObject({ code: "INVALID_INTERVAL_SECONDS" });
+      await expect(
+        createSchedule(USER, {
+          ...base,
+          intervalSeconds: 60,
+          anchorAt: "not-a-date",
+        })
+      ).rejects.toMatchObject({ code: "INVALID_ANCHOR_AT" });
+    });
+
+    it("updates interval cadence and cleans fields from the previous type", async () => {
+      await seedSchedule({ id: "becomes-interval", sessionId: SESSION_A });
+      const anchorAt = new Date(Date.now() - 3_600_000);
+      const updated = await updateSchedule("becomes-interval", USER, {
+        scheduleType: "interval",
+        intervalSeconds: 900,
+        anchorAt: anchorAt.toISOString(),
+      });
+
+      expect(updated.scheduleType).toBe("interval");
+      expect(updated.intervalSeconds).toBe(900);
+      expect(updated.anchorAt?.getTime()).toBe(anchorAt.getTime());
+      expect(updated.scheduledAt).toBeNull();
+      expect(updated.cronExpression).toBeNull();
+      expect(updated.nextRunAt!.getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it("rejects invalid interval values on update", async () => {
+      const anchorAt = new Date(Date.now() - 3_600_000);
+      const created = await createSchedule(USER, {
+        sessionId: SESSION_A,
+        name: "Validated update",
+        scheduleType: "interval",
+        intervalSeconds: 300,
+        anchorAt: anchorAt.toISOString(),
+        commands: [{ command: "echo interval" }],
+      });
+
+      await expect(
+        updateSchedule(created.id, USER, { intervalSeconds: 59 })
+      ).rejects.toMatchObject({ code: "INVALID_INTERVAL_SECONDS" });
+      await expect(
+        updateSchedule(created.id, USER, { anchorAt: null })
+      ).rejects.toMatchObject({ code: "ANCHOR_AT_REQUIRED" });
+    });
+
+    it("re-arms an interval schedule after execution instead of completing it", async () => {
+      const anchorAt = new Date(Date.now() - 3_600_000);
+      const created = await createSchedule(USER, {
+        sessionId: SESSION_A,
+        name: "Re-arm interval",
+        scheduleType: "interval",
+        intervalSeconds: 300,
+        anchorAt: anchorAt.toISOString(),
+        timezone: "UTC",
+        commands: [{ command: "echo interval" }],
+      });
+
+      await executeSchedule(created, `rdv-${SESSION_A}`);
+      const row = await getScheduleRow(created.id);
+      expect(row.enabled).toBe(true);
+      expect(row.status).toBe("active");
+      expect(row.lastRunStatus).toBe("success");
+      expect(row.nextRunAt!.getTime()).toBeGreaterThan(Date.now());
     });
   });
 });

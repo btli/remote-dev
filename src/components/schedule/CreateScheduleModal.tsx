@@ -32,6 +32,8 @@ import {
   GripVertical,
   Calendar,
   Repeat,
+  TimerReset,
+  BookmarkPlus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useScheduleContext } from "@/contexts/ScheduleContext";
@@ -39,6 +41,9 @@ import { CRON_PRESETS, TIMEZONE_OPTIONS, type ScheduleCommandInput, type Schedul
 import type { TerminalSession } from "@/types/session";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DateTimePicker } from "@/components/ui/date-time-picker";
+import { useScheduleTemplateContext } from "@/contexts/ScheduleTemplateContext";
+import type { ScheduleTemplate } from "@/types/schedule-template";
+import { SaveScheduleTemplateDialog } from "./SaveScheduleTemplateDialog";
 
 interface CreateScheduleModalProps {
   open: boolean;
@@ -51,12 +56,34 @@ interface CommandRow extends ScheduleCommandInput {
   id: string; // For React key
 }
 
+type IntervalUnit = "minutes" | "hours" | "days";
+
+const INTERVAL_UNIT_SECONDS: Record<IntervalUnit, number> = {
+  minutes: 60,
+  hours: 3_600,
+  days: 86_400,
+};
+
+function nextFiveMinuteBoundary(): Date {
+  const step = 5 * 60_000;
+  const date = new Date((Math.floor(Date.now() / step) + 1) * step);
+  date.setSeconds(0, 0);
+  return date;
+}
+
+function splitInterval(seconds: number): { value: number; unit: IntervalUnit } {
+  if (seconds % 86_400 === 0) return { value: seconds / 86_400, unit: "days" };
+  if (seconds % 3_600 === 0) return { value: seconds / 3_600, unit: "hours" };
+  return { value: Math.max(1, seconds / 60), unit: "minutes" };
+}
+
 export function CreateScheduleModal({
   open,
   onClose,
   session,
 }: CreateScheduleModalProps) {
   const { createSchedule } = useScheduleContext();
+  const { templates, recordUsage } = useScheduleTemplateContext();
 
   const activeSession = session ?? null;
 
@@ -72,6 +99,11 @@ export function CreateScheduleModal({
 
   // One-time schedule state - using Date object for the DateTimePicker
   const [scheduledDateTime, setScheduledDateTime] = useState<Date | undefined>(undefined);
+  const [intervalValue, setIntervalValue] = useState(1);
+  const [intervalUnit, setIntervalUnit] = useState<IntervalUnit>("hours");
+  const [anchorDateTime, setAnchorDateTime] = useState<Date | undefined>(
+    nextFiveMinuteBoundary
+  );
 
   // Advanced options
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -82,6 +114,7 @@ export function CreateScheduleModal({
   // UI state
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
 
   // Reset form when modal opens
   const handleOpenChange = useCallback(
@@ -101,6 +134,9 @@ export function CreateScheduleModal({
         defaultTime.setSeconds(0);
         defaultTime.setMilliseconds(0);
         setScheduledDateTime(defaultTime);
+        setIntervalValue(1);
+        setIntervalUnit("hours");
+        setAnchorDateTime(nextFiveMinuteBoundary());
         setShowAdvanced(false);
         setMaxRetries(3);
         setRetryDelaySeconds(30);
@@ -155,9 +191,9 @@ export function CreateScheduleModal({
       setError("Please select a session");
       return false;
     }
-    // Name is only required for recurring schedules
-    if (scheduleType === "recurring" && !name.trim()) {
-      setError("Schedule name is required for recurring schedules");
+    // One-time schedules can generate a name from their date and command.
+    if (scheduleType !== "one-time" && !name.trim()) {
+      setError("Schedule name is required");
       return false;
     }
 
@@ -170,9 +206,24 @@ export function CreateScheduleModal({
         setError("Scheduled time must be in the future");
         return false;
       }
-    } else {
+    } else if (scheduleType === "recurring") {
       if (!cronExpression.trim()) {
         setError("Cron expression is required for recurring schedules");
+        return false;
+      }
+    } else {
+      const intervalSeconds = intervalValue * INTERVAL_UNIT_SECONDS[intervalUnit];
+      if (
+        !Number.isFinite(intervalValue) ||
+        !Number.isInteger(intervalSeconds) ||
+        intervalValue < 1 ||
+        intervalSeconds > 30 * 86_400
+      ) {
+        setError("Interval must be between 1 minute and 30 days");
+        return false;
+      }
+      if (!anchorDateTime || isNaN(anchorDateTime.getTime())) {
+        setError("Starting time is required for interval schedules");
         return false;
       }
     }
@@ -223,12 +274,27 @@ export function CreateScheduleModal({
           retryDelaySeconds,
           timeoutSeconds,
         });
-      } else {
+      } else if (scheduleType === "recurring") {
         await createSchedule({
           sessionId: activeSession.id,
           name: name.trim(),
           scheduleType: "recurring",
           cronExpression: cronExpression.trim(),
+          timezone,
+          commands: validCommands,
+          enabled: true,
+          maxRetries,
+          retryDelaySeconds,
+          timeoutSeconds,
+        });
+      } else if (anchorDateTime) {
+        await createSchedule({
+          sessionId: activeSession.id,
+          name: name.trim(),
+          scheduleType: "interval",
+          intervalSeconds:
+            intervalValue * INTERVAL_UNIT_SECONDS[intervalUnit],
+          anchorAt: anchorDateTime.toISOString(),
           timezone,
           commands: validCommands,
           enabled: true,
@@ -263,6 +329,34 @@ export function CreateScheduleModal({
       return "In less than a minute";
     }
 
+    if (scheduleType === "interval") {
+      if (!anchorDateTime) return "Select a starting time";
+      const intervalSeconds =
+        intervalValue * INTERVAL_UNIT_SECONDS[intervalUnit];
+      if (intervalSeconds < 60 || intervalSeconds > 30 * 86_400) {
+        return "Interval must be between 1 minute and 30 days";
+      }
+      const now = new Date();
+      const intervalMs = intervalSeconds * 1000;
+      const next =
+        now < anchorDateTime
+          ? anchorDateTime
+          : new Date(
+              anchorDateTime.getTime() +
+                (Math.floor(
+                  (now.getTime() - anchorDateTime.getTime()) / intervalMs
+                ) +
+                  1) *
+                  intervalMs
+            );
+      return `Next: ${next.toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })}`;
+    }
+
     try {
       // Simple preview - in production we'd use croner to calculate this
       const preset = CRON_PRESETS.find((p) => p.value === cronExpression);
@@ -273,6 +367,54 @@ export function CreateScheduleModal({
     } catch {
       return "Invalid expression";
     }
+  };
+
+  const applyTemplate = (template: ScheduleTemplate) => {
+    setScheduleType(template.scheduleType);
+    setCronExpression(template.cronExpression ?? "0 9 * * *");
+    setCronPreset("");
+    if (template.intervalSeconds) {
+      const interval = splitInterval(template.intervalSeconds);
+      setIntervalValue(interval.value);
+      setIntervalUnit(interval.unit);
+    }
+    setTimezone(template.timezone);
+    setMaxRetries(template.maxRetries);
+    setRetryDelaySeconds(template.retryDelaySeconds);
+    setTimeoutSeconds(template.timeoutSeconds);
+    setCommands(
+      [...template.commands].sort((a, b) => a.order - b.order).map((command) => ({
+        id: crypto.randomUUID(),
+        command: command.command,
+        delayBeforeSeconds: command.delayBeforeSeconds,
+        continueOnError: command.continueOnError,
+      }))
+    );
+    if (template.scheduleType === "one-time") setScheduledDateTime(undefined);
+    if (template.scheduleType === "interval") setAnchorDateTime(undefined);
+    setError(null);
+    void recordUsage(template.id);
+  };
+
+  const templateSnapshot = {
+    scheduleType,
+    cronExpression: scheduleType === "recurring" ? cronExpression.trim() : null,
+    intervalSeconds:
+      scheduleType === "interval"
+        ? intervalValue * INTERVAL_UNIT_SECONDS[intervalUnit]
+        : null,
+    timezone,
+    maxRetries,
+    retryDelaySeconds,
+    timeoutSeconds,
+    commands: commands
+      .filter((command) => command.command.trim())
+      .map((command, order) => ({
+        command: command.command.trim(),
+        order,
+        delayBeforeSeconds: command.delayBeforeSeconds ?? 0,
+        continueOnError: command.continueOnError ?? false,
+      })),
   };
 
   return (
@@ -294,10 +436,40 @@ export function CreateScheduleModal({
 
         <ScrollArea className="max-h-[calc(85vh-140px)] pr-4">
           <div className="space-y-4 mt-3">
+            {templates.length > 0 && (
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">
+                  Start from template
+                </Label>
+                <Select
+                  value=""
+                  onValueChange={(id) => {
+                    const template = templates.find((item) => item.id === id);
+                    if (template) applyTemplate(template);
+                  }}
+                >
+                  <SelectTrigger className="h-8 text-xs bg-card/50 border-border">
+                    <SelectValue placeholder="Choose a saved configuration" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {templates.map((template) => (
+                      <SelectItem
+                        key={template.id}
+                        value={template.id}
+                        className="text-xs"
+                      >
+                        {template.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             {/* Schedule Name */}
             <div className="space-y-1.5">
               <Label htmlFor="schedule-name" className="text-xs text-muted-foreground">
-                Schedule Name {scheduleType === "recurring" && "*"}
+                Schedule Name {scheduleType !== "one-time" && "*"}
               </Label>
               <Input
                 id="schedule-name"
@@ -324,7 +496,7 @@ export function CreateScheduleModal({
                 onValueChange={(value) => setScheduleType(value as ScheduleType)}
                 className="w-full"
               >
-                <TabsList className="grid w-full grid-cols-2 bg-card/50 h-8">
+                <TabsList className="grid w-full grid-cols-3 bg-card/50 h-8">
                   <TabsTrigger
                     value="one-time"
                     className="text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground flex items-center gap-1.5"
@@ -338,6 +510,13 @@ export function CreateScheduleModal({
                   >
                     <Repeat className="w-3.5 h-3.5" />
                     Recurring
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="interval"
+                    className="text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground flex items-center gap-1.5"
+                  >
+                    <TimerReset className="w-3.5 h-3.5" />
+                    Interval
                   </TabsTrigger>
                 </TabsList>
               </Tabs>
@@ -402,6 +581,63 @@ export function CreateScheduleModal({
                     <p className="text-[10px] text-primary/80">{getNextRunPreview()}</p>
                   </div>
                 </>
+              )}
+
+              {scheduleType === "interval" && (
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">
+                      Every N
+                    </Label>
+                    <div className="grid grid-cols-[1fr_120px] gap-2">
+                      <Input
+                        type="number"
+                        step={1}
+                        min={1}
+                        max={
+                          intervalUnit === "days"
+                            ? 30
+                            : intervalUnit === "hours"
+                              ? 720
+                              : 43_200
+                        }
+                        value={intervalValue}
+                        onChange={(event) =>
+                          setIntervalValue(Number(event.target.value))
+                        }
+                        className="h-8 text-xs bg-card/50 border-border"
+                      />
+                      <Select
+                        value={intervalUnit}
+                        onValueChange={(value) =>
+                          setIntervalUnit(value as IntervalUnit)
+                        }
+                      >
+                        <SelectTrigger className="h-8 text-xs bg-card/50 border-border">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="minutes">Minutes</SelectItem>
+                          <SelectItem value="hours">Hours</SelectItem>
+                          <SelectItem value="days">Days</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">
+                      Starting from *
+                    </Label>
+                    <DateTimePicker
+                      date={anchorDateTime}
+                      onDateChange={setAnchorDateTime}
+                      placeholder="Select anchor date and time"
+                    />
+                    <p className="text-[10px] text-primary/80">
+                      {getNextRunPreview()}
+                    </p>
+                  </div>
+                </div>
               )}
 
               {/* Timezone */}
@@ -591,6 +827,15 @@ export function CreateScheduleModal({
 
             {/* Actions */}
             <div className="flex justify-end gap-2 pt-2">
+              <Button
+                variant="outline"
+                onClick={() => setSaveTemplateOpen(true)}
+                disabled={templateSnapshot.commands.length === 0}
+                className="mr-auto h-8 text-xs"
+              >
+                <BookmarkPlus className="mr-1.5 h-3.5 w-3.5" />
+                Save as template
+              </Button>
               <Button variant="ghost" onClick={onClose} className="h-8 text-xs text-muted-foreground">
                 Cancel
               </Button>
@@ -612,6 +857,14 @@ export function CreateScheduleModal({
           </div>
         </ScrollArea>
       </DialogContent>
+      {saveTemplateOpen && (
+        <SaveScheduleTemplateDialog
+          open
+          onOpenChange={setSaveTemplateOpen}
+          snapshot={templateSnapshot}
+          suggestedName={name.trim()}
+        />
+      )}
     </Dialog>
   );
 }

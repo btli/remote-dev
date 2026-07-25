@@ -37,6 +37,7 @@ export const {
   githubChangeNotifications,
   githubIssues,
   sessionSchedules,
+  scheduleTemplates,
   scheduleCommands,
   scheduleExecutions,
   commandExecutions,

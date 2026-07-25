@@ -11,6 +11,7 @@ import { useState, useCallback, useMemo, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useScheduleContext } from "@/contexts/ScheduleContext";
 import { useSessionContext } from "@/contexts/SessionContext";
+import { useScheduleTemplateContext } from "@/contexts/ScheduleTemplateContext";
 import {
   Plus,
   Calendar,
@@ -19,6 +20,11 @@ import {
   Trash2,
   Play,
   Clock,
+  TimerReset,
+  Bookmark,
+  Pencil,
+  Check,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -40,6 +46,7 @@ import {
 import { CreateScheduleModal } from "@/components/schedule/CreateScheduleModal";
 import { EditScheduleModal } from "@/components/schedule/EditScheduleModal";
 import type { SessionScheduleWithSession } from "@/types/schedule";
+import { Input } from "@/components/ui/input";
 
 // =============================================================================
 // Helpers
@@ -56,6 +63,33 @@ function formatNextRun(date: Date | null): string {
   if (diff < 3600000) return `${Math.floor(diff / 60000)} min`;
   if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function formatInterval(schedule: SessionScheduleWithSession): string | null {
+  if (
+    schedule.scheduleType !== "interval" ||
+    !schedule.intervalSeconds ||
+    !schedule.anchorAt
+  ) {
+    return null;
+  }
+  const choices: Array<[number, string]> = [
+    [86_400, "day"],
+    [3_600, "hour"],
+    [60, "minute"],
+  ];
+  const [unitSeconds, unit] =
+    choices.find(([seconds]) => schedule.intervalSeconds! % seconds === 0) ??
+    choices[2];
+  const count = schedule.intervalSeconds / unitSeconds;
+  const anchor = new Intl.DateTimeFormat(undefined, {
+    timeZone: schedule.timezone,
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(schedule.anchorAt));
+  return `Every ${count} ${unit}${count === 1 ? "" : "s"} from ${anchor}`;
 }
 
 function getScheduleStatusColor(
@@ -127,7 +161,13 @@ function ScheduleItem({
   const isOneTime = schedule.scheduleType === "one-time";
   const isCompleted = isOneTime && schedule.status === "completed";
   const statusColor = getScheduleStatusColor(schedule, isCompleted);
-  const TypeIcon = isOneTime ? Calendar : Repeat;
+  const TypeIcon =
+    schedule.scheduleType === "interval"
+      ? TimerReset
+      : isOneTime
+        ? Calendar
+        : Repeat;
+  const intervalDescription = formatInterval(schedule);
 
   return (
     <div className="group px-2 py-1.5 rounded-md transition-all duration-150 hover:bg-accent/50">
@@ -157,6 +197,14 @@ function ScheduleItem({
               {schedule.session?.name}
             </span>
           </div>
+          {intervalDescription && (
+            <p
+              className="mt-0.5 truncate text-[10px] text-muted-foreground/70"
+              title={intervalDescription}
+            >
+              {intervalDescription}
+            </p>
+          )}
         </div>
 
         <div className="flex items-center gap-0.5 shrink-0 mt-0.5">
@@ -267,6 +315,12 @@ export function SchedulesPanel({
   const { schedules, toggleEnabled, deleteSchedule, executeNow } =
     useScheduleContext();
   const { sessions, activeSessionId } = useSessionContext();
+  const {
+    templates,
+    loading: templatesLoading,
+    updateTemplate,
+    deleteTemplate,
+  } = useScheduleTemplateContext();
   const activeSession = useMemo(
     () => sessions.find((s) => s.id === activeSessionId) ?? null,
     [sessions, activeSessionId]
@@ -287,6 +341,10 @@ export function SchedulesPanel({
   const [runningScheduleId, setRunningScheduleId] = useState<string | null>(
     null
   );
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(
+    null
+  );
+  const [templateName, setTemplateName] = useState("");
 
   // Open CreateScheduleModal when triggered from session context menu
   useEffect(() => {
@@ -308,6 +366,22 @@ export function SchedulesPanel({
     },
     [executeNow]
   );
+
+  const beginTemplateRename = (id: string, currentName: string) => {
+    setEditingTemplateId(id);
+    setTemplateName(currentName);
+  };
+
+  const saveTemplateRename = async () => {
+    if (!editingTemplateId || !templateName.trim()) return;
+    const updated = await updateTemplate(editingTemplateId, {
+      name: templateName.trim(),
+    });
+    if (updated) {
+      setEditingTemplateId(null);
+      setTemplateName("");
+    }
+  };
 
   return (
     <>
@@ -362,6 +436,88 @@ export function SchedulesPanel({
                 />
               ))
             )}
+          </div>
+
+          <div className="mt-2 border-t border-border/60 pt-1">
+            <div className="flex items-center gap-2 px-3 py-1.5">
+              <Bookmark className="h-3 w-3 text-muted-foreground" />
+              <span className="flex-1 text-xs font-medium text-muted-foreground">
+                Templates
+              </span>
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                {templates.length}
+              </span>
+            </div>
+            <div className="space-y-0.5 px-1">
+              {templatesLoading ? (
+                <div className="flex items-center gap-2 px-3 py-2 text-[11px] text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Loading templates
+                </div>
+              ) : templates.length === 0 ? (
+                <p className="px-3 py-2 text-[11px] text-muted-foreground">
+                  Save a schedule configuration to reuse it.
+                </p>
+              ) : (
+                templates.map((template) => (
+                  <div
+                    key={template.id}
+                    className="group flex min-h-8 items-center gap-1.5 rounded-md px-2 py-1 hover:bg-accent/50 focus-within:bg-accent/50"
+                  >
+                    {editingTemplateId === template.id ? (
+                      <>
+                        <Input
+                          value={templateName}
+                          onChange={(event) => setTemplateName(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") void saveTemplateRename();
+                            if (event.key === "Escape") setEditingTemplateId(null);
+                          }}
+                          className="h-6 flex-1 text-xs"
+                          autoFocus
+                        />
+                        <button
+                          onClick={() => void saveTemplateRename()}
+                          className="text-muted-foreground hover:text-foreground"
+                          aria-label="Save template name"
+                        >
+                          <Check className="h-3 w-3" />
+                        </button>
+                        <button
+                          onClick={() => setEditingTemplateId(null)}
+                          className="text-muted-foreground hover:text-foreground"
+                          aria-label="Cancel template rename"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="min-w-0 flex-1 truncate text-xs">
+                          {template.name}
+                        </span>
+                        <button
+                          onClick={() =>
+                            beginTemplateRename(template.id, template.name)
+                          }
+                          className="opacity-0 text-muted-foreground transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+                          aria-label={`Rename ${template.name}`}
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                        <button
+                          onClick={() => void deleteTemplate(template.id)}
+                          className="opacity-0 text-muted-foreground transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+                          aria-label={`Delete ${template.name}`}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
       </ScrollArea>

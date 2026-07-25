@@ -545,6 +545,8 @@ export const sessionSchedules = pgTable(
     scheduleType: text("schedule_type").$type<ScheduleType>().notNull().default("one-time"),
     cronExpression: text("cron_expression"),
     scheduledAt: timestamp("scheduled_at", { withTimezone: true, mode: "date" }),
+    intervalSeconds: integer("interval_seconds"),
+    anchorAt: timestamp("anchor_at", { withTimezone: true, mode: "date" }),
     timezone: text("timezone").notNull().default("America/Los_Angeles"),
     enabled: boolean("enabled").notNull().default(true),
     status: text("status").$type<ScheduleStatus>().notNull().default("active"),
@@ -562,6 +564,32 @@ export const sessionSchedules = pgTable(
     index("session_schedule_user_idx").on(table.userId),
     index("session_schedule_session_idx").on(table.sessionId),
     index("session_schedule_next_run_idx").on(table.enabled, table.nextRunAt),
+  ]
+);
+
+export const scheduleTemplates = pgTable(
+  "schedule_template",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    scheduleType: text("schedule_type").$type<ScheduleType>().notNull(),
+    cronExpression: text("cron_expression"),
+    intervalSeconds: integer("interval_seconds"),
+    timezone: text("timezone").notNull().default("America/Los_Angeles"),
+    maxRetries: integer("max_retries").notNull().default(0),
+    retryDelaySeconds: integer("retry_delay_seconds").notNull().default(60),
+    timeoutSeconds: integer("timeout_seconds").notNull().default(300),
+    commandsJson: text("commands_json").notNull(),
+    usageCount: integer("usage_count").notNull().default(0),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("schedule_template_user_idx").on(table.userId),
+    index("schedule_template_usage_idx").on(table.userId, table.usageCount),
   ]
 );
 

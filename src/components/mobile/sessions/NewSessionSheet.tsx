@@ -8,12 +8,12 @@
  * its internals. We don't redesign the wizard; we only own the slide-up
  * presentation, viewport sizing, and the create-session callback wiring.
  *
- * **Provider scope (c9aq):** The wizard consumes `ProfileContext` +
- * `TemplateContext`, and this sheet is `dynamic(ssr: false)` from
- * `SessionsTab`, so we mount those providers *here* — they only
- * initialize (and fetch) when the user taps "+ New" on mobile, instead
- * of hydrating with the initial mobile bundle. Desktop continues to
- * hydrate them eagerly via `DesktopProviders`.
+ * **Provider scope (c9aq):** This sheet mirrors the desktop
+ * `ProfileProvider` + `TemplateProvider` + `ScheduleTemplateProvider`
+ * stack. Because it is `dynamic(ssr: false)` from `SessionsTab`, those
+ * contexts initialize (and fetch) only when the user taps "+ New" on
+ * mobile instead of hydrating with the initial bundle. Desktop continues
+ * to hydrate them eagerly via `DesktopProviders`.
  */
 
 import { useCallback } from "react";
@@ -22,6 +22,7 @@ import { useSessionContext } from "@/contexts/SessionContext";
 import { useProjectTree } from "@/contexts/ProjectTreeContext";
 import { ProfileProvider } from "@/contexts/ProfileContext";
 import { TemplateProvider } from "@/contexts/TemplateContext";
+import { ScheduleTemplateProvider } from "@/contexts/ScheduleTemplateContext";
 import { NewSessionWizard } from "@/components/session/NewSessionWizard";
 
 import { BottomSheet } from "../common/BottomSheet";
@@ -78,12 +79,14 @@ export function NewSessionSheet({
         {open ? (
           <ProfileProvider>
             <TemplateProvider>
-              <NewSessionWizard
-                open={open}
-                onClose={() => onOpenChange(false)}
-                onCreate={handleCreate}
-                isGitHubConnected={isGitHubConnected}
-              />
+              <ScheduleTemplateProvider>
+                <NewSessionWizard
+                  open={open}
+                  onClose={() => onOpenChange(false)}
+                  onCreate={handleCreate}
+                  isGitHubConnected={isGitHubConnected}
+                />
+              </ScheduleTemplateProvider>
             </TemplateProvider>
           </ProfileProvider>
         ) : null}

@@ -69,9 +69,11 @@ async function seedSession(id: string, status: SessionStatus = "active"): Promis
 interface SeedScheduleOptions {
   id: string;
   sessionId: string;
-  scheduleType: "one-time" | "recurring";
+  scheduleType: "one-time" | "recurring" | "interval";
   scheduledAt?: Date;
   cronExpression?: string;
+  intervalSeconds?: number;
+  anchorAt?: Date;
   nextRunAt?: Date | null;
 }
 
@@ -84,6 +86,8 @@ async function seedSchedule(opts: SeedScheduleOptions): Promise<void> {
     scheduleType: opts.scheduleType,
     scheduledAt: opts.scheduledAt ?? null,
     cronExpression: opts.cronExpression ?? null,
+    intervalSeconds: opts.intervalSeconds ?? null,
+    anchorAt: opts.anchorAt ?? null,
     timezone: "UTC",
     enabled: true,
     status: "active",
@@ -334,6 +338,59 @@ describe("SchedulerOrchestrator registration", () => {
     expect(row.status).toBe("active");
     expect(row.nextRunAt).not.toBeNull();
     expect(row.nextRunAt!.getTime()).toBeGreaterThan(Date.now());
+    expect(schedulerOrchestrator.getJobCount()).toBe(1);
+  });
+
+  it("recomputes stale interval nextRunAt on startup without one-time catch-up", async () => {
+    await seedSession("interval-session");
+    const anchorAt = new Date(Date.now() - 24 * 3_600_000);
+    await seedSchedule({
+      id: "stale-interval",
+      sessionId: "interval-session",
+      scheduleType: "interval",
+      intervalSeconds: 5 * 3_600,
+      anchorAt,
+      nextRunAt: new Date(Date.now() - 3_600_000),
+    });
+
+    await schedulerOrchestrator.start();
+
+    const row = await getScheduleRow("stale-interval");
+    expect(row.enabled).toBe(true);
+    expect(row.status).toBe("active");
+    expect(row.nextRunAt!.getTime()).toBeGreaterThan(Date.now());
+    expect(schedulerOrchestrator.getJobCount()).toBe(1);
+    expect(mockedSendKeys).not.toHaveBeenCalled();
+  });
+
+  it("registers an interval as a single fire and re-registers it afterward", async () => {
+    await seedSession("firing-interval-session");
+    const anchorAt = new Date(Date.now() + 2_000);
+    await seedSchedule({
+      id: "firing-interval",
+      sessionId: "firing-interval-session",
+      scheduleType: "interval",
+      intervalSeconds: 60,
+      anchorAt,
+      nextRunAt: anchorAt,
+    });
+
+    await schedulerOrchestrator.start();
+    expect(schedulerOrchestrator.getJobCount()).toBe(1);
+
+    await vi.waitFor(
+      async () => {
+        const row = await getScheduleRow("firing-interval");
+        expect(row.lastRunStatus).toBe("success");
+      },
+      { timeout: 8000 }
+    );
+
+    const row = await getScheduleRow("firing-interval");
+    expect(row.enabled).toBe(true);
+    expect(row.status).toBe("active");
+    expect(row.nextRunAt!.getTime()).toBeGreaterThan(Date.now());
+    expect(mockedSendKeys).toHaveBeenCalledTimes(1);
     expect(schedulerOrchestrator.getJobCount()).toBe(1);
   });
 });

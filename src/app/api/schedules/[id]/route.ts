@@ -49,6 +49,55 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
     if ("error" in result) return result.error;
     const { commands, ...updates } = result.data;
 
+    if (
+      updates.scheduleType !== undefined &&
+      !["one-time", "recurring", "interval"].includes(updates.scheduleType)
+    ) {
+      return errorResponse("Invalid schedule type", 400, "INVALID_SCHEDULE_TYPE");
+    }
+    if (
+      updates.intervalSeconds !== undefined &&
+      updates.intervalSeconds !== null &&
+      (!Number.isInteger(updates.intervalSeconds) ||
+        updates.intervalSeconds < 60)
+    ) {
+      return errorResponse(
+        "Interval must be at least 60 seconds",
+        400,
+        "INVALID_INTERVAL_SECONDS"
+      );
+    }
+    if (
+      updates.anchorAt !== undefined &&
+      updates.anchorAt !== null &&
+      isNaN(new Date(updates.anchorAt).getTime())
+    ) {
+      return errorResponse(
+        "Invalid anchor time format",
+        400,
+        "INVALID_ANCHOR_AT"
+      );
+    }
+    if (updates.scheduleType === "interval") {
+      if (
+        updates.intervalSeconds === undefined ||
+        updates.intervalSeconds === null
+      ) {
+        return errorResponse(
+          "Interval is required for interval schedules",
+          400,
+          "INVALID_INTERVAL_SECONDS"
+        );
+      }
+      if (updates.anchorAt === undefined || updates.anchorAt === null) {
+        return errorResponse(
+          "Anchor time is required for interval schedules",
+          400,
+          "ANCHOR_AT_REQUIRED"
+        );
+      }
+    }
+
     // Update schedule metadata if provided
     // If no updates, still validate ownership/existence to prevent blind command updates
     if (Object.keys(updates).length > 0) {

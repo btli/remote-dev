@@ -13,10 +13,11 @@
  * Notification, PeerChat) stay in `app/page.tsx` so they wrap *both*
  * branches.
  *
- * `ProfileProvider` + `TemplateProvider` are also desktop-only at the
- * top level: mobile mounts them on demand inside its `NewSessionSheet`
- * (which is itself `dynamic(ssr: false)`), so the wizard's two
- * dependencies don't hydrate with mobile's initial bundle.
+ * `ProfileProvider`, `TemplateProvider`, and `ScheduleTemplateProvider`
+ * are also desktop-only at the top level: mobile mirrors that provider
+ * stack on demand inside its `NewSessionSheet` (which is itself
+ * `dynamic(ssr: false)`), so those contexts don't hydrate with mobile's
+ * initial bundle.
  *
  * Server-fetched bootstrap data (`isGitHubConnected`,
  * `initialHasGitHubAccounts`) is forwarded from `app/page.tsx` through
@@ -27,6 +28,7 @@
 import type { ReactNode } from "react";
 
 import { TemplateProvider } from "@/contexts/TemplateContext";
+import { ScheduleTemplateProvider } from "@/contexts/ScheduleTemplateContext";
 import { RecordingProvider } from "@/contexts/RecordingContext";
 import { TrashProvider } from "@/contexts/TrashContext";
 import { ScheduleProvider } from "@/contexts/ScheduleContext";
@@ -56,25 +58,27 @@ export function DesktopProviders({
       <LiteLLMProvider>
         <ProfileProvider>
           <TemplateProvider>
-            <RecordingProvider>
-              <GitHubAccountProvider initialHasAccounts={initialHasGitHubAccounts}>
-                <GitHubStatsProvider isGitHubConnected={isGitHubConnected}>
-                  <GitHubIssuesProvider>
-                    <TrashProvider>
-                      <PortProvider>
-                        <ScheduleProvider>
-                          <BeadsProvider>
-                            <SessionMCPProvider>
-                              {children}
-                            </SessionMCPProvider>
-                          </BeadsProvider>
-                        </ScheduleProvider>
-                      </PortProvider>
-                    </TrashProvider>
-                  </GitHubIssuesProvider>
-                </GitHubStatsProvider>
-              </GitHubAccountProvider>
-            </RecordingProvider>
+            <ScheduleTemplateProvider>
+              <RecordingProvider>
+                <GitHubAccountProvider initialHasAccounts={initialHasGitHubAccounts}>
+                  <GitHubStatsProvider isGitHubConnected={isGitHubConnected}>
+                    <GitHubIssuesProvider>
+                      <TrashProvider>
+                        <PortProvider>
+                          <ScheduleProvider>
+                            <BeadsProvider>
+                              <SessionMCPProvider>
+                                {children}
+                              </SessionMCPProvider>
+                            </BeadsProvider>
+                          </ScheduleProvider>
+                        </PortProvider>
+                      </TrashProvider>
+                    </GitHubIssuesProvider>
+                  </GitHubStatsProvider>
+                </GitHubAccountProvider>
+              </RecordingProvider>
+            </ScheduleTemplateProvider>
           </TemplateProvider>
         </ProfileProvider>
       </LiteLLMProvider>

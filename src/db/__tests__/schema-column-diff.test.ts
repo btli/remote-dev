@@ -64,9 +64,9 @@ describe("schema column diff (sqlite-core vs pg-core)", () => {
     // + 1 (oyej.14: webhook_delivery) + 3 (server-to-server migration:
     // peer_instance, migration_job, migration_import) + 4 (remote-dev-3b3l:
     // claude_account, claude_usage_limit_state, claude_profile_pool,
-    // claude_profile_pool_member) = 81 tables.
+    // claude_profile_pool_member) + 1 (schedule_template) = 82 tables.
     // (hgwo + n6uc add no tables; x386.16 dropped message_replay_cursor.)
-    expect(sqliteTables).toHaveLength(81);
+    expect(sqliteTables).toHaveLength(82);
   });
 
   // One assertion per table so a failure names the offending table.
