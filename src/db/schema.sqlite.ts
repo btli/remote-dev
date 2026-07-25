@@ -1436,6 +1436,8 @@ export const agentSchedules = sqliteTable(
     scheduleType: text("schedule_type").$type<ScheduleType>().notNull().default("recurring"),
     cronExpression: text("cron_expression"),
     scheduledAt: integer("scheduled_at", { mode: "timestamp_ms" }),
+    intervalSeconds: integer("interval_seconds"),
+    anchorAt: integer("anchor_at", { mode: "timestamp_ms" }),
     timezone: text("timezone").notNull().default("America/Los_Angeles"),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     status: text("status").$type<ScheduleStatus>().notNull().default("active"),

@@ -7,6 +7,7 @@
  * `sessionSchedules`/`scheduleCommands` which send keystrokes to an EXISTING
  * session. See `src/services/agent-run-service.ts`.
  */
+import type { ScheduleType } from "./schedule";
 
 /** Lifecycle of a single agent run. */
 export type AgentRunStatus =
@@ -36,10 +37,12 @@ export interface AgentScheduleInput {
    * (the project's primary profile + fallback pool, skipping limited accounts).
    */
   profileId?: string | null;
-  /** "recurring" (cronExpression) or "one-time" (scheduledAt). */
-  scheduleType?: "recurring" | "one-time";
+  /** Recurring cron, one-time datetime, or interval cadence configuration. */
+  scheduleType?: ScheduleType;
   cronExpression?: string | null;
   scheduledAt?: string | number | Date | null;
+  intervalSeconds?: number | null;
+  anchorAt?: string | number | Date | null;
   timezone?: string;
   enabled?: boolean;
   maxRetries?: number;

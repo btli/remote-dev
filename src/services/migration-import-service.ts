@@ -1016,6 +1016,9 @@ export async function importDb(
           scheduleType: schedule.scheduleType as ScheduleType,
           cronExpression: schedule.cronExpression,
           scheduledAt: schedule.scheduledAt ? new Date(schedule.scheduledAt) : null,
+          intervalSeconds: schedule.intervalSeconds ?? null,
+          anchorAt:
+            schedule.anchorAt != null ? new Date(schedule.anchorAt) : null,
           timezone: schedule.timezone,
           enabled: false,
           status: "paused",

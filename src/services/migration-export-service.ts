@@ -469,6 +469,8 @@ export async function buildDbBundle(
       scheduleType: s.scheduleType,
       cronExpression: s.cronExpression ?? null,
       scheduledAt: msOrNull(s.scheduledAt),
+      intervalSeconds: s.intervalSeconds ?? null,
+      anchorAt: msOrNull(s.anchorAt),
       timezone: s.timezone,
       maxRetries: s.maxRetries,
       enabled: s.enabled,

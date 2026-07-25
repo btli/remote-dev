@@ -257,16 +257,31 @@ async function seedSourceProject(): Promise<void> {
     createdAt: NOW,
     updatedAt: NOW,
   });
-  await db.insert(agentSchedules).values({
-    id: "sched-1",
-    userId: USER,
-    projectId: PROJECT,
-    name: "nightly",
-    prompt: "run checks",
-    cronExpression: "0 2 * * *",
-    createdAt: NOW,
-    updatedAt: NOW,
-  });
+  await db.insert(agentSchedules).values([
+    {
+      id: "sched-1",
+      userId: USER,
+      projectId: PROJECT,
+      name: "nightly",
+      prompt: "run checks",
+      scheduleType: "recurring",
+      cronExpression: "0 2 * * *",
+      createdAt: NOW,
+      updatedAt: NOW,
+    },
+    {
+      id: "sched-2",
+      userId: USER,
+      projectId: PROJECT,
+      name: "every-hour",
+      prompt: "run checks",
+      scheduleType: "interval",
+      intervalSeconds: 3600,
+      anchorAt: NOW,
+      createdAt: NOW,
+      updatedAt: NOW,
+    },
+  ]);
 }
 
 describe("MigrationExportService", () => {
@@ -319,9 +334,25 @@ describe("MigrationExportService", () => {
     });
     expect(JSON.stringify(bundle)).not.toContain("ghp_");
 
-    expect(bundle.agentSchedules[0]).toMatchObject({
-      name: "nightly",
-      cronExpression: "0 2 * * *",
+    expect(bundle.agentSchedules).toHaveLength(2);
+    expect(bundle.agentSchedules.find((schedule) => schedule.name === "nightly"))
+      .toMatchObject({
+        scheduleType: "recurring",
+        cronExpression: "0 2 * * *",
+        scheduledAt: null,
+        intervalSeconds: null,
+        anchorAt: null,
+        enabled: true,
+      });
+    expect(
+      bundle.agentSchedules.find((schedule) => schedule.name === "every-hour"),
+    ).toMatchObject({
+      name: "every-hour",
+      scheduleType: "interval",
+      cronExpression: null,
+      scheduledAt: null,
+      intervalSeconds: 3600,
+      anchorAt: NOW.getTime(),
       enabled: true,
     });
   });

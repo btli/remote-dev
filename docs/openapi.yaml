@@ -3034,9 +3034,20 @@ components:
         agentFlags: { type: array, items: { type: string } }
         worktreeType: { type: string, nullable: true }
         baseBranch: { type: string, nullable: true }
-        scheduleType: { type: string, enum: [recurring, one-time], description: "recurring → cronExpression; one-time → scheduledAt" }
+        scheduleType: { type: string, enum: [recurring, one-time, interval], description: "recurring → cronExpression; one-time → scheduledAt; interval → intervalSeconds + anchorAt" }
         cronExpression: { type: string, nullable: true }
         scheduledAt: { type: string, format: date-time, nullable: true }
+        intervalSeconds:
+          type: integer
+          nullable: true
+          minimum: 60
+          maximum: 2592000
+          description: Absolute-duration cadence in seconds when scheduleType is interval.
+        anchorAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Cadence anchor when scheduleType is interval; missed occurrences are skipped.
         timezone: { type: string }
         enabled: { type: boolean }
         maxRetries: { type: integer }

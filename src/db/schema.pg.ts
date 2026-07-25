@@ -1435,6 +1435,8 @@ export const agentSchedules = pgTable(
     scheduleType: text("schedule_type").$type<ScheduleType>().notNull().default("recurring"),
     cronExpression: text("cron_expression"),
     scheduledAt: timestamp("scheduled_at", { withTimezone: true, mode: "date" }),
+    intervalSeconds: integer("interval_seconds"),
+    anchorAt: timestamp("anchor_at", { withTimezone: true, mode: "date" }),
     timezone: text("timezone").notNull().default("America/Los_Angeles"),
     enabled: boolean("enabled").notNull().default(true),
     status: text("status").$type<ScheduleStatus>().notNull().default("active"),

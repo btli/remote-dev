@@ -13,6 +13,10 @@ import {
 } from "@/lib/scheduler-client";
 import type { AgentScheduleUpdate } from "@/types/agent-run";
 import { createLogger } from "@/lib/logger";
+import {
+  isValidIntervalSeconds,
+  isValidTimezone,
+} from "@/lib/schedule-validation";
 
 const log = createLogger("api/agent-schedules");
 
@@ -30,11 +34,51 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
   try {
     const result = await parseJsonBody<AgentScheduleUpdate>(request);
     if ("error" in result) return result.error;
+    const updates = result.data;
+
+    if (
+      updates.scheduleType !== undefined &&
+      !["one-time", "recurring", "interval"].includes(updates.scheduleType)
+    ) {
+      return errorResponse(
+        "Invalid schedule type",
+        400,
+        "INVALID_SCHEDULE_TYPE",
+      );
+    }
+    if (
+      updates.intervalSeconds !== undefined &&
+      updates.intervalSeconds !== null &&
+      !isValidIntervalSeconds(updates.intervalSeconds)
+    ) {
+      return errorResponse(
+        "Interval must be between 1 minute and 30 days",
+        400,
+        "INVALID_INTERVAL_SECONDS",
+      );
+    }
+    if (
+      updates.timezone !== undefined &&
+      !isValidTimezone(updates.timezone)
+    ) {
+      return errorResponse("Invalid timezone", 400, "INVALID_TIMEZONE");
+    }
+    if (
+      updates.anchorAt !== undefined &&
+      updates.anchorAt !== null &&
+      isNaN(new Date(updates.anchorAt).getTime())
+    ) {
+      return errorResponse(
+        "Invalid anchor time format",
+        400,
+        "INVALID_ANCHOR_AT",
+      );
+    }
 
     const updated = await AgentScheduleService.updateAgentSchedule(
       userId,
       id,
-      result.data,
+      updates,
     );
     if (!updated) return errorResponse("Schedule not found", 404, "NOT_FOUND");
 
@@ -43,6 +87,12 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
         error: String(err),
       }),
     );
+    log.info("Agent schedule updated", {
+      scheduleId: id,
+      userId,
+      changedFields: Object.keys(updates),
+      ...(updates.enabled !== undefined ? { enabled: updates.enabled } : {}),
+    });
     return NextResponse.json(updated);
   } catch (error) {
     if (error instanceof AgentScheduleService.AgentScheduleServiceError) {
