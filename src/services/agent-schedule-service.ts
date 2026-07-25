@@ -75,7 +75,7 @@ export function validateAgentScheduleInput(
 ): ValidatedAgentSchedule {
   const timezone =
     input.timezone === undefined ? DEFAULT_TZ : input.timezone;
-  const scheduleType = input.scheduleType || "recurring";
+  const scheduleType: ScheduleType = input.scheduleType || "recurring";
   const agentProvider = input.agentProvider || "claude";
 
   if (!input.name || input.name.trim() === "") {
@@ -180,7 +180,7 @@ export function validateAgentScheduleInput(
     worktreeType: input.worktreeType ?? null,
     baseBranch: input.baseBranch ?? null,
     profileId: input.profileId ?? null,
-    scheduleType: scheduleType as ScheduleType,
+    scheduleType,
     cronExpression,
     scheduledAt,
     intervalSeconds,
