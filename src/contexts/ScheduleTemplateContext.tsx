@@ -28,7 +28,7 @@ interface ScheduleTemplateContextValue {
     id: string,
     input: UpdateScheduleTemplateInput
   ) => Promise<ScheduleTemplate>;
-  deleteTemplate: (id: string) => Promise<boolean>;
+  deleteTemplate: (id: string) => Promise<void>;
   recordUsage: (id: string) => Promise<void>;
 }
 
@@ -146,7 +146,7 @@ export function ScheduleTemplateProvider({ children }: { children: ReactNode }) 
     []
   );
 
-  const deleteTemplate = useCallback(async (id: string): Promise<boolean> => {
+  const deleteTemplate = useCallback(async (id: string): Promise<void> => {
     const response = await apiFetch(`/api/schedule-templates/${id}`, {
       method: "DELETE",
     });
@@ -157,7 +157,6 @@ export function ScheduleTemplateProvider({ children }: { children: ReactNode }) 
       );
     }
     setTemplates((current) => current.filter((item) => item.id !== id));
-    return true;
   }, []);
 
   const recordUsage = useCallback(async (id: string): Promise<void> => {
