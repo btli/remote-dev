@@ -1692,7 +1692,10 @@ daylight-saving changes do not shift the fire time.
 For `PATCH /api/agent-schedules/:id`, an explicit `cronExpression: null` keeps
 the schedule's existing cron expression; it does not clear it. An explicit
 `timezone: null` or `timezone: ""` is invalid and returns `400` with code
-`INVALID_TIMEZONE`.
+`INVALID_TIMEZONE`. Before this validation was added, PATCH attempted a NULL
+write for the former and stored the latter as-is; the create path instead
+treated either value as a request for the default. On create now, only omitting
+`timezone` uses the default.
 
 An agent run creates a fresh `terminalType:"agent"` session and delivers a
 prompt — distinct from the keystroke-only `/api/schedules`. State machine:

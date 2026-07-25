@@ -74,6 +74,30 @@ async function seedSchedule(opts: SeedScheduleOptions): Promise<void> {
   });
 }
 
+async function seedRecurringSchedule(
+  id: string,
+  nextRunAt: Date | null,
+): Promise<void> {
+  await handle.db.insert(agentSchedules).values({
+    id,
+    userId: USER,
+    projectId: PROJECT,
+    name: `schedule ${id}`,
+    agentProvider: "claude",
+    agentFlags: "[]",
+    prompt: "perform scheduled work",
+    scheduleType: "recurring",
+    cronExpression: "0 2 * * *",
+    scheduledAt: null,
+    intervalSeconds: null,
+    anchorAt: null,
+    timezone: "UTC",
+    enabled: true,
+    status: "active",
+    nextRunAt,
+  });
+}
+
 async function getScheduleRow(id: string) {
   const row = await handle.db.query.agentSchedules.findFirst({
     where: eq(agentSchedules.id, id),
@@ -82,7 +106,7 @@ async function getScheduleRow(id: string) {
   return row!;
 }
 
-describe("AgentSchedulerOrchestrator interval registration", () => {
+describe("AgentSchedulerOrchestrator registration", () => {
   beforeEach(async () => {
     handle = await createTestDb("rdv-agent-scheduler-orchestrator-test-");
     await handle.db
@@ -119,6 +143,21 @@ describe("AgentSchedulerOrchestrator interval registration", () => {
     expect(row.enabled).toBe(true);
     expect(row.status).toBe("active");
     expect(row.nextRunAt!.getTime()).toBeGreaterThan(Date.now());
+    expect(agentSchedulerOrchestrator.getJobCount()).toBe(1);
+    expect(mockedLaunchAgentRun).not.toHaveBeenCalled();
+  });
+
+  it("refreshes stale recurring nextRunAt on startup", async () => {
+    const staleNextRunAt = new Date(Date.now() - 3_600_000);
+    await seedRecurringSchedule("stale-recurring", staleNextRunAt);
+
+    await agentSchedulerOrchestrator.start();
+
+    const row = await getScheduleRow("stale-recurring");
+    expect(row.enabled).toBe(true);
+    expect(row.status).toBe("active");
+    expect(row.nextRunAt!.getTime()).toBeGreaterThan(Date.now());
+    expect(row.nextRunAt!.getTime()).not.toBe(staleNextRunAt.getTime());
     expect(agentSchedulerOrchestrator.getJobCount()).toBe(1);
     expect(mockedLaunchAgentRun).not.toHaveBeenCalled();
   });
@@ -170,7 +209,7 @@ describe("AgentSchedulerOrchestrator interval registration", () => {
 
     await expect(
       agentSchedulerOrchestrator.addJob("invalid-timezone"),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(false);
     expect(mockedLog.error).toHaveBeenCalledWith(
       "Failed to create agent cron job",
       expect.objectContaining({ scheduleId: "invalid-timezone" }),

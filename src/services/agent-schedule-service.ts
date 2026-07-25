@@ -400,6 +400,10 @@ export async function updateAgentSchedule(
     existing.scheduleType !== scheduleType &&
     scheduleType !== "one-time" &&
     nextRunAt !== undefined;
+  // `paused` is import-only for agent schedules because AgentScheduleUpdate
+  // has no status field — revisit if a pause API lands, since a user-intended
+  // pause must survive a re-enable, cf. the session stack which deliberately
+  // omits it.
   if (switchedToRepeating) {
     if (
       ["completed", "cancelled", "missed", "paused"].includes(existing.status)

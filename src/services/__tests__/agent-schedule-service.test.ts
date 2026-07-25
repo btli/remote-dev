@@ -551,36 +551,39 @@ describe("interval agent schedules", () => {
     },
   );
 
-  it("recomputes nextRunAt when re-enabling an interval row", async () => {
-    const anchorAt = new Date(Date.now() - 3_600_000);
-    const created = await createAgentSchedule(USER, {
-      projectId: PROJECT,
-      name: "Re-enable",
-      prompt: "p",
-      scheduleType: "interval",
-      intervalSeconds: 300,
-      anchorAt,
-      timezone: "UTC",
-      enabled: false,
-    });
-    await handle.db
-      .update(agentSchedules)
-      .set({
-        nextRunAt: new Date(Date.now() - 60_000),
-        status: "paused",
-      })
-      .where(eq(agentSchedules.id, created.id));
+  it.each(["completed", "cancelled", "missed", "paused"] as const)(
+    "recomputes nextRunAt when re-enabling an interval row with %s status",
+    async (status) => {
+      const anchorAt = new Date(Date.now() - 3_600_000);
+      const created = await createAgentSchedule(USER, {
+        projectId: PROJECT,
+        name: `Re-enable ${status}`,
+        prompt: "p",
+        scheduleType: "interval",
+        intervalSeconds: 300,
+        anchorAt,
+        timezone: "UTC",
+        enabled: false,
+      });
+      await handle.db
+        .update(agentSchedules)
+        .set({
+          nextRunAt: new Date(Date.now() - 60_000),
+          status,
+        })
+        .where(eq(agentSchedules.id, created.id));
 
-    const updated = await updateAgentSchedule(USER, created.id, {
-      enabled: true,
-    });
-    expect(updated!.enabled).toBe(true);
-    expect(updated!.status).toBe("active");
-    expect(updated!.nextRunAt!.getTime()).toBeGreaterThan(Date.now());
-    expect(updated!.nextRunAt!.getTime()).toBe(
-      calculateNextIntervalRun(anchorAt, 300).getTime(),
-    );
-  });
+      const updated = await updateAgentSchedule(USER, created.id, {
+        enabled: true,
+      });
+      expect(updated!.enabled).toBe(true);
+      expect(updated!.status).toBe("active");
+      expect(updated!.nextRunAt!.getTime()).toBeGreaterThan(Date.now());
+      expect(updated!.nextRunAt!.getTime()).toBe(
+        calculateNextIntervalRun(anchorAt, 300).getTime(),
+      );
+    },
+  );
 
   it("persists scheduler nextRunAt without touching updatedAt", async () => {
     const created = await createAgentSchedule(USER, {

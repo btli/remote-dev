@@ -2695,14 +2695,20 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     try {
       const parsed = agentBody ? JSON.parse(agentBody) : {};
       switch (agentAction) {
-        case "add":
-          await agentSchedulerOrchestrator.addJob(parsed.scheduleId);
-          sendJson(res, 200, { success: true });
+        case "add": {
+          const registered = await agentSchedulerOrchestrator.addJob(
+            parsed.scheduleId,
+          );
+          sendJson(res, 200, { success: true, registered });
           break;
-        case "update":
-          await agentSchedulerOrchestrator.updateJob(parsed.scheduleId);
-          sendJson(res, 200, { success: true });
+        }
+        case "update": {
+          const registered = await agentSchedulerOrchestrator.updateJob(
+            parsed.scheduleId,
+          );
+          sendJson(res, 200, { success: true, registered });
           break;
+        }
         case "remove":
           agentSchedulerOrchestrator.removeJob(parsed.scheduleId);
           sendJson(res, 200, { success: true });

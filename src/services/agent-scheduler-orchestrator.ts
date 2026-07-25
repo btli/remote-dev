@@ -90,14 +90,14 @@ class AgentSchedulerOrchestrator {
   private async registerSchedule(
     schedule: AgentScheduleRow,
     completedIntervalFireAt?: Date,
-  ): Promise<void> {
-    if (!this.isRunning) return;
-    if (!schedule.enabled) return;
+  ): Promise<boolean> {
+    if (!this.isRunning) return false;
+    if (!schedule.enabled) return false;
     if (
       schedule.scheduleType === "one-time" &&
       schedule.status === "completed"
     ) {
-      return;
+      return false;
     }
     this.removeJobInternal(schedule.id);
 
@@ -109,13 +109,13 @@ class AgentSchedulerOrchestrator {
           log.error("One-time agent schedule has no scheduledAt", {
             scheduleId: schedule.id,
           });
-          return;
+          return false;
         }
         if (schedule.scheduledAt <= new Date()) {
           log.warn("One-time agent schedule is in the past", {
             scheduleId: schedule.id,
           });
-          return;
+          return false;
         }
         cronPattern = schedule.scheduledAt;
         label = `one-time at ${schedule.scheduledAt.toISOString()}`;
@@ -124,7 +124,7 @@ class AgentSchedulerOrchestrator {
           log.error("Recurring agent schedule has no cronExpression", {
             scheduleId: schedule.id,
           });
-          return;
+          return false;
         }
         cronPattern = schedule.cronExpression;
         label = `"${schedule.cronExpression}"`;
@@ -136,7 +136,7 @@ class AgentSchedulerOrchestrator {
               scheduleId: schedule.id,
             },
           );
-          return;
+          return false;
         }
         const now = new Date();
         const intervalCalculationTime =
@@ -176,7 +176,7 @@ class AgentSchedulerOrchestrator {
 
       // stop() may have run while registration awaited DB/bookkeeping work.
       // Re-check immediately before constructing the Cron so it cannot leak.
-      if (!this.isRunning) return;
+      if (!this.isRunning) return false;
 
       const cronJob = new Cron(
         cronPattern,
@@ -243,11 +243,37 @@ class AgentSchedulerOrchestrator {
         );
         void this.executeJob(schedule.id, "interval");
       }
+
+      // Persist the armed next fire time for recurring schedules so the row
+      // never shows a stale (past) nextRunAt while a valid croner job is
+      // armed. nextRunAt was previously only written at create/update/post-
+      // execution, so a restart could leave it pointing into the past.
+      if (
+        schedule.scheduleType === "recurring" &&
+        nextRun &&
+        schedule.nextRunAt?.getTime() !== nextRun.getTime()
+      ) {
+        try {
+          await AgentScheduleService.persistNextRunAt(schedule.id, nextRun);
+          log.debug("Persisted recurring agent nextRunAt at registration", {
+            scheduleId: schedule.id,
+            previousNextRunAt: schedule.nextRunAt?.toISOString() ?? null,
+            nextRunAt: nextRun.toISOString(),
+          });
+        } catch (error) {
+          log.error("Failed to persist agent nextRunAt at registration", {
+            scheduleId: schedule.id,
+            error: String(error),
+          });
+        }
+      }
+      return true;
     } catch (error) {
       log.error("Failed to create agent cron job", {
         scheduleId: schedule.id,
         error: String(error),
       });
+      return false;
     }
   }
 
@@ -345,28 +371,30 @@ class AgentSchedulerOrchestrator {
     }
   }
 
-  async addJob(scheduleId: string): Promise<void> {
+  async addJob(scheduleId: string): Promise<boolean> {
     if (!this.isRunning) {
       log.warn("Agent orchestrator not running, skipping addJob", {
         scheduleId,
       });
-      return;
+      return false;
     }
     try {
       const schedules = await AgentScheduleService.getEnabledAgentSchedules();
       const schedule = schedules.find((s) => s.id === scheduleId);
       if (schedule) {
-        await this.registerSchedule(schedule);
+        return await this.registerSchedule(schedule);
       } else {
         log.warn("Agent schedule not registered: disabled or not found", {
           scheduleId,
         });
+        return false;
       }
     } catch (error) {
       log.error("Failed to add agent job", {
         scheduleId,
         error: String(error),
       });
+      return false;
     }
   }
 
@@ -375,10 +403,10 @@ class AgentSchedulerOrchestrator {
     log.debug("Removed agent job", { scheduleId });
   }
 
-  async updateJob(scheduleId: string): Promise<void> {
-    if (!this.isRunning) return;
+  async updateJob(scheduleId: string): Promise<boolean> {
+    if (!this.isRunning) return false;
     this.removeJobInternal(scheduleId);
-    await this.addJob(scheduleId);
+    return this.addJob(scheduleId);
   }
 
   private removeJobInternal(scheduleId: string): void {

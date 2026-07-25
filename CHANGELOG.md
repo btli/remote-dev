@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Agent schedule PATCH validation is now strict and consistent across schedule types: `cronExpression: null` keeps the existing cron expression instead of clearing it, while `timezone: null` or an empty string returns `400 INVALID_TIMEZONE` instead of falling back to the default timezone.
+- Agent schedule timezone validation is now strict and consistent between create and PATCH: an explicit `timezone: null` or empty string returns `400 INVALID_TIMEZONE`, while omitting it on create still uses the default. Previously, create treated null or empty values as a request for the default, but PATCH attempted an invalid NULL write for null and stored an empty string as-is. On PATCH, `cronExpression: null` now keeps the existing cron expression instead of clearing it.
 
 ### Added
 
