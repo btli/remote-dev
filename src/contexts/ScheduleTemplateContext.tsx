@@ -23,11 +23,11 @@ interface ScheduleTemplateContextValue {
   refreshTemplates: () => Promise<void>;
   createTemplate: (
     input: CreateScheduleTemplateInput
-  ) => Promise<ScheduleTemplate | null>;
+  ) => Promise<ScheduleTemplate>;
   updateTemplate: (
     id: string,
     input: UpdateScheduleTemplateInput
-  ) => Promise<ScheduleTemplate | null>;
+  ) => Promise<ScheduleTemplate>;
   deleteTemplate: (id: string) => Promise<boolean>;
   recordUsage: (id: string) => Promise<void>;
 }
@@ -42,6 +42,27 @@ function hydrateTemplate(template: ScheduleTemplate): ScheduleTemplate {
     createdAt: new Date(template.createdAt),
     updatedAt: new Date(template.updatedAt),
   };
+}
+
+async function responseError(
+  response: Response,
+  fallbackMessage: string
+): Promise<Error> {
+  try {
+    const body: unknown = await response.json();
+    if (
+      typeof body === "object" &&
+      body !== null &&
+      "error" in body &&
+      typeof body.error === "string" &&
+      body.error
+    ) {
+      return new Error(body.error);
+    }
+  } catch {
+    // A non-JSON error response still gets the operation-specific fallback.
+  }
+  return new Error(fallbackMessage);
 }
 
 export function useScheduleTemplateContext(): ScheduleTemplateContextValue {
@@ -81,21 +102,21 @@ export function ScheduleTemplateProvider({ children }: { children: ReactNode }) 
   const createTemplate = useCallback(
     async (
       input: CreateScheduleTemplateInput
-    ): Promise<ScheduleTemplate | null> => {
-      try {
-        const response = await apiFetch("/api/schedule-templates", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(input),
-        });
-        if (!response.ok) throw new Error("Failed to create schedule template");
-        const template = hydrateTemplate(await response.json());
-        setTemplates((current) => [template, ...current]);
-        return template;
-      } catch (err) {
-        console.error("Error creating schedule template:", err);
-        return null;
+    ): Promise<ScheduleTemplate> => {
+      const response = await apiFetch("/api/schedule-templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      if (!response.ok) {
+        throw await responseError(
+          response,
+          "Failed to create schedule template"
+        );
       }
+      const template = hydrateTemplate(await response.json());
+      setTemplates((current) => [template, ...current]);
+      return template;
     },
     []
   );
@@ -104,39 +125,39 @@ export function ScheduleTemplateProvider({ children }: { children: ReactNode }) 
     async (
       id: string,
       input: UpdateScheduleTemplateInput
-    ): Promise<ScheduleTemplate | null> => {
-      try {
-        const response = await apiFetch(`/api/schedule-templates/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(input),
-        });
-        if (!response.ok) throw new Error("Failed to update schedule template");
-        const template = hydrateTemplate(await response.json());
-        setTemplates((current) =>
-          current.map((item) => (item.id === id ? template : item))
+    ): Promise<ScheduleTemplate> => {
+      const response = await apiFetch(`/api/schedule-templates/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      if (!response.ok) {
+        throw await responseError(
+          response,
+          "Failed to update schedule template"
         );
-        return template;
-      } catch (err) {
-        console.error("Error updating schedule template:", err);
-        return null;
       }
+      const template = hydrateTemplate(await response.json());
+      setTemplates((current) =>
+        current.map((item) => (item.id === id ? template : item))
+      );
+      return template;
     },
     []
   );
 
   const deleteTemplate = useCallback(async (id: string): Promise<boolean> => {
-    try {
-      const response = await apiFetch(`/api/schedule-templates/${id}`, {
-        method: "DELETE",
-      });
-      if (!response.ok) throw new Error("Failed to delete schedule template");
-      setTemplates((current) => current.filter((item) => item.id !== id));
-      return true;
-    } catch (err) {
-      console.error("Error deleting schedule template:", err);
-      return false;
+    const response = await apiFetch(`/api/schedule-templates/${id}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      throw await responseError(
+        response,
+        "Failed to delete schedule template"
+      );
     }
+    setTemplates((current) => current.filter((item) => item.id !== id));
+    return true;
   }, []);
 
   const recordUsage = useCallback(async (id: string): Promise<void> => {
@@ -146,7 +167,12 @@ export function ScheduleTemplateProvider({ children }: { children: ReactNode }) 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "use" }),
       });
-      if (!response.ok) throw new Error("Failed to record schedule template usage");
+      if (!response.ok) {
+        throw await responseError(
+          response,
+          "Failed to record schedule template usage"
+        );
+      }
       setTemplates((current) =>
         current.map((item) =>
           item.id === id

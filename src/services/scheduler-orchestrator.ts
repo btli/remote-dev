@@ -127,7 +127,8 @@ class SchedulerOrchestrator {
    * Register a schedule with croner
    */
   private async registerSchedule(
-    schedule: SessionScheduleWithCommands
+    schedule: SessionScheduleWithCommands,
+    completedIntervalFireAt?: Date
   ): Promise<void> {
     if (!this.isRunning) {
       return;
@@ -304,9 +305,16 @@ class SchedulerOrchestrator {
           });
           return;
         }
+        const now = new Date();
+        const intervalCalculationTime =
+          completedIntervalFireAt &&
+          completedIntervalFireAt.getTime() > now.getTime()
+            ? completedIntervalFireAt
+            : now;
         const nextIntervalRun = ScheduleService.calculateNextIntervalRun(
           schedule.anchorAt,
-          schedule.intervalSeconds
+          schedule.intervalSeconds,
+          intervalCalculationTime
         );
         cronPattern = nextIntervalRun;
         scheduleTypeLabel = ScheduleService.describeIntervalSchedule(
@@ -337,6 +345,10 @@ class SchedulerOrchestrator {
         cronPattern,
         {
           timezone: schedule.timezone,
+          // Hold Date-based interval jobs until registration has verified
+          // that their one-shot fire is still schedulable. This prevents a
+          // boundary timer from racing the missed-fire recovery path.
+          paused: schedule.scheduleType === "interval",
           catch: (error: unknown) => {
             log.error("Schedule cron error", { scheduleId: schedule.id, error: String(error) });
           },
@@ -354,11 +366,35 @@ class SchedulerOrchestrator {
       this.jobs.set(schedule.id, {
         scheduleId: schedule.id,
         cronJob,
-        scheduleData: schedule,
+        scheduleData:
+          schedule.scheduleType === "interval" && cronPattern instanceof Date
+            ? { ...schedule, nextRunAt: cronPattern }
+            : schedule,
       });
 
-      const nextRun = cronJob.nextRun();
+      let nextRun = cronJob.nextRun();
+      if (schedule.scheduleType === "interval" && nextRun) {
+        cronJob.resume();
+        // The Date can cross while resuming; use Croner's post-resume view to
+        // decide whether the normal callback or recovery owns this occurrence.
+        nextRun = cronJob.nextRun();
+      }
       log.info("Registered schedule", { name: schedule.name, scheduleId: schedule.id, type: scheduleTypeLabel, timezone: schedule.timezone, nextRun: nextRun?.toISOString() ?? "never" });
+
+      // A Date-based interval fire can pass while registration awaits DB
+      // bookkeeping. Croner does not fire past Date patterns, so recover the
+      // just-missed occurrence through the normal execution path; its finally
+      // block will calculate and register the next interval occurrence.
+      if (schedule.scheduleType === "interval" && !nextRun) {
+        // Cancel any timer Croner queued while the Date crossed its boundary;
+        // recovery below owns this occurrence and must not race a late callback.
+        cronJob.stop();
+        log.warn("Interval fire passed during registration; executing immediately", {
+          scheduleId: schedule.id,
+          fireAt: cronPattern instanceof Date ? cronPattern.toISOString() : null,
+        });
+        void this.executeJob(schedule.id, tmuxSessionName, "interval");
+      }
 
       // Persist the armed next fire time for recurring schedules so the row
       // never shows a stale (past) nextRunAt while a valid croner job is
@@ -459,7 +495,10 @@ class SchedulerOrchestrator {
             refreshed?.enabled &&
             refreshed.scheduleType === "interval"
           ) {
-            await this.registerSchedule(refreshed);
+            await this.registerSchedule(
+              refreshed,
+              job.scheduleData.nextRunAt ?? undefined
+            );
             log.debug("Re-registered interval schedule after execution", {
               scheduleId,
             });

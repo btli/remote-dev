@@ -8,6 +8,7 @@ import {
   validateScheduleTemplateOptions,
 } from "@/lib/schedule-template-validation";
 import { isValidIntervalSeconds, isValidTimezone } from "@/lib/schedule-validation";
+import { validateCronExpression } from "@/services/schedule-service";
 import type {
   CreateScheduleTemplateInput,
   ScheduleTemplate,
@@ -17,6 +18,16 @@ import type {
 import type { ScheduleType } from "@/types/schedule";
 
 const log = createLogger("ScheduleTemplateService");
+
+export class ScheduleTemplateValidationError extends Error {
+  constructor(
+    message: string,
+    public readonly code: string
+  ) {
+    super(message);
+    this.name = "ScheduleTemplateValidationError";
+  }
+}
 
 function parseCommands(commandsJson: string, templateId: string): ScheduleTemplateCommand[] {
   try {
@@ -68,21 +79,43 @@ function parseCommands(commandsJson: string, templateId: string): ScheduleTempla
 function validateTemplateConfiguration(input: {
   scheduleType: ScheduleType;
   timezone: string;
+  cronExpression?: string | null;
   intervalSeconds?: number | null;
   maxRetries?: number;
   retryDelaySeconds?: number;
   timeoutSeconds?: number;
 }): void {
   if (!isValidTimezone(input.timezone)) {
-    throw new Error("Invalid timezone");
+    throw new ScheduleTemplateValidationError(
+      "Invalid timezone",
+      "INVALID_TIMEZONE"
+    );
   }
   const optionsError = validateScheduleTemplateOptions(input);
-  if (optionsError) throw new Error(optionsError);
+  if (optionsError) {
+    throw new ScheduleTemplateValidationError(
+      optionsError,
+      "INVALID_TEMPLATE_OPTIONS"
+    );
+  }
+  if (
+    input.scheduleType === "recurring" &&
+    (!input.cronExpression ||
+      !validateCronExpression(input.cronExpression, input.timezone))
+  ) {
+    throw new ScheduleTemplateValidationError(
+      "A valid cron expression is required for recurring templates",
+      "INVALID_CRON_EXPRESSION"
+    );
+  }
   if (
     input.scheduleType === "interval" &&
     !isValidIntervalSeconds(input.intervalSeconds)
   ) {
-    throw new Error("Interval must be between 1 minute and 30 days");
+    throw new ScheduleTemplateValidationError(
+      "Interval must be between 1 minute and 30 days",
+      "INVALID_INTERVAL_SECONDS"
+    );
   }
 }
 
@@ -150,7 +183,12 @@ export async function createScheduleTemplate(
       input.scheduleType === "interval" ? input.intervalSeconds : null,
   });
   const commands = normalizeScheduleTemplateCommands(input.commands);
-  if (!commands) throw new Error("At least one valid command is required");
+  if (!commands) {
+    throw new ScheduleTemplateValidationError(
+      "At least one valid command is required",
+      "INVALID_COMMANDS"
+    );
+  }
 
   const [row] = await db
     .insert(scheduleTemplates)
@@ -192,10 +230,17 @@ export async function updateScheduleTemplate(
         ? input.intervalSeconds
         : existing.intervalSeconds
       : null;
+  const cronExpression =
+    nextType === "recurring"
+      ? input.cronExpression !== undefined
+        ? input.cronExpression
+        : existing.cronExpression
+      : null;
   validateTemplateConfiguration({
     ...input,
     scheduleType: nextType,
     timezone,
+    cronExpression,
     intervalSeconds,
   });
   const commands =
@@ -203,7 +248,10 @@ export async function updateScheduleTemplate(
       ? normalizeScheduleTemplateCommands(input.commands)
       : undefined;
   if (input.commands !== undefined && !commands) {
-    throw new Error("At least one valid command is required");
+    throw new ScheduleTemplateValidationError(
+      "At least one valid command is required",
+      "INVALID_COMMANDS"
+    );
   }
 
   const [row] = await db
@@ -216,12 +264,7 @@ export async function updateScheduleTemplate(
       ...(input.scheduleType !== undefined
         ? { scheduleType: input.scheduleType }
         : {}),
-      cronExpression:
-        nextType === "recurring"
-          ? input.cronExpression !== undefined
-            ? input.cronExpression
-            : existing.cronExpression
-          : null,
+      cronExpression,
       intervalSeconds,
       ...(input.timezone !== undefined ? { timezone } : {}),
       ...(input.maxRetries !== undefined

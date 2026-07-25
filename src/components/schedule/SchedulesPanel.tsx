@@ -8,6 +8,7 @@
  */
 
 import { useState, useCallback, useMemo, useEffect } from "react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { describeScheduleInterval } from "@/lib/schedule-format";
 import { useScheduleContext } from "@/contexts/ScheduleContext";
@@ -354,12 +355,18 @@ export function SchedulesPanel({
 
   const saveTemplateRename = async () => {
     if (!editingTemplateId || !templateName.trim()) return;
-    const updated = await updateTemplate(editingTemplateId, {
-      name: templateName.trim(),
-    });
-    if (updated) {
+    try {
+      await updateTemplate(editingTemplateId, {
+        name: templateName.trim(),
+      });
       setEditingTemplateId(null);
       setTemplateName("");
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to update schedule template"
+      );
     }
   };
 
@@ -550,7 +557,15 @@ export function SchedulesPanel({
           scheduleName={deleteTemplateTarget.name}
           itemType="Template"
           onConfirm={async () => {
-            await deleteTemplate(deleteTemplateTarget.id);
+            try {
+              await deleteTemplate(deleteTemplateTarget.id);
+            } catch (error) {
+              toast.error(
+                error instanceof Error
+                  ? error.message
+                  : "Failed to delete schedule template"
+              );
+            }
           }}
           onClose={() => setDeleteTemplateTarget(null)}
         />

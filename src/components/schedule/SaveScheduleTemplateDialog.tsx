@@ -43,16 +43,19 @@ export function SaveScheduleTemplateDialog({
 
     setSaving(true);
     setError(null);
-    const template = await createTemplate({
-      ...snapshot,
-      name: name.trim(),
-      description: description.trim() || undefined,
-    });
-    setSaving(false);
-    if (template) {
+    try {
+      await createTemplate({
+        ...snapshot,
+        name: name.trim(),
+        description: description.trim() || undefined,
+      });
       onOpenChange(false);
-    } else {
-      setError("Failed to save schedule template");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to save schedule template"
+      );
+    } finally {
+      setSaving(false);
     }
   };
 

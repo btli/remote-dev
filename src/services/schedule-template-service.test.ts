@@ -26,6 +26,7 @@ import {
   getScheduleTemplate,
   getScheduleTemplates,
   recordScheduleTemplateUsage,
+  ScheduleTemplateValidationError,
   updateScheduleTemplate,
 } from "./schedule-template-service";
 import { scheduleTemplates, users } from "@/db/schema";
@@ -190,6 +191,31 @@ describe("ScheduleTemplateService", () => {
         commands: [{ ...base.commands[0], continueOnError: "yes" as never }],
       })
     ).rejects.toThrow("valid command");
+  });
+
+  it("rejects invalid recurring cron expressions with a typed validation error", async () => {
+    const invalidCreate = createScheduleTemplate(USER_A, {
+      name: "Broken recurring template",
+      scheduleType: "recurring",
+      cronExpression: "not a cron expression",
+      timezone: "UTC",
+      commands: [
+        {
+          command: "echo recurring",
+          order: 0,
+          delayBeforeSeconds: 0,
+          continueOnError: false,
+        },
+      ],
+    });
+
+    await expect(invalidCreate).rejects.toMatchObject({
+      name: "ScheduleTemplateValidationError",
+      code: "INVALID_CRON_EXPRESSION",
+    });
+    await expect(invalidCreate).rejects.toBeInstanceOf(
+      ScheduleTemplateValidationError
+    );
   });
 
   it("filters malformed stored commands and defaults optional fields", async () => {

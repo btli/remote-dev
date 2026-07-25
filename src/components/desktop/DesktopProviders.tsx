@@ -14,10 +14,10 @@
  * branches.
  *
  * `ProfileProvider`, `TemplateProvider`, and `ScheduleTemplateProvider`
- * are also desktop-only at the top level: mobile mirrors that provider
- * stack on demand inside its `NewSessionSheet` (which is itself
- * `dynamic(ssr: false)`), so those contexts don't hydrate with mobile's
- * initial bundle.
+ * are also desktop-only at the top level. Mobile mounts only
+ * `ProfileProvider` and `TemplateProvider` on demand inside its
+ * `NewSessionSheet` (which is itself `dynamic(ssr: false)`), so these
+ * contexts don't hydrate with mobile's initial bundle.
  *
  * Server-fetched bootstrap data (`isGitHubConnected`,
  * `initialHasGitHubAccounts`) is forwarded from `app/page.tsx` through

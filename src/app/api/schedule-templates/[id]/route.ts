@@ -5,6 +5,7 @@ import {
   deleteScheduleTemplate,
   getScheduleTemplate,
   recordScheduleTemplateUsage,
+  ScheduleTemplateValidationError,
   updateScheduleTemplate,
 } from "@/services/schedule-template-service";
 import { validateCronExpression } from "@/services/schedule-service";
@@ -16,14 +17,22 @@ import {
 import { isValidIntervalSeconds, isValidTimezone } from "@/lib/schedule-validation";
 
 export const GET = withApiAuth(async (_request, { userId, params }) => {
-  const template = await getScheduleTemplate(params!.id, userId);
+  const id = params?.id;
+  if (!id) {
+    return errorResponse("Schedule template ID is required", 400, "ID_REQUIRED");
+  }
+  const template = await getScheduleTemplate(id, userId);
   return template
     ? NextResponse.json(template)
     : errorResponse("Schedule template not found", 404);
 });
 
 export const PATCH = withApiAuth(async (request, { userId, params }) => {
-  const existing = await getScheduleTemplate(params!.id, userId);
+  const id = params?.id;
+  if (!id) {
+    return errorResponse("Schedule template ID is required", 400, "ID_REQUIRED");
+  }
+  const existing = await getScheduleTemplate(id, userId);
   if (!existing) return errorResponse("Schedule template not found", 404);
 
   const result = await parseJsonBody<UpdateScheduleTemplateInput>(request);
@@ -72,29 +81,44 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
     return errorResponse("Interval must be between 1 minute and 30 days", 400);
   }
 
-  const template = await updateScheduleTemplate(params!.id, userId, {
-    ...input,
-    ...(input.name !== undefined ? { name: input.name.trim() } : {}),
-    ...(commands ? { commands } : {}),
-  });
-  return NextResponse.json(template);
+  try {
+    const template = await updateScheduleTemplate(id, userId, {
+      ...input,
+      ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+      ...(commands ? { commands } : {}),
+    });
+    return NextResponse.json(template);
+  } catch (error) {
+    if (error instanceof ScheduleTemplateValidationError) {
+      return errorResponse(error.message, 400, error.code);
+    }
+    throw error;
+  }
 });
 
 export const DELETE = withApiAuth(async (_request, { userId, params }) => {
-  const deleted = await deleteScheduleTemplate(params!.id, userId);
+  const id = params?.id;
+  if (!id) {
+    return errorResponse("Schedule template ID is required", 400, "ID_REQUIRED");
+  }
+  const deleted = await deleteScheduleTemplate(id, userId);
   return deleted
     ? NextResponse.json({ success: true })
     : errorResponse("Schedule template not found", 404);
 });
 
 export const POST = withApiAuth(async (request, { userId, params }) => {
+  const id = params?.id;
+  if (!id) {
+    return errorResponse("Schedule template ID is required", 400, "ID_REQUIRED");
+  }
   const result = await parseJsonBody<{ action?: string }>(request);
   if ("error" in result) return result.error;
   if (result.data.action !== "use") {
     return errorResponse("Unknown action", 400);
   }
 
-  const recorded = await recordScheduleTemplateUsage(params!.id, userId);
+  const recorded = await recordScheduleTemplateUsage(id, userId);
   return recorded
     ? NextResponse.json({ success: true })
     : errorResponse("Schedule template not found", 404);

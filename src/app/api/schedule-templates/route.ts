@@ -4,6 +4,7 @@ import { errorResponse, parseJsonBody, withApiAuth } from "@/lib/api";
 import {
   createScheduleTemplate,
   getScheduleTemplates,
+  ScheduleTemplateValidationError,
 } from "@/services/schedule-template-service";
 import { validateCronExpression } from "@/services/schedule-service";
 import type { CreateScheduleTemplateInput } from "@/types/schedule-template";
@@ -55,10 +56,17 @@ export const POST = withApiAuth(async (request, { userId }) => {
   if (validationError) return errorResponse(validationError, 400);
   const commands = normalizeScheduleTemplateCommands(result.data.commands)!;
 
-  const template = await createScheduleTemplate(userId, {
-    ...result.data,
-    name: result.data.name.trim(),
-    commands,
-  });
-  return NextResponse.json(template, { status: 201 });
+  try {
+    const template = await createScheduleTemplate(userId, {
+      ...result.data,
+      name: result.data.name.trim(),
+      commands,
+    });
+    return NextResponse.json(template, { status: 201 });
+  } catch (error) {
+    if (error instanceof ScheduleTemplateValidationError) {
+      return errorResponse(error.message, 400, error.code);
+    }
+    throw error;
+  }
 });

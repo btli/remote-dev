@@ -95,6 +95,8 @@ tags:
     description: SSH connection definitions
   - name: Schedules
     description: Scheduled command execution
+  - name: ScheduleTemplates
+    description: Reusable schedule configurations
   - name: Ports
     description: Port registry and framework/runtime detection
   - name: LiteLLM
@@ -1518,7 +1520,17 @@ paths:
       tags: [Schedules]
       summary: List schedules
       parameters: [{ name: sessionId, in: query, schema: { type: string } }]
-      responses: { '200': { description: Schedules, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+      responses:
+        '200':
+          description: Schedules
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  schedules:
+                    type: array
+                    items: { $ref: '#/components/schemas/Schedule' }
     post:
       tags: [Schedules]
       summary: Create schedule
@@ -1526,30 +1538,16 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [sessionId, name, commands]
-              properties:
-                sessionId: { type: string }
-                name: { type: string }
-                commands: { type: array, items: { type: string }, minItems: 1 }
-                scheduleType: { type: string, enum: [one-time, recurring], default: one-time }
-                cronExpression: { type: string }
-                scheduledAt: { type: string, format: date-time }
-                timezone: { type: string }
-                enabled: { type: boolean }
-                maxRetries: { type: integer }
-                retryDelaySeconds: { type: integer }
-                timeoutSeconds: { type: integer }
-      responses: { '201': { description: Created schedule, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+            schema: { $ref: '#/components/schemas/CreateScheduleInput' }
+      responses: { '201': { description: Created schedule, content: { application/json: { schema: { $ref: '#/components/schemas/Schedule' } } } } }
   /api/schedules/{id}:
     parameters: [{ $ref: '#/components/parameters/IdPath' }]
-    get: { tags: [Schedules], summary: Get schedule, responses: { '200': { description: Schedule, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, '404': { $ref: '#/components/responses/NotFound' } } }
+    get: { tags: [Schedules], summary: Get schedule, responses: { '200': { description: Schedule, content: { application/json: { schema: { $ref: '#/components/schemas/Schedule' } } } }, '404': { $ref: '#/components/responses/NotFound' } } }
     patch:
       tags: [Schedules]
       summary: Update schedule
-      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }
-      responses: { '200': { description: Updated schedule, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/UpdateScheduleInput' } } } }
+      responses: { '200': { description: Updated schedule, content: { application/json: { schema: { $ref: '#/components/schemas/Schedule' } } } } }
     delete: { tags: [Schedules], summary: Delete schedule, responses: { '200': { $ref: '#/components/responses/Success' } } }
   /api/schedules/{id}/execute:
     parameters: [{ $ref: '#/components/parameters/IdPath' }]
@@ -1565,6 +1563,76 @@ paths:
       summary: Execution history
       parameters: [{ name: limit, in: query, schema: { type: integer, default: 50 } }]
       responses: { '200': { description: Executions, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+
+  # ===================== Schedule templates =====================
+  /api/schedule-templates:
+    get:
+      tags: [ScheduleTemplates]
+      summary: List schedule templates
+      responses:
+        '200':
+          description: Templates ordered by usage count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  templates:
+                    type: array
+                    items: { $ref: '#/components/schemas/ScheduleTemplate' }
+    post:
+      tags: [ScheduleTemplates]
+      summary: Create a schedule template
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateScheduleTemplateInput' }
+      responses:
+        '201': { description: Created template, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleTemplate' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/schedule-templates/{id}:
+    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+    get:
+      tags: [ScheduleTemplates]
+      summary: Get a schedule template
+      responses:
+        '200': { description: Schedule template, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleTemplate' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [ScheduleTemplates]
+      summary: Update a schedule template
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateScheduleTemplateInput' }
+      responses:
+        '200': { description: Updated template, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleTemplate' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [ScheduleTemplates]
+      summary: Delete a schedule template
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [ScheduleTemplates]
+      summary: Record schedule template usage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [use] }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # ===================== Ports =====================
   /api/ports:
@@ -2707,6 +2775,226 @@ components:
         privateKey: { type: string }
         publicKey: { type: string }
         generateKeypair: { type: boolean }
+    ScheduleCommandInput:
+      type: object
+      required: [command]
+      properties:
+        command: { type: string }
+        delayBeforeSeconds: { type: integer, minimum: 0, default: 0 }
+        continueOnError: { type: boolean, default: false }
+    ScheduleCommand:
+      allOf:
+        - { $ref: '#/components/schemas/ScheduleCommandInput' }
+        - type: object
+          properties:
+            id: { type: string }
+            scheduleId: { type: string }
+            order: { type: integer, minimum: 0 }
+            createdAt: { type: string, format: date-time }
+    CreateScheduleInput:
+      type: object
+      required: [sessionId, name, commands]
+      properties:
+        sessionId: { type: string }
+        name: { type: string }
+        commands:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ScheduleCommandInput' }
+        scheduleType:
+          type: string
+          enum: [one-time, recurring, interval]
+          default: one-time
+        cronExpression:
+          type: string
+          nullable: true
+          description: Required when scheduleType is recurring.
+        scheduledAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Required future instant when scheduleType is one-time.
+        intervalSeconds:
+          type: integer
+          nullable: true
+          minimum: 60
+          maximum: 2592000
+          description: Absolute-duration cadence in seconds when scheduleType is interval.
+        anchorAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Cadence anchor when scheduleType is interval; missed occurrences are skipped.
+        timezone: { type: string, default: America/Los_Angeles }
+        enabled: { type: boolean, default: true }
+        maxRetries: { type: integer, minimum: 0, default: 0 }
+        retryDelaySeconds: { type: integer, minimum: 0, default: 60 }
+        timeoutSeconds: { type: integer, minimum: 0, default: 300 }
+    UpdateScheduleInput:
+      type: object
+      properties:
+        name: { type: string }
+        scheduleType: { type: string, enum: [one-time, recurring, interval] }
+        cronExpression:
+          type: string
+          nullable: true
+          description: Required when the resulting scheduleType is recurring.
+        scheduledAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Required future instant when the resulting scheduleType is one-time.
+        intervalSeconds:
+          type: integer
+          nullable: true
+          minimum: 60
+          maximum: 2592000
+          description: Absolute-duration cadence in seconds when the resulting scheduleType is interval.
+        anchorAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Cadence anchor when the resulting scheduleType is interval; missed occurrences are skipped.
+        timezone: { type: string }
+        enabled: { type: boolean }
+        status: { type: string, enum: [active, paused, failed, completed, missed, cancelled] }
+        maxRetries: { type: integer, minimum: 0 }
+        retryDelaySeconds: { type: integer, minimum: 0 }
+        timeoutSeconds: { type: integer, minimum: 0 }
+        commands:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ScheduleCommandInput' }
+    Schedule:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        sessionId: { type: string }
+        name: { type: string }
+        scheduleType: { type: string, enum: [one-time, recurring, interval] }
+        cronExpression:
+          type: string
+          nullable: true
+          description: Cron cadence for recurring schedules; null otherwise.
+        scheduledAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Fire instant for one-time schedules; null otherwise.
+        intervalSeconds:
+          type: integer
+          nullable: true
+          minimum: 60
+          maximum: 2592000
+          description: Absolute-duration cadence in seconds for interval schedules; null otherwise.
+        anchorAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Cadence anchor for interval schedules; missed occurrences are skipped. Null otherwise.
+        timezone: { type: string }
+        enabled: { type: boolean }
+        status: { type: string, enum: [active, paused, failed, completed, missed, cancelled] }
+        maxRetries: { type: integer }
+        retryDelaySeconds: { type: integer }
+        timeoutSeconds: { type: integer }
+        lastRunAt: { type: string, format: date-time, nullable: true }
+        lastRunStatus: { type: string, enum: [success, failed, timeout], nullable: true }
+        nextRunAt: { type: string, format: date-time, nullable: true }
+        consecutiveFailures: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        commands:
+          type: array
+          items: { $ref: '#/components/schemas/ScheduleCommand' }
+    ScheduleTemplateCommand:
+      type: object
+      required: [command, order, delayBeforeSeconds, continueOnError]
+      properties:
+        command: { type: string }
+        order: { type: integer, minimum: 0 }
+        delayBeforeSeconds: { type: integer, minimum: 0, maximum: 86400 }
+        continueOnError: { type: boolean }
+    ScheduleTemplateCommandInput:
+      type: object
+      required: [command]
+      properties:
+        command: { type: string }
+        order: { type: integer, minimum: 0 }
+        delayBeforeSeconds: { type: integer, minimum: 0, maximum: 86400, default: 0 }
+        continueOnError: { type: boolean, default: false }
+    CreateScheduleTemplateInput:
+      type: object
+      required: [name, scheduleType, commands]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        scheduleType: { type: string, enum: [one-time, recurring, interval] }
+        cronExpression:
+          type: string
+          nullable: true
+          description: Required and validated in timezone for recurring templates.
+        intervalSeconds:
+          type: integer
+          nullable: true
+          minimum: 60
+          maximum: 2592000
+          description: Absolute-duration cadence in seconds for interval templates.
+        timezone: { type: string, default: America/Los_Angeles }
+        maxRetries: { type: integer, minimum: 0, maximum: 10, default: 0 }
+        retryDelaySeconds: { type: integer, minimum: 0, maximum: 3600, default: 60 }
+        timeoutSeconds: { type: integer, minimum: 0, maximum: 86400, default: 300 }
+        commands:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ScheduleTemplateCommandInput' }
+    UpdateScheduleTemplateInput:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string, nullable: true }
+        scheduleType: { type: string, enum: [one-time, recurring, interval] }
+        cronExpression:
+          type: string
+          nullable: true
+          description: Required and validated in timezone when the resulting type is recurring.
+        intervalSeconds:
+          type: integer
+          nullable: true
+          minimum: 60
+          maximum: 2592000
+          description: Absolute-duration cadence in seconds when the resulting type is interval.
+        timezone: { type: string }
+        maxRetries: { type: integer, minimum: 0, maximum: 10 }
+        retryDelaySeconds: { type: integer, minimum: 0, maximum: 3600 }
+        timeoutSeconds: { type: integer, minimum: 0, maximum: 86400 }
+        commands:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ScheduleTemplateCommandInput' }
+    ScheduleTemplate:
+      allOf:
+        - { $ref: '#/components/schemas/CreateScheduleTemplateInput' }
+        - type: object
+          properties:
+            id: { type: string }
+            userId: { type: string }
+            description: { type: string, nullable: true }
+            cronExpression: { type: string, nullable: true }
+            intervalSeconds:
+              type: integer
+              nullable: true
+              minimum: 60
+              maximum: 2592000
+              description: Absolute-duration cadence in seconds for interval templates; null otherwise.
+            usageCount: { type: integer, minimum: 0 }
+            lastUsedAt: { type: string, format: date-time, nullable: true }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+            commands:
+              type: array
+              items: { $ref: '#/components/schemas/ScheduleTemplateCommand' }
     ApiKey:
       type: object
       properties:

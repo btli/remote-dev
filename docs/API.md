@@ -8,9 +8,9 @@ For a machine-readable contract, see [openapi.yaml](./openapi.yaml) (OpenAPI 3.1
 
 > **Scope.** Every endpoint documented here is served by the **Next.js** app
 > (default port **6001**) under `/api/*`. As of v0.3.18 the codebase exposes
-> **53 route groups** (top-level directories under `src/app/api`, excluding the
-> non-routable `_lib/` helper directory), **196 `route.ts` files**, and **312
-> method×path operations** (138 GET · 96 POST · 41 DELETE · 25 PATCH · 12 PUT).
+> **54 route groups** (top-level directories under `src/app/api`, excluding the
+> non-routable `_lib/` helper directory), **198 `route.ts` files**, and **318
+> method×path operations** (140 GET · 98 POST · 42 DELETE · 26 PATCH · 12 PUT).
 > The path-based [port proxy](#port-proxy) adds one more route at the app root
 > (`/<basePath>/proxy/<port>/…`, exporting all seven HTTP methods) outside
 > `/api/*`.
@@ -121,6 +121,7 @@ by session/key auth:
 | Secrets | `/api/secrets` | [Secrets](#secrets) |
 | SSH connections | `/api/ssh-connections` | [SSH connections](#ssh-connections) |
 | Schedules | `/api/schedules` | [Schedules](#schedules) |
+| Schedule templates | `/api/schedule-templates` | [Schedule templates](#schedule-templates) |
 | Ports | `/api/ports` | [Ports](#ports) |
 | Port proxy | `/<basePath>/proxy/<port>/*` | [Port proxy](#port-proxy) |
 | LiteLLM | `/api/litellm` | [LiteLLM](#litellm) |
@@ -1113,7 +1114,8 @@ key was written or generated). See the [SshConnection object](#sshconnection-obj
 
 ## Schedules
 
-Scheduled command execution against a session (one-time or recurring/cron).
+Scheduled command execution against a session (one-time, recurring/cron, or
+fixed interval).
 Base path `/api/schedules`. All **[session | key]**.
 
 > Execution model: commands are delivered via tmux `sendKeys` (fire-and-forget).
@@ -1132,10 +1134,65 @@ GET    /api/schedules/:id/executions?limit=50  # execution history
 
 **Create body** (`CreateScheduleInput`): `sessionId` (required), `name`
 (required), `commands` (non-empty array, required), `scheduleType`
-(`one-time` default | `recurring`). For `recurring`, `cronExpression` is
-required; for `one-time`, `scheduledAt` (future ISO datetime) is required.
+(`one-time` default | `recurring` | `interval`). For `recurring`,
+`cronExpression` is required. For `one-time`, `scheduledAt` (future ISO
+datetime) is required. For `interval`, `intervalSeconds` (integer from 60
+through 2,592,000) and `anchorAt` (ISO datetime) are required.
+
+An interval uses an absolute-duration cadence measured from its anchor, not
+calendar or wall-clock recurrence. For example, a 90-minute interval advances
+by exactly 5,400 seconds from `anchorAt`. Occurrences missed while the scheduler
+is stopped are skipped; registration arms the first occurrence strictly after
+the current time.
+
 Optional: `timezone`, `enabled`, `maxRetries`, `retryDelaySeconds`,
-`timeoutSeconds`. Returns `201` with the schedule.
+`timeoutSeconds`. Responses include nullable `cronExpression`, `scheduledAt`,
+`intervalSeconds`, and `anchorAt` fields. Returns `201` with the schedule.
+
+---
+
+## Schedule templates
+
+Reusable schedule configurations. Templates contain cadence, retry, timeout,
+and command settings, but no session, one-time date, or interval anchor; those
+are chosen when applying a template. Base path `/api/schedule-templates`. All
+**[session | key]** and owner-scoped.
+
+```http
+GET    /api/schedule-templates       # list, ordered by usage count
+POST   /api/schedule-templates       # create
+GET    /api/schedule-templates/:id   # get
+PATCH  /api/schedule-templates/:id   # update
+DELETE /api/schedule-templates/:id   # delete
+POST   /api/schedule-templates/:id   # record use with {"action":"use"}
+```
+
+**Create body** (`CreateScheduleTemplateInput`):
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Non-empty template name |
+| `description` | string | No | Optional description |
+| `scheduleType` | enum | Yes | `one-time` \| `recurring` \| `interval` |
+| `cronExpression` | string \| null | Recurring only | Valid cron expression in `timezone` |
+| `intervalSeconds` | integer \| null | Interval only | Absolute-duration cadence, 60–2,592,000 seconds |
+| `timezone` | string | No | IANA timezone; defaults to `America/Los_Angeles` |
+| `maxRetries` | integer | No | 0–10; defaults to 0 |
+| `retryDelaySeconds` | integer | No | 0–3,600; defaults to 60 |
+| `timeoutSeconds` | integer | No | 0–86,400; defaults to 300 |
+| `commands` | object[] | Yes | Non-empty command list |
+
+Each command has a required non-empty `command` string and optional
+`order` (non-negative integer), `delayBeforeSeconds` (0–86,400), and
+`continueOnError` (boolean). The server normalizes command order to array
+position. Creation returns `201` with the template object.
+
+`PATCH` accepts the same fields optionally and validates the resulting merged
+configuration. Switching schedule type clears cadence fields that do not apply.
+`DELETE` returns `{ "success": true }`. To record selection/use, send
+`{ "action": "use" }` to `POST /api/schedule-templates/:id`; it atomically
+increments `usageCount`, stamps `lastUsedAt`, and returns
+`{ "success": true }`.
 
 ---
 

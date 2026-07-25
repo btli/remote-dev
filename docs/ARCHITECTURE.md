@@ -68,7 +68,7 @@ desktop app**, and **native mobile clients** (see
 │  - groups        │  │  - Detachable    │
 │  - projects      │  │                  │
 │  - node_prefs    │  │                  │
-│  - …81 tables    │  │                  │
+│  - …82 tables    │  │                  │
 └──────────────────┘  └──────────────────┘
 ```
 
@@ -395,7 +395,7 @@ representative map, not an exhaustive listing. Grouped by domain:
 ## Database Layer
 
 - **Drizzle ORM**, defaulting to **libsql** (SQLite-compatible; runs under both Bun and Node.js).
-- Schema source of truth: `src/db/schema.def.ts` (**81 tables**); the runtime
+- Schema source of truth: `src/db/schema.def.ts` (**82 tables**); the runtime
   `src/db/schema.ts` is a generated barrel. See "Dual database backend" below.
   (The separate `apps/supervisor` app has its own ~10-table schema.)
 - Primary database file: `sqlite.db` (gitignored). Logs and LiteLLM analytics use
@@ -765,7 +765,7 @@ active Flutter app) and `packages/mobile/` (an Expo/React Native app). See
 
 ### REST API
 
-The HTTP surface spans **53 route groups** and **196 `route.ts` files**
-under `src/app/api` (312 exported handlers). It is documented in
+The HTTP surface spans **54 route groups** and **198 `route.ts` files**
+under `src/app/api` (318 exported handlers). It is documented in
 [`docs/API.md`](./API.md), with an OpenAPI spec at
 [`docs/openapi.yaml`](./openapi.yaml).

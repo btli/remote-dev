@@ -129,7 +129,7 @@ export function IntervalScheduleFields({
         <div className="grid grid-cols-[1fr_120px] gap-2">
           <Input
             type="number"
-            step={1}
+            step="any"
             min={1}
             max={INTERVAL_UNIT_MAX[intervalUnit]}
             value={intervalValue}
