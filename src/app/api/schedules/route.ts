@@ -4,6 +4,11 @@ import * as ScheduleService from "@/services/schedule-service";
 import { notifyScheduleCreated } from "@/lib/scheduler-client";
 import type { CreateScheduleInput } from "@/types/schedule";
 import { createLogger } from "@/lib/logger";
+import {
+  isValidTimezone,
+  MAX_INTERVAL_SECONDS,
+  MIN_INTERVAL_SECONDS,
+} from "@/lib/schedule-validation";
 
 const log = createLogger("api/schedules");
 
@@ -46,6 +51,11 @@ export const POST = withApiAuth(async (request, { userId }) => {
     if (!["one-time", "recurring", "interval"].includes(scheduleType)) {
       return errorResponse("Invalid schedule type", 400, "INVALID_SCHEDULE_TYPE");
     }
+    const timezone =
+      input.timezone === undefined ? "America/Los_Angeles" : input.timezone;
+    if (!isValidTimezone(timezone)) {
+      return errorResponse("Invalid timezone", 400, "INVALID_TIMEZONE");
+    }
     if (scheduleType === "recurring") {
       if (!input.cronExpression) {
         return errorResponse("Cron expression is required for recurring schedules", 400, "CRON_REQUIRED");
@@ -67,10 +77,11 @@ export const POST = withApiAuth(async (request, { userId }) => {
         input.intervalSeconds === null ||
         input.intervalSeconds === undefined ||
         !Number.isInteger(input.intervalSeconds) ||
-        input.intervalSeconds < 60
+        input.intervalSeconds < MIN_INTERVAL_SECONDS ||
+        input.intervalSeconds > MAX_INTERVAL_SECONDS
       ) {
         return errorResponse(
-          "Interval must be at least 60 seconds",
+          "Interval must be between 1 minute and 30 days",
           400,
           "INVALID_INTERVAL_SECONDS"
         );

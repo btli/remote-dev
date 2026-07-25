@@ -7,22 +7,33 @@ import {
 } from "@/services/schedule-template-service";
 import { validateCronExpression } from "@/services/schedule-service";
 import type { CreateScheduleTemplateInput } from "@/types/schedule-template";
+import {
+  normalizeScheduleTemplateCommands,
+  validateScheduleTemplateOptions,
+} from "@/lib/schedule-template-validation";
+import {
+  isValidTimezone,
+  MAX_INTERVAL_SECONDS,
+  MIN_INTERVAL_SECONDS,
+} from "@/lib/schedule-validation";
 
-function validateInput(input: CreateScheduleTemplateInput): string | null {
+export function validateInput(input: CreateScheduleTemplateInput): string | null {
   if (!input.name?.trim()) return "Template name is required";
   if (!["one-time", "recurring", "interval"].includes(input.scheduleType)) {
     return "Invalid schedule type";
   }
-  if (!input.commands?.length || input.commands.some((command) => !command.command?.trim())) {
+  if (!normalizeScheduleTemplateCommands(input.commands)) {
     return "At least one command is required";
   }
+  const optionsError = validateScheduleTemplateOptions(input);
+  if (optionsError) return optionsError;
+  const timezone =
+    input.timezone === undefined ? "America/Los_Angeles" : input.timezone;
+  if (!isValidTimezone(timezone)) return "Invalid timezone";
   if (
     input.scheduleType === "recurring" &&
     (!input.cronExpression ||
-      !validateCronExpression(
-        input.cronExpression,
-        input.timezone ?? "America/Los_Angeles"
-      ))
+      !validateCronExpression(input.cronExpression, timezone))
   ) {
     return "A valid cron expression is required for recurring templates";
   }
@@ -31,9 +42,10 @@ function validateInput(input: CreateScheduleTemplateInput): string | null {
     (input.intervalSeconds === null ||
       input.intervalSeconds === undefined ||
       !Number.isInteger(input.intervalSeconds) ||
-      input.intervalSeconds < 60)
+      input.intervalSeconds < MIN_INTERVAL_SECONDS ||
+      input.intervalSeconds > MAX_INTERVAL_SECONDS)
   ) {
-    return "Interval must be at least 60 seconds";
+    return "Interval must be between 1 minute and 30 days";
   }
   return null;
 }
@@ -49,10 +61,12 @@ export const POST = withApiAuth(async (request, { userId }) => {
 
   const validationError = validateInput(result.data);
   if (validationError) return errorResponse(validationError, 400);
+  const commands = normalizeScheduleTemplateCommands(result.data.commands)!;
 
   const template = await createScheduleTemplate(userId, {
     ...result.data,
     name: result.data.name.trim(),
+    commands,
   });
   return NextResponse.json(template, { status: 201 });
 });

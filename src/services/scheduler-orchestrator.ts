@@ -249,6 +249,7 @@ class SchedulerOrchestrator {
                 await this.executeJob(schedule.id, tmuxSessionName, "one-time");
               }
             );
+            this.jobs.get(schedule.id)?.cronJob.stop();
             this.jobs.set(schedule.id, {
               scheduleId: schedule.id,
               cronJob: placeholderJob,
@@ -349,6 +350,7 @@ class SchedulerOrchestrator {
         }
       );
 
+      this.jobs.get(schedule.id)?.cronJob.stop();
       this.jobs.set(schedule.id, {
         scheduleId: schedule.id,
         cronJob,
@@ -615,7 +617,7 @@ class SchedulerOrchestrator {
       scheduledAt: job.scheduleData.scheduledAt,
       isRunning: job.cronJob.isBusy(),
       isPaused: !job.cronJob.isRunning(),
-      nextRun: job.cronJob.nextRun(),
+      nextRun: job.cronJob.nextRun() ?? job.scheduleData.nextRunAt,
       lastRun: job.scheduleData.lastRunAt,
       lastStatus: job.scheduleData.lastRunStatus,
     }));

@@ -284,6 +284,8 @@ describe("SessionsTab", () => {
     const user = userEvent.setup();
     renderTab();
     await user.click(screen.getByTestId("mobile-new-session-button"));
-    expect(screen.getByTestId("new-session-wizard-stub")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("new-session-wizard-stub")).toBeInTheDocument()
+    );
   });
 });

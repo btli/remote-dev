@@ -423,6 +423,13 @@ describe("ScheduleService lifecycle", () => {
           anchorAt: "not-a-date",
         })
       ).rejects.toMatchObject({ code: "INVALID_ANCHOR_AT" });
+      await expect(
+        createSchedule(USER, {
+          ...base,
+          intervalSeconds: 2_592_001,
+          anchorAt: new Date().toISOString(),
+        })
+      ).rejects.toMatchObject({ code: "INVALID_INTERVAL_SECONDS" });
     });
 
     it("updates interval cadence and cleans fields from the previous type", async () => {
@@ -457,8 +464,92 @@ describe("ScheduleService lifecycle", () => {
         updateSchedule(created.id, USER, { intervalSeconds: 59 })
       ).rejects.toMatchObject({ code: "INVALID_INTERVAL_SECONDS" });
       await expect(
+        updateSchedule(created.id, USER, { intervalSeconds: 2_592_001 })
+      ).rejects.toMatchObject({ code: "INVALID_INTERVAL_SECONDS" });
+      await expect(
         updateSchedule(created.id, USER, { anchorAt: null })
       ).rejects.toMatchObject({ code: "ANCHOR_AT_REQUIRED" });
+    });
+
+    it("does not persist fields from other schedule types", async () => {
+      const recurring = await createSchedule(USER, {
+        sessionId: SESSION_A,
+        name: "Recurring",
+        scheduleType: "recurring",
+        cronExpression: "0 * * * *",
+        timezone: "UTC",
+        commands: [{ command: "echo recurring" }],
+      });
+      const recurringUpdated = await updateSchedule(recurring.id, USER, {
+        anchorAt: new Date().toISOString(),
+        intervalSeconds: 300,
+      });
+      expect(recurringUpdated.anchorAt).toBeNull();
+      expect(recurringUpdated.intervalSeconds).toBeNull();
+
+      const interval = await createSchedule(USER, {
+        sessionId: SESSION_A,
+        name: "Interval",
+        scheduleType: "interval",
+        intervalSeconds: 300,
+        anchorAt: new Date().toISOString(),
+        timezone: "UTC",
+        commands: [{ command: "echo interval" }],
+      });
+      const intervalUpdated = await updateSchedule(interval.id, USER, {
+        cronExpression: "*/5 * * * *",
+      });
+      expect(intervalUpdated.cronExpression).toBeNull();
+    });
+
+    it("can disable an interval row with a missing anchor", async () => {
+      const now = new Date();
+      await handle.db.insert(sessionSchedules).values({
+        id: "corrupt-interval",
+        userId: USER,
+        sessionId: SESSION_A,
+        name: "Corrupt interval",
+        scheduleType: "interval",
+        intervalSeconds: 300,
+        anchorAt: null,
+        timezone: "UTC",
+        enabled: true,
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const updated = await updateSchedule("corrupt-interval", USER, {
+        enabled: false,
+      });
+      expect(updated.enabled).toBe(false);
+      expect(updated.anchorAt).toBeNull();
+    });
+
+    it("recomputes nextRunAt when re-enabling an interval schedule", async () => {
+      const anchorAt = new Date(Date.now() - 3_600_000);
+      const created = await createSchedule(USER, {
+        sessionId: SESSION_A,
+        name: "Re-enabled interval",
+        scheduleType: "interval",
+        intervalSeconds: 300,
+        anchorAt: anchorAt.toISOString(),
+        timezone: "UTC",
+        enabled: false,
+        commands: [{ command: "echo interval" }],
+      });
+      await handle.db
+        .update(sessionSchedules)
+        .set({ nextRunAt: new Date(Date.now() - 60_000) })
+        .where(eq(sessionSchedules.id, created.id));
+
+      const updated = await updateSchedule(created.id, USER, {
+        enabled: true,
+      });
+      expect(updated.nextRunAt!.getTime()).toBeGreaterThan(Date.now());
+      expect(updated.nextRunAt!.getTime()).toBe(
+        calculateNextIntervalRun(anchorAt, 300).getTime()
+      );
     });
 
     it("re-arms an interval schedule after execution instead of completing it", async () => {
@@ -479,6 +570,100 @@ describe("ScheduleService lifecycle", () => {
       expect(row.status).toBe("active");
       expect(row.lastRunStatus).toBe("success");
       expect(row.nextRunAt!.getTime()).toBeGreaterThan(Date.now());
+    });
+  });
+
+  describe("timezone validation", () => {
+    it.each([
+      {
+        scheduleType: "one-time" as const,
+        scheduledAt: new Date(Date.now() + 3_600_000).toISOString(),
+      },
+      {
+        scheduleType: "recurring" as const,
+        cronExpression: "0 * * * *",
+      },
+      {
+        scheduleType: "interval" as const,
+        intervalSeconds: 300,
+        anchorAt: new Date().toISOString(),
+      },
+    ])("rejects an invalid timezone when creating $scheduleType schedules", async (fields) => {
+      await expect(
+        createSchedule(USER, {
+          sessionId: SESSION_A,
+          name: `Invalid ${fields.scheduleType}`,
+          timezone: "Mars/Olympus",
+          commands: [{ command: "echo invalid" }],
+          ...fields,
+        })
+      ).rejects.toMatchObject({ code: "INVALID_TIMEZONE" });
+    });
+
+    it("rejects an invalid timezone when updating all schedule types", async () => {
+      const oneTime = await createSchedule(USER, {
+        sessionId: SESSION_A,
+        name: "One time",
+        scheduleType: "one-time",
+        scheduledAt: new Date(Date.now() + 3_600_000).toISOString(),
+        timezone: "UTC",
+        commands: [{ command: "echo once" }],
+      });
+      const recurring = await createSchedule(USER, {
+        sessionId: SESSION_A,
+        name: "Recurring",
+        scheduleType: "recurring",
+        cronExpression: "0 * * * *",
+        timezone: "UTC",
+        commands: [{ command: "echo recurring" }],
+      });
+      const interval = await createSchedule(USER, {
+        sessionId: SESSION_A,
+        name: "Interval",
+        scheduleType: "interval",
+        intervalSeconds: 300,
+        anchorAt: new Date().toISOString(),
+        timezone: "UTC",
+        commands: [{ command: "echo interval" }],
+      });
+
+      for (const schedule of [oneTime, recurring, interval]) {
+        await expect(
+          updateSchedule(schedule.id, USER, { timezone: "Mars/Olympus" })
+        ).rejects.toMatchObject({ code: "INVALID_TIMEZONE" });
+      }
+    });
+  });
+
+  describe("schedule type changes", () => {
+    it.each([
+      {
+        id: "completed-to-recurring",
+        updates: {
+          scheduleType: "recurring" as const,
+          cronExpression: "0 * * * *",
+        },
+      },
+      {
+        id: "completed-to-interval",
+        updates: {
+          scheduleType: "interval" as const,
+          intervalSeconds: 300,
+          anchorAt: new Date().toISOString(),
+        },
+      },
+    ])("re-arms a completed one-time schedule when changing type", async ({ id, updates }) => {
+      await seedSchedule({
+        id,
+        sessionId: SESSION_A,
+        enabled: false,
+        status: "completed",
+      });
+
+      const updated = await updateSchedule(id, USER, updates);
+      expect(updated.status).toBe("active");
+      expect(updated.enabled).toBe(true);
+      expect(updated.nextRunAt!.getTime()).toBeGreaterThan(Date.now());
     });
   });
 });

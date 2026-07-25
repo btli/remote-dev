@@ -28,7 +28,7 @@ import {
   recordScheduleTemplateUsage,
   updateScheduleTemplate,
 } from "./schedule-template-service";
-import { users } from "@/db/schema";
+import { scheduleTemplates, users } from "@/db/schema";
 
 const USER_A = "schedule-template-user-a";
 const USER_B = "schedule-template-user-b";
@@ -156,5 +156,75 @@ describe("ScheduleTemplateService", () => {
 
     expect(await deleteScheduleTemplate(created.id, USER_A)).toBe(true);
     expect(await getScheduleTemplate(created.id, USER_A)).toBeNull();
+  });
+
+  it("rejects invalid timezone, numeric, and command inputs in the service", async () => {
+    const base = {
+      name: "Invalid template",
+      scheduleType: "one-time" as const,
+      commands: [
+        {
+          command: "echo once",
+          order: 0,
+          delayBeforeSeconds: 0,
+          continueOnError: false,
+        },
+      ],
+    };
+
+    await expect(
+      createScheduleTemplate(USER_A, {
+        ...base,
+        timezone: "Mars/Olympus",
+      })
+    ).rejects.toThrow("Invalid timezone");
+    await expect(
+      createScheduleTemplate(USER_A, {
+        ...base,
+        maxRetries: 11,
+      })
+    ).rejects.toThrow("Max retries");
+    await expect(
+      createScheduleTemplate(USER_A, {
+        ...base,
+        commands: [{ ...base.commands[0], continueOnError: "yes" as never }],
+      })
+    ).rejects.toThrow("valid command");
+  });
+
+  it("filters malformed stored commands and defaults optional fields", async () => {
+    await handle.db.insert(scheduleTemplates).values({
+      id: "malformed-commands",
+      userId: USER_A,
+      name: "Legacy template",
+      scheduleType: "one-time",
+      commandsJson: JSON.stringify([
+        null,
+        { nope: true },
+        { command: "echo defaulted" },
+        {
+          command: "echo configured",
+          order: 7,
+          delayBeforeSeconds: 5,
+          continueOnError: true,
+        },
+      ]),
+    });
+
+    const template = await getScheduleTemplate("malformed-commands", USER_A);
+    expect(template?.commands).toEqual([
+      {
+        command: "echo defaulted",
+        order: 2,
+        delayBeforeSeconds: 0,
+        continueOnError: false,
+      },
+      {
+        command: "echo configured",
+        order: 7,
+        delayBeforeSeconds: 5,
+        continueOnError: true,
+      },
+    ]);
   });
 });

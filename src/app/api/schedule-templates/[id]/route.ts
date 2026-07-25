@@ -9,6 +9,15 @@ import {
 } from "@/services/schedule-template-service";
 import { validateCronExpression } from "@/services/schedule-service";
 import type { UpdateScheduleTemplateInput } from "@/types/schedule-template";
+import {
+  normalizeScheduleTemplateCommands,
+  validateScheduleTemplateOptions,
+} from "@/lib/schedule-template-validation";
+import {
+  isValidTimezone,
+  MAX_INTERVAL_SECONDS,
+  MIN_INTERVAL_SECONDS,
+} from "@/lib/schedule-validation";
 
 export const GET = withApiAuth(async (_request, { userId, params }) => {
   const template = await getScheduleTemplate(params!.id, userId);
@@ -25,7 +34,8 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
   if ("error" in result) return result.error;
   const input = result.data;
   const scheduleType = input.scheduleType ?? existing.scheduleType;
-  const timezone = input.timezone ?? existing.timezone;
+  const timezone =
+    input.timezone === undefined ? existing.timezone : input.timezone;
   const cronExpression =
     input.cronExpression !== undefined
       ? input.cronExpression
@@ -41,10 +51,18 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
   if (!["one-time", "recurring", "interval"].includes(scheduleType)) {
     return errorResponse("Invalid schedule type", 400);
   }
+  if (!isValidTimezone(timezone)) {
+    return errorResponse("Invalid timezone", 400);
+  }
+  const optionsError = validateScheduleTemplateOptions(input);
+  if (optionsError) return errorResponse(optionsError, 400);
+  const commands =
+    input.commands !== undefined
+      ? normalizeScheduleTemplateCommands(input.commands)
+      : undefined;
   if (
     input.commands !== undefined &&
-    (!input.commands.length ||
-      input.commands.some((command) => !command.command?.trim()))
+    !commands
   ) {
     return errorResponse("At least one command is required", 400);
   }
@@ -62,14 +80,16 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
     (intervalSeconds === null ||
       intervalSeconds === undefined ||
       !Number.isInteger(intervalSeconds) ||
-      intervalSeconds < 60)
+      intervalSeconds < MIN_INTERVAL_SECONDS ||
+      intervalSeconds > MAX_INTERVAL_SECONDS)
   ) {
-    return errorResponse("Interval must be at least 60 seconds", 400);
+    return errorResponse("Interval must be between 1 minute and 30 days", 400);
   }
 
   const template = await updateScheduleTemplate(params!.id, userId, {
     ...input,
     ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+    ...(commands ? { commands } : {}),
   });
   return NextResponse.json(template);
 });

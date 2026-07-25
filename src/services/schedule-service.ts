@@ -21,6 +21,12 @@ import { Cron } from "croner";
 import { ScheduleServiceError } from "@/lib/errors";
 import * as TmuxService from "./tmux-service";
 import { createLogger } from "@/lib/logger";
+import {
+  isValidTimezone,
+  MAX_INTERVAL_SECONDS,
+  MIN_INTERVAL_SECONDS,
+} from "@/lib/schedule-validation";
+export { describeIntervalSchedule } from "@/lib/schedule-format";
 
 const log = createLogger("Schedule");
 import type {
@@ -101,30 +107,6 @@ export function calculateNextIntervalRun(
   return new Date(candidate <= now.getTime() ? candidate + intervalMs : candidate);
 }
 
-export function describeIntervalSchedule(
-  intervalSeconds: number,
-  anchorAt: Date,
-  timezone: string
-): string {
-  const units: Array<[number, string]> = [
-    [86_400, "day"],
-    [3_600, "hour"],
-    [60, "minute"],
-  ];
-  const [unitSeconds, unit] =
-    units.find(([seconds]) => intervalSeconds % seconds === 0) ?? units[2];
-  const count = intervalSeconds / unitSeconds;
-  const anchor = new Intl.DateTimeFormat(undefined, {
-    timeZone: timezone,
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(anchorAt);
-
-  return `Every ${count} ${unit}${count === 1 ? "" : "s"} from ${anchor}`;
-}
-
 /**
  * Get human-readable description of cron expression
  */
@@ -156,8 +138,13 @@ export async function createSchedule(
   userId: string,
   input: CreateScheduleInput
 ): Promise<SessionScheduleWithCommands> {
-  const timezone = input.timezone || "America/Los_Angeles";
+  const timezone =
+    input.timezone === undefined ? "America/Los_Angeles" : input.timezone;
   const scheduleType: ScheduleType = input.scheduleType || "one-time";
+
+  if (!isValidTimezone(timezone)) {
+    throw new ScheduleServiceError("Invalid timezone", "INVALID_TIMEZONE");
+  }
 
   // Validate based on schedule type
   let nextRunAt: Date | null = null;
@@ -207,10 +194,11 @@ export async function createSchedule(
       input.intervalSeconds === null ||
       input.intervalSeconds === undefined ||
       !Number.isInteger(input.intervalSeconds) ||
-      input.intervalSeconds < 60
+      input.intervalSeconds < MIN_INTERVAL_SECONDS ||
+      input.intervalSeconds > MAX_INTERVAL_SECONDS
     ) {
       throw new ScheduleServiceError(
-        "Interval must be at least 60 seconds",
+        "Interval must be between 1 minute and 30 days",
         "INVALID_INTERVAL_SECONDS"
       );
     }
@@ -418,13 +406,26 @@ export async function updateSchedule(
     );
   }
 
-  const scheduleType = updates.scheduleType ?? existing.scheduleType ?? "recurring";
+  const scheduleType =
+    updates.scheduleType ?? existing.scheduleType ?? "recurring";
+  const timezone =
+    updates.timezone === undefined ? existing.timezone : updates.timezone;
+  if (!isValidTimezone(timezone)) {
+    throw new ScheduleServiceError(
+      "Invalid timezone",
+      "INVALID_TIMEZONE",
+      scheduleId
+    );
+  }
 
   // Recalculate next run based on schedule type
   let nextRunAt: Date | null | undefined;
   let scheduledAt: Date | null | undefined;
   let intervalSeconds: number | null | undefined;
   let anchorAt: Date | null | undefined;
+  let cronExpression: string | null | undefined;
+  let enabled = updates.enabled;
+  let status = updates.status;
 
   if (scheduleType === "one-time") {
     if (updates.scheduledAt !== undefined || updates.scheduleType !== undefined) {
@@ -453,10 +454,11 @@ export async function updateSchedule(
         );
       }
       nextRunAt = scheduledAt;
-      if (updates.status === undefined) updates.status = "active";
-      if (updates.enabled === undefined) updates.enabled = true;
+      if (status === undefined) status = "active";
+      if (enabled === undefined) enabled = true;
     }
     if (updates.scheduleType !== undefined) {
+      cronExpression = null;
       intervalSeconds = null;
       anchorAt = null;
     }
@@ -475,15 +477,15 @@ export async function updateSchedule(
           scheduleId
         );
       }
-      const tz = updates.timezone ?? existing.timezone;
-      if (!validateCronExpression(cronExpr, tz)) {
+      if (!validateCronExpression(cronExpr, timezone)) {
         throw new ScheduleServiceError(
           "Invalid cron expression or timezone",
           "INVALID_CRON_EXPRESSION",
           scheduleId
         );
       }
-      nextRunAt = calculateNextRun(cronExpr, tz);
+      cronExpression = cronExpr;
+      nextRunAt = calculateNextRun(cronExpr, timezone);
     }
     if (updates.scheduleType !== undefined) {
       scheduledAt = null;
@@ -491,48 +493,68 @@ export async function updateSchedule(
       anchorAt = null;
     }
   } else {
-    const intervalValue =
-      updates.intervalSeconds !== undefined
-        ? updates.intervalSeconds
-        : existing.intervalSeconds;
-    if (
-      intervalValue === null ||
-      intervalValue === undefined ||
-      !Number.isInteger(intervalValue) ||
-      intervalValue < 60
-    ) {
-      throw new ScheduleServiceError(
-        "Interval must be at least 60 seconds",
-        "INVALID_INTERVAL_SECONDS",
-        scheduleId
-      );
-    }
-    const anchorValue =
-      updates.anchorAt !== undefined ? updates.anchorAt : existing.anchorAt;
-    if (!anchorValue) {
-      throw new ScheduleServiceError(
-        "Anchor time is required for interval schedules",
-        "ANCHOR_AT_REQUIRED",
-        scheduleId
-      );
-    }
-    anchorAt = new Date(anchorValue);
-    if (isNaN(anchorAt.getTime())) {
-      throw new ScheduleServiceError(
-        "Invalid anchor time format",
-        "INVALID_ANCHOR_AT",
-        scheduleId
-      );
-    }
-    intervalSeconds = intervalValue;
-    if (
+    const shouldRecomputeInterval =
       updates.intervalSeconds !== undefined ||
       updates.anchorAt !== undefined ||
-      updates.scheduleType !== undefined
-    ) {
+      updates.scheduleType !== undefined ||
+      updates.enabled === true;
+    if (shouldRecomputeInterval) {
+      const intervalValue =
+        updates.intervalSeconds !== undefined
+          ? updates.intervalSeconds
+          : existing.intervalSeconds;
+      if (
+        intervalValue === null ||
+        intervalValue === undefined ||
+        !Number.isInteger(intervalValue) ||
+        intervalValue < MIN_INTERVAL_SECONDS ||
+        intervalValue > MAX_INTERVAL_SECONDS
+      ) {
+        throw new ScheduleServiceError(
+          "Interval must be between 1 minute and 30 days",
+          "INVALID_INTERVAL_SECONDS",
+          scheduleId
+        );
+      }
+      const anchorValue =
+        updates.anchorAt !== undefined ? updates.anchorAt : existing.anchorAt;
+      if (!anchorValue) {
+        throw new ScheduleServiceError(
+          "Anchor time is required for interval schedules",
+          "ANCHOR_AT_REQUIRED",
+          scheduleId
+        );
+      }
+      anchorAt = new Date(anchorValue);
+      if (isNaN(anchorAt.getTime())) {
+        throw new ScheduleServiceError(
+          "Invalid anchor time format",
+          "INVALID_ANCHOR_AT",
+          scheduleId
+        );
+      }
+      intervalSeconds = intervalValue;
       nextRunAt = calculateNextIntervalRun(anchorAt, intervalSeconds);
     }
-    scheduledAt = null;
+    if (updates.scheduleType !== undefined) {
+      cronExpression = null;
+      scheduledAt = null;
+    }
+  }
+
+  const switchedToRepeating =
+    updates.scheduleType !== undefined &&
+    existing.scheduleType !== scheduleType &&
+    scheduleType !== "one-time" &&
+    nextRunAt !== undefined;
+  if (switchedToRepeating) {
+    if (
+      status === undefined &&
+      ["completed", "cancelled", "missed"].includes(existing.status)
+    ) {
+      status = "active";
+    }
+    if (enabled === undefined) enabled = true;
   }
 
   // Re-enabling a schedule whose status is a terminal marker re-arms it:
@@ -542,21 +564,42 @@ export async function updateSchedule(
   // "Missed" forever while croner actively fires it. An explicit status in
   // the same update always wins.
   if (
-    updates.enabled === true &&
-    updates.status === undefined &&
-    (existing.status === "cancelled" || existing.status === "missed")
+    enabled === true &&
+    status === undefined &&
+    (existing.status === "cancelled" ||
+      existing.status === "missed" ||
+      (scheduleType !== "one-time" && existing.status === "completed"))
   ) {
-    updates.status = "active";
+    status = "active";
   }
 
-  // Build update object
+  // Build the DB update from an explicit whitelist. Type-specific client
+  // fields are only written after validation and conversion above.
   const updateData: Record<string, unknown> = {
-    ...updates,
     updatedAt: new Date(),
   };
+  if (updates.name !== undefined) updateData.name = updates.name;
+  if (updates.scheduleType !== undefined) {
+    updateData.scheduleType = updates.scheduleType;
+  }
+  if (updates.timezone !== undefined) updateData.timezone = timezone;
+  if (enabled !== undefined) updateData.enabled = enabled;
+  if (status !== undefined) updateData.status = status;
+  if (updates.maxRetries !== undefined) {
+    updateData.maxRetries = updates.maxRetries;
+  }
+  if (updates.retryDelaySeconds !== undefined) {
+    updateData.retryDelaySeconds = updates.retryDelaySeconds;
+  }
+  if (updates.timeoutSeconds !== undefined) {
+    updateData.timeoutSeconds = updates.timeoutSeconds;
+  }
 
   if (nextRunAt !== undefined) {
     updateData.nextRunAt = nextRunAt;
+  }
+  if (cronExpression !== undefined) {
+    updateData.cronExpression = cronExpression;
   }
   if (scheduledAt !== undefined) {
     updateData.scheduledAt = scheduledAt;
@@ -569,7 +612,6 @@ export async function updateSchedule(
   }
   if (updates.scheduleType !== undefined) {
     if (scheduleType === "one-time") {
-      updateData.cronExpression = null;
       updateData.intervalSeconds = null;
       updateData.anchorAt = null;
     } else if (scheduleType === "recurring") {
@@ -577,7 +619,6 @@ export async function updateSchedule(
       updateData.intervalSeconds = null;
       updateData.anchorAt = null;
     } else {
-      updateData.cronExpression = null;
       updateData.scheduledAt = null;
     }
   }
@@ -597,12 +638,12 @@ export async function updateSchedule(
   // (a silent PATCH {enabled:false} previously left no info-level record).
   // Logged after the write so a failed update cannot leave a phantom
   // transition in the audit trail.
-  if (updates.enabled !== undefined) {
+  if (enabled !== undefined) {
     log.info("Schedule enabled-state transition", {
       scheduleId,
-      enabled: updates.enabled,
+      enabled,
       previousEnabled: existing.enabled,
-      status: updates.status ?? existing.status,
+      status: status ?? existing.status,
     });
   }
 
@@ -1275,7 +1316,8 @@ export async function markScheduleCancelled(scheduleId: string): Promise<number>
 }
 
 /**
- * Persist the scheduler's computed next fire time for a recurring schedule.
+ * Persist the scheduler's computed next fire time for a recurring or interval
+ * schedule.
  * Direct DB bookkeeping write: no notify loop, and updatedAt is left alone
  * so it keeps meaning "last config/state change".
  */

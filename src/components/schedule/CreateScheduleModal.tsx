@@ -115,6 +115,9 @@ export function CreateScheduleModal({
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
+  const [appliedTemplateId, setAppliedTemplateId] = useState<string | null>(
+    null
+  );
 
   // Reset form when modal opens
   const handleOpenChange = useCallback(
@@ -142,6 +145,7 @@ export function CreateScheduleModal({
         setRetryDelaySeconds(30);
         setTimeoutSeconds(300);
         setError(null);
+        setAppliedTemplateId(null);
       }
       if (!isOpen) {
         onClose();
@@ -287,7 +291,10 @@ export function CreateScheduleModal({
           retryDelaySeconds,
           timeoutSeconds,
         });
-      } else if (anchorDateTime) {
+      } else {
+        if (!anchorDateTime) {
+          throw new Error("Starting time is required for interval schedules");
+        }
         await createSchedule({
           sessionId: activeSession.id,
           name: name.trim(),
@@ -304,6 +311,9 @@ export function CreateScheduleModal({
         });
       }
 
+      if (appliedTemplateId) {
+        await recordUsage(appliedTemplateId);
+      }
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create schedule");
@@ -391,9 +401,11 @@ export function CreateScheduleModal({
       }))
     );
     if (template.scheduleType === "one-time") setScheduledDateTime(undefined);
-    if (template.scheduleType === "interval") setAnchorDateTime(undefined);
+    if (template.scheduleType === "interval") {
+      setAnchorDateTime(nextFiveMinuteBoundary());
+    }
     setError(null);
-    void recordUsage(template.id);
+    setAppliedTemplateId(template.id);
   };
 
   const templateSnapshot = {

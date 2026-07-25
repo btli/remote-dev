@@ -4,6 +4,11 @@ import * as ScheduleService from "@/services/schedule-service";
 import { notifyScheduleUpdated, notifyScheduleDeleted } from "@/lib/scheduler-client";
 import type { UpdateScheduleInput, ScheduleCommandInput } from "@/types/schedule";
 import { createLogger } from "@/lib/logger";
+import {
+  isValidTimezone,
+  MAX_INTERVAL_SECONDS,
+  MIN_INTERVAL_SECONDS,
+} from "@/lib/schedule-validation";
 
 const log = createLogger("api/schedules");
 
@@ -59,13 +64,20 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
       updates.intervalSeconds !== undefined &&
       updates.intervalSeconds !== null &&
       (!Number.isInteger(updates.intervalSeconds) ||
-        updates.intervalSeconds < 60)
+        updates.intervalSeconds < MIN_INTERVAL_SECONDS ||
+        updates.intervalSeconds > MAX_INTERVAL_SECONDS)
     ) {
       return errorResponse(
-        "Interval must be at least 60 seconds",
+        "Interval must be between 1 minute and 30 days",
         400,
         "INVALID_INTERVAL_SECONDS"
       );
+    }
+    if (
+      updates.timezone !== undefined &&
+      !isValidTimezone(updates.timezone)
+    ) {
+      return errorResponse("Invalid timezone", 400, "INVALID_TIMEZONE");
     }
     if (
       updates.anchorAt !== undefined &&
@@ -78,26 +90,6 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
         "INVALID_ANCHOR_AT"
       );
     }
-    if (updates.scheduleType === "interval") {
-      if (
-        updates.intervalSeconds === undefined ||
-        updates.intervalSeconds === null
-      ) {
-        return errorResponse(
-          "Interval is required for interval schedules",
-          400,
-          "INVALID_INTERVAL_SECONDS"
-        );
-      }
-      if (updates.anchorAt === undefined || updates.anchorAt === null) {
-        return errorResponse(
-          "Anchor time is required for interval schedules",
-          400,
-          "ANCHOR_AT_REQUIRED"
-        );
-      }
-    }
-
     // Update schedule metadata if provided
     // If no updates, still validate ownership/existence to prevent blind command updates
     if (Object.keys(updates).length > 0) {

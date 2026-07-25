@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { cn } from "@/lib/utils";
+import { describeIntervalSchedule } from "@/lib/schedule-format";
 import { useTaskContext } from "@/contexts/TaskContext";
 import { useScheduleContext } from "@/contexts/ScheduleContext";
 import { useSessionContext } from "@/contexts/SessionContext";
@@ -545,33 +546,6 @@ function formatNextRun(date: Date | null): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function formatInterval(schedule: SessionScheduleWithSession): string | null {
-  if (
-    schedule.scheduleType !== "interval" ||
-    !schedule.intervalSeconds ||
-    !schedule.anchorAt
-  ) {
-    return null;
-  }
-  const choices: Array<[number, string]> = [
-    [86_400, "day"],
-    [3_600, "hour"],
-    [60, "minute"],
-  ];
-  const [unitSeconds, unit] =
-    choices.find(([seconds]) => schedule.intervalSeconds! % seconds === 0) ??
-    choices[2];
-  const count = schedule.intervalSeconds / unitSeconds;
-  const anchor = new Intl.DateTimeFormat(undefined, {
-    timeZone: schedule.timezone,
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(schedule.anchorAt));
-  return `Every ${count} ${unit}${count === 1 ? "" : "s"} from ${anchor}`;
-}
-
 interface ScheduleItemProps {
   schedule: SessionScheduleWithSession;
   onEdit: () => void;
@@ -623,7 +597,16 @@ function ScheduleItem({ schedule, onEdit, onDelete, onToggle, onRunNow, isRunnin
       : isOneTime
         ? Calendar
         : Repeat;
-  const intervalDescription = formatInterval(schedule);
+  const intervalDescription =
+    schedule.scheduleType === "interval" &&
+    schedule.intervalSeconds &&
+    schedule.anchorAt
+      ? describeIntervalSchedule(
+          schedule.intervalSeconds,
+          new Date(schedule.anchorAt),
+          schedule.timezone
+        )
+      : null;
 
   return (
     <div className="group px-2 py-1.5 rounded-md transition-all duration-150 hover:bg-accent/50">

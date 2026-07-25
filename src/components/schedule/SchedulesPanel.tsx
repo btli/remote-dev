@@ -9,6 +9,7 @@
 
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { cn } from "@/lib/utils";
+import { describeIntervalSchedule } from "@/lib/schedule-format";
 import { useScheduleContext } from "@/contexts/ScheduleContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useScheduleTemplateContext } from "@/contexts/ScheduleTemplateContext";
@@ -63,33 +64,6 @@ function formatNextRun(date: Date | null): string {
   if (diff < 3600000) return `${Math.floor(diff / 60000)} min`;
   if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-function formatInterval(schedule: SessionScheduleWithSession): string | null {
-  if (
-    schedule.scheduleType !== "interval" ||
-    !schedule.intervalSeconds ||
-    !schedule.anchorAt
-  ) {
-    return null;
-  }
-  const choices: Array<[number, string]> = [
-    [86_400, "day"],
-    [3_600, "hour"],
-    [60, "minute"],
-  ];
-  const [unitSeconds, unit] =
-    choices.find(([seconds]) => schedule.intervalSeconds! % seconds === 0) ??
-    choices[2];
-  const count = schedule.intervalSeconds / unitSeconds;
-  const anchor = new Intl.DateTimeFormat(undefined, {
-    timeZone: schedule.timezone,
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(schedule.anchorAt));
-  return `Every ${count} ${unit}${count === 1 ? "" : "s"} from ${anchor}`;
 }
 
 function getScheduleStatusColor(
@@ -167,7 +141,16 @@ function ScheduleItem({
       : isOneTime
         ? Calendar
         : Repeat;
-  const intervalDescription = formatInterval(schedule);
+  const intervalDescription =
+    schedule.scheduleType === "interval" &&
+    schedule.intervalSeconds &&
+    schedule.anchorAt
+      ? describeIntervalSchedule(
+          schedule.intervalSeconds,
+          new Date(schedule.anchorAt),
+          schedule.timezone
+        )
+      : null;
 
   return (
     <div className="group px-2 py-1.5 rounded-md transition-all duration-150 hover:bg-accent/50">
@@ -241,6 +224,7 @@ function ScheduleItem({
 interface DeleteScheduleDialogProps {
   open: boolean;
   scheduleName: string;
+  itemType?: "Schedule" | "Template";
   onConfirm: () => Promise<void>;
   onClose: () => void;
 }
@@ -248,6 +232,7 @@ interface DeleteScheduleDialogProps {
 function DeleteScheduleDialog({
   open,
   scheduleName,
+  itemType = "Schedule",
   onConfirm,
   onClose,
 }: DeleteScheduleDialogProps) {
@@ -268,10 +253,10 @@ function DeleteScheduleDialog({
       <AlertDialogContent className="max-w-sm">
         <AlertDialogHeader>
           <AlertDialogTitle className="text-sm">
-            Delete Schedule
+            Delete {itemType}
           </AlertDialogTitle>
           <AlertDialogDescription className="text-xs">
-            Are you sure you want to delete{" "}
+            Are you sure you want to delete the {itemType.toLowerCase()}{" "}
             <span className="text-foreground font-medium">
               &quot;{scheduleName}&quot;
             </span>
@@ -345,6 +330,10 @@ export function SchedulesPanel({
     null
   );
   const [templateName, setTemplateName] = useState("");
+  const [deleteTemplateTarget, setDeleteTemplateTarget] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
 
   // Open CreateScheduleModal when triggered from session context menu
   useEffect(() => {
@@ -506,7 +495,12 @@ export function SchedulesPanel({
                           <Pencil className="h-3 w-3" />
                         </button>
                         <button
-                          onClick={() => void deleteTemplate(template.id)}
+                          onClick={() =>
+                            setDeleteTemplateTarget({
+                              id: template.id,
+                              name: template.name,
+                            })
+                          }
                           className="opacity-0 text-muted-foreground transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
                           aria-label={`Delete ${template.name}`}
                         >
@@ -555,6 +549,19 @@ export function SchedulesPanel({
           scheduleName={deleteTarget.name}
           onConfirm={() => deleteSchedule(deleteTarget.id)}
           onClose={() => setDeleteTarget(null)}
+        />
+      )}
+
+      {/* Delete Template Confirmation */}
+      {deleteTemplateTarget && (
+        <DeleteScheduleDialog
+          open
+          scheduleName={deleteTemplateTarget.name}
+          itemType="Template"
+          onConfirm={async () => {
+            await deleteTemplate(deleteTemplateTarget.id);
+          }}
+          onClose={() => setDeleteTemplateTarget(null)}
         />
       )}
     </>
