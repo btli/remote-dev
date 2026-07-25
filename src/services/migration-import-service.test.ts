@@ -64,7 +64,12 @@ import {
   triggerConfigs,
   channels,
 } from "@/db/schema";
-import type { BundleManifest, DbBundle, MigrationOptions } from "@/lib/migration-bundle";
+import {
+  dbBundleSchema,
+  type BundleManifest,
+  type DbBundle,
+  type MigrationOptions,
+} from "@/lib/migration-bundle";
 
 const DEST_USER = "dest-user-1";
 const JOB_ID = "11111111-2222-4333-8444-555555555555";
@@ -290,6 +295,22 @@ function makeBundle(): DbBundle {
     ],
     agentSchedules: [
       {
+        name: "nightly",
+        agentProvider: "claude",
+        agentFlags: "[]",
+        prompt: "run nightly checks",
+        worktreeType: null,
+        baseBranch: null,
+        scheduleType: "recurring",
+        cronExpression: "0 2 * * *",
+        scheduledAt: null,
+        intervalSeconds: null,
+        anchorAt: null,
+        timezone: "UTC",
+        maxRetries: 0,
+        enabled: true,
+      },
+      {
         name: "every-hour",
         agentProvider: "claude",
         agentFlags: "[]",
@@ -374,16 +395,37 @@ describe("MigrationImportService", () => {
     expect(channel?.groupId).toBe(result.idRemaps[G1]);
 
     // Schedules: force-disabled + paused, no next run (no double cron firing).
-    const [schedule] = await handle.db
+    const schedules = await handle.db
       .select()
       .from(agentSchedules)
       .where(eq(agentSchedules.projectId, SRC_PROJECT));
-    expect(schedule.enabled).toBe(false);
-    expect(schedule.status).toBe("paused");
-    expect(schedule.nextRunAt).toBeNull();
-    expect(schedule.scheduleType).toBe("interval");
-    expect(schedule.intervalSeconds).toBe(3600);
-    expect(schedule.anchorAt?.getTime()).toBe(NOW);
+    expect(schedules).toHaveLength(2);
+    expect(
+      schedules.every(
+        (schedule) =>
+          !schedule.enabled &&
+          schedule.status === "paused" &&
+          schedule.nextRunAt === null,
+      ),
+    ).toBe(true);
+    const recurring = schedules.find((schedule) => schedule.name === "nightly");
+    expect(recurring).toMatchObject({
+      scheduleType: "recurring",
+      cronExpression: "0 2 * * *",
+      scheduledAt: null,
+      intervalSeconds: null,
+      anchorAt: null,
+    });
+    const interval = schedules.find(
+      (schedule) => schedule.name === "every-hour",
+    );
+    expect(interval).toMatchObject({
+      scheduleType: "interval",
+      cronExpression: null,
+      scheduledAt: null,
+      intervalSeconds: 3600,
+    });
+    expect(interval?.anchorAt?.getTime()).toBe(NOW);
     expect(result.conflicts.some((c) => c.type === "schedule_disabled")).toBe(true);
 
     // Triggers: force-disabled pending review.
@@ -450,8 +492,54 @@ describe("MigrationImportService", () => {
       agentConfigs: 1,
       projectSecrets: 1,
       profiles: 1,
-      agentSchedules: 1,
+      agentSchedules: 2,
       triggerConfigs: 1,
+    });
+  });
+
+  it("accepts and imports a pre-interval v1 bundle with null timing fields", async () => {
+    const bundle = makeBundle();
+    bundle.agentSchedules = [
+      {
+        name: "legacy-nightly",
+        agentProvider: "claude",
+        agentFlags: "[]",
+        prompt: "run legacy checks",
+        worktreeType: null,
+        baseBranch: null,
+        scheduleType: "recurring",
+        cronExpression: "0 2 * * *",
+        scheduledAt: null,
+        timezone: "UTC",
+        maxRetries: 0,
+        enabled: true,
+      },
+    ];
+
+    const parsed = dbBundleSchema.safeParse(
+      JSON.parse(JSON.stringify(bundle)),
+    );
+    expect(
+      parsed.success,
+      JSON.stringify(parsed.success ? null : parsed.error.issues),
+    ).toBe(true);
+    if (!parsed.success) throw parsed.error;
+
+    await initAndImport(parsed.data);
+
+    const [schedule] = await handle.db
+      .select()
+      .from(agentSchedules)
+      .where(eq(agentSchedules.projectId, SRC_PROJECT));
+    expect(schedule).toMatchObject({
+      name: "legacy-nightly",
+      scheduleType: "recurring",
+      cronExpression: "0 2 * * *",
+      intervalSeconds: null,
+      anchorAt: null,
+      nextRunAt: null,
+      enabled: false,
+      status: "paused",
     });
   });
 

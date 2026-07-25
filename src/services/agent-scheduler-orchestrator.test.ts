@@ -50,6 +50,7 @@ interface SeedScheduleOptions {
   intervalSeconds: number;
   anchorAt: Date;
   nextRunAt?: Date | null;
+  timezone?: string;
 }
 
 async function seedSchedule(opts: SeedScheduleOptions): Promise<void> {
@@ -66,7 +67,7 @@ async function seedSchedule(opts: SeedScheduleOptions): Promise<void> {
     scheduledAt: null,
     intervalSeconds: opts.intervalSeconds,
     anchorAt: opts.anchorAt,
-    timezone: "UTC",
+    timezone: opts.timezone ?? "UTC",
     enabled: true,
     status: "active",
     nextRunAt: opts.nextRunAt ?? null,
@@ -158,6 +159,25 @@ describe("AgentSchedulerOrchestrator interval registration", () => {
     expect(agentSchedulerOrchestrator.getJobCount()).toBe(1);
   });
 
+  it("contains interval registration errors when addJob receives a malformed row", async () => {
+    await agentSchedulerOrchestrator.start();
+    await seedSchedule({
+      id: "invalid-timezone",
+      intervalSeconds: 300,
+      anchorAt: new Date(),
+      timezone: "Mars/Olympus_Mons",
+    });
+
+    await expect(
+      agentSchedulerOrchestrator.addJob("invalid-timezone"),
+    ).resolves.toBeUndefined();
+    expect(mockedLog.error).toHaveBeenCalledWith(
+      "Failed to create agent cron job",
+      expect.objectContaining({ scheduleId: "invalid-timezone" }),
+    );
+    expect(agentSchedulerOrchestrator.getJobCount()).toBe(0);
+  });
+
   it("executes and re-arms an interval whose fire passes during registration", async () => {
     const anchorAt = new Date(Date.now() - 60_000);
     await seedSchedule({
@@ -203,5 +223,7 @@ describe("AgentSchedulerOrchestrator interval registration", () => {
       "Interval fire passed during registration; executing immediately",
       expect.objectContaining({ scheduleId: "slipped-interval" }),
     );
+    calculateNextIntervalRun.mockRestore();
+    persistNextRunAt.mockRestore();
   });
 });

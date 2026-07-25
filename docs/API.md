@@ -1689,6 +1689,11 @@ from 60 through 2,592,000) and `anchorAt` (an ISO datetime). Interval cadence is
 an absolute duration from the anchor: missed occurrences are skipped and
 daylight-saving changes do not shift the fire time.
 
+For `PATCH /api/agent-schedules/:id`, an explicit `cronExpression: null` keeps
+the schedule's existing cron expression; it does not clear it. An explicit
+`timezone: null` or `timezone: ""` is invalid and returns `400` with code
+`INVALID_TIMEZONE`.
+
 An agent run creates a fresh `terminalType:"agent"` session and delivers a
 prompt — distinct from the keystroke-only `/api/schedules`. State machine:
 `pending→running→completed|failed` (+`superseded`).

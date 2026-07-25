@@ -87,6 +87,12 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
         error: String(err),
       }),
     );
+    log.info("Agent schedule updated", {
+      scheduleId: id,
+      userId,
+      changedFields: Object.keys(updates),
+      ...(updates.enabled !== undefined ? { enabled: updates.enabled } : {}),
+    });
     return NextResponse.json(updated);
   } catch (error) {
     if (error instanceof AgentScheduleService.AgentScheduleServiceError) {

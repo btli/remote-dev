@@ -401,15 +401,21 @@ export async function updateAgentSchedule(
     scheduleType !== "one-time" &&
     nextRunAt !== undefined;
   if (switchedToRepeating) {
-    if (existing.status === "completed") status = "active";
+    if (
+      ["completed", "cancelled", "missed", "paused"].includes(existing.status)
+    ) {
+      status = "active";
+    }
     if (enabled === undefined) enabled = true;
   }
 
   if (
     enabled === true &&
     status === undefined &&
-    scheduleType !== "one-time" &&
-    existing.status === "completed"
+    (existing.status === "paused" ||
+      existing.status === "cancelled" ||
+      existing.status === "missed" ||
+      (scheduleType !== "one-time" && existing.status === "completed"))
   ) {
     status = "active";
   }
@@ -452,6 +458,16 @@ export async function updateAgentSchedule(
     .set(set)
     .where(and(eq(agentSchedules.id, id), eq(agentSchedules.userId, userId)))
     .returning();
+
+  if (enabled !== undefined) {
+    log.info("Agent schedule enabled-state transition", {
+      scheduleId: id,
+      enabled,
+      previousEnabled: existing.enabled,
+      status: status ?? existing.status,
+    });
+  }
+
   return row ?? null;
 }
 
@@ -489,8 +505,10 @@ export async function markScheduleFired(id: string): Promise<void> {
       now,
     );
   } else if (row.scheduleType === "one-time") {
-    set.status = "completed" as ScheduleStatus;
+    set.status = "completed";
     set.enabled = false;
+    set.nextRunAt = null;
+  } else {
     set.nextRunAt = null;
   }
   await db.update(agentSchedules).set(set).where(eq(agentSchedules.id, id));

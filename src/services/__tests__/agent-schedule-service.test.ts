@@ -374,6 +374,98 @@ describe("interval agent schedules", () => {
     });
   });
 
+  it("switches recurring to one-time and clears recurring fields", async () => {
+    const recurring = await createAgentSchedule(USER, {
+      projectId: PROJECT,
+      name: "Recurring to one-time",
+      prompt: "p",
+      scheduleType: "recurring",
+      cronExpression: "0 * * * *",
+      timezone: "UTC",
+    });
+    const previousNextRunAt = recurring.nextRunAt!.getTime();
+    const scheduledAt = new Date(Date.now() + 3_600_000);
+
+    const updated = await updateAgentSchedule(USER, recurring.id, {
+      scheduleType: "one-time",
+      scheduledAt,
+    });
+
+    expect(updated).toMatchObject({
+      scheduleType: "one-time",
+      cronExpression: null,
+      intervalSeconds: null,
+      anchorAt: null,
+    });
+    expect(updated!.scheduledAt?.getTime()).toBe(scheduledAt.getTime());
+    expect(updated!.nextRunAt?.getTime()).toBe(scheduledAt.getTime());
+    expect(updated!.nextRunAt?.getTime()).not.toBe(previousNextRunAt);
+  });
+
+  it("switches a completed one-time schedule to interval and re-arms it", async () => {
+    const oneTime = await createAgentSchedule(USER, {
+      projectId: PROJECT,
+      name: "One-time to interval",
+      prompt: "p",
+      scheduleType: "one-time",
+      scheduledAt: new Date(Date.now() + 3_600_000),
+      timezone: "UTC",
+    });
+    await handle.db
+      .update(agentSchedules)
+      .set({ enabled: false, status: "completed", nextRunAt: null })
+      .where(eq(agentSchedules.id, oneTime.id));
+    const anchorAt = new Date(Date.now() - 3_600_000);
+
+    const updated = await updateAgentSchedule(USER, oneTime.id, {
+      scheduleType: "interval",
+      intervalSeconds: 900,
+      anchorAt,
+    });
+
+    expect(updated).toMatchObject({
+      scheduleType: "interval",
+      cronExpression: null,
+      scheduledAt: null,
+      intervalSeconds: 900,
+      enabled: true,
+      status: "active",
+    });
+    expect(updated!.anchorAt?.getTime()).toBe(anchorAt.getTime());
+    expect(updated!.nextRunAt?.getTime()).toBe(
+      calculateNextIntervalRun(anchorAt, 900).getTime(),
+    );
+  });
+
+  it("switches interval to recurring and clears interval fields", async () => {
+    const interval = await createAgentSchedule(USER, {
+      projectId: PROJECT,
+      name: "Interval to recurring",
+      prompt: "p",
+      scheduleType: "interval",
+      intervalSeconds: 300,
+      anchorAt: new Date(),
+      timezone: "UTC",
+    });
+    const previousNextRunAt = interval.nextRunAt!.getTime();
+
+    const updated = await updateAgentSchedule(USER, interval.id, {
+      scheduleType: "recurring",
+      cronExpression: "0 2 * * *",
+    });
+
+    expect(updated).toMatchObject({
+      scheduleType: "recurring",
+      cronExpression: "0 2 * * *",
+      scheduledAt: null,
+      intervalSeconds: null,
+      anchorAt: null,
+    });
+    expect(updated!.nextRunAt).toBeInstanceOf(Date);
+    expect(updated!.nextRunAt!.getTime()).toBeGreaterThan(Date.now());
+    expect(updated!.nextRunAt!.getTime()).not.toBe(previousNextRunAt);
+  });
+
   it("never persists cross-type timing fields or raw timestamp strings", async () => {
     const recurring = await createAgentSchedule(USER, {
       projectId: PROJECT,
@@ -419,6 +511,46 @@ describe("interval agent schedules", () => {
     expect(row.nextRunAt!.getTime()).toBeGreaterThan(Date.now());
   });
 
+  it.each([
+    {
+      id: "malformed-recurring",
+      scheduleType: "recurring" as const,
+      cronExpression: null,
+      intervalSeconds: null,
+      anchorAt: null,
+    },
+    {
+      id: "malformed-interval",
+      scheduleType: "interval" as const,
+      cronExpression: null,
+      intervalSeconds: 300,
+      anchorAt: null,
+    },
+  ])(
+    "clears stale nextRunAt after firing malformed $scheduleType rows",
+    async (timing) => {
+      await handle.db.insert(agentSchedules).values({
+        id: timing.id,
+        userId: USER,
+        projectId: PROJECT,
+        name: timing.id,
+        prompt: "p",
+        scheduleType: timing.scheduleType,
+        cronExpression: timing.cronExpression,
+        intervalSeconds: timing.intervalSeconds,
+        anchorAt: timing.anchorAt,
+        timezone: "UTC",
+        nextRunAt: new Date(Date.now() - 60_000),
+      });
+
+      await markScheduleFired(timing.id);
+
+      const row = await getScheduleRow(timing.id);
+      expect(row.lastRunAt).toBeInstanceOf(Date);
+      expect(row.nextRunAt).toBeNull();
+    },
+  );
+
   it("recomputes nextRunAt when re-enabling an interval row", async () => {
     const anchorAt = new Date(Date.now() - 3_600_000);
     const created = await createAgentSchedule(USER, {
@@ -435,7 +567,7 @@ describe("interval agent schedules", () => {
       .update(agentSchedules)
       .set({
         nextRunAt: new Date(Date.now() - 60_000),
-        status: "completed",
+        status: "paused",
       })
       .where(eq(agentSchedules.id, created.id));
 

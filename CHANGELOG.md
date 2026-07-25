@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Agent schedule PATCH validation is now strict and consistent across schedule types: `cronExpression: null` keeps the existing cron expression instead of clearing it, while `timezone: null` or an empty string returns `400 INVALID_TIMEZONE` instead of falling back to the default timezone.
+
 ### Added
 
 - **Interval agent schedules:** API-only scheduled real-agent launches now support absolute-duration intervals from 60 seconds through 30 days, anchor-aligned and DST-independent. Missed occurrences are skipped, interval schedules re-arm after each launch, and interval timing survives project migration export/import.

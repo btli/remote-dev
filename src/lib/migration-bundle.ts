@@ -285,8 +285,10 @@ export interface BundleAgentSchedule {
   scheduleType: string;
   cronExpression: string | null;
   scheduledAt: number | null;
-  intervalSeconds: number | null;
-  anchorAt: number | null;
+  /** Optional for backward compatibility with pre-interval v1 bundles. */
+  intervalSeconds?: number | null;
+  /** Optional for backward compatibility with pre-interval v1 bundles. */
+  anchorAt?: number | null;
   timezone: string;
   maxRetries: number;
   /** Source enabled state (imports are force-disabled to prevent double-firing). */
@@ -599,8 +601,8 @@ export const dbBundleSchema: z.ZodType<DbBundle> = z.object({
       scheduleType: z.string(),
       cronExpression: z.string().nullable(),
       scheduledAt: msTimestamp.nullable(),
-      intervalSeconds: z.number().int().nullable(),
-      anchorAt: msTimestamp.nullable(),
+      intervalSeconds: z.number().int().nullable().optional(),
+      anchorAt: msTimestamp.nullable().optional(),
       timezone: z.string(),
       maxRetries: z.number().int(),
       enabled: z.boolean(),

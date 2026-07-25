@@ -101,76 +101,79 @@ class AgentSchedulerOrchestrator {
     }
     this.removeJobInternal(schedule.id);
 
-    let cronPattern: string | Date;
-    let label: string;
-    if (schedule.scheduleType === "one-time") {
-      if (!schedule.scheduledAt) {
-        log.error("One-time agent schedule has no scheduledAt", {
-          scheduleId: schedule.id,
-        });
-        return;
-      }
-      if (schedule.scheduledAt <= new Date()) {
-        log.warn("One-time agent schedule is in the past", {
-          scheduleId: schedule.id,
-        });
-        return;
-      }
-      cronPattern = schedule.scheduledAt;
-      label = `one-time at ${schedule.scheduledAt.toISOString()}`;
-    } else if (schedule.scheduleType === "recurring") {
-      if (!schedule.cronExpression) {
-        log.error("Recurring agent schedule has no cronExpression", {
-          scheduleId: schedule.id,
-        });
-        return;
-      }
-      cronPattern = schedule.cronExpression;
-      label = `"${schedule.cronExpression}"`;
-    } else {
-      if (!schedule.anchorAt || !schedule.intervalSeconds) {
-        log.error("Interval agent schedule is missing its interval or anchor", {
-          scheduleId: schedule.id,
-        });
-        return;
-      }
-      const now = new Date();
-      const intervalCalculationTime =
-        completedIntervalFireAt &&
-        completedIntervalFireAt.getTime() > now.getTime()
-          ? completedIntervalFireAt
-          : now;
-      const nextIntervalRun =
-        AgentScheduleService.calculateNextIntervalRun(
-          schedule.anchorAt,
-          schedule.intervalSeconds,
-          intervalCalculationTime,
-        );
-      cronPattern = nextIntervalRun;
-      label = AgentScheduleService.describeIntervalSchedule(
-        schedule.intervalSeconds,
-        schedule.anchorAt,
-        schedule.timezone,
-      );
-      if (schedule.nextRunAt?.getTime() !== nextIntervalRun.getTime()) {
-        try {
-          await AgentScheduleService.persistNextRunAt(
-            schedule.id,
-            nextIntervalRun,
-          );
-        } catch (error) {
+    try {
+      let cronPattern: string | Date;
+      let label: string;
+      if (schedule.scheduleType === "one-time") {
+        if (!schedule.scheduledAt) {
+          log.error("One-time agent schedule has no scheduledAt", {
+            scheduleId: schedule.id,
+          });
+          return;
+        }
+        if (schedule.scheduledAt <= new Date()) {
+          log.warn("One-time agent schedule is in the past", {
+            scheduleId: schedule.id,
+          });
+          return;
+        }
+        cronPattern = schedule.scheduledAt;
+        label = `one-time at ${schedule.scheduledAt.toISOString()}`;
+      } else if (schedule.scheduleType === "recurring") {
+        if (!schedule.cronExpression) {
+          log.error("Recurring agent schedule has no cronExpression", {
+            scheduleId: schedule.id,
+          });
+          return;
+        }
+        cronPattern = schedule.cronExpression;
+        label = `"${schedule.cronExpression}"`;
+      } else {
+        if (!schedule.anchorAt || !schedule.intervalSeconds) {
           log.error(
-            "Failed to persist agent interval nextRunAt at registration",
+            "Interval agent schedule is missing its interval or anchor",
             {
               scheduleId: schedule.id,
-              error: String(error),
             },
           );
+          return;
+        }
+        const now = new Date();
+        const intervalCalculationTime =
+          completedIntervalFireAt &&
+          completedIntervalFireAt.getTime() > now.getTime()
+            ? completedIntervalFireAt
+            : now;
+        const nextIntervalRun =
+          AgentScheduleService.calculateNextIntervalRun(
+            schedule.anchorAt,
+            schedule.intervalSeconds,
+            intervalCalculationTime,
+          );
+        cronPattern = nextIntervalRun;
+        label = AgentScheduleService.describeIntervalSchedule(
+          schedule.intervalSeconds,
+          schedule.anchorAt,
+          schedule.timezone,
+        );
+        if (schedule.nextRunAt?.getTime() !== nextIntervalRun.getTime()) {
+          try {
+            await AgentScheduleService.persistNextRunAt(
+              schedule.id,
+              nextIntervalRun,
+            );
+          } catch (error) {
+            log.error(
+              "Failed to persist agent interval nextRunAt at registration",
+              {
+                scheduleId: schedule.id,
+                error: String(error),
+              },
+            );
+          }
         }
       }
-    }
 
-    try {
       // stop() may have run while registration awaited DB/bookkeeping work.
       // Re-check immediately before constructing the Cron so it cannot leak.
       if (!this.isRunning) return;
@@ -349,9 +352,22 @@ class AgentSchedulerOrchestrator {
       });
       return;
     }
-    const schedules = await AgentScheduleService.getEnabledAgentSchedules();
-    const schedule = schedules.find((s) => s.id === scheduleId);
-    if (schedule) await this.registerSchedule(schedule);
+    try {
+      const schedules = await AgentScheduleService.getEnabledAgentSchedules();
+      const schedule = schedules.find((s) => s.id === scheduleId);
+      if (schedule) {
+        await this.registerSchedule(schedule);
+      } else {
+        log.warn("Agent schedule not registered: disabled or not found", {
+          scheduleId,
+        });
+      }
+    } catch (error) {
+      log.error("Failed to add agent job", {
+        scheduleId,
+        error: String(error),
+      });
+    }
   }
 
   removeJob(scheduleId: string): void {

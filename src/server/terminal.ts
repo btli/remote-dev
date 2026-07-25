@@ -2711,6 +2711,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
           sendJson(res, 200, {
             running: agentSchedulerOrchestrator.isStarted(),
             jobCount: agentSchedulerOrchestrator.getJobCount(),
+            jobs: agentSchedulerOrchestrator.getStatus(),
           });
           break;
         default:
