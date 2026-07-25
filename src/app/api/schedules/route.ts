@@ -4,11 +4,7 @@ import * as ScheduleService from "@/services/schedule-service";
 import { notifyScheduleCreated } from "@/lib/scheduler-client";
 import type { CreateScheduleInput } from "@/types/schedule";
 import { createLogger } from "@/lib/logger";
-import {
-  isValidTimezone,
-  MAX_INTERVAL_SECONDS,
-  MIN_INTERVAL_SECONDS,
-} from "@/lib/schedule-validation";
+import { isValidIntervalSeconds, isValidTimezone } from "@/lib/schedule-validation";
 
 const log = createLogger("api/schedules");
 
@@ -73,13 +69,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
         return errorResponse("Scheduled time must be in the future", 400, "SCHEDULED_AT_IN_PAST");
       }
     } else {
-      if (
-        input.intervalSeconds === null ||
-        input.intervalSeconds === undefined ||
-        !Number.isInteger(input.intervalSeconds) ||
-        input.intervalSeconds < MIN_INTERVAL_SECONDS ||
-        input.intervalSeconds > MAX_INTERVAL_SECONDS
-      ) {
+      if (!isValidIntervalSeconds(input.intervalSeconds)) {
         return errorResponse(
           "Interval must be between 1 minute and 30 days",
           400,

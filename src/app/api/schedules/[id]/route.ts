@@ -4,11 +4,7 @@ import * as ScheduleService from "@/services/schedule-service";
 import { notifyScheduleUpdated, notifyScheduleDeleted } from "@/lib/scheduler-client";
 import type { UpdateScheduleInput, ScheduleCommandInput } from "@/types/schedule";
 import { createLogger } from "@/lib/logger";
-import {
-  isValidTimezone,
-  MAX_INTERVAL_SECONDS,
-  MIN_INTERVAL_SECONDS,
-} from "@/lib/schedule-validation";
+import { isValidIntervalSeconds, isValidTimezone } from "@/lib/schedule-validation";
 
 const log = createLogger("api/schedules");
 
@@ -63,9 +59,7 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
     if (
       updates.intervalSeconds !== undefined &&
       updates.intervalSeconds !== null &&
-      (!Number.isInteger(updates.intervalSeconds) ||
-        updates.intervalSeconds < MIN_INTERVAL_SECONDS ||
-        updates.intervalSeconds > MAX_INTERVAL_SECONDS)
+      !isValidIntervalSeconds(updates.intervalSeconds)
     ) {
       return errorResponse(
         "Interval must be between 1 minute and 30 days",

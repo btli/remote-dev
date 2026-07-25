@@ -41,6 +41,14 @@ import { CRON_PRESETS, TIMEZONE_OPTIONS, type ScheduleCommandInput, type Schedul
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DateTimePicker } from "@/components/ui/date-time-picker";
 import { SaveScheduleTemplateDialog } from "./SaveScheduleTemplateDialog";
+import {
+  buildTemplateSnapshot,
+  INTERVAL_UNIT_SECONDS,
+  IntervalScheduleFields,
+  intervalFormError,
+  splitInterval,
+  type IntervalUnit,
+} from "./schedule-form-shared";
 
 interface EditScheduleModalProps {
   open: boolean;
@@ -50,20 +58,6 @@ interface EditScheduleModalProps {
 
 interface CommandRow extends ScheduleCommandInput {
   id: string;
-}
-
-type IntervalUnit = "minutes" | "hours" | "days";
-
-const INTERVAL_UNIT_SECONDS: Record<IntervalUnit, number> = {
-  minutes: 60,
-  hours: 3_600,
-  days: 86_400,
-};
-
-function splitInterval(seconds: number): { value: number; unit: IntervalUnit } {
-  if (seconds % 86_400 === 0) return { value: seconds / 86_400, unit: "days" };
-  if (seconds % 3_600 === 0) return { value: seconds / 3_600, unit: "hours" };
-  return { value: Math.max(1, seconds / 60), unit: "minutes" };
 }
 
 export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleModalProps) {
@@ -227,18 +221,9 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
         return false;
       }
     } else {
-      const intervalSeconds = intervalValue * INTERVAL_UNIT_SECONDS[intervalUnit];
-      if (
-        !Number.isFinite(intervalValue) ||
-        !Number.isInteger(intervalSeconds) ||
-        intervalValue < 1 ||
-        intervalSeconds > 30 * 86_400
-      ) {
-        setError("Interval must be between 1 minute and 30 days");
-        return false;
-      }
-      if (!anchorDateTime || isNaN(anchorDateTime.getTime())) {
-        setError("Starting time is required for interval schedules");
+      const intervalError = intervalFormError(intervalValue, intervalUnit, anchorDateTime);
+      if (intervalError) {
+        setError(intervalError);
         return false;
       }
     }
@@ -313,26 +298,17 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
     }
   };
 
-  const templateSnapshot = {
+  const templateSnapshot = buildTemplateSnapshot({
     scheduleType,
-    cronExpression: scheduleType === "recurring" ? cronExpression.trim() : null,
-    intervalSeconds:
-      scheduleType === "interval"
-        ? intervalValue * INTERVAL_UNIT_SECONDS[intervalUnit]
-        : null,
+    cronExpression,
+    intervalValue,
+    intervalUnit,
     timezone,
     maxRetries,
     retryDelaySeconds,
     timeoutSeconds,
-    commands: commands
-      .filter((command) => command.command.trim())
-      .map((command, order) => ({
-        command: command.command.trim(),
-        order,
-        delayBeforeSeconds: command.delayBeforeSeconds ?? 0,
-        continueOnError: command.continueOnError ?? false,
-      })),
-  };
+    commands,
+  });
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
@@ -466,57 +442,14 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
                 )}
 
                 {scheduleType === "interval" && (
-                  <div className="space-y-3">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">
-                        Every N
-                      </Label>
-                      <div className="grid grid-cols-[1fr_120px] gap-2">
-                        <Input
-                          type="number"
-                          step={1}
-                          min={1}
-                          max={
-                            intervalUnit === "days"
-                              ? 30
-                              : intervalUnit === "hours"
-                                ? 720
-                                : 43_200
-                          }
-                          value={intervalValue}
-                          onChange={(event) =>
-                            setIntervalValue(Number(event.target.value))
-                          }
-                          className="h-8 text-xs bg-card/50 border-border"
-                        />
-                        <Select
-                          value={intervalUnit}
-                          onValueChange={(value) =>
-                            setIntervalUnit(value as IntervalUnit)
-                          }
-                        >
-                          <SelectTrigger className="h-8 text-xs bg-card/50 border-border">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="minutes">Minutes</SelectItem>
-                            <SelectItem value="hours">Hours</SelectItem>
-                            <SelectItem value="days">Days</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">
-                        Starting from *
-                      </Label>
-                      <DateTimePicker
-                        date={anchorDateTime}
-                        onDateChange={setAnchorDateTime}
-                        placeholder="Select anchor date and time"
-                      />
-                    </div>
-                  </div>
+                  <IntervalScheduleFields
+                    intervalValue={intervalValue}
+                    intervalUnit={intervalUnit}
+                    anchorDateTime={anchorDateTime}
+                    onIntervalValueChange={setIntervalValue}
+                    onIntervalUnitChange={setIntervalUnit}
+                    onAnchorDateTimeChange={setAnchorDateTime}
+                  />
                 )}
 
                 <div className="space-y-1.5">

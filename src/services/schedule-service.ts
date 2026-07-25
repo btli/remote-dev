@@ -21,12 +21,12 @@ import { Cron } from "croner";
 import { ScheduleServiceError } from "@/lib/errors";
 import * as TmuxService from "./tmux-service";
 import { createLogger } from "@/lib/logger";
+import { isValidIntervalSeconds, isValidTimezone } from "@/lib/schedule-validation";
 import {
-  isValidTimezone,
-  MAX_INTERVAL_SECONDS,
-  MIN_INTERVAL_SECONDS,
-} from "@/lib/schedule-validation";
-export { describeIntervalSchedule } from "@/lib/schedule-format";
+  calculateNextIntervalRun,
+  describeIntervalSchedule,
+} from "@/lib/schedule-format";
+export { calculateNextIntervalRun, describeIntervalSchedule };
 
 const log = createLogger("Schedule");
 import type {
@@ -85,26 +85,6 @@ export function calculateNextRun(
   } catch {
     return null;
   }
-}
-
-/**
- * Calculate the next interval occurrence using an absolute-duration cadence.
- * The result is always strictly after `now`; missed occurrences are skipped.
- */
-export function calculateNextIntervalRun(
-  anchorAt: Date,
-  intervalSeconds: number,
-  now: Date = new Date()
-): Date {
-  const intervalMs = intervalSeconds * 1000;
-  if (now.getTime() < anchorAt.getTime()) {
-    return new Date(anchorAt);
-  }
-
-  const elapsedMs = now.getTime() - anchorAt.getTime();
-  const elapsedIntervals = Math.ceil(elapsedMs / intervalMs);
-  const candidate = anchorAt.getTime() + elapsedIntervals * intervalMs;
-  return new Date(candidate <= now.getTime() ? candidate + intervalMs : candidate);
 }
 
 /**
@@ -190,13 +170,7 @@ export async function createSchedule(
     }
     nextRunAt = calculateNextRun(input.cronExpression, timezone);
   } else {
-    if (
-      input.intervalSeconds === null ||
-      input.intervalSeconds === undefined ||
-      !Number.isInteger(input.intervalSeconds) ||
-      input.intervalSeconds < MIN_INTERVAL_SECONDS ||
-      input.intervalSeconds > MAX_INTERVAL_SECONDS
-    ) {
+    if (!isValidIntervalSeconds(input.intervalSeconds)) {
       throw new ScheduleServiceError(
         "Interval must be between 1 minute and 30 days",
         "INVALID_INTERVAL_SECONDS"
@@ -503,13 +477,7 @@ export async function updateSchedule(
         updates.intervalSeconds !== undefined
           ? updates.intervalSeconds
           : existing.intervalSeconds;
-      if (
-        intervalValue === null ||
-        intervalValue === undefined ||
-        !Number.isInteger(intervalValue) ||
-        intervalValue < MIN_INTERVAL_SECONDS ||
-        intervalValue > MAX_INTERVAL_SECONDS
-      ) {
+      if (!isValidIntervalSeconds(intervalValue)) {
         throw new ScheduleServiceError(
           "Interval must be between 1 minute and 30 days",
           "INVALID_INTERVAL_SECONDS",
@@ -609,18 +577,6 @@ export async function updateSchedule(
   }
   if (anchorAt !== undefined) {
     updateData.anchorAt = anchorAt;
-  }
-  if (updates.scheduleType !== undefined) {
-    if (scheduleType === "one-time") {
-      updateData.intervalSeconds = null;
-      updateData.anchorAt = null;
-    } else if (scheduleType === "recurring") {
-      updateData.scheduledAt = null;
-      updateData.intervalSeconds = null;
-      updateData.anchorAt = null;
-    } else {
-      updateData.scheduledAt = null;
-    }
   }
 
   const [updated] = await db

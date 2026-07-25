@@ -7,11 +7,7 @@ import {
   normalizeScheduleTemplateCommands,
   validateScheduleTemplateOptions,
 } from "@/lib/schedule-template-validation";
-import {
-  isValidTimezone,
-  MAX_INTERVAL_SECONDS,
-  MIN_INTERVAL_SECONDS,
-} from "@/lib/schedule-validation";
+import { isValidIntervalSeconds, isValidTimezone } from "@/lib/schedule-validation";
 import type {
   CreateScheduleTemplateInput,
   ScheduleTemplate,
@@ -84,11 +80,7 @@ function validateTemplateConfiguration(input: {
   if (optionsError) throw new Error(optionsError);
   if (
     input.scheduleType === "interval" &&
-    (input.intervalSeconds === undefined ||
-      input.intervalSeconds === null ||
-      !Number.isInteger(input.intervalSeconds) ||
-      input.intervalSeconds < MIN_INTERVAL_SECONDS ||
-      input.intervalSeconds > MAX_INTERVAL_SECONDS)
+    !isValidIntervalSeconds(input.intervalSeconds)
   ) {
     throw new Error("Interval must be between 1 minute and 30 days");
   }

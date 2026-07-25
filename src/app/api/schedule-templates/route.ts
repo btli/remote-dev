@@ -11,13 +11,9 @@ import {
   normalizeScheduleTemplateCommands,
   validateScheduleTemplateOptions,
 } from "@/lib/schedule-template-validation";
-import {
-  isValidTimezone,
-  MAX_INTERVAL_SECONDS,
-  MIN_INTERVAL_SECONDS,
-} from "@/lib/schedule-validation";
+import { isValidIntervalSeconds, isValidTimezone } from "@/lib/schedule-validation";
 
-export function validateInput(input: CreateScheduleTemplateInput): string | null {
+function validateInput(input: CreateScheduleTemplateInput): string | null {
   if (!input.name?.trim()) return "Template name is required";
   if (!["one-time", "recurring", "interval"].includes(input.scheduleType)) {
     return "Invalid schedule type";
@@ -39,11 +35,7 @@ export function validateInput(input: CreateScheduleTemplateInput): string | null
   }
   if (
     input.scheduleType === "interval" &&
-    (input.intervalSeconds === null ||
-      input.intervalSeconds === undefined ||
-      !Number.isInteger(input.intervalSeconds) ||
-      input.intervalSeconds < MIN_INTERVAL_SECONDS ||
-      input.intervalSeconds > MAX_INTERVAL_SECONDS)
+    !isValidIntervalSeconds(input.intervalSeconds)
   ) {
     return "Interval must be between 1 minute and 30 days";
   }

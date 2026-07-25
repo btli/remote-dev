@@ -13,11 +13,7 @@ import {
   normalizeScheduleTemplateCommands,
   validateScheduleTemplateOptions,
 } from "@/lib/schedule-template-validation";
-import {
-  isValidTimezone,
-  MAX_INTERVAL_SECONDS,
-  MIN_INTERVAL_SECONDS,
-} from "@/lib/schedule-validation";
+import { isValidIntervalSeconds, isValidTimezone } from "@/lib/schedule-validation";
 
 export const GET = withApiAuth(async (_request, { userId, params }) => {
   const template = await getScheduleTemplate(params!.id, userId);
@@ -60,10 +56,7 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
     input.commands !== undefined
       ? normalizeScheduleTemplateCommands(input.commands)
       : undefined;
-  if (
-    input.commands !== undefined &&
-    !commands
-  ) {
+  if (input.commands !== undefined && !commands) {
     return errorResponse("At least one command is required", 400);
   }
   if (
@@ -75,14 +68,7 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
       400
     );
   }
-  if (
-    scheduleType === "interval" &&
-    (intervalSeconds === null ||
-      intervalSeconds === undefined ||
-      !Number.isInteger(intervalSeconds) ||
-      intervalSeconds < MIN_INTERVAL_SECONDS ||
-      intervalSeconds > MAX_INTERVAL_SECONDS)
-  ) {
+  if (scheduleType === "interval" && !isValidIntervalSeconds(intervalSeconds)) {
     return errorResponse("Interval must be between 1 minute and 30 days", 400);
   }
 

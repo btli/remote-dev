@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { cn } from "@/lib/utils";
-import { describeIntervalSchedule } from "@/lib/schedule-format";
+import { describeScheduleInterval } from "@/lib/schedule-format";
 import { useTaskContext } from "@/contexts/TaskContext";
 import { useScheduleContext } from "@/contexts/ScheduleContext";
 import { useSessionContext } from "@/contexts/SessionContext";
@@ -597,16 +597,7 @@ function ScheduleItem({ schedule, onEdit, onDelete, onToggle, onRunNow, isRunnin
       : isOneTime
         ? Calendar
         : Repeat;
-  const intervalDescription =
-    schedule.scheduleType === "interval" &&
-    schedule.intervalSeconds &&
-    schedule.anchorAt
-      ? describeIntervalSchedule(
-          schedule.intervalSeconds,
-          new Date(schedule.anchorAt),
-          schedule.timezone
-        )
-      : null;
+  const intervalDescription = describeScheduleInterval(schedule);
 
   return (
     <div className="group px-2 py-1.5 rounded-md transition-all duration-150 hover:bg-accent/50">
