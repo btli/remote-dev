@@ -15,19 +15,21 @@ import { createTestDb, type TestDbHandle } from "./__tests__/migration-test-db";
 
 let handle: TestDbHandle;
 
+const mockedLog = vi.hoisted(() => ({
+  error: vi.fn(),
+  warn: vi.fn(),
+  info: vi.fn(),
+  debug: vi.fn(),
+  trace: vi.fn(),
+}));
+
 vi.mock("@/db", () => ({
   get db() {
     return handle.db;
   },
 }));
 vi.mock("@/lib/logger", () => ({
-  createLogger: () => ({
-    error: vi.fn(),
-    warn: vi.fn(),
-    info: vi.fn(),
-    debug: vi.fn(),
-    trace: vi.fn(),
-  }),
+  createLogger: () => mockedLog,
 }));
 vi.mock("./tmux-service", () => ({
   sessionExists: vi.fn(async () => true),
@@ -39,6 +41,7 @@ import {
   classifyOneTimeRegistration,
   MISSED_FIRE_GRACE_MS,
 } from "./scheduler-orchestrator";
+import * as ScheduleService from "./schedule-service";
 import * as TmuxService from "./tmux-service";
 import {
   projects,
@@ -69,9 +72,11 @@ async function seedSession(id: string, status: SessionStatus = "active"): Promis
 interface SeedScheduleOptions {
   id: string;
   sessionId: string;
-  scheduleType: "one-time" | "recurring";
+  scheduleType: "one-time" | "recurring" | "interval";
   scheduledAt?: Date;
   cronExpression?: string;
+  intervalSeconds?: number;
+  anchorAt?: Date;
   nextRunAt?: Date | null;
 }
 
@@ -84,6 +89,8 @@ async function seedSchedule(opts: SeedScheduleOptions): Promise<void> {
     scheduleType: opts.scheduleType,
     scheduledAt: opts.scheduledAt ?? null,
     cronExpression: opts.cronExpression ?? null,
+    intervalSeconds: opts.intervalSeconds ?? null,
+    anchorAt: opts.anchorAt ?? null,
     timezone: "UTC",
     enabled: true,
     status: "active",
@@ -165,6 +172,7 @@ describe("SchedulerOrchestrator registration", () => {
     mockedSendKeys.mockClear();
     mockedSessionExists.mockClear();
     mockedSessionExists.mockResolvedValue(true);
+    for (const method of Object.values(mockedLog)) method.mockClear();
   });
 
   afterEach(async () => {
@@ -335,5 +343,111 @@ describe("SchedulerOrchestrator registration", () => {
     expect(row.nextRunAt).not.toBeNull();
     expect(row.nextRunAt!.getTime()).toBeGreaterThan(Date.now());
     expect(schedulerOrchestrator.getJobCount()).toBe(1);
+  });
+
+  it("recomputes stale interval nextRunAt on startup without one-time catch-up", async () => {
+    await seedSession("interval-session");
+    const anchorAt = new Date(Date.now() - 24 * 3_600_000);
+    await seedSchedule({
+      id: "stale-interval",
+      sessionId: "interval-session",
+      scheduleType: "interval",
+      intervalSeconds: 5 * 3_600,
+      anchorAt,
+      nextRunAt: new Date(Date.now() - 3_600_000),
+    });
+
+    await schedulerOrchestrator.start();
+
+    const row = await getScheduleRow("stale-interval");
+    expect(row.enabled).toBe(true);
+    expect(row.status).toBe("active");
+    expect(row.nextRunAt!.getTime()).toBeGreaterThan(Date.now());
+    expect(schedulerOrchestrator.getJobCount()).toBe(1);
+    expect(mockedSendKeys).not.toHaveBeenCalled();
+  });
+
+  it("registers an interval as a single fire and re-registers it afterward", async () => {
+    await seedSession("firing-interval-session");
+    const anchorAt = new Date(Date.now() + 2_000);
+    await seedSchedule({
+      id: "firing-interval",
+      sessionId: "firing-interval-session",
+      scheduleType: "interval",
+      intervalSeconds: 60,
+      anchorAt,
+      nextRunAt: anchorAt,
+    });
+
+    await schedulerOrchestrator.start();
+    expect(schedulerOrchestrator.getJobCount()).toBe(1);
+
+    await vi.waitFor(
+      async () => {
+        const row = await getScheduleRow("firing-interval");
+        expect(row.lastRunStatus).toBe("success");
+      },
+      { timeout: 8000 }
+    );
+
+    const row = await getScheduleRow("firing-interval");
+    expect(row.enabled).toBe(true);
+    expect(row.status).toBe("active");
+    expect(row.nextRunAt!.getTime()).toBeGreaterThan(Date.now());
+    const executions = await handle.db.query.scheduleExecutions.findMany({
+      where: eq(scheduleExecutions.scheduleId, "firing-interval"),
+    });
+    expect(executions).toHaveLength(1);
+    expect(mockedSendKeys).toHaveBeenCalledTimes(1);
+    expect(schedulerOrchestrator.getJobCount()).toBe(1);
+  });
+
+  it("executes and re-arms an interval whose fire passes during registration", async () => {
+    await seedSession("slipped-interval-session");
+    const anchorAt = new Date(Date.now() - 60_000);
+    await seedSchedule({
+      id: "slipped-interval",
+      sessionId: "slipped-interval-session",
+      scheduleType: "interval",
+      intervalSeconds: 60,
+      anchorAt,
+      nextRunAt: null,
+    });
+
+    const calculateNextIntervalRun = vi.spyOn(
+      ScheduleService,
+      "calculateNextIntervalRun"
+    );
+    calculateNextIntervalRun.mockImplementationOnce(
+      () => new Date(Date.now() + 10)
+    );
+    const persistNextRunAt = vi.spyOn(ScheduleService, "persistNextRunAt");
+    const realPersistNextRunAt = persistNextRunAt.getMockImplementation();
+    persistNextRunAt.mockImplementationOnce(async (scheduleId, nextRunAt) => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      if (realPersistNextRunAt) {
+        await realPersistNextRunAt(scheduleId, nextRunAt);
+      }
+    });
+
+    await schedulerOrchestrator.start();
+
+    await vi.waitFor(
+      async () => {
+        const row = await getScheduleRow("slipped-interval");
+        expect(row.lastRunStatus).toBe("success");
+        expect(row.nextRunAt!.getTime()).toBeGreaterThan(Date.now());
+        expect(mockedSendKeys).toHaveBeenCalledTimes(1);
+        expect(schedulerOrchestrator.getJobCount()).toBe(1);
+      },
+      { timeout: 5000 }
+    );
+
+    expect(mockedLog.warn).toHaveBeenCalledWith(
+      "Interval fire passed during registration; executing immediately",
+      expect.objectContaining({ scheduleId: "slipped-interval" })
+    );
+    calculateNextIntervalRun.mockRestore();
+    persistNextRunAt.mockRestore();
   });
 });

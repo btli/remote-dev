@@ -13,6 +13,28 @@ then delivers a prompt to the agent. This is **distinct** from the keystroke-onl
 session and whose "success" only means the keystrokes were sent). Distinct
 lifecycle → distinct tables (`agentSchedules`, `agentRuns`).
 
+## Session command schedules
+
+Session command schedules send one or more ordered commands to an existing tmux
+session. They support three timing modes:
+
+- **One-time** runs once at a chosen date and time, then completes.
+- **Recurring** uses a cron expression interpreted in the selected timezone.
+- **Interval** runs every N minutes, hours, or days from an absolute anchor.
+  Interval math uses elapsed seconds, not wall-clock fields, so daylight-saving
+  changes do not shift the cadence. When the scheduler was offline for one or
+  more ticks, it skips the missed occurrences and arms only the next future
+  occurrence. A stale interval `nextRunAt` is recomputed from the anchor at
+  startup; the one-time missed-fire grace policy does not apply.
+
+Any session schedule configuration can be saved as a user-scoped template.
+Templates retain the timing mode, cron expression or interval duration,
+timezone, retry and timeout settings, and ordered commands. They deliberately
+do not retain absolute dates: applying a one-time template requires a new date,
+and applying an interval template requires a new anchor. Templates are
+available through `/api/schedule-templates` and can be created, applied,
+renamed, or deleted from the schedules UI.
+
 The supervisor lifecycle primitives this page builds on (the `instance` table, the
 `requested→provisioning→ready↔suspended→terminating→deleted` state machine,
 suspend/resume, StatefulSet scaling) are documented in `docs/MULTI_INSTANCE.md` +

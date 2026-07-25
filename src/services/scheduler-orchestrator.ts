@@ -16,7 +16,7 @@ import { db } from "@/db";
 import { terminalSessions } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import * as ScheduleService from "./schedule-service";
-import type { SessionScheduleWithCommands } from "@/types/schedule";
+import type { ScheduleType, SessionScheduleWithCommands } from "@/types/schedule";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("Scheduler");
@@ -127,8 +127,13 @@ class SchedulerOrchestrator {
    * Register a schedule with croner
    */
   private async registerSchedule(
-    schedule: SessionScheduleWithCommands
+    schedule: SessionScheduleWithCommands,
+    completedIntervalFireAt?: Date
   ): Promise<void> {
+    if (!this.isRunning) {
+      return;
+    }
+
     // Skip if not enabled
     if (!schedule.enabled) {
       return;
@@ -242,9 +247,10 @@ class SchedulerOrchestrator {
                 },
               },
               async () => {
-                await this.executeJob(schedule.id, tmuxSessionName, true);
+                await this.executeJob(schedule.id, tmuxSessionName, "one-time");
               }
             );
+            this.jobs.get(schedule.id)?.cronJob.stop();
             this.jobs.set(schedule.id, {
               scheduleId: schedule.id,
               cronJob: placeholderJob,
@@ -254,7 +260,7 @@ class SchedulerOrchestrator {
             // (execution-row insert, one-time completion marking, and job
             // removal all happen inside executeJob). Fire-and-forget so a
             // slow catch-up run does not block startup registration.
-            void this.executeJob(schedule.id, tmuxSessionName, true);
+            void this.executeJob(schedule.id, tmuxSessionName, "one-time");
             return;
           }
           // action === "mark-missed"
@@ -284,7 +290,7 @@ class SchedulerOrchestrator {
         // Croner accepts Date objects for one-time scheduling
         cronPattern = schedule.scheduledAt;
         scheduleTypeLabel = `one-time at ${schedule.scheduledAt.toISOString()}`;
-      } else {
+      } else if (schedule.scheduleType === "recurring") {
         // For recurring schedules, use the cron expression
         if (!schedule.cronExpression) {
           log.error("Recurring schedule has no cronExpression", { scheduleId: schedule.id });
@@ -292,6 +298,46 @@ class SchedulerOrchestrator {
         }
         cronPattern = schedule.cronExpression;
         scheduleTypeLabel = `"${schedule.cronExpression}"`;
+      } else {
+        if (!schedule.anchorAt || !schedule.intervalSeconds) {
+          log.error("Interval schedule is missing its interval or anchor", {
+            scheduleId: schedule.id,
+          });
+          return;
+        }
+        const now = new Date();
+        const intervalCalculationTime =
+          completedIntervalFireAt &&
+          completedIntervalFireAt.getTime() > now.getTime()
+            ? completedIntervalFireAt
+            : now;
+        const nextIntervalRun = ScheduleService.calculateNextIntervalRun(
+          schedule.anchorAt,
+          schedule.intervalSeconds,
+          intervalCalculationTime
+        );
+        cronPattern = nextIntervalRun;
+        scheduleTypeLabel = ScheduleService.describeIntervalSchedule(
+          schedule.intervalSeconds,
+          schedule.anchorAt,
+          schedule.timezone
+        );
+        if (schedule.nextRunAt?.getTime() !== nextIntervalRun.getTime()) {
+          try {
+            await ScheduleService.persistNextRunAt(schedule.id, nextIntervalRun);
+          } catch (error) {
+            log.error("Failed to persist interval nextRunAt at registration", {
+              scheduleId: schedule.id,
+              error: String(error),
+            });
+          }
+        }
+      }
+
+      // stop() may have run while registration awaited DB/bookkeeping work.
+      // Re-check immediately before constructing the Cron so it cannot leak.
+      if (!this.isRunning) {
+        return;
       }
 
       // Create cron job
@@ -299,23 +345,56 @@ class SchedulerOrchestrator {
         cronPattern,
         {
           timezone: schedule.timezone,
+          // Hold Date-based interval jobs until registration has verified
+          // that their one-shot fire is still schedulable. This prevents a
+          // boundary timer from racing the missed-fire recovery path.
+          paused: schedule.scheduleType === "interval",
           catch: (error: unknown) => {
             log.error("Schedule cron error", { scheduleId: schedule.id, error: String(error) });
           },
         },
         async () => {
-          await this.executeJob(schedule.id, tmuxSessionName, schedule.scheduleType === "one-time");
+          await this.executeJob(
+            schedule.id,
+            tmuxSessionName,
+            schedule.scheduleType
+          );
         }
       );
 
+      this.jobs.get(schedule.id)?.cronJob.stop();
       this.jobs.set(schedule.id, {
         scheduleId: schedule.id,
         cronJob,
-        scheduleData: schedule,
+        scheduleData:
+          schedule.scheduleType === "interval" && cronPattern instanceof Date
+            ? { ...schedule, nextRunAt: cronPattern }
+            : schedule,
       });
 
-      const nextRun = cronJob.nextRun();
+      let nextRun = cronJob.nextRun();
+      if (schedule.scheduleType === "interval" && nextRun) {
+        cronJob.resume();
+        // The Date can cross while resuming; use Croner's post-resume view to
+        // decide whether the normal callback or recovery owns this occurrence.
+        nextRun = cronJob.nextRun();
+      }
       log.info("Registered schedule", { name: schedule.name, scheduleId: schedule.id, type: scheduleTypeLabel, timezone: schedule.timezone, nextRun: nextRun?.toISOString() ?? "never" });
+
+      // A Date-based interval fire can pass while registration awaits DB
+      // bookkeeping. Croner does not fire past Date patterns, so recover the
+      // just-missed occurrence through the normal execution path; its finally
+      // block will calculate and register the next interval occurrence.
+      if (schedule.scheduleType === "interval" && !nextRun) {
+        // Cancel any timer Croner queued while the Date crossed its boundary;
+        // recovery below owns this occurrence and must not race a late callback.
+        cronJob.stop();
+        log.warn("Interval fire passed during registration; executing immediately", {
+          scheduleId: schedule.id,
+          fireAt: cronPattern instanceof Date ? cronPattern.toISOString() : null,
+        });
+        void this.executeJob(schedule.id, tmuxSessionName, "interval");
+      }
 
       // Persist the armed next fire time for recurring schedules so the row
       // never shows a stale (past) nextRunAt while a valid croner job is
@@ -348,14 +427,14 @@ class SchedulerOrchestrator {
   private async executeJob(
     scheduleId: string,
     tmuxSessionName: string,
-    isOneTime = false
+    scheduleType: ScheduleType = "recurring"
   ): Promise<void> {
     if (this.executing.has(scheduleId)) {
       log.warn("Skipping schedule fire: an execution is already in flight", { scheduleId });
       return;
     }
 
-    log.info("Executing schedule", { scheduleId, isOneTime });
+    log.info("Executing schedule", { scheduleId, scheduleType });
 
     const job = this.jobs.get(scheduleId);
     if (!job) {
@@ -387,7 +466,7 @@ class SchedulerOrchestrator {
 
       // For one-time schedules, remove the job after execution
       // (The schedule service already marked it as completed and disabled)
-      if (isOneTime) {
+      if (scheduleType === "one-time") {
         this.removeJobInternal(scheduleId);
         log.info("One-time schedule removed after execution", { scheduleId });
       }
@@ -399,12 +478,41 @@ class SchedulerOrchestrator {
       log.error("Failed to execute schedule", { scheduleId, error: String(error) });
 
       // Still remove one-time jobs even if they failed
-      if (isOneTime) {
+      if (scheduleType === "one-time") {
         this.removeJobInternal(scheduleId);
         log.info("One-time schedule removed after failed execution", { scheduleId });
       }
     } finally {
       this.executing.delete(scheduleId);
+      if (scheduleType === "interval" && this.isRunning) {
+        try {
+          const refreshed = await ScheduleService.getScheduleWithCommands(
+            scheduleId,
+            job.scheduleData.userId
+          );
+          if (
+            this.isRunning &&
+            refreshed?.enabled &&
+            refreshed.scheduleType === "interval"
+          ) {
+            await this.registerSchedule(
+              refreshed,
+              job.scheduleData.nextRunAt ?? undefined
+            );
+            log.debug("Re-registered interval schedule after execution", {
+              scheduleId,
+            });
+          } else {
+            this.removeJobInternal(scheduleId);
+          }
+        } catch (error) {
+          log.error("Failed to re-register interval schedule", {
+            scheduleId,
+            error: String(error),
+          });
+          this.removeJobInternal(scheduleId);
+        }
+      }
     }
   }
 
@@ -548,7 +656,7 @@ class SchedulerOrchestrator {
       scheduledAt: job.scheduleData.scheduledAt,
       isRunning: job.cronJob.isBusy(),
       isPaused: !job.cronJob.isRunning(),
-      nextRun: job.cronJob.nextRun(),
+      nextRun: job.cronJob.nextRun() ?? job.scheduleData.nextRunAt,
       lastRun: job.scheduleData.lastRunAt,
       lastStatus: job.scheduleData.lastRunStatus,
     }));

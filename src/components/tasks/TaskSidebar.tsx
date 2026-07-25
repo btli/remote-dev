@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { cn } from "@/lib/utils";
+import { describeScheduleInterval } from "@/lib/schedule-format";
 import { useTaskContext } from "@/contexts/TaskContext";
 import { useScheduleContext } from "@/contexts/ScheduleContext";
 import { useSessionContext } from "@/contexts/SessionContext";
@@ -35,6 +36,7 @@ import {
   Clock,
   Repeat,
   Play,
+  TimerReset,
 } from "lucide-react";
 import { getIssueIcon } from "@/components/github/issue-icons";
 import { CreateScheduleModal } from "@/components/schedule/CreateScheduleModal";
@@ -589,7 +591,13 @@ function ScheduleItem({ schedule, onEdit, onDelete, onToggle, onRunNow, isRunnin
   const isOneTime = schedule.scheduleType === "one-time";
   const isCompleted = isOneTime && schedule.status === "completed";
   const statusColor = getScheduleStatusColor(schedule, isCompleted);
-  const TypeIcon = isOneTime ? Calendar : Repeat;
+  const TypeIcon =
+    schedule.scheduleType === "interval"
+      ? TimerReset
+      : isOneTime
+        ? Calendar
+        : Repeat;
+  const intervalDescription = describeScheduleInterval(schedule);
 
   return (
     <div className="group px-2 py-1.5 rounded-md transition-all duration-150 hover:bg-accent/50">
@@ -616,6 +624,14 @@ function ScheduleItem({ schedule, onEdit, onDelete, onToggle, onRunNow, isRunnin
               {schedule.session?.name}
             </span>
           </div>
+          {intervalDescription && (
+            <p
+              className="mt-0.5 truncate text-[10px] text-muted-foreground/70"
+              title={intervalDescription}
+            >
+              {intervalDescription}
+            </p>
+          )}
         </div>
 
         {/* Actions */}

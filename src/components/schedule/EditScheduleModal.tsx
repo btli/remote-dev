@@ -32,11 +32,23 @@ import {
   GripVertical,
   Calendar,
   Repeat,
+  TimerReset,
+  BookmarkPlus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useScheduleContext } from "@/contexts/ScheduleContext";
 import { CRON_PRESETS, TIMEZONE_OPTIONS, type ScheduleCommandInput, type ScheduleType } from "@/types/schedule";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { DateTimePicker } from "@/components/ui/date-time-picker";
+import { SaveScheduleTemplateDialog } from "./SaveScheduleTemplateDialog";
+import {
+  buildTemplateSnapshot,
+  INTERVAL_UNIT_SECONDS,
+  IntervalScheduleFields,
+  intervalFormError,
+  splitInterval,
+  type IntervalUnit,
+} from "./schedule-form-shared";
 
 interface EditScheduleModalProps {
   open: boolean;
@@ -56,8 +68,10 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
   const [scheduleType, setScheduleType] = useState<ScheduleType>("recurring");
   const [cronExpression, setCronExpression] = useState("");
   const [cronPreset, setCronPreset] = useState("");
-  const [scheduledDate, setScheduledDate] = useState("");
-  const [scheduledTime, setScheduledTime] = useState("");
+  const [scheduledDateTime, setScheduledDateTime] = useState<Date | undefined>();
+  const [intervalValue, setIntervalValue] = useState(1);
+  const [intervalUnit, setIntervalUnit] = useState<IntervalUnit>("hours");
+  const [anchorDateTime, setAnchorDateTime] = useState<Date | undefined>();
   const [timezone, setTimezone] = useState("America/Los_Angeles");
   const [commands, setCommands] = useState<CommandRow[]>([]);
   const [enabled, setEnabled] = useState(true);
@@ -72,6 +86,7 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
 
   // Load schedule data
   const loadSchedule = useCallback(async () => {
@@ -98,13 +113,21 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
 
       // Parse scheduledAt for one-time schedules
       if (schedule.scheduledAt) {
-        const dt = new Date(schedule.scheduledAt);
-        setScheduledDate(dt.toISOString().split("T")[0]);
-        setScheduledTime(dt.toTimeString().slice(0, 5));
+        setScheduledDateTime(new Date(schedule.scheduledAt));
       } else {
-        setScheduledDate("");
-        setScheduledTime("");
+        setScheduledDateTime(undefined);
       }
+      if (schedule.intervalSeconds) {
+        const interval = splitInterval(schedule.intervalSeconds);
+        setIntervalValue(interval.value);
+        setIntervalUnit(interval.unit);
+      } else {
+        setIntervalValue(1);
+        setIntervalUnit("hours");
+      }
+      setAnchorDateTime(
+        schedule.anchorAt ? new Date(schedule.anchorAt) : undefined
+      );
 
       // Map commands
       const mappedCommands = schedule.commands.map((cmd) => ({
@@ -175,9 +198,8 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
 
   // Validation
   const validateForm = (): boolean => {
-    // Name is only required for recurring schedules
-    if (scheduleType === "recurring" && !name.trim()) {
-      setError("Schedule name is required for recurring schedules");
+    if (scheduleType !== "one-time" && !name.trim()) {
+      setError("Schedule name is required");
       return false;
     }
     if (scheduleType === "recurring") {
@@ -185,19 +207,23 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
         setError("Cron expression is required for recurring schedules");
         return false;
       }
-    } else {
-      // One-time schedule
-      if (!scheduledDate || !scheduledTime) {
+    } else if (scheduleType === "one-time") {
+      if (!scheduledDateTime) {
         setError("Date and time are required for one-time schedules");
         return false;
       }
-      const scheduledAt = new Date(`${scheduledDate}T${scheduledTime}`);
-      if (isNaN(scheduledAt.getTime())) {
+      if (isNaN(scheduledDateTime.getTime())) {
         setError("Invalid date/time format");
         return false;
       }
-      if (scheduledAt <= new Date()) {
+      if (scheduledDateTime <= new Date()) {
         setError("Scheduled time must be in the future");
+        return false;
+      }
+    } else {
+      const intervalError = intervalFormError(intervalValue, intervalUnit, anchorDateTime);
+      if (intervalError) {
+        setError(intervalError);
         return false;
       }
     }
@@ -230,8 +256,7 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
 
       // Auto-generate name for one-time schedules if not provided
       if (scheduleType === "one-time" && !scheduleName) {
-        const scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
-        scheduleName = `${scheduledDateTime.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} - ${validCommands[0].command.slice(0, 30)}${validCommands[0].command.length > 30 ? "..." : ""}`;
+        scheduleName = `${scheduledDateTime!.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} - ${validCommands[0].command.slice(0, 30)}${validCommands[0].command.length > 30 ? "..." : ""}`;
       }
 
       const updates: Record<string, unknown> = {
@@ -247,10 +272,19 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
       if (scheduleType === "recurring") {
         updates.cronExpression = cronExpression.trim();
         updates.scheduledAt = null;
-      } else {
-        // One-time schedule
+        updates.intervalSeconds = null;
+        updates.anchorAt = null;
+      } else if (scheduleType === "one-time") {
         updates.cronExpression = null;
-        updates.scheduledAt = new Date(`${scheduledDate}T${scheduledTime}`).toISOString();
+        updates.scheduledAt = scheduledDateTime!.toISOString();
+        updates.intervalSeconds = null;
+        updates.anchorAt = null;
+      } else {
+        updates.cronExpression = null;
+        updates.scheduledAt = null;
+        updates.intervalSeconds =
+          intervalValue * INTERVAL_UNIT_SECONDS[intervalUnit];
+        updates.anchorAt = anchorDateTime!.toISOString();
       }
 
       await updateSchedule(scheduleId, updates, validCommands);
@@ -263,6 +297,18 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
       setIsSaving(false);
     }
   };
+
+  const templateSnapshot = buildTemplateSnapshot({
+    scheduleType,
+    cronExpression,
+    intervalValue,
+    intervalUnit,
+    timezone,
+    maxRetries,
+    retryDelaySeconds,
+    timeoutSeconds,
+    commands,
+  });
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
@@ -287,7 +333,7 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
               {/* Schedule Name */}
               <div className="space-y-1.5">
                 <Label htmlFor="edit-schedule-name" className="text-xs text-muted-foreground">
-                  Schedule Name {scheduleType === "recurring" && "*"}
+                  Schedule Name {scheduleType !== "one-time" && "*"}
                 </Label>
                 <Input
                   id="edit-schedule-name"
@@ -320,7 +366,7 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
                   onValueChange={(value) => setScheduleType(value as ScheduleType)}
                   className="w-full"
                 >
-                  <TabsList className="grid w-full grid-cols-2 bg-card/50 h-8">
+                  <TabsList className="grid w-full grid-cols-3 bg-card/50 h-8">
                     <TabsTrigger
                       value="one-time"
                       className="text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground flex items-center gap-1.5"
@@ -335,38 +381,29 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
                       <Repeat className="w-3.5 h-3.5" />
                       Recurring
                     </TabsTrigger>
+                    <TabsTrigger
+                      value="interval"
+                      className="text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground flex items-center gap-1.5"
+                    >
+                      <TimerReset className="w-3.5 h-3.5" />
+                      Interval
+                    </TabsTrigger>
                   </TabsList>
                 </Tabs>
 
                 {/* One-time Schedule: Date/Time Picker */}
                 {scheduleType === "one-time" && (
                   <div className="space-y-2">
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <div className="space-y-1.5">
-                        <Label htmlFor="edit-scheduled-date" className="text-xs text-muted-foreground">
-                          Date *
-                        </Label>
-                        <Input
-                          id="edit-scheduled-date"
-                          type="date"
-                          value={scheduledDate}
-                          onChange={(e) => setScheduledDate(e.target.value)}
-                          min={new Date().toISOString().split("T")[0]}
-                          className="h-8 text-xs bg-card/50 border-border focus:border-primary"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="edit-scheduled-time" className="text-xs text-muted-foreground">
-                          Time *
-                        </Label>
-                        <Input
-                          id="edit-scheduled-time"
-                          type="time"
-                          value={scheduledTime}
-                          onChange={(e) => setScheduledTime(e.target.value)}
-                          className="h-8 text-xs bg-card/50 border-border focus:border-primary"
-                        />
-                      </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">
+                        Date & Time *
+                      </Label>
+                      <DateTimePicker
+                        date={scheduledDateTime}
+                        onDateChange={setScheduledDateTime}
+                        minDate={new Date()}
+                        placeholder="Select date and time"
+                      />
                     </div>
                   </div>
                 )}
@@ -402,6 +439,17 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
                       />
                     </div>
                   </>
+                )}
+
+                {scheduleType === "interval" && (
+                  <IntervalScheduleFields
+                    intervalValue={intervalValue}
+                    intervalUnit={intervalUnit}
+                    anchorDateTime={anchorDateTime}
+                    onIntervalValueChange={setIntervalValue}
+                    onIntervalUnitChange={setIntervalUnit}
+                    onAnchorDateTimeChange={setAnchorDateTime}
+                  />
                 )}
 
                 <div className="space-y-1.5">
@@ -577,6 +625,15 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
               {error && <p className="text-xs text-red-400">{error}</p>}
 
               <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setSaveTemplateOpen(true)}
+                  disabled={templateSnapshot.commands.length === 0}
+                  className="mr-auto h-8 text-xs"
+                >
+                  <BookmarkPlus className="mr-1.5 h-3.5 w-3.5" />
+                  Save as template
+                </Button>
                 <Button variant="ghost" onClick={onClose} className="h-8 text-xs text-muted-foreground">
                   Cancel
                 </Button>
@@ -599,6 +656,14 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
           </ScrollArea>
         )}
       </DialogContent>
+      {saveTemplateOpen && (
+        <SaveScheduleTemplateDialog
+          open
+          onOpenChange={setSaveTemplateOpen}
+          snapshot={templateSnapshot}
+          suggestedName={name.trim()}
+        />
+      )}
     </Dialog>
   );
 }

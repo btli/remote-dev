@@ -13,11 +13,12 @@
 // =============================================================================
 
 /**
- * Schedule type - one-time or recurring
+ * Schedule type - one-time, recurring, or interval
  * - one-time: Executes once at a specific datetime, then auto-completes
  * - recurring: Executes on a cron schedule repeatedly
+ * - interval: Executes on an absolute-duration cadence from an anchor
  */
-export type ScheduleType = "one-time" | "recurring";
+export type ScheduleType = "one-time" | "recurring" | "interval";
 
 /**
  * Schedule lifecycle status
@@ -67,6 +68,8 @@ export interface SessionSchedule {
   scheduleType: ScheduleType;
   cronExpression: string | null; // Null for one-time schedules
   scheduledAt: Date | null; // For one-time schedules only
+  intervalSeconds: number | null; // For interval schedules only
+  anchorAt: Date | null; // First occurrence for interval schedules
   timezone: string;
   enabled: boolean;
   status: ScheduleStatus;
@@ -188,6 +191,8 @@ export interface CreateScheduleInput {
   scheduleType?: ScheduleType; // Default: "one-time"
   cronExpression?: string; // Required for recurring schedules
   scheduledAt?: string; // ISO 8601 datetime for one-time schedules
+  intervalSeconds?: number | null; // Required for interval schedules
+  anchorAt?: string | null; // ISO 8601 datetime for interval schedules
   timezone?: string;
   commands: ScheduleCommandInput[];
   enabled?: boolean;
@@ -204,6 +209,8 @@ export interface UpdateScheduleInput {
   scheduleType?: ScheduleType;
   cronExpression?: string | null;
   scheduledAt?: string | null; // ISO 8601 datetime
+  intervalSeconds?: number | null;
+  anchorAt?: string | null; // ISO 8601 datetime
   timezone?: string;
   enabled?: boolean;
   status?: ScheduleStatus;

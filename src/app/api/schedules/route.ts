@@ -4,6 +4,7 @@ import * as ScheduleService from "@/services/schedule-service";
 import { notifyScheduleCreated } from "@/lib/scheduler-client";
 import type { CreateScheduleInput } from "@/types/schedule";
 import { createLogger } from "@/lib/logger";
+import { isValidIntervalSeconds, isValidTimezone } from "@/lib/schedule-validation";
 
 const log = createLogger("api/schedules");
 
@@ -43,6 +44,14 @@ export const POST = withApiAuth(async (request, { userId }) => {
 
     // Validate schedule type-specific fields
     const scheduleType = input.scheduleType || "one-time";
+    if (!["one-time", "recurring", "interval"].includes(scheduleType)) {
+      return errorResponse("Invalid schedule type", 400, "INVALID_SCHEDULE_TYPE");
+    }
+    const timezone =
+      input.timezone === undefined ? "America/Los_Angeles" : input.timezone;
+    if (!isValidTimezone(timezone)) {
+      return errorResponse("Invalid timezone", 400, "INVALID_TIMEZONE");
+    }
     if (scheduleType === "recurring") {
       if (!input.cronExpression) {
         return errorResponse("Cron expression is required for recurring schedules", 400, "CRON_REQUIRED");
@@ -58,6 +67,28 @@ export const POST = withApiAuth(async (request, { userId }) => {
       }
       if (scheduledDate <= new Date()) {
         return errorResponse("Scheduled time must be in the future", 400, "SCHEDULED_AT_IN_PAST");
+      }
+    } else {
+      if (!isValidIntervalSeconds(input.intervalSeconds)) {
+        return errorResponse(
+          "Interval must be between 1 minute and 30 days",
+          400,
+          "INVALID_INTERVAL_SECONDS"
+        );
+      }
+      if (!input.anchorAt) {
+        return errorResponse(
+          "Anchor time is required for interval schedules",
+          400,
+          "ANCHOR_AT_REQUIRED"
+        );
+      }
+      if (isNaN(new Date(input.anchorAt).getTime())) {
+        return errorResponse(
+          "Invalid anchor time format",
+          400,
+          "INVALID_ANCHOR_AT"
+        );
       }
     }
 

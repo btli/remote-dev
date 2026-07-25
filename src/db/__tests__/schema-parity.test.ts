@@ -109,6 +109,9 @@ type _SchemaParity = [
   // sessionSchedules
   Expect<Equal<(typeof sqliteSchema.sessionSchedules)["$inferSelect"], (typeof pgSchema.sessionSchedules)["$inferSelect"]>>,
   Expect<Equal<(typeof sqliteSchema.sessionSchedules)["$inferInsert"], (typeof pgSchema.sessionSchedules)["$inferInsert"]>>,
+  // scheduleTemplates
+  Expect<Equal<(typeof sqliteSchema.scheduleTemplates)["$inferSelect"], (typeof pgSchema.scheduleTemplates)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.scheduleTemplates)["$inferInsert"], (typeof pgSchema.scheduleTemplates)["$inferInsert"]>>,
   // scheduleCommands
   Expect<Equal<(typeof sqliteSchema.scheduleCommands)["$inferSelect"], (typeof pgSchema.scheduleCommands)["$inferSelect"]>>,
   Expect<Equal<(typeof sqliteSchema.scheduleCommands)["$inferInsert"], (typeof pgSchema.scheduleCommands)["$inferInsert"]>>,
@@ -282,7 +285,7 @@ void _parityHolds;
 
 // Trivial runtime test so vitest treats this file as a (passing) suite. The
 // real guarantee is the compile-time tuple above, enforced by `tsc`.
-it("schema.sqlite and schema.pg expose the same 81 table exports", () => {
+it("schema.sqlite and schema.pg expose the same 82 table exports", () => {
   const sqliteTables = Object.keys(sqliteSchema).sort();
   const pgTables = Object.keys(pgSchema).sort();
   expect(sqliteTables).toEqual(pgTables);
@@ -294,5 +297,6 @@ it("schema.sqlite and schema.pg expose the same 81 table exports", () => {
   // migrationImports) + 4 (remote-dev-3b3l: claudeAccounts,
   // claudeUsageLimitStates, claudeProfilePools, claudeProfilePoolMembers)
   // = 81. (x386.16 dropped message_replay_cursor.)
-  expect(sqliteTables).toHaveLength(81);
+  // + 1 scheduleTemplates
+  expect(sqliteTables).toHaveLength(82);
 });

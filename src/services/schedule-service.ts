@@ -21,6 +21,12 @@ import { Cron } from "croner";
 import { ScheduleServiceError } from "@/lib/errors";
 import * as TmuxService from "./tmux-service";
 import { createLogger } from "@/lib/logger";
+import { isValidIntervalSeconds, isValidTimezone } from "@/lib/schedule-validation";
+import {
+  calculateNextIntervalRun,
+  describeIntervalSchedule,
+} from "@/lib/schedule-format";
+export { calculateNextIntervalRun, describeIntervalSchedule };
 
 const log = createLogger("Schedule");
 import type {
@@ -112,12 +118,19 @@ export async function createSchedule(
   userId: string,
   input: CreateScheduleInput
 ): Promise<SessionScheduleWithCommands> {
-  const timezone = input.timezone || "America/Los_Angeles";
+  const timezone =
+    input.timezone === undefined ? "America/Los_Angeles" : input.timezone;
   const scheduleType: ScheduleType = input.scheduleType || "one-time";
+
+  if (!isValidTimezone(timezone)) {
+    throw new ScheduleServiceError("Invalid timezone", "INVALID_TIMEZONE");
+  }
 
   // Validate based on schedule type
   let nextRunAt: Date | null = null;
   let scheduledAt: Date | null = null;
+  let intervalSeconds: number | null = null;
+  let anchorAt: Date | null = null;
 
   if (scheduleType === "one-time") {
     // One-time schedule requires scheduledAt
@@ -141,7 +154,7 @@ export async function createSchedule(
       );
     }
     nextRunAt = scheduledAt;
-  } else {
+  } else if (scheduleType === "recurring") {
     // Recurring schedule requires cron expression
     if (!input.cronExpression) {
       throw new ScheduleServiceError(
@@ -156,6 +169,28 @@ export async function createSchedule(
       );
     }
     nextRunAt = calculateNextRun(input.cronExpression, timezone);
+  } else {
+    if (!isValidIntervalSeconds(input.intervalSeconds)) {
+      throw new ScheduleServiceError(
+        "Interval must be between 1 minute and 30 days",
+        "INVALID_INTERVAL_SECONDS"
+      );
+    }
+    if (!input.anchorAt) {
+      throw new ScheduleServiceError(
+        "Anchor time is required for interval schedules",
+        "ANCHOR_AT_REQUIRED"
+      );
+    }
+    anchorAt = new Date(input.anchorAt);
+    if (isNaN(anchorAt.getTime())) {
+      throw new ScheduleServiceError(
+        "Invalid anchor time format",
+        "INVALID_ANCHOR_AT"
+      );
+    }
+    intervalSeconds = input.intervalSeconds;
+    nextRunAt = calculateNextIntervalRun(anchorAt, intervalSeconds);
   }
 
   // Validate session ownership
@@ -192,6 +227,8 @@ export async function createSchedule(
       scheduleType,
       cronExpression: scheduleType === "recurring" ? input.cronExpression : null,
       scheduledAt,
+      intervalSeconds,
+      anchorAt,
       timezone,
       enabled: input.enabled ?? true,
       status: "active",
@@ -343,23 +380,39 @@ export async function updateSchedule(
     );
   }
 
-  const scheduleType = updates.scheduleType ?? existing.scheduleType ?? "recurring";
+  const scheduleType =
+    updates.scheduleType ?? existing.scheduleType ?? "recurring";
+  const timezone =
+    updates.timezone === undefined ? existing.timezone : updates.timezone;
+  if (!isValidTimezone(timezone)) {
+    throw new ScheduleServiceError(
+      "Invalid timezone",
+      "INVALID_TIMEZONE",
+      scheduleId
+    );
+  }
 
   // Recalculate next run based on schedule type
   let nextRunAt: Date | null | undefined;
   let scheduledAt: Date | null | undefined;
+  let intervalSeconds: number | null | undefined;
+  let anchorAt: Date | null | undefined;
+  let cronExpression: string | null | undefined;
+  let enabled = updates.enabled;
+  let status = updates.status;
 
   if (scheduleType === "one-time") {
-    // For one-time schedules, use scheduledAt
-    if (updates.scheduledAt !== undefined) {
-      if (updates.scheduledAt === null) {
+    if (updates.scheduledAt !== undefined || updates.scheduleType !== undefined) {
+      const scheduledAtValue =
+        updates.scheduledAt !== undefined ? updates.scheduledAt : existing.scheduledAt;
+      if (!scheduledAtValue) {
         throw new ScheduleServiceError(
           "Scheduled time is required for one-time schedules",
           "SCHEDULED_AT_REQUIRED",
           scheduleId
         );
       }
-      scheduledAt = new Date(updates.scheduledAt);
+      scheduledAt = new Date(scheduledAtValue);
       if (isNaN(scheduledAt.getTime())) {
         throw new ScheduleServiceError(
           "Invalid scheduled time format",
@@ -375,19 +428,21 @@ export async function updateSchedule(
         );
       }
       nextRunAt = scheduledAt;
-
-      // Reset status and enabled when schedule time changes
-      // This allows one-time schedules to be re-run after editing
-      if (updates.status === undefined) {
-        updates.status = "active";
-      }
-      if (updates.enabled === undefined) {
-        updates.enabled = true;
-      }
+      if (status === undefined) status = "active";
+      if (enabled === undefined) enabled = true;
     }
-  } else {
+    if (updates.scheduleType !== undefined) {
+      cronExpression = null;
+      intervalSeconds = null;
+      anchorAt = null;
+    }
+  } else if (scheduleType === "recurring") {
     // For recurring schedules, use cron expression
-    if (updates.cronExpression !== undefined || updates.timezone) {
+    if (
+      updates.cronExpression !== undefined ||
+      updates.timezone !== undefined ||
+      updates.scheduleType !== undefined
+    ) {
       const cronExpr = updates.cronExpression ?? existing.cronExpression;
       if (!cronExpr) {
         throw new ScheduleServiceError(
@@ -396,16 +451,78 @@ export async function updateSchedule(
           scheduleId
         );
       }
-      const tz = updates.timezone ?? existing.timezone;
-      if (!validateCronExpression(cronExpr, tz)) {
+      if (!validateCronExpression(cronExpr, timezone)) {
         throw new ScheduleServiceError(
           "Invalid cron expression or timezone",
           "INVALID_CRON_EXPRESSION",
           scheduleId
         );
       }
-      nextRunAt = calculateNextRun(cronExpr, tz);
+      cronExpression = cronExpr;
+      nextRunAt = calculateNextRun(cronExpr, timezone);
     }
+    if (updates.scheduleType !== undefined) {
+      scheduledAt = null;
+      intervalSeconds = null;
+      anchorAt = null;
+    }
+  } else {
+    const shouldRecomputeInterval =
+      updates.intervalSeconds !== undefined ||
+      updates.anchorAt !== undefined ||
+      updates.scheduleType !== undefined ||
+      updates.enabled === true;
+    if (shouldRecomputeInterval) {
+      const intervalValue =
+        updates.intervalSeconds !== undefined
+          ? updates.intervalSeconds
+          : existing.intervalSeconds;
+      if (!isValidIntervalSeconds(intervalValue)) {
+        throw new ScheduleServiceError(
+          "Interval must be between 1 minute and 30 days",
+          "INVALID_INTERVAL_SECONDS",
+          scheduleId
+        );
+      }
+      const anchorValue =
+        updates.anchorAt !== undefined ? updates.anchorAt : existing.anchorAt;
+      if (!anchorValue) {
+        throw new ScheduleServiceError(
+          "Anchor time is required for interval schedules",
+          "ANCHOR_AT_REQUIRED",
+          scheduleId
+        );
+      }
+      anchorAt = new Date(anchorValue);
+      if (isNaN(anchorAt.getTime())) {
+        throw new ScheduleServiceError(
+          "Invalid anchor time format",
+          "INVALID_ANCHOR_AT",
+          scheduleId
+        );
+      }
+      intervalSeconds = intervalValue;
+      nextRunAt = calculateNextIntervalRun(anchorAt, intervalSeconds);
+    }
+    if (updates.scheduleType !== undefined) {
+      cronExpression = null;
+      scheduledAt = null;
+    }
+  }
+
+  const switchedToRepeating =
+    updates.scheduleType !== undefined &&
+    existing.scheduleType !== scheduleType &&
+    scheduleType !== "one-time" &&
+    nextRunAt !== undefined;
+  if (switchedToRepeating) {
+    if (
+      status === undefined &&
+      ["completed", "cancelled", "missed"].includes(existing.status)
+    ) {
+      status = "active";
+    }
+    if (enabled === undefined) enabled = true;
   }
 
   // Re-enabling a schedule whose status is a terminal marker re-arms it:
@@ -415,24 +532,51 @@ export async function updateSchedule(
   // "Missed" forever while croner actively fires it. An explicit status in
   // the same update always wins.
   if (
-    updates.enabled === true &&
-    updates.status === undefined &&
-    (existing.status === "cancelled" || existing.status === "missed")
+    enabled === true &&
+    status === undefined &&
+    (existing.status === "cancelled" ||
+      existing.status === "missed" ||
+      (scheduleType !== "one-time" && existing.status === "completed"))
   ) {
-    updates.status = "active";
+    status = "active";
   }
 
-  // Build update object
+  // Build the DB update from an explicit whitelist. Type-specific client
+  // fields are only written after validation and conversion above.
   const updateData: Record<string, unknown> = {
-    ...updates,
     updatedAt: new Date(),
   };
+  if (updates.name !== undefined) updateData.name = updates.name;
+  if (updates.scheduleType !== undefined) {
+    updateData.scheduleType = updates.scheduleType;
+  }
+  if (updates.timezone !== undefined) updateData.timezone = timezone;
+  if (enabled !== undefined) updateData.enabled = enabled;
+  if (status !== undefined) updateData.status = status;
+  if (updates.maxRetries !== undefined) {
+    updateData.maxRetries = updates.maxRetries;
+  }
+  if (updates.retryDelaySeconds !== undefined) {
+    updateData.retryDelaySeconds = updates.retryDelaySeconds;
+  }
+  if (updates.timeoutSeconds !== undefined) {
+    updateData.timeoutSeconds = updates.timeoutSeconds;
+  }
 
   if (nextRunAt !== undefined) {
     updateData.nextRunAt = nextRunAt;
   }
+  if (cronExpression !== undefined) {
+    updateData.cronExpression = cronExpression;
+  }
   if (scheduledAt !== undefined) {
     updateData.scheduledAt = scheduledAt;
+  }
+  if (intervalSeconds !== undefined) {
+    updateData.intervalSeconds = intervalSeconds;
+  }
+  if (anchorAt !== undefined) {
+    updateData.anchorAt = anchorAt;
   }
 
   const [updated] = await db
@@ -450,12 +594,12 @@ export async function updateSchedule(
   // (a silent PATCH {enabled:false} previously left no info-level record).
   // Logged after the write so a failed update cannot leave a phantom
   // transition in the audit trail.
-  if (updates.enabled !== undefined) {
+  if (enabled !== undefined) {
     log.info("Schedule enabled-state transition", {
       scheduleId,
-      enabled: updates.enabled,
+      enabled,
       previousEnabled: existing.enabled,
-      status: updates.status ?? existing.status,
+      status: status ?? existing.status,
     });
   }
 
@@ -908,10 +1052,15 @@ async function updateScheduleAfterExecution(
     return;
   }
 
-  // For recurring schedules, calculate next run
-  const nextRunAt = schedule.cronExpression
-    ? calculateNextRun(schedule.cronExpression, schedule.timezone)
-    : null;
+  // Recurring cron and interval schedules both re-arm after execution.
+  const nextRunAt =
+    schedule.scheduleType === "interval" &&
+    schedule.anchorAt &&
+    schedule.intervalSeconds
+      ? calculateNextIntervalRun(schedule.anchorAt, schedule.intervalSeconds, now)
+      : schedule.cronExpression
+        ? calculateNextRun(schedule.cronExpression, schedule.timezone)
+        : null;
   const consecutiveFailures =
     status === "failed" ? (schedule.consecutiveFailures || 0) + 1 : 0;
 
@@ -1123,7 +1272,8 @@ export async function markScheduleCancelled(scheduleId: string): Promise<number>
 }
 
 /**
- * Persist the scheduler's computed next fire time for a recurring schedule.
+ * Persist the scheduler's computed next fire time for a recurring or interval
+ * schedule.
  * Direct DB bookkeeping write: no notify loop, and updatedAt is left alone
  * so it keeps meaning "last config/state change".
  */
@@ -1152,6 +1302,8 @@ function mapDbScheduleToSchedule(
     scheduleType: (dbSchedule.scheduleType ?? "recurring") as ScheduleType,
     cronExpression: dbSchedule.cronExpression,
     scheduledAt: dbSchedule.scheduledAt ? new Date(dbSchedule.scheduledAt) : null,
+    intervalSeconds: dbSchedule.intervalSeconds,
+    anchorAt: dbSchedule.anchorAt ? new Date(dbSchedule.anchorAt) : null,
     timezone: dbSchedule.timezone,
     enabled: dbSchedule.enabled,
     status: dbSchedule.status as ScheduleStatus,
