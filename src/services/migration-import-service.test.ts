@@ -290,15 +290,17 @@ function makeBundle(): DbBundle {
     ],
     agentSchedules: [
       {
-        name: "nightly",
+        name: "every-hour",
         agentProvider: "claude",
         agentFlags: "[]",
-        prompt: "run nightly checks",
+        prompt: "run hourly checks",
         worktreeType: null,
         baseBranch: null,
-        scheduleType: "recurring",
-        cronExpression: "0 2 * * *",
+        scheduleType: "interval",
+        cronExpression: null,
         scheduledAt: null,
+        intervalSeconds: 3600,
+        anchorAt: NOW,
         timezone: "UTC",
         maxRetries: 0,
         enabled: true,
@@ -379,6 +381,9 @@ describe("MigrationImportService", () => {
     expect(schedule.enabled).toBe(false);
     expect(schedule.status).toBe("paused");
     expect(schedule.nextRunAt).toBeNull();
+    expect(schedule.scheduleType).toBe("interval");
+    expect(schedule.intervalSeconds).toBe(3600);
+    expect(schedule.anchorAt?.getTime()).toBe(NOW);
     expect(result.conflicts.some((c) => c.type === "schedule_disabled")).toBe(true);
 
     // Triggers: force-disabled pending review.

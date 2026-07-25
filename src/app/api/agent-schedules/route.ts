@@ -10,6 +10,10 @@ import * as AgentScheduleService from "@/services/agent-schedule-service";
 import { notifyAgentScheduleCreated } from "@/lib/scheduler-client";
 import type { AgentScheduleInput } from "@/types/agent-run";
 import { createLogger } from "@/lib/logger";
+import {
+  isValidIntervalSeconds,
+  isValidTimezone,
+} from "@/lib/schedule-validation";
 
 const log = createLogger("api/agent-schedules");
 
@@ -45,6 +49,43 @@ export const POST = withApiAuth(async (request, { userId }) => {
       typeof input.profileId !== "string"
     ) {
       return errorResponse("profileId must be a string or null", 400, "INVALID_PROFILE_ID");
+    }
+
+    const scheduleType = input.scheduleType || "recurring";
+    if (!["one-time", "recurring", "interval"].includes(scheduleType)) {
+      return errorResponse(
+        "Invalid schedule type",
+        400,
+        "INVALID_SCHEDULE_TYPE",
+      );
+    }
+    const timezone =
+      input.timezone === undefined ? "America/Los_Angeles" : input.timezone;
+    if (!isValidTimezone(timezone)) {
+      return errorResponse("Invalid timezone", 400, "INVALID_TIMEZONE");
+    }
+    if (scheduleType === "interval") {
+      if (!isValidIntervalSeconds(input.intervalSeconds)) {
+        return errorResponse(
+          "Interval must be between 1 minute and 30 days",
+          400,
+          "INVALID_INTERVAL_SECONDS",
+        );
+      }
+      if (!input.anchorAt) {
+        return errorResponse(
+          "Anchor time is required for interval schedules",
+          400,
+          "ANCHOR_AT_REQUIRED",
+        );
+      }
+      if (isNaN(new Date(input.anchorAt).getTime())) {
+        return errorResponse(
+          "Invalid anchor time format",
+          400,
+          "INVALID_ANCHOR_AT",
+        );
+      }
     }
 
     const schedule = await AgentScheduleService.createAgentSchedule(

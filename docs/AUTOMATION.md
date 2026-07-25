@@ -55,7 +55,7 @@ those primitives; they do not re-implement them.
 | Capability | Status | Interface | Notes |
 |------------|--------|-----------|-------|
 | Triggered agent runs — GitHub webhook (§2) | **Shipped** | API + Settings UI | HMAC-verified webhook; per-delivery + per-commit dedup. The most complete tier. |
-| Scheduled agent runs (§1) | **Beta** | API only | Cron launch works; a run is **never marked `completed`**, so run history reads as stuck "running". No UI. |
+| Scheduled agent runs (§1) | **Beta** | API only | Cron, one-time, and fixed-interval launch work; a run is **never marked `completed`**, so run history reads as stuck "running". No UI. |
 | Crown — best-of-N + judge + auto-PR (§3) | **Beta** | API + CLI | Full pipeline + real judge + `gh` auto-PR, but **every run waits the full ~30-min timeout** before judging. No UI. |
 | Supervisor agent-launch + delegation (§6) | **Shipped** | API + CLI | `POST /api/instances/:id/agent`, `POST /api/delegate`, `rdv delegate`. No UI. |
 | Golden dev-env image (§4) | **Shipped** | Image build | Bakes all 5 agent CLIs; opt-out background auto-update. |
@@ -65,15 +65,15 @@ those primitives; they do not re-implement them.
 
 ---
 
-## 1. Scheduled agent runs — cron + prompt → real agent launch
+## 1. Scheduled agent runs — schedule + prompt → real agent launch
 
-**Status: Beta.** Cron-driven launch works end-to-end; run-completion tracking does
-not (see the gap below). API only — there is no CLI command and no settings UI for
-schedules.
+**Status: Beta.** Cron, one-time, and fixed-interval launch work end-to-end;
+run-completion tracking does not (see the gap below). API only — there is no CLI
+command and no settings UI for schedules.
 
 | Table | Purpose |
 |-------|---------|
-| `agentSchedules` | Cron/one-time schedule + launch template (provider, flags, prompt, worktree). Cron columns mirror `sessionSchedules`. |
+| `agentSchedules` | Cron/one-time/interval schedule + launch template (provider, flags, prompt, worktree). Timing columns mirror `sessionSchedules`. |
 | `agentRuns` | One run instance from any source (`schedule`/`trigger`/`manual`/`crown`) + its provenance + the session it created + status. |
 
 The cron loop runs in the **terminal server** (`agentSchedulerOrchestrator`,
@@ -83,6 +83,12 @@ boot via [`croner`](https://www.npmjs.com/package/croner) and fires
 `SessionService.createSessionWithDedupFlag` path an interactive agent session
 uses, then delivers the prompt via tmux `send-keys` with `\r` (the Claude/Codex
 TUI requires the carriage return to submit) after a pane-quiescent wait.
+
+Interval schedules use an absolute-duration cadence from `anchorAt`, with a
+minimum of 60 seconds and maximum of 30 days. The timezone is display metadata
+only: daylight-saving changes never shift an interval fire. Missed occurrences
+are skipped, and the scheduler arms the first anchor-aligned occurrence strictly
+in the future.
 
 **Run state machine — as implemented.** `launchAgentRun` inserts a run as
 `pending`, then — once the agent session is created and the prompt delivered —

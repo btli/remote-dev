@@ -261,9 +261,11 @@ async function seedSourceProject(): Promise<void> {
     id: "sched-1",
     userId: USER,
     projectId: PROJECT,
-    name: "nightly",
+    name: "every-hour",
     prompt: "run checks",
-    cronExpression: "0 2 * * *",
+    scheduleType: "interval",
+    intervalSeconds: 3600,
+    anchorAt: NOW,
     createdAt: NOW,
     updatedAt: NOW,
   });
@@ -320,8 +322,12 @@ describe("MigrationExportService", () => {
     expect(JSON.stringify(bundle)).not.toContain("ghp_");
 
     expect(bundle.agentSchedules[0]).toMatchObject({
-      name: "nightly",
-      cronExpression: "0 2 * * *",
+      name: "every-hour",
+      scheduleType: "interval",
+      cronExpression: null,
+      scheduledAt: null,
+      intervalSeconds: 3600,
+      anchorAt: NOW.getTime(),
       enabled: true,
     });
   });

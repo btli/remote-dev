@@ -1550,10 +1550,12 @@ export const schema: SchemaDefinition = [
       // (agent-profile-service deleteProfile); intentionally NOT a DB-level FK —
       // see projectProfileLinks.poolId for why (db:push idempotency). [remote-dev-3b3l]
       { field: "profileId", dbName: "profile_id", kind: "text" },
-      // Cron (mirrors sessionSchedules).
+      // Schedule timing (mirrors sessionSchedules).
       { field: "scheduleType", dbName: "schedule_type", kind: "text", notNull: true, typeBrand: "ScheduleType", default: { kind: "value", value: "\"recurring\"" } },
       { field: "cronExpression", dbName: "cron_expression", kind: "text" },
       { field: "scheduledAt", dbName: "scheduled_at", kind: "timestampMs" },
+      { field: "intervalSeconds", dbName: "interval_seconds", kind: "integer" },
+      { field: "anchorAt", dbName: "anchor_at", kind: "timestampMs" },
       { field: "timezone", dbName: "timezone", kind: "text", notNull: true, default: { kind: "value", value: "\"America/Los_Angeles\"" } },
       { field: "enabled", dbName: "enabled", kind: "boolean", notNull: true, default: { kind: "value", value: "true" } },
       { field: "status", dbName: "status", kind: "text", notNull: true, typeBrand: "ScheduleStatus", default: { kind: "value", value: "\"active\"" } },

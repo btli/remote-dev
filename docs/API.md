@@ -1682,6 +1682,13 @@ GET  /api/agent-runs                    # list runs (?scheduleId/?triggerConfigI
 POST /api/agent-runs                    # immediate manual launch (202)
 ```
 
+Agent schedules support `scheduleType` values `recurring`, `one-time`, and
+`interval`. Recurring schedules require `cronExpression`; one-time schedules
+require `scheduledAt`; interval schedules require `intervalSeconds` (an integer
+from 60 through 2,592,000) and `anchorAt` (an ISO datetime). Interval cadence is
+an absolute duration from the anchor: missed occurrences are skipped and
+daylight-saving changes do not shift the fire time.
+
 An agent run creates a fresh `terminalType:"agent"` session and delivers a
 prompt — distinct from the keystroke-only `/api/schedules`. State machine:
 `pending→running→completed|failed` (+`superseded`).
