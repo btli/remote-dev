@@ -7,14 +7,14 @@ import { InvalidValueError } from "../errors/DomainError";
 const NOW = new Date("2026-06-13T12:00:00.000Z");
 
 /** A limited-state whose only window resets in the future (so unavailable now). */
-function limitedFuture(profileId: string): LimitState {
-  return LimitState.limited(profileId, {
+function limitedFuture(accountId: string): LimitState {
+  return LimitState.limited(accountId, {
     windows: [UsageWindow.create("5h", 100, new Date(NOW.getTime() + 3_600_000))],
   });
 }
 
-function candidate(profileId: string, priority: number, limitState: LimitState): RotationCandidate {
-  return { profileId, priority, limitState };
+function candidate(accountId: string, priority: number, limitState: LimitState): RotationCandidate {
+  return { accountId, priority, limitState };
 }
 
 describe("RotationPolicy", () => {

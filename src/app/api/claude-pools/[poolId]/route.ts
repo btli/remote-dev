@@ -5,7 +5,7 @@
  * `profilePoolRepository.getPool`, which returns null for missing/foreign
  * pools → 404, never leaking another user's pool).
  *
- * GET    -> the pool plus its members, each resolved to a profile name +
+ * GET    -> the pool plus its members, each resolved to an account label +
  *           serialized limit state (members owned by other users are omitted).
  * PUT    -> rename `{ name }`.
  * DELETE -> delete the pool (members cascade).
@@ -17,7 +17,7 @@ import {
   profilePoolRepository,
   usageLimitStateRepository,
 } from "@/infrastructure/container";
-import * as AgentProfileService from "@/services/agent-profile-service";
+import { listAccounts } from "@/services/claude-account-service";
 import { serializeLimitState } from "@/app/api/_lib/serialize-limit-state";
 
 export const dynamic = "force-dynamic";
@@ -32,24 +32,26 @@ export const GET = withApiAuth(async (_request, { userId, params }) => {
   const pool = await profilePoolRepository.getPool(poolId, userId);
   if (!pool) return errorResponse("Pool not found", 404);
 
-  const [members, profiles] = await Promise.all([
+  const [members, accounts] = await Promise.all([
     profilePoolRepository.membersOfPool(poolId),
-    AgentProfileService.getProfiles(userId),
+    listAccounts(userId),
   ]);
 
-  // Only the caller's profiles are nameable; foreign profileIds are dropped.
-  const nameById = new Map(profiles.map((p) => [p.id, p.name]));
-  const ownedMembers = members.filter((m) => nameById.has(m.profileId));
+  // Only the caller's accounts are nameable; foreign accountIds are dropped.
+  const nameById = new Map(
+    accounts.map((a) => [a.id, a.alias ?? a.emailAddress ?? null])
+  );
+  const ownedMembers = members.filter((m) => nameById.has(m.accountId));
 
-  const limitStates = await usageLimitStateRepository.findManyByProfileIds(
-    ownedMembers.map((m) => m.profileId)
+  const limitStates = await usageLimitStateRepository.findManyByAccountIds(
+    ownedMembers.map((m) => m.accountId)
   );
 
   const memberViews = ownedMembers.map((m) => ({
-    profileId: m.profileId,
-    name: nameById.get(m.profileId) ?? null,
+    accountId: m.accountId,
+    name: nameById.get(m.accountId) ?? null,
     priority: m.priority,
-    limitState: serializeLimitState(limitStates.get(m.profileId) ?? null),
+    limitState: serializeLimitState(limitStates.get(m.accountId) ?? null),
   }));
 
   return NextResponse.json({ ...pool, members: memberViews });

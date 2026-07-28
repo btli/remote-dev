@@ -66,9 +66,9 @@ const modePort: AutoRelaunchModePort = {
  *
  * - With a `relaunch` CTA → `agent_waiting` (actionable + push-eligible). The
  *   `relaunch` payload rides in `meta.relaunch` so the client can offer a
- *   1-click "relaunch under <profile>" that POSTs to `/api/sessions`; a
+ *   1-click "relaunch under <account>" that POSTs to `/api/sessions`; a
  *   `deepLinkSessionId` + open-session CTA keep it tappable everywhere else.
- * - Without a `relaunch` CTA (all profiles limited) → informational `info`
+ * - Without a `relaunch` CTA (all accounts limited) → informational `info`
  *   (passive), no relaunch affordance.
  *
  * Best-effort: never throws (the use-case treats notification as fire-and-forget).
@@ -112,7 +112,7 @@ const notificationPort: NotificationPort = {
 };
 
 /**
- * Launches a NEW parallel session under an available profile via the same
+ * Launches a NEW parallel session under an available account via the same
  * `session-service` create path `POST /api/sessions` uses. The originating
  * session is NEVER killed/stopped.
  *
@@ -153,7 +153,11 @@ const sessionLauncher: SessionLauncherPort = {
       terminalType: "agent",
       agentProvider: input.agentProvider as AgentProviderType,
       autoLaunchAgent: true,
-      profileId: input.profileId,
+      // The account decides the injected `CLAUDE_CODE_OAUTH_TOKEN`; the origin
+      // profile (when the account has one) still supplies the config dir / env
+      // overlay. [remote-dev-n4x4.6]
+      claudeAccountId: input.accountId,
+      ...(input.profileId ? { profileId: input.profileId } : {}),
       // Distinct, single-use scope key so dedup never folds this onto the
       // originating session (or a prior rotation). A fresh UUID guarantees no
       // collision with the limited session's scope.

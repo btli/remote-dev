@@ -499,6 +499,7 @@ export function EmbeddedSessionView({
       worktreeType: null,
       projectId: null,
       profileId: null,
+      claudeAccountId: null,
       terminalType: session.terminalType ?? "shell",
       agentProvider: null,
       agentExitState: null,

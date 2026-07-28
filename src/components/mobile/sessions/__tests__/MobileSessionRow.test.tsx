@@ -36,6 +36,7 @@ function makeSession(over: Partial<TerminalSession> = {}): TerminalSession {
     worktreeType: null,
     projectId: "p1",
     profileId: null,
+    claudeAccountId: null,
     terminalType: "shell",
     agentProvider: null,
     agentExitState: null,

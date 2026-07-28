@@ -27,6 +27,7 @@ function suspendedAgentSession(
     worktreeType: null,
     projectId: "p1",
     profileId: null,
+    claudeAccountId: null,
     terminalType: "agent",
     agentProvider: "claude",
     agentExitState: "exited",

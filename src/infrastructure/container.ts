@@ -157,8 +157,12 @@ import type { ProfilePoolRepository } from "@/application/ports/ProfilePoolRepos
 import type { ProfileSelectionPolicy } from "@/application/ports/ProfileSelectionPolicy";
 import type { UsageLimitGateway } from "@/application/ports/UsageLimitGateway";
 import { db as appDb } from "@/db";
-import { projectProfileLinks } from "@/db/schema";
-import { eq as drizzleEq } from "drizzle-orm";
+import { projectProfileLinks, claudeAccounts } from "@/db/schema";
+import {
+  eq as drizzleEq,
+  and as drizzleAnd,
+  inArray as drizzleInArray,
+} from "drizzle-orm";
 
 const log = createLogger("Container");
 
@@ -619,7 +623,44 @@ const readProjectProfileLink = async (
     where: drizzleEq(projectProfileLinks.projectId, projectId),
   });
   if (!link) return null;
-  return { profileId: link.profileId ?? null, poolId: link.poolId ?? null };
+  return {
+    profileId: link.profileId ?? null,
+    accountId: link.accountId ?? null,
+    poolId: link.poolId ?? null,
+  };
+};
+
+/**
+ * Bridge for projects still pinned to a pre-n4x4.6 primary *profile*: resolve
+ * the Claude account whose origin profile is `profileId`. Scoped to the owner
+ * so one user's link can never resolve to another user's account.
+ */
+const readAccountForProfile = async (
+  profileId: string,
+  userId: string
+): Promise<string | null> => {
+  const row = await appDb.query.claudeAccounts.findFirst({
+    where: drizzleAnd(
+      drizzleEq(claudeAccounts.profileId, profileId),
+      drizzleEq(claudeAccounts.userId, userId)
+    ),
+    columns: { id: true },
+  });
+  return row?.id ?? null;
+};
+
+/** Reverse lookup: each account's origin profile id (null when standalone). */
+const readProfilesForAccounts = async (
+  accountIds: string[]
+): Promise<Map<string, string | null>> => {
+  const out = new Map<string, string | null>();
+  if (accountIds.length === 0) return out;
+  const rows = await appDb.query.claudeAccounts.findMany({
+    where: drizzleInArray(claudeAccounts.id, accountIds),
+    columns: { id: true, profileId: true },
+  });
+  for (const row of rows) out.set(row.id, row.profileId ?? null);
+  return out;
 };
 
 /**
@@ -645,7 +686,9 @@ export const profileSelectionPolicy: ProfileSelectionPolicy =
     profilePoolRepository,
     usageLimitStateRepository,
     readProjectProfileLink,
-    readInheritedPoolId
+    readInheritedPoolId,
+    readAccountForProfile,
+    readProfilesForAccounts
   );
 
 /** Record a usage-limit observation (with the staleness guard). */

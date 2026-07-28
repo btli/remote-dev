@@ -42,6 +42,7 @@ export interface SessionDbRecord {
   worktreeType: string | null;
   projectId: string | null;
   profileId: string | null;
+  claudeAccountId: string | null;
   terminalType: string | null;
   agentProvider: string | null;
   agentExitState: string | null;
@@ -79,6 +80,7 @@ export interface SessionDbInsert {
   // projectId will fail fast here rather than propagate to an opaque DB error.
   projectId: string;
   profileId: string | null;
+  claudeAccountId: string | null;
   terminalType: TerminalType;
   agentProvider: AgentProviderType | null;
   agentExitState: AgentExitState | null;
@@ -114,6 +116,7 @@ export class SessionMapper {
       worktreeType: record.worktreeType ?? null,
       projectId: record.projectId,
       profileId: record.profileId,
+      claudeAccountId: record.claudeAccountId ?? null,
       terminalType: (record.terminalType as TerminalType) ?? "shell",
       agentProvider: (record.agentProvider as AgentProviderType) ?? null,
       agentExitState: (record.agentExitState as AgentExitState) ?? null,
@@ -157,6 +160,7 @@ export class SessionMapper {
       worktreeType: (session.worktreeType as WorktreeType) ?? null,
       projectId: assertProjectId(session.projectId, session.id),
       profileId: session.profileId,
+      claudeAccountId: session.claudeAccountId,
       terminalType: session.terminalType,
       agentProvider: session.agentProvider,
       agentExitState: session.agentExitState,
@@ -192,6 +196,7 @@ export class SessionMapper {
     worktreeType: string | null;
     projectId: string | null;
     profileId: string | null;
+    claudeAccountId: string | null;
     terminalType: TerminalType;
     agentProvider: AgentProviderType | null;
     agentExitState: AgentExitState | null;
@@ -220,6 +225,7 @@ export class SessionMapper {
       worktreeType: session.worktreeType ?? null,
       projectId: session.projectId,
       profileId: session.profileId,
+      claudeAccountId: session.claudeAccountId,
       terminalType: session.terminalType,
       agentProvider: session.agentProvider,
       agentExitState: session.agentExitState,

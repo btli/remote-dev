@@ -20,7 +20,10 @@
 
 import type { AutoRelaunchModePort } from "@/application/ports/AutoRelaunchModePort";
 import type { NotificationPort } from "@/application/ports/NotificationPort";
-import type { ProfileSelectionPolicy } from "@/application/ports/ProfileSelectionPolicy";
+import type {
+  ProfileSelectionPolicy,
+  SelectedAccount,
+} from "@/application/ports/ProfileSelectionPolicy";
 import type { SessionLauncherPort } from "@/application/ports/SessionLauncherPort";
 import type { ClaudeAutoRelaunchMode } from "@/types/claude-limits";
 import { createLogger } from "@/lib/logger";
@@ -31,8 +34,8 @@ export interface RelaunchOnLimitInput {
   sessionId: string;
   userId: string;
   projectId: string;
-  /** The profile that just hit its limit. */
-  currentProfileId: string;
+  /** The Claude account that just hit its limit. */
+  currentAccountId: string;
   /** Agent provider of the limited session (passed to launch / CTA). */
   agentProvider: string;
   /** Human-readable session name, when known (for the notification). */
@@ -44,9 +47,9 @@ export interface RelaunchOnLimitInput {
 /** What the use-case ended up doing — handy for tests + callers/logging. */
 export type RelaunchAction =
   | { kind: "noop"; mode: ClaudeAutoRelaunchMode }
-  | { kind: "notified"; relaunchProfileId: string }
+  | { kind: "notified"; relaunchAccountId: string }
   | { kind: "notified_all_limited" }
-  | { kind: "relaunched"; newSessionId: string; profileId: string };
+  | { kind: "relaunched"; newSessionId: string; accountId: string };
 
 export class RelaunchOnLimitUseCase {
   constructor(
@@ -68,33 +71,35 @@ export class RelaunchOnLimitUseCase {
       return { kind: "noop", mode };
     }
 
-    // Both notify + auto need to know whether an alternate profile exists.
-    const nextProfileId = await this.selectionPolicy.selectNextAvailable(
-      input.currentProfileId,
-      input.projectId,
-      input.userId,
-      now
-    );
+    // Both notify + auto need to know whether an alternate account exists.
+    const next: SelectedAccount | null =
+      await this.selectionPolicy.selectNextAvailable(
+        input.currentAccountId,
+        input.projectId,
+        input.userId,
+        now
+      );
 
     if (mode === "notify") {
-      if (nextProfileId) {
+      if (next) {
         await this.notificationPort.notifyLimit({
           userId: input.userId,
           sessionId: input.sessionId,
           sessionName: input.sessionName,
           title: "Claude usage limit reached",
-          body: "Tap to relaunch under an available profile.",
+          body: "Tap to relaunch under an available account.",
           relaunch: {
             projectId: input.projectId,
-            profileId: nextProfileId,
+            accountId: next.accountId,
+            profileId: next.profileId,
             agentProvider: input.agentProvider,
           },
         });
         log.info("Notified limit with relaunch CTA", {
           sessionId: input.sessionId,
-          relaunchProfileId: nextProfileId,
+          relaunchAccountId: next.accountId,
         });
-        return { kind: "notified", relaunchProfileId: nextProfileId };
+        return { kind: "notified", relaunchAccountId: next.accountId };
       }
 
       await this.notifyAllLimited(input);
@@ -102,7 +107,7 @@ export class RelaunchOnLimitUseCase {
     }
 
     // mode === "auto"
-    if (!nextProfileId) {
+    if (!next) {
       await this.notifyAllLimited(input);
       return { kind: "notified_all_limited" };
     }
@@ -111,21 +116,22 @@ export class RelaunchOnLimitUseCase {
       const { sessionId: newSessionId } = await this.sessionLauncher.launch({
         userId: input.userId,
         projectId: input.projectId,
-        profileId: nextProfileId,
+        accountId: next.accountId,
+        profileId: next.profileId,
         agentProvider: input.agentProvider,
         originatingSessionId: input.sessionId,
       });
-      log.info("Auto-relaunched under alternate profile", {
+      log.info("Auto-relaunched under alternate account", {
         originatingSessionId: input.sessionId,
         newSessionId,
-        profileId: nextProfileId,
+        accountId: next.accountId,
       });
-      return { kind: "relaunched", newSessionId, profileId: nextProfileId };
+      return { kind: "relaunched", newSessionId, accountId: next.accountId };
     } catch (error) {
       // Launch failed — degrade to a notification so the user can act.
       log.warn("Auto-relaunch failed; falling back to notification", {
         sessionId: input.sessionId,
-        profileId: nextProfileId,
+        accountId: next.accountId,
         error: String(error),
       });
       await this.notificationPort.notifyLimit({
@@ -133,25 +139,26 @@ export class RelaunchOnLimitUseCase {
         sessionId: input.sessionId,
         sessionName: input.sessionName,
         title: "Claude usage limit reached",
-        body: "Auto-relaunch failed. Tap to relaunch under an available profile.",
+        body: "Auto-relaunch failed. Tap to relaunch under an available account.",
         relaunch: {
           projectId: input.projectId,
-          profileId: nextProfileId,
+          accountId: next.accountId,
+          profileId: next.profileId,
           agentProvider: input.agentProvider,
         },
       });
-      return { kind: "notified", relaunchProfileId: nextProfileId };
+      return { kind: "notified", relaunchAccountId: next.accountId };
     }
   }
 
-  /** Notify that every candidate profile is limited (no relaunch CTA). */
+  /** Notify that every candidate account is limited (no relaunch CTA). */
   private async notifyAllLimited(input: RelaunchOnLimitInput): Promise<void> {
     await this.notificationPort.notifyLimit({
       userId: input.userId,
       sessionId: input.sessionId,
       sessionName: input.sessionName,
-      title: "All Claude profiles limited",
-      body: "Every profile in the fallback pool is currently rate-limited.",
+      title: "All Claude accounts limited",
+      body: "Every account in the fallback pool is currently rate-limited.",
     });
     log.info("Notified all-limited", { sessionId: input.sessionId });
   }

@@ -1,12 +1,16 @@
 "use client";
 
 /**
- * Settings → Claude Accounts. [remote-dev-0yix]
+ * Settings → Claude Accounts. [remote-dev-0yix / remote-dev-n4x4.7]
  *
- * Hosts the cswap-style usage-limit dashboard plus the global default for what
- * to do when a running Claude session hits a limit (notify / auto / disabled).
+ * The single management surface for Claude ACCOUNTS: the cswap-style dashboard
+ * (which owns the "Add account" flow, per-account Verify / Rename / Remove, and
+ * the usage-limit view) plus the global default for what to do when a running
+ * Claude session hits a limit (notify / auto / disabled).
+ *
  * Per-project overrides + fallback-pool assignment live in the project
- * preferences panel (PoolAssignmentPanel).
+ * preferences panel (PoolAssignmentPanel). Accounts are decoupled from agent
+ * profiles [remote-dev-n4x4.6], so nothing here creates or edits a profile.
  */
 
 import { Bell, Repeat, Ban } from "lucide-react";
@@ -31,7 +35,7 @@ const RELAUNCH_OPTIONS: {
     value: "auto",
     label: "Auto-relaunch",
     description:
-      "Spawn a parallel session under an available profile (never force-kills).",
+      "Spawn a parallel session under an available account (never force-kills).",
     icon: Repeat,
   },
   {

@@ -1,21 +1,25 @@
 "use client";
 
 /**
- * Claude profile assignment for a project (in project preferences).
- * [remote-dev-0yix]
+ * Claude profile + account-pool assignment for a project (in project
+ * preferences). [remote-dev-0yix / remote-dev-n4x4.6]
  *
  * Three things:
- *   1. Primary profile — the project's pinned Claude profile. Persists
+ *   1. Primary profile — the project's pinned agent profile. Persists
  *      immediately via the existing folder-link endpoints
  *      (`PUT/DELETE /api/profiles/folders/:projectId`, exposed on ProfileContext
  *      as link/unlinkFolderToProfile). This reuses the same persistence the
  *      Profiles UI already uses.
- *   2. Fallback pool — an ordered set of profiles to rotate through when the
- *      primary is limited. The *selection* (which pool) is a node preference
- *      (`claudeProfilePoolId`, inherited project→group) and is owned by the
- *      parent prefs form (controlled `poolId` / `onPoolIdChange`, saved with the
- *      rest of the prefs). Pool membership + priorities persist immediately via
- *      the pool member routes.
+ *   2. Fallback pool — an ordered set of Claude ACCOUNTS to rotate through when
+ *      the current one is limited. Pools are pools of accounts, not profiles:
+ *      a usage limit belongs to the subscription, and every session shares one
+ *      Claude config dir, selecting its account purely by which
+ *      `CLAUDE_CODE_OAUTH_TOKEN` gets injected [remote-dev-n4x4.6]. The
+ *      *selection* (which pool) is a node preference (`claudeProfilePoolId`,
+ *      inherited project→group) and is owned by the parent prefs form
+ *      (controlled `poolId` / `onPoolIdChange`, saved with the rest of the
+ *      prefs). Membership + priorities persist immediately via the
+ *      account-keyed pool member routes.
  *   3. Auto-relaunch mode — node preference `claudeAutoRelaunchMode`
  *      (null = inherit the global default), also a controlled prop saved by the
  *      parent.
@@ -38,7 +42,6 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useProfileContext } from "@/contexts/ProfileContext";
-import { isClaudeCapableProvider } from "@/types/agent";
 import type {
   ClaudeAutoRelaunchMode,
   ClaudePoolDetail,
@@ -81,17 +84,14 @@ export function PoolAssignmentPanel({
     folderProfileLinks,
     linkFolderToProfile,
     unlinkFolderFromProfile,
+    accounts,
+    refreshAccounts,
     pools,
     createPool,
     getPoolDetail,
     addPoolMember,
     removePoolMember,
   } = useProfileContext();
-
-  // Only claude-capable profiles are assignable (they carry Claude accounts).
-  const claudeProfiles = profiles.filter((p) =>
-    isClaudeCapableProvider(p.provider)
-  );
 
   const primaryProfileId = folderProfileLinks.get(projectId) ?? null;
   const [primarySaving, setPrimarySaving] = useState(false);
@@ -128,6 +128,11 @@ export function PoolAssignmentPanel({
       setPoolDetail(null);
     }
   }, [poolId, reloadPoolDetail]);
+
+  // The member picker lists Claude accounts; make sure they're loaded.
+  useEffect(() => {
+    void refreshAccounts();
+  }, [refreshAccounts]);
 
   async function handlePrimaryChange(value: string) {
     setPrimarySaving(true);
@@ -186,38 +191,39 @@ export function PoolAssignmentPanel({
     }
   }
 
-  async function handleRemoveMember(memberId: string) {
+  async function handleRemoveMember(accountId: string) {
     if (!poolId) return;
     setError(null);
     try {
-      await removePoolMember(poolId, memberId);
+      await removePoolMember(poolId, accountId);
       await reloadPoolDetail(poolId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to remove member");
     }
   }
 
-  async function handlePriorityChange(memberId: string, priority: number) {
+  async function handlePriorityChange(accountId: string, priority: number) {
     if (!poolId || !Number.isFinite(priority)) return;
     setError(null);
     try {
       // POST upserts (priority updated on conflict).
-      await addPoolMember(poolId, memberId, priority);
+      await addPoolMember(poolId, accountId, priority);
       await reloadPoolDetail(poolId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to set priority");
     }
   }
 
-  // Profiles eligible to add to the pool: claude-capable, not already a member.
-  const memberIds = new Set((poolDetail?.members ?? []).map((m) => m.profileId));
-  const addableProfiles = claudeProfiles.filter((p) => !memberIds.has(p.id));
+  // Accounts eligible to add to the pool: any of the user's, not already a
+  // member. Alias → email → id is the same label the pool routes emit.
+  const memberIds = new Set((poolDetail?.members ?? []).map((m) => m.accountId));
+  const addableAccounts = accounts.filter((a) => !memberIds.has(a.id));
 
-  if (claudeProfiles.length === 0) {
+  if (profiles.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
-        No Claude profiles yet. Create one in Settings → Profiles to assign a
-        primary profile and a fallback pool for this project.
+        No profiles yet. Create one in Settings → Profiles to pin a primary
+        profile for this project.
       </div>
     );
   }
@@ -227,7 +233,7 @@ export function PoolAssignmentPanel({
       {/* Primary profile */}
       <div className="space-y-2">
         <Label className="flex items-center gap-2">
-          Primary Claude profile
+          Primary profile
           {primarySaving && (
             <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
           )}
@@ -242,7 +248,7 @@ export function PoolAssignmentPanel({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={NO_PRIMARY}>No primary profile</SelectItem>
-            {claudeProfiles.map((p) => (
+            {profiles.map((p) => (
               <SelectItem key={p.id} value={p.id}>
                 {p.name}
               </SelectItem>
@@ -330,7 +336,7 @@ export function PoolAssignmentPanel({
                 .sort((a, b) => a.priority - b.priority)
                 .map((member) => (
                   <div
-                    key={member.profileId}
+                    key={member.accountId}
                     className="flex items-center gap-2"
                   >
                     <Input
@@ -338,7 +344,7 @@ export function PoolAssignmentPanel({
                       defaultValue={member.priority}
                       onBlur={(e) =>
                         void handlePriorityChange(
-                          member.profileId,
+                          member.accountId,
                           Number(e.target.value)
                         )
                       }
@@ -346,14 +352,15 @@ export function PoolAssignmentPanel({
                       title="Priority (lower = tried first)"
                     />
                     <span className="text-sm text-foreground flex-1 min-w-0 truncate">
-                      {member.name ?? member.profileId}
+                      {member.name ?? "Unnamed account"}
                     </span>
                     <LimitStatusBadge state={member.limitState} />
                     <Button
                       type="button"
                       size="icon"
                       variant="ghost"
-                      onClick={() => void handleRemoveMember(member.profileId)}
+                      onClick={() => void handleRemoveMember(member.accountId)}
+                      aria-label="Remove from pool"
                       className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -364,22 +371,22 @@ export function PoolAssignmentPanel({
           ) : (
             !poolLoading && (
               <p className="text-[11px] text-muted-foreground">
-                No members yet. Add Claude profiles below.
+                No members yet. Add Claude accounts below.
               </p>
             )
           )}
 
           {/* Add member */}
-          {addableProfiles.length > 0 && (
+          {addableAccounts.length > 0 ? (
             <div className="flex gap-2 pt-1">
               <Select value={addMemberId} onValueChange={setAddMemberId}>
                 <SelectTrigger className="h-8 bg-card/50 border-border text-sm">
-                  <SelectValue placeholder="Add a profile…" />
+                  <SelectValue placeholder="Add an account…" />
                 </SelectTrigger>
                 <SelectContent>
-                  {addableProfiles.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
+                  {addableAccounts.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>
+                      {a.alias ?? a.emailAddress ?? "Unnamed account"}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -396,6 +403,12 @@ export function PoolAssignmentPanel({
                 Add
               </Button>
             </div>
+          ) : (
+            accounts.length === 0 && (
+              <p className="text-[11px] text-muted-foreground">
+                No Claude accounts yet. Add one in Settings → Claude Accounts.
+              </p>
+            )
           )}
         </div>
       )}

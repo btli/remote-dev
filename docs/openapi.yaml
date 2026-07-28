@@ -1146,17 +1146,92 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [profileId], properties: { profileId: { type: string } } } } } }
       responses: { '200': { $ref: '#/components/responses/Success' } }
     delete: { tags: [Profiles], summary: Unlink folder from profile, responses: { '200': { $ref: '#/components/responses/Success' } } }
-  /api/profiles/{id}/limit-state:
-    parameters: [{ $ref: '#/components/parameters/IdPath' }]
+  /api/claude-accounts:
     get:
       tags: [ClaudeLimits]
-      summary: Get a profile's serialized Claude usage-limit state
+      summary: List the caller's Claude accounts
+      description: >-
+        A Claude account is one subscription, independent of any agent profile.
+        The stored OAuth token is encrypted at rest and NEVER returned — only
+        `hasToken` reports whether one exists.
+      responses:
+        '200': { description: Accounts, content: { application/json: { schema: { type: object, properties: { accounts: { type: array, items: { $ref: '#/components/schemas/ClaudeAccount' } } } } } } }
+    post:
+      tags: [ClaudeLimits]
+      summary: Add an account by pasting a `claude setup-token` OAuth token
+      description: >-
+        The remote/PWA onboarding fallback, for when there is no local browser.
+        Identity is read via `claude auth status --json`; re-posting a token for
+        an already-known email UPDATES that account in place (200) instead of
+        creating a duplicate (201).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, format: password, description: "The long-lived `sk-ant-oat…` token printed by `claude setup-token`" }
+                alias: { type: string, nullable: true }
+      responses:
+        '200': { description: Existing account updated in place, content: { application/json: { schema: { $ref: '#/components/schemas/ClaudeAccountSaveResult' } } } }
+        '201': { description: Account created, content: { application/json: { schema: { $ref: '#/components/schemas/ClaudeAccountSaveResult' } } } }
+        '400': { description: "Missing token, or a value that is not shaped like an OAuth token (code INVALID_TOKEN_FORMAT)", content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /api/claude-accounts/{accountId}:
+    parameters: [{ name: accountId, in: path, required: true, schema: { type: string } }]
+    get:
+      tags: [ClaudeLimits]
+      summary: Get one Claude account
+      responses:
+        '200': { description: Account, content: { application/json: { schema: { type: object, properties: { account: { $ref: '#/components/schemas/ClaudeAccount' } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [ClaudeLimits]
+      summary: Update an account's label or kind
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                alias: { type: string, nullable: true }
+                accountKind: { type: string, enum: [subscription, api_key] }
+      responses:
+        '200': { description: Updated account, content: { application/json: { schema: { type: object, properties: { account: { $ref: '#/components/schemas/ClaudeAccount' } } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [ClaudeLimits]
+      summary: Delete an account (limit state + pool membership cascade)
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/claude-accounts/{accountId}/verify:
+    parameters: [{ name: accountId, in: path, required: true, schema: { type: string } }]
+    post:
+      tags: [ClaudeLimits]
+      summary: Re-read an account's identity via `claude auth status --json`
+      description: >-
+        Runs the CLI under the account's own env (its decrypted OAuth token) and
+        refreshes email / org / tier / auth method / health. Replaces the removed
+        credential-file "Sync", which read a `.credentials.json` that never
+        exists on macOS.
+      responses:
+        '200': { description: Refreshed account, content: { application/json: { schema: { type: object, properties: { account: { $ref: '#/components/schemas/ClaudeAccount' }, loggedIn: { type: boolean }, authMethod: { type: string, nullable: true } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/claude-accounts/{accountId}/limit-state:
+    parameters: [{ name: accountId, in: path, required: true, schema: { type: string } }]
+    get:
+      tags: [ClaudeLimits]
+      summary: Get an account's serialized Claude usage-limit state
       responses:
         '200': { description: Limit state (available/unknown default when none recorded), content: { application/json: { schema: { $ref: '#/components/schemas/LimitState' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
     patch:
       tags: [ClaudeLimits]
-      summary: Manual override — mark a profile available (clears a limit)
+      summary: Manual override — mark an account available (clears a limit)
       requestBody:
         required: true
         content:
@@ -1170,30 +1245,76 @@ paths:
         '200': { description: Updated limit state, content: { application/json: { schema: { $ref: '#/components/schemas/LimitState' } } } }
         '400': { description: Status other than "available", content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/claude-accounts/setup-session:
+    post:
+      tags: [ClaudeLimits]
+      summary: Start "Add account" — launch a session running `claude setup-token`
+      description: >-
+        Creates a real shell session and types `claude setup-token` into it. The
+        user completes the OAuth sign-in in their browser, then POSTs to
+        /api/claude-accounts/capture to store the printed token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectId]
+              properties:
+                projectId: { type: string }
+                profileId: { type: string, description: Optional profile to bind the setup session to }
+      responses:
+        '201':
+          description: Session launched
+          content: { application/json: { schema: { type: object, properties: { sessionId: { type: string }, command: { type: string }, commandSent: { type: boolean }, instructions: { type: array, items: { type: string } } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/claude-accounts/capture:
+    post:
+      tags: [ClaudeLimits]
+      summary: Finish "Add account" — capture the token printed by the setup session
+      description: >-
+        Reads the setup session's scrollback, extracts the `sk-ant-oat…` token,
+        stores it encrypted, and probes identity. The token is never echoed back.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId]
+              properties:
+                sessionId: { type: string }
+                alias: { type: string, nullable: true }
+                accountId: { type: string, nullable: true, description: Update this specific account instead of matching on the probed email }
+      responses:
+        '200': { description: Account created or updated, content: { application/json: { schema: { $ref: '#/components/schemas/ClaudeAccountSaveResult' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: "Token not printed yet (code TOKEN_NOT_READY) or the session could not be read (CAPTURE_FAILED)", content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /api/profiles/select:
     get:
       tags: [ClaudeLimits]
-      summary: Recommended profile for a project (read-only wizard pre-fill)
+      summary: Recommended profile + Claude account for a project (wizard pre-fill)
       description: >-
-        Runs the primary→fallback-pool selection (with rotation) for the
-        project and returns the recommended profile. Creates nothing. The same
-        resolution runs server-side at session creation for claude sessions
-        with no explicit profile.
+        Runs the primary→fallback-pool selection (with rotation) for the project
+        and returns the recommended Claude account plus its origin profile.
+        Creates nothing. The same resolution runs server-side at session creation
+        for claude sessions with no explicit profile.
       parameters:
         - { name: projectId, in: query, required: true, schema: { type: string } }
       responses:
         '200':
-          description: Recommendation (profileId null when nothing is configured)
-          content: { application/json: { schema: { type: object, properties: { profileId: { type: string, nullable: true }, wasAutoSelected: { type: boolean } } } } }
+          description: Recommendation (both ids null when nothing is configured)
+          content: { application/json: { schema: { type: object, properties: { profileId: { type: string, nullable: true }, claudeAccountId: { type: string, nullable: true }, wasAutoSelected: { type: boolean } } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
   /api/claude/usage:
     get:
       tags: [ClaudeLimits]
       summary: Claude Accounts dashboard payload
       description: >-
-        Every Claude-capable profile the caller owns with its account kind +
-        display identity, serialized limit state, and the ids of the caller's
-        pools it belongs to.
+        Every Claude ACCOUNT the caller owns with its display identity, auth
+        health, serialized limit state, and the ids of the caller's pools it
+        belongs to. Tokens are never included.
       responses:
         '200':
           description: Dashboard payload
@@ -1202,18 +1323,15 @@ paths:
               schema:
                 type: object
                 properties:
-                  profiles:
+                  accounts:
                     type: array
                     items:
-                      type: object
-                      properties:
-                        id: { type: string }
-                        name: { type: string }
-                        accountKind: { type: string, enum: [subscription, api_key] }
-                        emailAddress: { type: string, nullable: true }
-                        organizationName: { type: string, nullable: true }
-                        limitState: { $ref: '#/components/schemas/LimitState' }
-                        pools: { type: array, items: { type: string } }
+                      allOf:
+                        - { $ref: '#/components/schemas/ClaudeAccount' }
+                        - type: object
+                          properties:
+                            limitState: { $ref: '#/components/schemas/LimitState' }
+                            pools: { type: array, items: { type: string } }
   /api/claude-pools:
     get:
       tags: [ClaudeLimits]
@@ -1233,11 +1351,11 @@ paths:
     parameters: [{ name: poolId, in: path, required: true, schema: { type: string } }]
     get:
       tags: [ClaudeLimits]
-      summary: Get a pool plus its members (name + limit state)
+      summary: Get a pool plus its account members (label + limit state)
       responses:
         '200':
           description: Pool with members
-          content: { application/json: { schema: { type: object, properties: { id: { type: string }, name: { type: string }, members: { type: array, items: { type: object, properties: { profileId: { type: string }, name: { type: string, nullable: true }, priority: { type: integer }, limitState: { $ref: '#/components/schemas/LimitState' } } } } } } } }
+          content: { application/json: { schema: { type: object, properties: { id: { type: string }, name: { type: string }, members: { type: array, items: { type: object, properties: { accountId: { type: string }, name: { type: string, nullable: true }, priority: { type: integer }, limitState: { $ref: '#/components/schemas/LimitState' } } } } } } } }
         '404': { $ref: '#/components/responses/NotFound' }
     put:
       tags: [ClaudeLimits]
@@ -1259,7 +1377,7 @@ paths:
       tags: [ClaudeLimits]
       summary: List pool members ordered by ascending priority
       responses:
-        '200': { description: Members, content: { application/json: { schema: { type: object, properties: { members: { type: array, items: { type: object, properties: { profileId: { type: string }, priority: { type: integer } } } } } } } } }
+        '200': { description: Members, content: { application/json: { schema: { type: object, properties: { members: { type: array, items: { type: object, properties: { accountId: { type: string }, priority: { type: integer } } } } } } } } }
         '404': { $ref: '#/components/responses/NotFound' }
     post:
       tags: [ClaudeLimits]
@@ -1270,18 +1388,18 @@ paths:
           application/json:
             schema:
               type: object
-              required: [profileId]
+              required: [accountId]
               properties:
-                profileId: { type: string }
+                accountId: { type: string }
                 priority: { type: integer, description: "Lower = higher priority / earlier in rotation (default 0)" }
       responses:
-        '201': { description: Added/updated, content: { application/json: { schema: { type: object, properties: { poolId: { type: string }, profileId: { type: string }, priority: { type: integer } } } } } }
+        '201': { description: Added/updated, content: { application/json: { schema: { type: object, properties: { poolId: { type: string }, accountId: { type: string }, priority: { type: integer } } } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
-        '404': { description: Pool or profile not owned by the caller, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Pool or account not owned by the caller, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     delete:
       tags: [ClaudeLimits]
       summary: Remove a pool member
-      parameters: [{ name: profileId, in: query, schema: { type: string }, description: profileId (may also be supplied in a JSON body) }]
+      parameters: [{ name: accountId, in: query, schema: { type: string }, description: accountId (may also be supplied in a JSON body) }]
       responses:
         '204': { description: Removed }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -1294,7 +1412,7 @@ paths:
       responses:
         '200':
           description: Member availability
-          content: { application/json: { schema: { type: object, properties: { poolId: { type: string }, name: { type: string }, members: { type: array, items: { type: object, properties: { profileId: { type: string }, name: { type: string, nullable: true }, priority: { type: integer }, limitState: { $ref: '#/components/schemas/LimitState' } } } } } } } }
+          content: { application/json: { schema: { type: object, properties: { poolId: { type: string }, name: { type: string }, members: { type: array, items: { type: object, properties: { accountId: { type: string }, name: { type: string, nullable: true }, priority: { type: integer }, limitState: { $ref: '#/components/schemas/LimitState' } } } } } } } }
         '404': { $ref: '#/components/responses/NotFound' }
   /api/agent-profiles/{id}/configs:
     parameters: [{ $ref: '#/components/parameters/IdPath' }]
@@ -2600,11 +2718,40 @@ components:
       properties:
         ids: { type: array, items: { type: string } }
         all: { type: boolean }
+    ClaudeAccount:
+      type: object
+      description: >-
+        One Claude subscription (or API key), independent of any agent profile.
+        A session selects it by having CLAUDE_CODE_OAUTH_TOKEN injected into its
+        env, so N accounts share one Claude config dir. The stored token is
+        encrypted at rest and never appears in a response — `hasToken` only
+        reports whether one exists.
+      properties:
+        id: { type: string }
+        alias: { type: string, nullable: true, description: User-facing label; the UI falls back to the email }
+        accountKind: { type: string, enum: [subscription, api_key] }
+        emailAddress: { type: string, nullable: true }
+        organizationId: { type: string, nullable: true }
+        organizationName: { type: string, nullable: true }
+        rateLimitTier: { type: string, nullable: true, description: "Subscription tier as reported by the CLI, e.g. \"max\"" }
+        authMethod: { type: string, nullable: true, description: "Verbatim `authMethod` from `claude auth status --json`; an OPEN set (none | claude.ai | oauth_token | …)" }
+        authHealthy: { type: boolean, description: Whether the last identity probe reported loggedIn true }
+        lastVerifiedAt: { type: integer, nullable: true, description: Epoch-ms of the last identity probe }
+        hasToken: { type: boolean, description: Whether an encrypted OAuth token is stored }
+        profileId: { type: string, nullable: true, description: Legacy origin profile, when the account was migrated from one. NOT an identity. }
+        createdAt: { type: integer }
+        updatedAt: { type: integer }
+    ClaudeAccountSaveResult:
+      type: object
+      properties:
+        account: { $ref: '#/components/schemas/ClaudeAccount' }
+        loggedIn: { type: boolean, description: Whether the identity probe recognized the token }
+        updated: { type: boolean, description: True when an existing account was updated in place rather than created }
     LimitState:
       type: object
       description: >-
-        Serialized Claude usage-limit block shared by the profile/pool routes.
-        A profile with no recorded state serializes as the available/unknown
+        Serialized Claude usage-limit block shared by the account/pool routes.
+        An account with no recorded state serializes as the available/unknown
         default (all numeric/timestamp fields null, status "unknown").
         Timestamps are epoch-ms numbers matching the DB timestampMs columns.
       properties:

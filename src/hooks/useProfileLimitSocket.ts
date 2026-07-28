@@ -1,12 +1,17 @@
 "use client";
 
 /**
- * [remote-dev-0yix] Claude profile usage-limit control socket.
+ * [remote-dev-0yix / remote-dev-n4x4.6] Claude ACCOUNT usage-limit control
+ * socket.
  *
  * Opens ONE lightweight control-mode WebSocket per browser tab (no PTY) to the
  * terminal server and listens for `profile_limit_changed` broadcasts, feeding
  * each into ProfileContext's `limitStates` map so the Claude Accounts dashboard
  * and the wizard's limit badges update live without a refresh.
+ *
+ * The event NAME is retained for wire compatibility, but its payload keys on
+ * `accountId` since usage limits belong to the Claude subscription, not to the
+ * agent profile a session happened to run under.
  *
  * Behavior mirrors {@link useStatusControlSocket} (same control-token auth,
  * same RDV_BASE_PATH-aware WS URL helper, same capped-backoff reconnect). They
@@ -80,7 +85,7 @@ export function useProfileLimitSocket({
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
-          if (msg.type === "profile_limit_changed" && msg.profileId) {
+          if (msg.type === "profile_limit_changed" && msg.accountId) {
             onLimitChangedRef.current(msg as ProfileLimitChangedEvent);
           }
         } catch {

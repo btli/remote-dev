@@ -37,13 +37,13 @@ class FakePoolRepo implements ProfilePoolRepository {
   async setPriority(): Promise<void> {}
 }
 
-/** Fake state repo: pre-seeded profileId → LimitState. */
+/** Fake state repo: pre-seeded accountId → LimitState. */
 class FakeStateRepo implements UsageLimitStateRepository {
   constructor(private readonly states: Map<string, LimitState>) {}
-  async findByProfileId(profileId: string): Promise<LimitState | null> {
-    return this.states.get(profileId) ?? null;
+  async findByAccountId(accountId: string): Promise<LimitState | null> {
+    return this.states.get(accountId) ?? null;
   }
-  async findManyByProfileIds(ids: string[]): Promise<Map<string, LimitState>> {
+  async findManyByAccountIds(ids: string[]): Promise<Map<string, LimitState>> {
     const out = new Map<string, LimitState>();
     for (const id of ids) {
       const s = this.states.get(id);
@@ -60,8 +60,8 @@ class FakeStateRepo implements UsageLimitStateRepository {
 }
 
 /** A limited state whose reset is in the future (still limited at NOW). */
-function limited(profileId: string): LimitState {
-  return LimitState.limited(profileId, {
+function limited(accountId: string): LimitState {
+  return LimitState.limited(accountId, {
     windows: [UsageWindow.create("5h", 100, new Date("2026-06-13T17:00:00Z"))],
     source: "reactive",
     lastCheckedAt: NOW,
@@ -69,8 +69,8 @@ function limited(profileId: string): LimitState {
 }
 
 /** An explicitly-available state. */
-function available(profileId: string): LimitState {
-  return LimitState.available(profileId, { source: "reactive", lastCheckedAt: NOW });
+function available(accountId: string): LimitState {
+  return LimitState.available(accountId, { source: "reactive", lastCheckedAt: NOW });
 }
 
 function makePolicy(opts: {
@@ -83,7 +83,11 @@ function makePolicy(opts: {
     new FakePoolRepo(opts.pools ?? new Map()),
     new FakeStateRepo(opts.states ?? new Map()),
     async () => opts.link,
-    async () => opts.inheritedPoolId ?? null
+    async () => opts.inheritedPoolId ?? null,
+    // No legacy profile→account bridging in these tests: links are already
+    // account-shaped. [remote-dev-n4x4.6]
+    async () => null,
+    async (ids) => new Map(ids.map((id) => [id, null]))
   );
 }
 
@@ -95,36 +99,36 @@ describe("PriorityProfileSelectionPolicy.selectForProject", () => {
 
   it("returns the primary when it is the only candidate and available", async () => {
     const policy = makePolicy({
-      link: { profileId: "primary", poolId: null },
+      link: { profileId: null, accountId: "primary", poolId: null },
       states: new Map([["primary", available("primary")]]),
     });
-    expect(await policy.selectForProject("proj", "u1", NOW)).toBe("primary");
+    expect((await policy.selectForProject("proj", "u1", NOW))?.accountId).toBe("primary");
   });
 
   it("returns the primary even when never observed (treated as available)", async () => {
-    const policy = makePolicy({ link: { profileId: "primary", poolId: null } });
-    expect(await policy.selectForProject("proj", "u1", NOW)).toBe("primary");
+    const policy = makePolicy({ link: { profileId: null, accountId: "primary", poolId: null } });
+    expect((await policy.selectForProject("proj", "u1", NOW))?.accountId).toBe("primary");
   });
 
   it("returns the (limited) primary when it is set, has NO pool, and is limited (best-effort, never null)", async () => {
     const policy = makePolicy({
-      link: { profileId: "primary", poolId: null },
+      link: { profileId: null, accountId: "primary", poolId: null },
       states: new Map([["primary", limited("primary")]]),
     });
     // No pool + the only candidate is limited → fall through to best-effort
     // (the primary) rather than dropping the project to no-profile.
-    expect(await policy.selectForProject("proj", "u1", NOW)).toBe("primary");
+    expect((await policy.selectForProject("proj", "u1", NOW))?.accountId).toBe("primary");
   });
 
   it("prefers the primary over pool members when the primary is available", async () => {
     const policy = makePolicy({
-      link: { profileId: "primary", poolId: "pool-1" },
+      link: { profileId: null, accountId: "primary", poolId: "pool-1" },
       pools: new Map([
         [
           "pool-1",
           [
-            { profileId: "m1", priority: 0 },
-            { profileId: "m2", priority: 1 },
+            { accountId: "m1", priority: 0 },
+            { accountId: "m2", priority: 1 },
           ],
         ],
       ]),
@@ -133,18 +137,18 @@ describe("PriorityProfileSelectionPolicy.selectForProject", () => {
         ["m1", available("m1")],
       ]),
     });
-    expect(await policy.selectForProject("proj", "u1", NOW)).toBe("primary");
+    expect((await policy.selectForProject("proj", "u1", NOW))?.accountId).toBe("primary");
   });
 
   it("rotates to the next available pool member when the primary is limited", async () => {
     const policy = makePolicy({
-      link: { profileId: "primary", poolId: "pool-1" },
+      link: { profileId: null, accountId: "primary", poolId: "pool-1" },
       pools: new Map([
         [
           "pool-1",
           [
-            { profileId: "m1", priority: 0 },
-            { profileId: "m2", priority: 1 },
+            { accountId: "m1", priority: 0 },
+            { accountId: "m2", priority: 1 },
           ],
         ],
       ]),
@@ -154,59 +158,59 @@ describe("PriorityProfileSelectionPolicy.selectForProject", () => {
         ["m2", available("m2")],
       ]),
     });
-    expect(await policy.selectForProject("proj", "u1", NOW)).toBe("m2");
+    expect((await policy.selectForProject("proj", "u1", NOW))?.accountId).toBe("m2");
   });
 
   it("resolves the inherited pool when the link has no poolId", async () => {
     const policy = makePolicy({
-      link: { profileId: "primary", poolId: null },
+      link: { profileId: null, accountId: "primary", poolId: null },
       inheritedPoolId: "inherited-pool",
       pools: new Map([
-        ["inherited-pool", [{ profileId: "m1", priority: 0 }]],
+        ["inherited-pool", [{ accountId: "m1", priority: 0 }]],
       ]),
       states: new Map([
         ["primary", limited("primary")],
         ["m1", available("m1")],
       ]),
     });
-    expect(await policy.selectForProject("proj", "u1", NOW)).toBe("m1");
+    expect((await policy.selectForProject("proj", "u1", NOW))?.accountId).toBe("m1");
   });
 
   it("prefers the link's poolId over the inherited pool", async () => {
     const policy = makePolicy({
-      link: { profileId: null, poolId: "link-pool" },
+      link: { profileId: null, accountId: null, poolId: "link-pool" },
       inheritedPoolId: "inherited-pool",
       pools: new Map([
-        ["link-pool", [{ profileId: "link-m", priority: 0 }]],
-        ["inherited-pool", [{ profileId: "inh-m", priority: 0 }]],
+        ["link-pool", [{ accountId: "link-m", priority: 0 }]],
+        ["inherited-pool", [{ accountId: "inh-m", priority: 0 }]],
       ]),
       states: new Map([["link-m", available("link-m")]]),
     });
-    expect(await policy.selectForProject("proj", "u1", NOW)).toBe("link-m");
+    expect((await policy.selectForProject("proj", "u1", NOW))?.accountId).toBe("link-m");
   });
 
   it("returns a best-effort primary when ALL candidates are limited (never blocks)", async () => {
     const policy = makePolicy({
-      link: { profileId: "primary", poolId: "pool-1" },
-      pools: new Map([["pool-1", [{ profileId: "m1", priority: 0 }]]]),
+      link: { profileId: null, accountId: "primary", poolId: "pool-1" },
+      pools: new Map([["pool-1", [{ accountId: "m1", priority: 0 }]]]),
       states: new Map([
         ["primary", limited("primary")],
         ["m1", limited("m1")],
       ]),
     });
     // Primary is pinned ahead of all members, so it is the best-effort pick.
-    expect(await policy.selectForProject("proj", "u1", NOW)).toBe("primary");
+    expect((await policy.selectForProject("proj", "u1", NOW))?.accountId).toBe("primary");
   });
 
   it("best-effort falls to the lowest-priority member when there is no primary", async () => {
     const policy = makePolicy({
-      link: { profileId: null, poolId: "pool-1" },
+      link: { profileId: null, accountId: null, poolId: "pool-1" },
       pools: new Map([
         [
           "pool-1",
           [
-            { profileId: "m1", priority: 5 },
-            { profileId: "m2", priority: 2 },
+            { accountId: "m1", priority: 5 },
+            { accountId: "m2", priority: 2 },
           ],
         ],
       ]),
@@ -216,20 +220,20 @@ describe("PriorityProfileSelectionPolicy.selectForProject", () => {
       ]),
     });
     // m2 has the lower priority value (2 < 5) → best-effort pick.
-    expect(await policy.selectForProject("proj", "u1", NOW)).toBe("m2");
+    expect((await policy.selectForProject("proj", "u1", NOW))?.accountId).toBe("m2");
   });
 });
 
 describe("PriorityProfileSelectionPolicy.selectNextAvailable", () => {
-  it("excludes the current profile and returns the next available by priority", async () => {
+  it("excludes the current account and returns the next available by priority", async () => {
     const policy = makePolicy({
-      link: { profileId: "primary", poolId: "pool-1" },
+      link: { profileId: null, accountId: "primary", poolId: "pool-1" },
       pools: new Map([
         [
           "pool-1",
           [
-            { profileId: "m1", priority: 0 },
-            { profileId: "m2", priority: 1 },
+            { accountId: "m1", priority: 0 },
+            { accountId: "m2", priority: 1 },
           ],
         ],
       ]),
@@ -240,13 +244,13 @@ describe("PriorityProfileSelectionPolicy.selectNextAvailable", () => {
       ]),
     });
     const next = await policy.selectNextAvailable("primary", "proj", "u1", NOW);
-    expect(next).toBe("m1");
+    expect(next?.accountId).toBe("m1");
   });
 
-  it("never returns the current profile even if it is the only available one", async () => {
+  it("never returns the current account even if it is the only available one", async () => {
     const policy = makePolicy({
-      link: { profileId: "primary", poolId: "pool-1" },
-      pools: new Map([["pool-1", [{ profileId: "m1", priority: 0 }]]]),
+      link: { profileId: null, accountId: "primary", poolId: "pool-1" },
+      pools: new Map([["pool-1", [{ accountId: "m1", priority: 0 }]]]),
       states: new Map([
         ["primary", available("primary")],
         ["m1", limited("m1")],
@@ -258,13 +262,13 @@ describe("PriorityProfileSelectionPolicy.selectNextAvailable", () => {
 
   it("returns null when every alternate is limited (all-limited)", async () => {
     const policy = makePolicy({
-      link: { profileId: "primary", poolId: "pool-1" },
+      link: { profileId: null, accountId: "primary", poolId: "pool-1" },
       pools: new Map([
         [
           "pool-1",
           [
-            { profileId: "m1", priority: 0 },
-            { profileId: "m2", priority: 1 },
+            { accountId: "m1", priority: 0 },
+            { accountId: "m2", priority: 1 },
           ],
         ],
       ]),

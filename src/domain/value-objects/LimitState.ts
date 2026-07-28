@@ -1,9 +1,9 @@
 /**
- * LimitState - Value object for a Claude profile's authoritative limit status.
+ * LimitState - Value object for a Claude ACCOUNT's authoritative limit status.
  *
- * Aggregates the usage windows observed for a profile plus whether the account
+ * Aggregates the usage windows observed for an account plus whether it
  * is currently limited, where the observation came from, and when it was made.
- * A limited profile becomes available again only once its earliest window reset
+ * A limited account becomes available again only once its earliest window reset
  * has passed (`isAvailableNow`).
  *
  * Pure and immutable: no DB / fs / network. Mirrors the ProfileIsolation VO
@@ -18,7 +18,7 @@ import type {
 import { UsageWindow } from "./UsageWindow";
 
 export interface LimitStateProps {
-  profileId: string;
+  accountId: string;
   isLimited: boolean;
   windows: UsageWindow[];
   /** How this state was observed; null if never observed. */
@@ -47,14 +47,14 @@ export interface LimitStateSnapshot {
 }
 
 export class LimitState {
-  private readonly profileId: string;
+  private readonly accountId: string;
   private readonly limited: boolean;
   private readonly windows: readonly UsageWindow[];
   private readonly source: UsageDetectionSource | null;
   private readonly lastCheckedAt: Date | null;
 
   private constructor(props: LimitStateProps) {
-    this.profileId = props.profileId;
+    this.accountId = props.accountId;
     this.limited = props.isLimited;
     // Freeze a copy so external mutation of the input array can't leak in.
     this.windows = Object.freeze([...props.windows]);
@@ -65,13 +65,13 @@ export class LimitState {
 
   /**
    * Create a LimitState directly from props.
-   * @throws InvalidValueError if profileId is empty.
+   * @throws InvalidValueError if accountId is empty.
    */
   static create(props: LimitStateProps): LimitState {
-    if (!props.profileId || typeof props.profileId !== "string") {
+    if (!props.accountId || typeof props.accountId !== "string") {
       throw new InvalidValueError(
-        "LimitState.profileId",
-        props.profileId,
+        "LimitState.accountId",
+        props.accountId,
         "Must be a non-empty string"
       );
     }
@@ -80,7 +80,7 @@ export class LimitState {
 
   /** An available (not limited) state. */
   static available(
-    profileId: string,
+    accountId: string,
     opts?: {
       windows?: UsageWindow[];
       source?: UsageDetectionSource | null;
@@ -88,7 +88,7 @@ export class LimitState {
     }
   ): LimitState {
     return LimitState.create({
-      profileId,
+      accountId,
       isLimited: false,
       windows: opts?.windows ?? [],
       source: opts?.source ?? null,
@@ -98,7 +98,7 @@ export class LimitState {
 
   /** A limited state. */
   static limited(
-    profileId: string,
+    accountId: string,
     opts?: {
       windows?: UsageWindow[];
       source?: UsageDetectionSource | null;
@@ -106,7 +106,7 @@ export class LimitState {
     }
   ): LimitState {
     return LimitState.create({
-      profileId,
+      accountId,
       isLimited: true,
       windows: opts?.windows ?? [],
       source: opts?.source ?? null,
@@ -114,8 +114,8 @@ export class LimitState {
     });
   }
 
-  getProfileId(): string {
-    return this.profileId;
+  getAccountId(): string {
+    return this.accountId;
   }
 
   isLimited(): boolean {
@@ -153,7 +153,7 @@ export class LimitState {
   }
 
   /**
-   * Whether the profile can be used right now.
+   * Whether the account can be used right now.
    * - Not limited → always available.
    * - Limited with a known earliest reset → available once that reset is at or
    *   before `now` (reset exactly == now counts as available).
@@ -198,7 +198,7 @@ export class LimitState {
 
   equals(other: LimitState): boolean {
     if (
-      this.profileId !== other.profileId ||
+      this.accountId !== other.accountId ||
       this.limited !== other.limited ||
       this.source !== other.source ||
       timeOrNull(this.lastCheckedAt) !== timeOrNull(other.lastCheckedAt) ||

@@ -1,41 +1,55 @@
 "use client";
 
 /**
- * Claude Accounts dashboard. [remote-dev-0yix]
+ * Claude Accounts dashboard. [remote-dev-0yix / remote-dev-n4x4.6 / n4x4.7]
  *
- * cswap-style overview of every claude-capable profile: account kind, 5h / 7d
- * usage bars, live reset countdown, status badge, pool memberships, and a
- * per-row "Mark available" override. Driven by a single `GET /api/claude/usage`
- * fetch; live `profile_limit_changed` updates are overlaid from ProfileContext's
- * `limitStates` map (no refetch needed), and a lightweight clock ticks the
- * countdowns. Reachable from Settings → Claude Accounts.
+ * cswap-style overview of every Claude ACCOUNT the user owns (an account is one
+ * Claude subscription, decoupled from agent profiles): identity, auth health,
+ * 5h / 7d usage bars, live reset countdown, status badge, pool memberships, and
+ * per-row Verify / Rename / Remove / "Mark available" actions.
  *
- * Graceful when data is absent: no claude profiles → an empty-state card; all
- * states "unknown"/available → bars at 0 / muted badges.
+ * Driven by a single `GET /api/claude/usage` fetch (→ `data.accounts`); live
+ * `profile_limit_changed` updates are overlaid from ProfileContext's
+ * `limitStates` map, which is account-keyed (no refetch needed), and a
+ * lightweight clock ticks the countdowns. Reachable from Settings → Claude
+ * Accounts.
+ *
+ * A single "Add account" action at the top opens {@link AddAccountDialog} —
+ * there is no per-profile login button and no Sync step anywhere.
+ *
+ * Graceful when data is absent: no accounts → an empty-state card that points
+ * at "Add account"; all states "unknown"/available → bars at 0 / muted badges.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { Loader2, Plus, RefreshCw, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api-fetch";
 import { useProfileContext } from "@/contexts/ProfileContext";
 import type {
-  ClaudeUsageProfile,
+  ClaudeUsageAccount,
   LimitStateBlock,
 } from "@/types/claude-limits";
 import { ClaudeAccountRow } from "./ClaudeAccountRow";
+import { AddAccountDialog } from "./AddAccountDialog";
 
 /** Re-tick the reset countdowns this often (ms). */
 const CLOCK_INTERVAL_MS = 30_000;
 
 export function ClaudeAccountsDashboard() {
-  const { getLimitState, markProfileAvailable, pools, refreshPools } =
-    useProfileContext();
+  const {
+    getAccountLimitState,
+    markAccountAvailable,
+    pools,
+    refreshPools,
+    refreshAccounts,
+  } = useProfileContext();
 
-  const [usage, setUsage] = useState<ClaudeUsageProfile[] | null>(null);
+  const [usage, setUsage] = useState<ClaudeUsageAccount[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [addOpen, setAddOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -46,7 +60,7 @@ export function ClaudeAccountsDashboard() {
         throw new Error(`Failed to load usage (${response.status})`);
       }
       const data = await response.json();
-      setUsage((data.profiles as ClaudeUsageProfile[]) ?? []);
+      setUsage((data.accounts as ClaudeUsageAccount[]) ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load usage");
     } finally {
@@ -69,17 +83,24 @@ export function ClaudeAccountsDashboard() {
     };
   }, []);
 
-  // Resolve the effective limit state for a profile: prefer the live cache
-  // (seeded from the same payload + updated by the WS event) over the snapshot
-  // fetched here, so a `profile_limit_changed` push reflects immediately.
+  // Any mutation here (add / verify / rename / remove) also invalidates the
+  // context's account list, which the pool picker reads from.
+  const reload = useCallback(() => {
+    void load();
+    void refreshAccounts();
+  }, [load, refreshAccounts]);
+
+  // Resolve the effective limit state for an account: prefer the live cache
+  // (updated by the WS event) over the snapshot fetched here, so a
+  // `profile_limit_changed` push reflects immediately.
   const resolveLimitState = useCallback(
-    (profile: ClaudeUsageProfile): LimitStateBlock =>
-      getLimitState(profile.id) ?? profile.limitState,
-    [getLimitState]
+    (account: ClaudeUsageAccount): LimitStateBlock =>
+      getAccountLimitState(account.id) ?? account.limitState,
+    [getAccountLimitState]
   );
 
-  // A manual override (markProfileAvailable) updates ProfileContext's
-  // `limitStates`; since `getLimitState`'s identity changes with it,
+  // A manual override (markAccountAvailable) updates ProfileContext's
+  // `limitStates`; since `getAccountLimitState`'s identity changes with it,
   // `resolveLimitState` re-runs and the row re-renders with the cleared state.
 
   return (
@@ -91,24 +112,31 @@ export function ClaudeAccountsDashboard() {
             Claude Accounts
           </h3>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Usage limits and reset times for each Claude profile. A profile maps
-            to one Claude account; limited profiles become available again at
+            Usage limits and reset times for each Claude account. An account is
+            one Claude subscription; limited accounts become available again at
             their reset time.
           </p>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => void load()}
-          disabled={loading}
-          className="text-muted-foreground"
-        >
-          {loading ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <RefreshCw className="w-4 h-4" />
-          )}
-        </Button>
+        <div className="flex items-center gap-1 shrink-0">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void load()}
+            disabled={loading}
+            aria-label="Reload usage"
+            className="text-muted-foreground"
+          >
+            {loading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4" />
+            )}
+          </Button>
+          <Button size="sm" onClick={() => setAddOpen(true)}>
+            <Plus className="w-4 h-4" />
+            Add account
+          </Button>
+        </div>
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
@@ -119,15 +147,15 @@ export function ClaudeAccountsDashboard() {
         </div>
       ) : usage && usage.length > 0 ? (
         <div className="flex flex-col gap-2">
-          {usage.map((profile) => (
+          {usage.map((account) => (
             <ClaudeAccountRow
-              key={profile.id}
-              profile={profile}
-              limitState={resolveLimitState(profile)}
+              key={account.id}
+              account={account}
+              limitState={resolveLimitState(account)}
               now={now}
               pools={pools}
-              onMarkAvailable={markProfileAvailable}
-              onLoginSynced={() => void load()}
+              onMarkAvailable={markAccountAvailable}
+              onChanged={reload}
             />
           ))}
         </div>
@@ -135,15 +163,23 @@ export function ClaudeAccountsDashboard() {
         <div className="rounded-lg border border-dashed border-border p-8 text-center">
           <Sparkles className="w-6 h-6 text-muted-foreground/50 mx-auto mb-2" />
           <p className="text-sm text-muted-foreground">
-            No Claude profiles yet.
+            No Claude accounts yet.
           </p>
           <p className="text-xs text-muted-foreground/70 mt-1">
-            Create a profile with the Claude provider in{" "}
-            <span className="font-medium text-foreground">Settings → Profiles</span>{" "}
-            to track its usage limits here.
+            Choose{" "}
+            <span className="font-medium text-foreground">Add account</span> to
+            sign in — or paste a token from{" "}
+            <code className="font-mono">claude setup-token</code> if this device
+            has no browser.
           </p>
         </div>
       )}
+
+      <AddAccountDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        onAdded={reload}
+      />
     </div>
   );
 }

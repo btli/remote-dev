@@ -268,6 +268,7 @@ describe("SshServerPlugin lifecycle hooks", () => {
       worktreeType: null,
       projectId: "p",
       profileId: null,
+      claudeAccountId: null,
       terminalType: "ssh",
       agentProvider: null,
       agentExitState: "exited",

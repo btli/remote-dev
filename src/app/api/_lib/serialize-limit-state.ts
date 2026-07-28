@@ -80,6 +80,8 @@ export function isClaudeCapable(provider: AgentProvider): boolean {
 
 /** Claude-account display fields layered on top of agent_profile. */
 export interface ClaudeAccountInfo {
+  /** The owning `claude_account.id`, or null when the profile has none. */
+  accountId: string | null;
   accountKind: ClaudeAccountKind;
   emailAddress: string | null;
   organizationName: string | null;
@@ -87,15 +89,21 @@ export interface ClaudeAccountInfo {
 
 /** The default when a profile has no `claude_account` row yet (Phase 2 fills it). */
 const DEFAULT_ACCOUNT_INFO: ClaudeAccountInfo = {
+  accountId: null,
   accountKind: "subscription",
   emailAddress: null,
   organizationName: null,
 };
 
 /**
- * Batch-load Claude-account info for many profiles, keyed by profileId.
- * Profiles without a row are omitted from the map (callers fall back to
- * {@link DEFAULT_ACCOUNT_INFO}).
+ * Batch-load Claude-account info for many profiles, keyed by profileId, via the
+ * retained `claude_account.profile_id` origin breadcrumb. Profiles without a
+ * row are omitted (callers fall back to {@link DEFAULT_ACCOUNT_INFO}).
+ *
+ * [remote-dev-n4x4.6] `profile_id` is nullable + NON-unique now, so a profile
+ * that somehow originated several accounts resolves to the first one. This is a
+ * BACK-COMPAT shim for the profile-shaped `/api/profiles` payload — new surfaces
+ * should read accounts directly via `claude-account-service`.
  */
 export async function getClaudeAccountInfoMany(
   profileIds: string[]
@@ -106,7 +114,9 @@ export async function getClaudeAccountInfoMany(
     where: inArray(claudeAccounts.profileId, profileIds),
   });
   for (const row of rows) {
+    if (!row.profileId || out.has(row.profileId)) continue;
     out.set(row.profileId, {
+      accountId: row.id,
       accountKind: row.accountKind as ClaudeAccountKind,
       emailAddress: row.emailAddress ?? null,
       organizationName: row.organizationName ?? null,

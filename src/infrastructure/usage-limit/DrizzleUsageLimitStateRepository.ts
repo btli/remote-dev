@@ -6,14 +6,14 @@
  * the row's status/source/timestamps into a LimitState. The write path honors
  * the `onlyIfNewer` staleness guard by comparing the stored `lastCheckedAt`.
  *
- * Note on userId: the domain LimitState is keyed by profileId and does NOT
+ * Note on userId: the domain LimitState is keyed by accountId and does NOT
  * carry a userId, but the row requires one (notNull). We resolve it from the
- * owning `agent_profile` on first insert; subsequent upserts never touch the
- * userId column.
+ * owning `claude_account` on first insert; subsequent upserts never touch the
+ * userId column. [remote-dev-n4x4.6]
  */
 
 import { db } from "@/db";
-import { claudeUsageLimitStates, agentProfiles } from "@/db/schema";
+import { claudeUsageLimitStates, claudeAccounts } from "@/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { LimitState } from "@/domain/value-objects/LimitState";
 import { UsageWindow } from "@/domain/value-objects/UsageWindow";
@@ -31,21 +31,21 @@ type Row = typeof claudeUsageLimitStates.$inferSelect;
 export class DrizzleUsageLimitStateRepository
   implements UsageLimitStateRepository
 {
-  async findByProfileId(profileId: string): Promise<LimitState | null> {
+  async findByAccountId(accountId: string): Promise<LimitState | null> {
     const row = await db.query.claudeUsageLimitStates.findFirst({
-      where: eq(claudeUsageLimitStates.profileId, profileId),
+      where: eq(claudeUsageLimitStates.accountId, accountId),
     });
     return row ? rowToLimitState(row) : null;
   }
 
-  async findManyByProfileIds(ids: string[]): Promise<Map<string, LimitState>> {
+  async findManyByAccountIds(ids: string[]): Promise<Map<string, LimitState>> {
     const out = new Map<string, LimitState>();
     if (ids.length === 0) return out;
     const rows = await db.query.claudeUsageLimitStates.findMany({
-      where: inArray(claudeUsageLimitStates.profileId, ids),
+      where: inArray(claudeUsageLimitStates.accountId, ids),
     });
     for (const row of rows) {
-      out.set(row.profileId, rowToLimitState(row));
+      out.set(row.accountId, rowToLimitState(row));
     }
     return out;
   }
@@ -54,11 +54,11 @@ export class DrizzleUsageLimitStateRepository
     state: LimitState,
     opts?: { onlyIfNewer?: Date }
   ): Promise<boolean> {
-    const profileId = state.getProfileId();
+    const accountId = state.getAccountId();
 
     const existing = await db.query.claudeUsageLimitStates.findFirst({
-      where: eq(claudeUsageLimitStates.profileId, profileId),
-      columns: { profileId: true, userId: true, lastCheckedAt: true },
+      where: eq(claudeUsageLimitStates.accountId, accountId),
+      columns: { accountId: true, userId: true, lastCheckedAt: true },
     });
 
     // Staleness guard: a strictly-newer stored observation already won, so this
@@ -77,24 +77,24 @@ export class DrizzleUsageLimitStateRepository
       await db
         .update(claudeUsageLimitStates)
         .set({ ...set, updatedAt: new Date() })
-        .where(eq(claudeUsageLimitStates.profileId, profileId));
+        .where(eq(claudeUsageLimitStates.accountId, accountId));
       return true;
     }
 
-    // First insert: resolve the owning userId from the profile row.
-    const userId = await this.resolveUserId(profileId);
+    // First insert: resolve the owning userId from the account row.
+    const userId = await this.resolveUserId(accountId);
     if (!userId) {
-      log.warn("Skipping usage-limit upsert: profile has no owner row", {
-        profileId,
+      log.warn("Skipping usage-limit upsert: account has no owner row", {
+        accountId,
       });
       return false;
     }
 
     await db
       .insert(claudeUsageLimitStates)
-      .values({ profileId, userId, ...set })
+      .values({ accountId, userId, ...set })
       .onConflictDoUpdate({
-        target: claudeUsageLimitStates.profileId,
+        target: claudeUsageLimitStates.accountId,
         set: { ...set, updatedAt: new Date() },
       });
     return true;
@@ -107,12 +107,12 @@ export class DrizzleUsageLimitStateRepository
     return rows.map(rowToLimitState);
   }
 
-  private async resolveUserId(profileId: string): Promise<string | null> {
-    const profile = await db.query.agentProfiles.findFirst({
-      where: eq(agentProfiles.id, profileId),
+  private async resolveUserId(accountId: string): Promise<string | null> {
+    const account = await db.query.claudeAccounts.findFirst({
+      where: eq(claudeAccounts.id, accountId),
       columns: { userId: true },
     });
-    return profile?.userId ?? null;
+    return account?.userId ?? null;
   }
 }
 
@@ -138,12 +138,12 @@ function rowToLimitState(row: Row): LimitState {
   const isLimited = (row.limitStatus as ClaudeLimitStatus) === "limited";
 
   return isLimited
-    ? LimitState.limited(row.profileId, {
+    ? LimitState.limited(row.accountId, {
         windows,
         source,
         lastCheckedAt: row.lastCheckedAt ?? null,
       })
-    : LimitState.available(row.profileId, {
+    : LimitState.available(row.accountId, {
         windows,
         source,
         lastCheckedAt: row.lastCheckedAt ?? null,

@@ -26,6 +26,7 @@ function makeSession(
     worktreeType: null,
     projectId: "p",
     profileId: null,
+    claudeAccountId: null,
     terminalType: "issues",
     agentProvider: null,
     agentExitState: null,

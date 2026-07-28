@@ -323,6 +323,7 @@ interface LimitSessionRow {
   userId: string;
   projectId: string | null;
   profileId: string | null;
+  claudeAccountId: string | null;
   agentProvider: string | null;
   tmuxSessionName: string;
   name: string | null;
@@ -331,11 +332,12 @@ interface LimitSessionRow {
 /**
  * Project a domain LimitState into the WS `profile_limit_changed` payload.
  * Pulls the 5h / 7d window percentages + reset times out of the windows array.
+ * `accountId` is the Claude account the limit belongs to [remote-dev-n4x4.6].
  */
 function limitStateToBroadcast(
   state: import("@/domain/value-objects/LimitState").LimitState
 ): {
-  profileId: string;
+  accountId: string;
   limitStatus: import("@/types/claude-limits").ClaudeLimitStatus;
   resetAt5h: string | null;
   resetAt7d: string | null;
@@ -357,7 +359,7 @@ function limitStateToBroadcast(
     }
   }
   return {
-    profileId: state.getProfileId(),
+    accountId: state.getAccountId(),
     limitStatus: state.isLimited() ? "limited" : "available",
     resetAt5h,
     resetAt7d,
@@ -368,7 +370,7 @@ function limitStateToBroadcast(
 
 /**
  * Broadcast a usage-limit state change to the OWNING user's UI clients only
- * (Wave D consumes it). Scoped to the owner so another user's profileId, reset
+ * (Wave D consumes it). Scoped to the owner so another user's accountId, reset
  * times, and usage percentages don't leak to every connected client.
  */
 function broadcastProfileLimitChanged(
@@ -387,7 +389,7 @@ function broadcastProfileLimitChanged(
  * and the `/internal/usage-limit` endpoint. Best-effort: logs + swallows.
  */
 async function trackAndBroadcastLimit(input: {
-  profileId: string;
+  accountId: string;
   userId: string;
   source: import("@/types/claude-limits").UsageDetectionSource;
   isLimited: boolean;
@@ -405,7 +407,7 @@ async function trackAndBroadcastLimit(input: {
   try {
     const { trackUsageLimitUseCase } = await import("@/infrastructure/container");
     const { state, wasNewlyLimited, wrote } = await trackUsageLimitUseCase.execute({
-      profileId: input.profileId,
+      accountId: input.accountId,
       userId: input.userId,
       source: input.source,
       isLimited: input.isLimited,
@@ -438,14 +440,14 @@ async function trackAndBroadcastLimit(input: {
         sessionId: input.sessionId,
         userId: input.userId,
         projectId: input.projectId,
-        currentProfileId: input.profileId,
+        currentAccountId: input.accountId,
         agentProvider: input.agentProvider ?? "claude",
         sessionName: input.sessionName ?? undefined,
       });
     }
   } catch (err) {
     usageLog.error("Failed to track/broadcast usage limit", {
-      profileId: input.profileId,
+      accountId: input.accountId,
       source: input.source,
       error: String(err),
     });
@@ -454,30 +456,30 @@ async function trackAndBroadcastLimit(input: {
 
 /**
  * Scan a session's recent scrollback for a Claude usage-limit signal when it
- * goes idle. Only runs for Claude agent sessions that have a profile (a limit
- * has to attribute to a profile). Skips the scan when the repo already shows
- * the profile limited + unexpired (cheap read) so we don't re-fire on every
- * idle transition while waiting for a reset. Best-effort throughout — never
- * throws into the status handler.
+ * goes idle. Only runs for Claude agent sessions that ran under a Claude
+ * ACCOUNT (a limit attributes to the subscription, not the config dir).
+ * Skips the scan when the repo already shows the account limited + unexpired
+ * (cheap read) so we don't re-fire on every idle transition while waiting for a
+ * reset. Best-effort throughout — never throws into the status handler.
  */
 async function scanSessionScrollbackForLimit(
   session: LimitSessionRow
 ): Promise<void> {
-  if (!session.profileId) return;
+  if (!session.claudeAccountId) return;
   // Reactive detection only recognizes the subscription "usage limit reached"
   // phrase; non-Claude providers never print it.
   if (session.agentProvider !== "claude") return;
 
   try {
     // Cheap performance guard (NOT the relaunch dedup — that now lives in the
-    // use-case via `wasNewlyLimited`): if the profile is already recorded
+    // use-case via `wasNewlyLimited`): if the account is already recorded
     // limited and not yet past its reset, there's nothing new to detect, so
     // skip the expensive scrollback capture + parse on this idle transition.
     const { usageLimitStateRepository } = await import(
       "@/infrastructure/container"
     );
-    const existing = await usageLimitStateRepository.findByProfileId(
-      session.profileId
+    const existing = await usageLimitStateRepository.findByAccountId(
+      session.claudeAccountId
     );
     const now = new Date();
     if (existing && existing.isLimited() && !existing.isAvailableNow(now)) {
@@ -505,12 +507,12 @@ async function scanSessionScrollbackForLimit(
 
     usageLog.info("Reactive usage-limit detected on idle", {
       sessionId: session.id,
-      profileId: session.profileId,
+      accountId: session.claudeAccountId,
       hasReset: parsed.resetAt5h !== null || parsed.resetAt7d !== null,
     });
 
     await trackAndBroadcastLimit({
-      profileId: session.profileId,
+      accountId: session.claudeAccountId,
       userId: session.userId,
       source: "reactive",
       isLimited: true,
@@ -1235,6 +1237,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
               userId: true,
               projectId: true,
               profileId: true,
+              claudeAccountId: true,
               agentProvider: true,
               tmuxSessionName: true,
               name: true,
@@ -1296,20 +1299,20 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
   }
 
   // POST /internal/usage-limit — record a Claude usage-limit observation.
-  // [remote-dev-3b3l] The manual/programmatic seam the Phase-2 poller / rdv
-  // hook (and the manual "mark limited" UI) will use. Body:
-  //   { sessionId?, profileId?, isLimited, resetAt5h?, resetAt7d?,
+  // [remote-dev-3b3l / remote-dev-n4x4.6] The manual/programmatic seam the
+  // poller / rdv hook (and the manual "mark limited" UI) use. Body:
+  //   { sessionId?, accountId?, isLimited, resetAt5h?, resetAt7d?,
   //     window5hPct?, window7dPct?, source? }
-  // Resolves profileId/userId/projectId from the session row when sessionId is
-  // given, else from profileId + its owning profile. Records via the use-case,
-  // broadcasts `profile_limit_changed`, and (when limited + a session/project
-  // is known) fires the relaunch use-case.
+  // Resolves accountId/userId/projectId from the session row when sessionId is
+  // given, else from accountId + its owning account row. Records via the
+  // use-case, broadcasts `profile_limit_changed`, and (when limited + a
+  // session/project is known) fires the relaunch use-case.
   if (pathname === "/internal/usage-limit" && req.method === "POST") {
     const payload = await parseRequestJson(req, res);
     if (!payload) return true; // invalid JSON already responded
 
     const sessionId = payload.sessionId as string | undefined;
-    const bodyProfileId = payload.profileId as string | undefined;
+    const bodyAccountId = payload.accountId as string | undefined;
     const isLimited = payload.isLimited === true;
     const source =
       (payload.source as import("@/types/claude-limits").UsageDetectionSource | undefined) ??
@@ -1334,8 +1337,8 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       typeof v === "number" && Number.isFinite(v) ? v : null;
 
     try {
-      // Resolve the (profileId, userId, projectId, …) tuple.
-      let profileId: string | undefined = bodyProfileId;
+      // Resolve the (accountId, userId, projectId, …) tuple.
+      let accountId: string | undefined = bodyAccountId;
       let userId: string | undefined;
       let projectId: string | null = null;
       let sessionName: string | null = null;
@@ -1350,7 +1353,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
           where: eq(terminalSessions.id, sessionId),
           columns: {
             userId: true,
-            profileId: true,
+            claudeAccountId: true,
             projectId: true,
             agentProvider: true,
             name: true,
@@ -1361,34 +1364,34 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
           return true;
         }
         userId = row.userId;
-        profileId = profileId ?? row.profileId ?? undefined;
+        accountId = accountId ?? row.claudeAccountId ?? undefined;
         projectId = row.projectId ?? null;
         sessionName = row.name ?? null;
         agentProvider = row.agentProvider ?? null;
-      } else if (profileId) {
-        // No session — resolve the owner from the profile itself.
-        const { agentProfiles } = await import("@/db/schema");
+      } else if (accountId) {
+        // No session — resolve the owner from the account itself.
+        const { claudeAccounts } = await import("@/db/schema");
         const { eq } = await import("drizzle-orm");
-        const profile = await db.query.agentProfiles.findFirst({
-          where: eq(agentProfiles.id, profileId),
+        const account = await db.query.claudeAccounts.findFirst({
+          where: eq(claudeAccounts.id, accountId),
           columns: { userId: true },
         });
-        if (!profile) {
-          sendJson(res, 404, { error: "Profile not found" });
+        if (!account) {
+          sendJson(res, 404, { error: "Claude account not found" });
           return true;
         }
-        userId = profile.userId;
+        userId = account.userId;
       }
 
-      if (!profileId || !userId) {
+      if (!accountId || !userId) {
         sendJson(res, 400, {
-          error: "Could not resolve a profileId + userId (pass sessionId or profileId)",
+          error: "Could not resolve an accountId + userId (pass sessionId or accountId)",
         });
         return true;
       }
 
       await trackAndBroadcastLimit({
-        profileId,
+        accountId,
         userId,
         source,
         isLimited,

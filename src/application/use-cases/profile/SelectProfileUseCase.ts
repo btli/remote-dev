@@ -1,12 +1,18 @@
 /**
- * SelectProfileUseCase - Resolve which Claude profile to launch for a project.
+ * SelectProfileUseCase - Resolve which Claude ACCOUNT (and, when it has one,
+ * which origin profile) to launch for a project.
  *
- * Explicit selection always wins (the user picked a profile in the wizard).
- * Otherwise delegate to the ProfileSelectionPolicy (primary → fallback pool
- * with rotation). The "launch now" path never throws on "all limited": the
- * policy returns a best-effort profile and we surface it, and "nothing
- * configured" surfaces as a null profile (caller proceeds with no profile =
- * today's behavior).
+ * Explicit selection always wins (the user picked a profile/account in the
+ * wizard). Otherwise delegate to the ProfileSelectionPolicy (primary → fallback
+ * pool with rotation). The "launch now" path never throws on "all limited": the
+ * policy returns a best-effort account and we surface it, and "nothing
+ * configured" surfaces as a null selection (caller proceeds with no
+ * profile/account = today's behavior).
+ *
+ * [remote-dev-n4x4.6] The result carries BOTH ids: `accountId` decides which
+ * `CLAUDE_CODE_OAUTH_TOKEN` the session gets, `profileId` decides which config
+ * dir / env overlay it runs under. They are independent — an account may have
+ * no origin profile, and an explicitly-pinned profile may have no account.
  *
  * Depends only on the policy port — unit-tested with an in-memory fake.
  */
@@ -25,7 +31,9 @@ export interface SelectProfileInput {
 export interface SelectProfileResult {
   /** The chosen profile, or null when nothing is configured/selected. */
   profileId: string | null;
-  /** True when the policy chose the profile (no explicit selection). */
+  /** The chosen Claude account, or null when none is configured/selected. */
+  accountId: string | null;
+  /** True when the policy chose the account (no explicit selection). */
   wasAutoSelected: boolean;
 }
 
@@ -35,18 +43,32 @@ export class SelectProfileUseCase {
   ) {}
 
   async execute(input: SelectProfileInput): Promise<SelectProfileResult> {
-    // Explicit selection wins outright — no policy involvement.
+    // Explicit selection wins outright — no policy involvement. The account is
+    // left unresolved here; the caller resolves the pinned profile's account
+    // (if any) when it builds the session env.
     if (input.explicitProfileId) {
-      return { profileId: input.explicitProfileId, wasAutoSelected: false };
+      return {
+        profileId: input.explicitProfileId,
+        accountId: null,
+        wasAutoSelected: false,
+      };
     }
 
     const now = input.now ?? new Date();
-    const profileId = await this.selectionPolicy.selectForProject(
+    const selected = await this.selectionPolicy.selectForProject(
       input.projectId,
       input.userId,
       now
     );
 
-    return { profileId, wasAutoSelected: profileId !== null };
+    if (!selected) {
+      return { profileId: null, accountId: null, wasAutoSelected: false };
+    }
+
+    return {
+      profileId: selected.profileId,
+      accountId: selected.accountId,
+      wasAutoSelected: true,
+    };
   }
 }

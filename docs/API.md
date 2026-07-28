@@ -111,7 +111,7 @@ by session/key auth:
 | GitHub accounts | `/api/github/accounts`, `/api/github/account` | [GitHub accounts](#github-accounts) |
 | API keys | `/api/keys` | [API keys](#api-keys) |
 | Agent profiles | `/api/profiles` | [Agent profiles](#agent-profiles) |
-| Claude usage limits & pools | `/api/profiles/:id/limit-state`, `/api/profiles/select`, `/api/claude/usage`, `/api/claude-pools` | [Claude usage limits & pools](#claude-usage-limits--pools) |
+| Claude accounts, usage limits & pools | `/api/claude-accounts`, `/api/claude-accounts/:accountId/limit-state`, `/api/profiles/select`, `/api/claude/usage`, `/api/claude-pools` | [Claude accounts, usage limits & pools](#claude-accounts-usage-limits--pools) |
 | Agent CLI status | `/api/agent-cli/status` | [Agent CLI](#agent-cli) |
 | Agent providers | `/api/agent-providers` | [Agent providers](#agent-providers) |
 | Agent config files | `/api/agent-configs` | [Agent config files](#agent-config-files) |
@@ -845,9 +845,11 @@ required), `description?`, `isDefault?`. Returns `201` with the profile.
 
 **List** additively augments each profile with `accountKind`
 (`subscription`|`api_key`, defaulting to `subscription` for Claude-capable
-profiles with no `claude_account` row) and a serialized `limitState` (the
-Claude usage-limit block; available/unknown default when no state recorded).
-See [Claude usage limits & pools](#claude-usage-limits--pools).
+profiles with no origin `claude_account` row), `claudeAccountId` (that origin
+account, or `null`), and a serialized `limitState` for that account (the Claude
+usage-limit block; available/unknown default when no state recorded). Limits key
+on the **account**, not the profile — see
+[Claude accounts, usage limits & pools](#claude-accounts-usage-limits--pools).
 
 ### Agent profile JSON configs
 
@@ -872,19 +874,43 @@ belong to the caller returns `404`; an invalid `agentType` returns `400`.
 
 ---
 
-## Claude usage limits & pools
+## Claude accounts, usage limits & pools
 
-cswap-style Claude usage-limit tracking + fallback pools (epic remote-dev-3b3l).
-Each Claude profile carries a usage-limit state; a project can declare a primary
-profile plus a fallback **pool** that auto-rotates to an available profile when
-the primary is limited. All **[session | key]** (`withApiAuth`), ownership-checked
-against the caller (a profile/pool that is not yours returns `404`).
+First-class Claude **accounts** plus cswap-style usage-limit tracking and
+fallback pools (epics remote-dev-3b3l, remote-dev-n4x4).
+
+An account is one Claude subscription, **decoupled from agent profiles**
+(remote-dev-n4x4.6). Every session shares the user's real Claude config dir —
+so skills, `CLAUDE.md`, MCP servers, settings and agents are identical for all
+of them — and picks its identity by having `CLAUDE_CODE_OAUTH_TOKEN` injected
+into its process env. That env var selects the account per-process independently
+of `CLAUDE_CONFIG_DIR`, which is what allows N accounts in parallel with no
+credential swapping, locking, or restarts.
+
+Usage limits and pool membership therefore key on the **account**, not the
+profile: a project declares a primary account plus a fallback **pool** that
+auto-rotates to an available account when the primary is limited. All
+**[session | key]** (`withApiAuth`), ownership-checked against the caller (an
+account/pool that is not yours returns `404`).
+
+The stored OAuth token is encrypted at rest (AES-256-GCM) and is **never**
+returned by any endpoint — account payloads carry only `hasToken: boolean`.
 
 ```http
-GET    /api/profiles/:id/limit-state     # serialized limit state for a profile
-PATCH  /api/profiles/:id/limit-state     # manual override { status: "available" } (clears a limit)
-GET    /api/profiles/select?projectId=   # recommended profile for a project (read-only wizard pre-fill)
-GET    /api/claude/usage                 # dashboard payload: all Claude profiles + state + pool membership
+GET    /api/claude-accounts                       # the caller's accounts (token-free)
+POST   /api/claude-accounts                       # paste-a-token onboarding { token, alias? }
+GET    /api/claude-accounts/:accountId            # one account
+PATCH  /api/claude-accounts/:accountId            # { alias?, accountKind? }
+DELETE /api/claude-accounts/:accountId            # delete → 204 (limits + pool membership cascade)
+POST   /api/claude-accounts/:accountId/verify     # re-read identity via `claude auth status --json`
+GET    /api/claude-accounts/:accountId/limit-state # serialized limit state for an account
+PATCH  /api/claude-accounts/:accountId/limit-state # manual override { status: "available" }
+
+POST   /api/claude-accounts/setup-session         # launch a session running `claude setup-token`
+POST   /api/claude-accounts/capture               # capture the printed token from that session
+
+GET    /api/profiles/select?projectId=   # recommended profile + account for a project (wizard pre-fill)
+GET    /api/claude/usage                 # dashboard payload: all accounts + state + pool membership
 
 GET    /api/claude-pools                 # list the caller's pools (+ memberCount)
 POST   /api/claude-pools                 # create { name } → 201 { id, name, memberCount }
@@ -892,10 +918,41 @@ GET    /api/claude-pools/:poolId         # pool + members (name + limit state)
 PUT    /api/claude-pools/:poolId         # rename { name }
 DELETE /api/claude-pools/:poolId         # delete (members cascade) → 204
 GET    /api/claude-pools/:poolId/members # members ordered by priority
-POST   /api/claude-pools/:poolId/members # add/upsert { profileId, priority? } → 201 (re-POST updates priority)
-DELETE /api/claude-pools/:poolId/members # remove { profileId } (body) or ?profileId= (query) → 204
+POST   /api/claude-pools/:poolId/members # add/upsert { accountId, priority? } → 201 (re-POST updates priority)
+DELETE /api/claude-pools/:poolId/members # remove { accountId } (body) or ?accountId= (query) → 204
 GET    /api/claude-pools/:poolId/status  # per-member availability snapshot
 ```
+
+### Adding an account
+
+One action, two paths — there is no "Sync" step:
+
+1. **Sign in here.** `POST /api/claude-accounts/setup-session { projectId, profileId? }`
+   launches a real terminal session running `claude setup-token` and returns
+   `{ sessionId, command, commandSent, instructions[] }`. The user completes the
+   OAuth sign-in in their browser; then
+   `POST /api/claude-accounts/capture { sessionId, alias?, accountId? }` reads
+   the token out of that session, stores it encrypted, and probes identity.
+   While the sign-in is still in progress it returns `409 TOKEN_NOT_READY`.
+2. **Paste a token** (remote / PWA, where there is no local browser).
+   `POST /api/claude-accounts { token, alias? }`. A value that isn't shaped like
+   `sk-ant-oat…` is rejected with `400 INVALID_TOKEN_FORMAT`.
+
+Both paths dedupe on the probed email: re-adding a known account **updates it in
+place** rather than creating a duplicate. Response is `201` on create, `200` on
+update, shaped `{ account, loggedIn, updated }`.
+
+### Identity
+
+Account identity (`emailAddress`, `organizationId`, `organizationName`,
+`rateLimitTier`, `authMethod`) comes from `claude auth status --json` executed
+under the account's own env. Credential **files are never parsed**: on macOS the
+CLI stores credentials in the Keychain under a service name derived from
+`CLAUDE_CONFIG_DIR`, so `<configDir>/.claude/.credentials.json` does not exist —
+which is why the old profile-scoped `POST /api/profiles/:id/claude-login` +
+"Sync" flow could never succeed (remote-dev-n4x4.8). Both of those routes, and
+`/api/profiles/:id/limit-state`, are **removed**. `authMethod` is an open set
+(`"none"`, `"claude.ai"`, `"oauth_token"`, …) and is stored verbatim.
 
 **Serialized limit state** (`limitState`, shared by every route above):
 
@@ -910,24 +967,27 @@ GET    /api/claude-pools/:poolId/status  # per-member availability snapshot
 }
 ```
 
-A profile with no recorded state serializes as the available/unknown default
+An account with no recorded state serializes as the available/unknown default
 (all numbers/timestamps `null`, `limitStatus: "unknown"`). `PATCH
-/api/profiles/:id/limit-state` accepts **only** `{ status: "available" }` (any
-other value → `400 INVALID_STATUS`); limiting a profile is a detection concern,
-not a manual one.
+/api/claude-accounts/:accountId/limit-state` accepts **only**
+`{ status: "available" }` (any other value → `400 INVALID_STATUS`); limiting an
+account is a detection concern, not a manual one.
 
-`GET /api/profiles/select` returns `{ profileId, wasAutoSelected }` and creates
-nothing — `profileId` is `null` when the project has no primary/pool configured
-(the caller proceeds with no profile). The same resolution runs **server-side at
-session creation**: a `claude` session created without an explicit profile is
-auto-assigned the project's profile and gets `RDV_PROFILE_ID` injected.
+`GET /api/profiles/select` returns `{ profileId, claudeAccountId,
+wasAutoSelected }` and creates nothing — both ids are `null` when the project
+has no primary/pool configured (the caller proceeds with neither). The same
+resolution runs **server-side at session creation**: a `claude` session created
+without an explicit profile is auto-assigned the project's account (its token is
+injected as `CLAUDE_CODE_OAUTH_TOKEN` and the id recorded on
+`terminal_session.claude_account_id`) plus that account's origin profile, and
+gets `RDV_PROFILE_ID` injected.
 
-`GET /api/claude/usage` returns
-`{ profiles: [{ id, name, accountKind, emailAddress, organizationName, limitState, pools }] }`
-over every Claude-capable profile (`pools` is the ids of the caller's pools the
-profile belongs to). `GET /api/claude-pools/:poolId/status` returns
-`{ poolId, name, members: [{ profileId, name, priority, limitState }] }`;
-members that resolve to a profile not owned by the caller are omitted.
+`GET /api/claude/usage` returns `{ accounts: [ …account fields…, limitState,
+pools ] }` over every account the caller owns (`pools` is the ids of the
+caller's pools the account belongs to). `GET /api/claude-pools/:poolId/status`
+returns `{ poolId, name, members: [{ accountId, name, priority, limitState }] }`
+where `name` is the account's alias or email; members that resolve to an account
+not owned by the caller are omitted.
 
 The proactive Anthropic usage poller that can populate this state on a timer is
 **OFF by default** — see `RDV_CLAUDE_USAGE_POLL_ENABLED` in
