@@ -1,48 +1,79 @@
 /**
  * anthropic-usage-adapter - The ONE volatile seam for proactive usage polling.
  *
- * cswap reads a Claude account's usage headroom without waiting to hit a limit.
- * The reliable, normalized signal is the **rate-limit response headers on the
- * Messages API** — every `POST /v1/messages` response (200 *and* 429) carries
- * them. We send the cheapest possible probe (`max_tokens: 1`) and read the
- * headers off the response; we never need the response *body*, so even a 429
- * (over a rate limit) is a useful, non-failing read. ALL knowledge of the wire
- * format lives here behind a single function; everything upstream (the poller,
- * the gateway, the use-cases) depends only on the normalized
- * `ClaudeUsageSnapshot`.
+ * Reads a Claude account's usage headroom WITHOUT sending a message (no quota
+ * burn) from the structured OAuth usage endpoint:
  *
- * Two header families, dispatched by AccountKind (see {@link fetchClaudeUsage}):
+ *   GET https://api.anthropic.com/api/oauth/usage
+ *     Authorization: Bearer <oauth access token>
+ *     anthropic-beta: oauth-2025-04-20
+ *     anthropic-version: 2023-06-01
  *
- *   subscription (OAuth, claude.ai 5h/7d rolling windows)
- *     anthropic-ratelimit-unified-5h-{remaining,limit,reset}
- *     anthropic-ratelimit-unified-7d-{remaining,limit,reset}
- *   These "unified" headers expose the consumer-subscription rolling-window
- *   utilization. They are **NOT** part of the documented public rate-limit API
- *   (https://platform.claude.com/docs/en/api/rate-limits lists only the
- *   classic per-minute headers below); they ride the same Messages responses
- *   that the Claude Code CLI sees, and the ReactiveOutputDetector already keys
- *   off `unified-5h/7d-reset`. We treat them as best-effort: absent → null, so
- *   the poller is a safe no-op on accounts that don't surface them.
+ * ALL knowledge of the wire format lives here behind a single function;
+ * everything upstream (the poller, the gateway, the use-cases) depends only on
+ * the normalized {@link ClaudeUsageSnapshot}.
  *
- *   api_key (raw key, rate limits + credits — NO fixed rolling reset)
- *     anthropic-ratelimit-requests-{limit,remaining,reset}   (RFC 3339 reset)
- *     anthropic-ratelimit-input-tokens-{limit,remaining,reset}
- *     anthropic-ratelimit-output-tokens-{limit,remaining,reset}
- *     anthropic-ratelimit-tokens-{limit,remaining,reset}
- *     retry-after  (seconds, on 429)
- *   These ARE documented. There is no 5h/7d window for a raw key — the account
- *   is governed by per-minute rate limits and credit balance — so we surface a
- *   single "org" dimension (worst-case utilization across the rate families)
- *   plus the soonest replenish/`retry-after` time.
+ * ## Why this replaced the old header scrape [remote-dev-n4x4.1]
  *
- * Source for the documented headers + RFC-3339 reset format:
- *   https://platform.claude.com/docs/en/api/rate-limits ("Response headers").
- * The unified-5h/7d headers are undocumented and may change — that volatility
- * is the reason this whole module is one swappable seam.
+ * The previous implementation POSTed a 1-token probe to `/v1/messages` and read
+ * `anthropic-ratelimit-unified-{5h,7d}-{limit,remaining}` off the response.
+ * **Those two header names do not exist.** The real unified headers are
+ * `-utilization` (a 0-1 fraction), `-status`, `-reset`, `-representative-claim`,
+ * `-fallback`, `-fallback-percentage`, `-overage-status` and
+ * `-overage-disabled-reason`. Consequence: both windows always parsed as null,
+ * the snapshot was never informative, and `fetchClaudeUsage` returned null
+ * unconditionally — the poller was inert even with the flag on. The probe is
+ * gone; there is no `/v1/messages` request in this module any more.
  *
- * Security: the OAuth token / API key passed in is used ONLY as the request
- * credential. It is NEVER logged, returned, or persisted — only AccountKind and
- * numeric usage flow out of here.
+ * ## Response shape (verified live against a Max subscription, 2026-07-28)
+ *
+ * ```jsonc
+ * {
+ *   "five_hour": { "utilization": 61.0, "resets_at": "2026-07-28T14:40:00Z", ... },
+ *   "seven_day": { "utilization": 98.0, "resets_at": "2026-07-30T22:59:59Z", ... },
+ *   "seven_day_opus": null, "seven_day_sonnet": null, ...   // legacy, all null
+ *   "limits": [
+ *     { "kind": "session",       "group": "session", "percent": 61,  "severity": "normal",
+ *       "resets_at": "...", "scope": null, "is_active": false },
+ *     { "kind": "weekly_all",    "group": "weekly",  "percent": 98,  "severity": "critical",
+ *       "resets_at": "...", "scope": null, "is_active": false },
+ *     { "kind": "weekly_scoped", "group": "weekly",  "percent": 100, "severity": "critical",
+ *       "resets_at": "...", "is_active": true,
+ *       "scope": { "model": { "id": null, "display_name": "Fable" }, "surface": null } }
+ *   ]
+ * }
+ * ```
+ *
+ * Load-bearing details, all encoded below:
+ *
+ * - `limits[]` is PRIMARY. The flat legacy per-model fields
+ *   (`seven_day_opus`, `seven_day_sonnet`, `seven_day_cowork`, …) are all null
+ *   and superseded; we never read them. `five_hour` / `seven_day` are used only
+ *   as a FALLBACK when `limits[]` is absent or empty.
+ * - `kind` and `severity` are OPEN string sets (observed: `session` /
+ *   `weekly_all` / `weekly_scoped`, and `normal` / `critical`). Unknown values
+ *   round-trip verbatim instead of being dropped or throwing.
+ * - Per-model identity is `scope.model.display_name` ONLY — `scope.model.id` is
+ *   null in practice, so matching is by display name.
+ * - `percent` is a 0-100 integer and the `utilization` fields are 0-100 floats.
+ *   (The *response headers* use a 0-1 fraction; do not conflate the scales.)
+ *
+ * ## api_key accounts
+ *
+ * This endpoint is subscription-only: it describes claude.ai rolling windows
+ * that a raw API key does not have. Raw keys are governed by the documented
+ * per-minute rate-limit headers (`anthropic-ratelimit-{requests,input-tokens,
+ * output-tokens,tokens}-{limit,remaining,reset}` + `retry-after`, see
+ * https://platform.claude.com/docs/en/api/rate-limits) which ride on Messages
+ * API responses — there is no free endpoint that reports them. That parsing is
+ * preserved and exported as {@link apiKeyUsageFromHeaders} so a caller that
+ * already holds such a response can normalize it; `fetchClaudeUsage` itself no
+ * longer issues a request for api_key (it never had a credential to use — see
+ * `UsageEndpointPoller`, which now only supports subscription).
+ *
+ * Security: the OAuth token passed in is used ONLY as the request credential.
+ * It is NEVER logged, returned, or persisted — only AccountKind and numeric
+ * usage flow out of here.
  */
 
 import { createLogger } from "@/lib/logger";
@@ -50,16 +81,14 @@ import type { ClaudeAccountKind } from "@/types/claude-limits";
 
 const log = createLogger("AnthropicUsageAdapter");
 
-/** The Messages endpoint we probe for rate-limit headers. */
-const MESSAGES_URL = "https://api.anthropic.com/v1/messages";
+/** The structured usage endpoint (subscription / OAuth accounts only). */
+const OAUTH_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 /** Pinned anthropic-version (matches the rest of the codebase's Claude calls). */
 const ANTHROPIC_VERSION = "2023-06-01";
-/** OAuth-token requests need this beta header on /v1/messages. */
+/** OAuth-token requests need this beta header. */
 const OAUTH_BETA = "oauth-2025-04-20";
-/** A small, cheap model is fine — we only read headers, never the body. */
-const PROBE_MODEL = "claude-haiku-4-5";
-/** Probe timeout (ms): a usage poll must never hang a sweep. */
-const PROBE_TIMEOUT_MS = 10_000;
+/** Request timeout (ms): a usage poll must never hang a sweep. */
+const REQUEST_TIMEOUT_MS = 10_000;
 
 /** The minimal `fetch` surface this module needs (injectable for tests). */
 export type FetchLike = (
@@ -67,10 +96,43 @@ export type FetchLike = (
   init: {
     method: string;
     headers: Record<string, string>;
-    body: string;
     signal?: AbortSignal;
   }
-) => Promise<{ status: number; headers: Headers }>;
+) => Promise<{
+  status: number;
+  headers: Headers;
+  text: () => Promise<string>;
+}>;
+
+/**
+ * One entry of the endpoint's `limits[]` array, normalized.
+ *
+ * `kind`, `group` and `severity` are deliberately plain strings: the endpoint's
+ * vocabularies are open, so an unrecognized value must survive the round trip
+ * rather than crash the poll or be silently dropped.
+ */
+export interface ClaudeUsageLimitEntry {
+  /** Open set. Observed: "session" | "weekly_all" | "weekly_scoped". */
+  kind: string;
+  /** Open set. Observed: "session" | "weekly". Null when not reported. */
+  group: string | null;
+  /** Utilization 0-100 (integer, clamped). */
+  percent: number;
+  /** Open set. Observed: "normal" | "critical". Null when not reported. */
+  severity: string | null;
+  /** When this window resets, or null. */
+  resetAt: Date | null;
+  /**
+   * The scoped model's DISPLAY NAME (e.g. "Fable"), or null for an
+   * account-level window. `scope.model.id` is null upstream, so the display
+   * name is the only usable per-model identity.
+   */
+  scopeModel: string | null;
+  /** The scoped surface, or null. Always null in observed responses. */
+  scopeSurface: string | null;
+  /** Whether this limit is the one actually binding right now. */
+  isActive: boolean;
+}
 
 /** Normalized usage reading for one Claude account. */
 export interface ClaudeUsageSnapshot {
@@ -93,19 +155,25 @@ export interface ClaudeUsageSnapshot {
    * `-reset`, or now + `retry-after` when currently 429'd. Null otherwise.
    */
   resetAtOrg: Date | null;
+  /**
+   * Every window the endpoint reported, including per-model
+   * (`weekly_scoped`) ones. Empty when the endpoint reported no `limits[]`
+   * (the 5h/7d fallback path) or for api_key accounts.
+   */
+  limits: ClaudeUsageLimitEntry[];
 }
 
 /**
  * Fetch a usage snapshot for the account behind `token`.
  *
- * @param token  The request credential: an OAuth access token (subscription)
- *   or a raw API key (api_key). Used only as the credential — never logged.
- * @param kind   The account kind, which selects the credential header and which
- *   rate-limit header family to read.
- * @param fetchImpl  Injected fetch (defaults to the global). Tests pass a fake
- *   returning a `Response`-shaped object with the real header names.
+ * @param token  The OAuth access token for a subscription account. Used only as
+ *   the request credential — never logged.
+ * @param kind   The account kind. Only "subscription" is fetchable here; see
+ *   the module docblock for why api_key returns null.
+ * @param fetchImpl  Injected fetch (defaults to the global). Tests pass a fake.
  * @returns A normalized snapshot, or null when usage cannot be determined
- *   (network/abort error, or no recognizable rate-limit headers).
+ *   (unsupported kind, network/abort error, non-200, malformed body, or a body
+ *   carrying no recognizable usage).
  */
 export async function fetchClaudeUsage(
   token: string,
@@ -114,101 +182,65 @@ export async function fetchClaudeUsage(
 ): Promise<ClaudeUsageSnapshot | null> {
   if (!token) return null;
 
+  if (kind !== "subscription") {
+    // The OAuth usage endpoint has no api_key equivalent, and a raw key's
+    // rate-limit headers only ride on Messages API responses (which we will
+    // not send — that would burn quota). A caller holding such a response can
+    // normalize it via apiKeyUsageFromHeaders().
+    log.debug("No free usage read for this account kind; skipping", { kind });
+    return null;
+  }
+
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetchImpl(MESSAGES_URL, {
-      method: "POST",
-      headers: buildHeaders(token, kind),
-      body: PROBE_BODY,
+    const response = await fetchImpl(OAUTH_USAGE_URL, {
+      method: "GET",
+      headers: buildHeaders(token),
       signal: controller.signal,
     });
-    // 200 (under limit) and 429 (over limit) BOTH carry the headers and are
-    // useful reads. Other statuses (401/403/5xx) won't carry meaningful usage
-    // headers, so snapshotFromHeaders yields an all-null snapshot we drop.
-    const snapshot =
-      kind === "api_key"
-        ? apiKeySnapshot(response.headers)
-        : subscriptionSnapshot(response.headers);
-    if (snapshot && isInformative(snapshot)) {
-      log.trace("Usage probe produced a snapshot", {
-        kind,
+
+    if (response.status !== 200) {
+      log.debug("Usage endpoint returned a non-200", { status: response.status });
+      return null;
+    }
+
+    const body = await parseBody(response);
+    if (!body) return null;
+
+    const snapshot = snapshotFromUsageBody(body);
+    if (!isInformative(snapshot)) {
+      log.debug("Usage endpoint returned no usable windows", {
         status: response.status,
       });
-      return snapshot;
+      return null;
     }
-    log.debug("Usage probe returned no usage headers", {
-      kind,
+
+    log.trace("Usage read produced a snapshot", {
       status: response.status,
+      limits: snapshot.limits.length,
     });
-    return null;
+    return snapshot;
   } catch (error) {
-    // Best-effort: a probe failure (timeout/abort/network) is never fatal.
-    log.warn("Usage probe failed", { kind, error: String(error) });
+    // Best-effort: a read failure (timeout/abort/network) is never fatal.
+    log.warn("Usage read failed", { kind, error: String(error) });
     return null;
   } finally {
     clearTimeout(timer);
   }
 }
 
-/** A one-token probe — we only want the headers, not a real completion. */
-const PROBE_BODY = JSON.stringify({
-  model: PROBE_MODEL,
-  max_tokens: 1,
-  messages: [{ role: "user", content: "." }],
-});
-
-/** Build the credential + version headers for the probe (token never logged). */
-function buildHeaders(
-  token: string,
-  kind: ClaudeAccountKind
-): Record<string, string> {
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-    "anthropic-version": ANTHROPIC_VERSION,
-  };
-  if (kind === "subscription") {
-    // OAuth subscription tokens authenticate via Bearer + the oauth beta.
-    headers["authorization"] = `Bearer ${token}`;
-    headers["anthropic-beta"] = OAUTH_BETA;
-  } else {
-    // Raw API keys authenticate via x-api-key.
-    headers["x-api-key"] = token;
-  }
-  return headers;
-}
-
-/** Default fetch wrapper that adapts the global fetch to {@link FetchLike}. */
-const defaultFetch: FetchLike = (url, init) =>
-  fetch(url, init).then((r) => ({ status: r.status, headers: r.headers }));
-
 /**
- * Build a subscription snapshot from the unified 5h/7d headers.
- * Returns null only when neither window is present.
+ * Normalize the documented per-minute rate-limit headers of an api_key
+ * response into a snapshot. Utilization is the WORST case across the rate
+ * families (the binding limit); the reset is the soonest replenish, or
+ * now + `retry-after` when currently 429'd.
+ *
+ * Exported (rather than called here) because the raw key lives behind the
+ * secrets path and no free endpoint reports these headers — see the module
+ * docblock.
  */
-function subscriptionSnapshot(headers: Headers): ClaudeUsageSnapshot | null {
-  const w5h = windowUtilization(headers, "5h");
-  const w7d = windowUtilization(headers, "7d");
-  return {
-    window5hPct: w5h,
-    window7dPct: w7d,
-    resetAt5h: parseResetHeader(
-      headers.get("anthropic-ratelimit-unified-5h-reset")
-    ),
-    resetAt7d: parseResetHeader(
-      headers.get("anthropic-ratelimit-unified-7d-reset")
-    ),
-    orgPct: null,
-    resetAtOrg: null,
-  };
-}
-
-/**
- * Build an api_key snapshot from the documented per-minute rate-limit headers.
- * Utilization is the WORST case across the rate families (the binding limit);
- * the reset is the soonest replenish, or now + retry-after when 429'd.
- */
-function apiKeySnapshot(headers: Headers): ClaudeUsageSnapshot {
+export function apiKeyUsageFromHeaders(headers: Headers): ClaudeUsageSnapshot {
   const families = ["requests", "input-tokens", "output-tokens", "tokens"];
 
   let worstPct: number | null = null;
@@ -243,25 +275,149 @@ function apiKeySnapshot(headers: Headers): ClaudeUsageSnapshot {
     resetAt7d: null,
     orgPct: worstPct,
     resetAtOrg: soonestReset,
+    limits: [],
+  };
+}
+
+/** Whether a snapshot carries at least one usable signal (else we drop it). */
+export function isInformative(snapshot: ClaudeUsageSnapshot): boolean {
+  return (
+    snapshot.limits.length > 0 ||
+    snapshot.window5hPct !== null ||
+    snapshot.window7dPct !== null ||
+    snapshot.resetAt5h !== null ||
+    snapshot.resetAt7d !== null ||
+    snapshot.orgPct !== null ||
+    snapshot.resetAtOrg !== null
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Request plumbing
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Build the credential + version headers (token never logged). */
+function buildHeaders(token: string): Record<string, string> {
+  return {
+    accept: "application/json",
+    authorization: `Bearer ${token}`,
+    "anthropic-beta": OAUTH_BETA,
+    "anthropic-version": ANTHROPIC_VERSION,
+  };
+}
+
+/** Default fetch wrapper that adapts the global fetch to {@link FetchLike}. */
+const defaultFetch: FetchLike = (url, init) =>
+  fetch(url, init).then((r) => ({
+    status: r.status,
+    headers: r.headers,
+    text: () => r.text(),
+  }));
+
+/** Read + JSON-parse the response body. Null on malformed or non-object JSON. */
+async function parseBody(response: {
+  text: () => Promise<string>;
+}): Promise<Record<string, unknown> | null> {
+  const raw = await response.text();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    log.warn("Usage endpoint returned malformed JSON");
+    return null;
+  }
+  if (!isRecord(parsed)) {
+    log.warn("Usage endpoint returned a non-object body");
+    return null;
+  }
+  return parsed;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Body → snapshot
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build the snapshot from a parsed `/api/oauth/usage` body.
+ *
+ * `limits[]` is primary; `five_hour` / `seven_day` are consulted only for the
+ * rollup dimensions `limits[]` did not supply (i.e. when it is absent/empty, or
+ * carries no `session` / `weekly_all` entry).
+ */
+export function snapshotFromUsageBody(
+  body: Record<string, unknown>
+): ClaudeUsageSnapshot {
+  const limits = parseLimits(body["limits"]);
+
+  // Account-level rollup. The 5h slot is the session window; the 7d slot is the
+  // ACCOUNT-level weekly window (`weekly_all`) — deliberately NOT the worst
+  // scoped window, so a single exhausted per-model window (e.g. Fable) does not
+  // mark the whole account limited. Per-model awareness reads `limits[]`.
+  const session = limits.find((l) => l.kind === "session");
+  const weeklyAll = limits.find((l) => l.kind === "weekly_all");
+
+  const fiveHour = parseWindow(body["five_hour"]);
+  const sevenDay = parseWindow(body["seven_day"]);
+
+  return {
+    window5hPct: session ? session.percent : fiveHour.percent,
+    window7dPct: weeklyAll ? weeklyAll.percent : sevenDay.percent,
+    resetAt5h: session ? session.resetAt : fiveHour.resetAt,
+    resetAt7d: weeklyAll ? weeklyAll.resetAt : sevenDay.resetAt,
+    orgPct: null,
+    resetAtOrg: null,
+    limits,
+  };
+}
+
+/** Parse a `five_hour` / `seven_day` object into its two usable dimensions. */
+function parseWindow(raw: unknown): {
+  percent: number | null;
+  resetAt: Date | null;
+} {
+  if (!isRecord(raw)) return { percent: null, resetAt: null };
+  return {
+    // `utilization` here is a 0-100 float (unlike the 0-1 response headers).
+    percent: parsePercent(raw["utilization"]),
+    resetAt: parseTimestamp(raw["resets_at"]),
   };
 }
 
 /**
- * Utilization for one unified subscription window: (limit - remaining) / limit
- * * 100, clamped to 0-100. Null when limit/remaining are absent or limit ≤ 0.
+ * Parse `limits[]`. Entries without a usable `kind` are dropped (they carry no
+ * identity); everything else — including unknown kinds and severities — is
+ * preserved verbatim.
  */
-function windowUtilization(
-  headers: Headers,
-  window: "5h" | "7d"
-): number | null {
-  const limit = parseNonNegInt(
-    headers.get(`anthropic-ratelimit-unified-${window}-limit`)
-  );
-  const remaining = parseNonNegInt(
-    headers.get(`anthropic-ratelimit-unified-${window}-remaining`)
-  );
-  return utilizationPct(limit, remaining);
+function parseLimits(raw: unknown): ClaudeUsageLimitEntry[] {
+  if (!Array.isArray(raw)) return [];
+
+  const entries: ClaudeUsageLimitEntry[] = [];
+  for (const item of raw) {
+    if (!isRecord(item)) continue;
+    const kind = parseNonEmptyString(item["kind"]);
+    if (kind === null) continue;
+
+    const scope = isRecord(item["scope"]) ? item["scope"] : null;
+    const model = scope && isRecord(scope["model"]) ? scope["model"] : null;
+
+    entries.push({
+      kind,
+      group: parseNonEmptyString(item["group"]),
+      percent: parsePercent(item["percent"]) ?? 0,
+      severity: parseNonEmptyString(item["severity"]),
+      resetAt: parseTimestamp(item["resets_at"]),
+      // `scope.model.id` is null upstream — display_name is the only identity.
+      scopeModel: model ? parseNonEmptyString(model["display_name"]) : null,
+      scopeSurface: scope ? parseNonEmptyString(scope["surface"]) : null,
+      isActive: item["is_active"] === true,
+    });
+  }
+  return entries;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// api_key rate-limit header parsing (documented headers)
+// ─────────────────────────────────────────────────────────────────────────────
 
 /** Utilization for one documented api_key rate family (e.g. "requests"). */
 function familyUtilization(headers: Headers, family: string): number | null {
@@ -271,41 +427,27 @@ function familyUtilization(headers: Headers, family: string): number | null {
   const remaining = parseNonNegInt(
     headers.get(`anthropic-ratelimit-${family}-remaining`)
   );
-  return utilizationPct(limit, remaining);
-}
-
-/** (limit - remaining) / limit * 100, clamped 0-100. Null if not derivable. */
-function utilizationPct(
-  limit: number | null,
-  remaining: number | null
-): number | null {
   if (limit === null || remaining === null || limit <= 0) return null;
-  const used = limit - remaining;
-  const pct = (used / limit) * 100;
-  if (pct < 0) return 0;
-  if (pct > 100) return 100;
-  return Math.round(pct);
+  return clampPercent(((limit - remaining) / limit) * 100);
 }
 
 /**
  * Parse a rate-limit `-reset` header into a Date. The documented headers use
- * **RFC 3339** (e.g. `2025-06-13T15:00:00Z`); the undocumented unified headers
- * have historically carried a **unix epoch in seconds** (see
- * ReactiveOutputDetector). Accept both so neither family needs a special case.
+ * **RFC 3339** (e.g. `2025-06-13T15:00:00Z`); unified headers have historically
+ * carried a **unix epoch in seconds** (see ReactiveOutputDetector). Accept both.
  */
 function parseResetHeader(raw: string | null): Date | null {
   if (!raw) return null;
   const trimmed = raw.trim();
   if (trimmed.length === 0) return null;
 
-  // Pure digits → unix epoch seconds (the unified-header shape).
+  // Pure digits → unix epoch seconds.
   if (/^\d{9,}$/.test(trimmed)) {
     const epochSec = Number.parseInt(trimmed, 10);
     if (!Number.isFinite(epochSec) || epochSec <= 0) return null;
     return new Date(epochSec * 1000);
   }
 
-  // Otherwise an RFC 3339 / ISO 8601 timestamp (the documented shape).
   const ms = Date.parse(trimmed);
   return Number.isNaN(ms) ? null : new Date(ms);
 }
@@ -324,14 +466,38 @@ function parseNonNegInt(raw: string | null): number | null {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
-/** Whether a snapshot carries at least one usable signal (else we drop it). */
-function isInformative(snapshot: ClaudeUsageSnapshot): boolean {
-  return (
-    snapshot.window5hPct !== null ||
-    snapshot.window7dPct !== null ||
-    snapshot.resetAt5h !== null ||
-    snapshot.resetAt7d !== null ||
-    snapshot.orgPct !== null ||
-    snapshot.resetAtOrg !== null
-  );
+// ─────────────────────────────────────────────────────────────────────────────
+// Small value parsers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** A 0-100 percentage, rounded and clamped. Null when not a finite number. */
+function parsePercent(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return clampPercent(value);
+}
+
+function clampPercent(value: number): number {
+  if (value <= 0) return 0;
+  if (value >= 100) return 100;
+  return Math.round(value);
+}
+
+/** An ISO-8601 timestamp string, or null when absent/unparseable. */
+function parseTimestamp(value: unknown): Date | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+  const ms = Date.parse(trimmed);
+  return Number.isNaN(ms) ? null : new Date(ms);
+}
+
+/** A non-empty trimmed string, or null. */
+function parseNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }

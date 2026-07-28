@@ -1,33 +1,134 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest";
 import {
+  apiKeyUsageFromHeaders,
   fetchClaudeUsage,
   type FetchLike,
 } from "./anthropic-usage-adapter";
 
 /**
- * Build a FetchLike that returns the given status + headers and records the
+ * Build a FetchLike returning the given status + raw body, recording the
  * request it was called with (so we can assert on credential headers without
- * ever exposing the token elsewhere).
+ * ever exposing the token elsewhere). No live network calls anywhere here.
  */
 function fakeFetch(
   status: number,
-  headers: Record<string, string>
+  body: string
 ): { fetch: FetchLike; calls: Array<Parameters<FetchLike>> } {
   const calls: Array<Parameters<FetchLike>> = [];
   const fetch: FetchLike = async (url, init) => {
     calls.push([url, init]);
-    return { status, headers: new Headers(headers) };
+    return { status, headers: new Headers(), text: async () => body };
   };
   return { fetch, calls };
 }
 
+function jsonFetch(payload: unknown, status = 200) {
+  return fakeFetch(status, JSON.stringify(payload));
+}
+
+/** The live shape verified against a Max subscription (2026-07-28). */
+const LIVE_BODY = {
+  five_hour: {
+    utilization: 61.0,
+    resets_at: "2026-07-28T14:40:00.280338+00:00",
+    limit_dollars: null,
+    used_dollars: null,
+    remaining_dollars: null,
+  },
+  seven_day: {
+    utilization: 98.0,
+    resets_at: "2026-07-30T22:59:59.280356+00:00",
+    limit_dollars: null,
+    used_dollars: null,
+    remaining_dollars: null,
+  },
+  seven_day_oauth_apps: null,
+  seven_day_opus: null,
+  seven_day_sonnet: null,
+  seven_day_cowork: null,
+  seven_day_omelette: null,
+  extra_usage: {
+    is_enabled: false,
+    used_credits: 12137.0,
+    utilization: null,
+    disabled_reason: "out_of_credits",
+  },
+  limits: [
+    {
+      kind: "session",
+      group: "session",
+      percent: 61,
+      severity: "normal",
+      resets_at: "2026-07-28T14:40:00.280338+00:00",
+      scope: null,
+      is_active: false,
+    },
+    {
+      kind: "weekly_all",
+      group: "weekly",
+      percent: 98,
+      severity: "critical",
+      resets_at: "2026-07-30T22:59:59.280356+00:00",
+      scope: null,
+      is_active: false,
+    },
+    {
+      kind: "weekly_scoped",
+      group: "weekly",
+      percent: 100,
+      severity: "critical",
+      resets_at: "2026-07-30T23:00:00.280564+00:00",
+      scope: { model: { id: null, display_name: "Fable" }, surface: null },
+      is_active: true,
+    },
+  ],
+};
+
 describe("fetchClaudeUsage", () => {
+  describe("request shape", () => {
+    it("GETs /api/oauth/usage with Bearer + the oauth beta and a timeout signal", async () => {
+      const { fetch, calls } = jsonFetch(LIVE_BODY);
+
+      await fetchClaudeUsage("secret-oauth", "subscription", fetch);
+
+      expect(calls).toHaveLength(1);
+      const [url, init] = calls[0];
+      expect(url).toBe("https://api.anthropic.com/api/oauth/usage");
+      expect(init.method).toBe("GET");
+      expect(init.headers["authorization"]).toBe("Bearer secret-oauth");
+      expect(init.headers["anthropic-beta"]).toBe("oauth-2025-04-20");
+      expect(init.headers["anthropic-version"]).toBe("2023-06-01");
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it("never issues a /v1/messages probe", async () => {
+      const { fetch, calls } = jsonFetch(LIVE_BODY);
+      await fetchClaudeUsage("tok", "subscription", fetch);
+      for (const [url, init] of calls) {
+        expect(url).not.toContain("/v1/messages");
+        expect(init.method).toBe("GET");
+        expect(init).not.toHaveProperty("body");
+      }
+    });
+
+    it("defaults to subscription when no kind is given", async () => {
+      const { fetch, calls } = jsonFetch(LIVE_BODY);
+      await fetchClaudeUsage("tok", undefined, fetch);
+      expect(calls[0][1].headers["authorization"]).toBe("Bearer tok");
+    });
+  });
+
   describe("guards", () => {
     it("returns null for an empty token without calling fetch", async () => {
-      const { fetch, calls } = fakeFetch(200, {});
-      const result = await fetchClaudeUsage("", "subscription", fetch);
-      expect(result).toBeNull();
+      const { fetch, calls } = jsonFetch(LIVE_BODY);
+      expect(await fetchClaudeUsage("", "subscription", fetch)).toBeNull();
+      expect(calls).toHaveLength(0);
+    });
+
+    it("returns null for api_key without calling fetch (endpoint is subscription-only)", async () => {
+      const { fetch, calls } = jsonFetch(LIVE_BODY);
+      expect(await fetchClaudeUsage("sk-ant-key", "api_key", fetch)).toBeNull();
       expect(calls).toHaveLength(0);
     });
 
@@ -35,105 +136,225 @@ describe("fetchClaudeUsage", () => {
       const throwing: FetchLike = async () => {
         throw new Error("network down");
       };
-      const result = await fetchClaudeUsage("tok", "subscription", throwing);
-      expect(result).toBeNull();
+      await expect(
+        fetchClaudeUsage("tok", "subscription", throwing)
+      ).resolves.toBeNull();
     });
   });
 
-  describe("subscription (unified 5h/7d headers)", () => {
-    it("derives utilization and reset (unix-epoch reset) for both windows", async () => {
-      const epoch5h = 1749826800; // 2025-06-13T15:00:00Z
-      const epoch7d = 1750000000;
-      const { fetch } = fakeFetch(200, {
-        "anthropic-ratelimit-unified-5h-limit": "1000",
-        "anthropic-ratelimit-unified-5h-remaining": "250", // 75% used
-        "anthropic-ratelimit-unified-5h-reset": String(epoch5h),
-        "anthropic-ratelimit-unified-7d-limit": "10000",
-        "anthropic-ratelimit-unified-7d-remaining": "9000", // 10% used
-        "anthropic-ratelimit-unified-7d-reset": String(epoch7d),
-      });
+  describe("limits[] present (primary path)", () => {
+    it("maps every window, including the per-model weekly_scoped entry", async () => {
+      const { fetch } = jsonFetch(LIVE_BODY);
 
-      const snap = await fetchClaudeUsage("oauth-token", "subscription", fetch);
+      const snap = await fetchClaudeUsage("tok", "subscription", fetch);
 
       expect(snap).not.toBeNull();
-      expect(snap!.window5hPct).toBe(75);
-      expect(snap!.window7dPct).toBe(10);
-      expect(snap!.resetAt5h?.getTime()).toBe(epoch5h * 1000);
-      expect(snap!.resetAt7d?.getTime()).toBe(epoch7d * 1000);
-      // No api_key org dimension on a subscription read.
+      expect(snap!.limits).toHaveLength(3);
+      expect(snap!.limits[2]).toEqual({
+        kind: "weekly_scoped",
+        group: "weekly",
+        percent: 100,
+        severity: "critical",
+        resetAt: new Date("2026-07-30T23:00:00.280564+00:00"),
+        // scope.model.id is null upstream — display_name is the identity.
+        scopeModel: "Fable",
+        scopeSurface: null,
+        isActive: true,
+      });
+    });
+
+    it("rolls up 5h from `session` and 7d from `weekly_all` (not the worst scoped window)", async () => {
+      const { fetch } = jsonFetch(LIVE_BODY);
+
+      const snap = await fetchClaudeUsage("tok", "subscription", fetch);
+
+      expect(snap!.window5hPct).toBe(61);
+      expect(snap!.window7dPct).toBe(98); // NOT 100 from the Fable scoped window
+      expect(snap!.resetAt5h?.toISOString()).toBe("2026-07-28T14:40:00.280Z");
+      expect(snap!.resetAt7d?.toISOString()).toBe("2026-07-30T22:59:59.280Z");
       expect(snap!.orgPct).toBeNull();
       expect(snap!.resetAtOrg).toBeNull();
     });
 
-    it("also parses an RFC 3339 reset value (documented format)", async () => {
-      const iso = "2025-06-13T15:00:00Z";
-      const { fetch } = fakeFetch(200, {
-        "anthropic-ratelimit-unified-5h-limit": "100",
-        "anthropic-ratelimit-unified-5h-remaining": "0",
-        "anthropic-ratelimit-unified-5h-reset": iso,
+    it("ignores the legacy flat per-model fields entirely", async () => {
+      // Legacy fields populated but contradicting limits[] — limits[] wins.
+      const { fetch } = jsonFetch({
+        ...LIVE_BODY,
+        seven_day_opus: { utilization: 5.0, resets_at: null },
+        seven_day_sonnet: { utilization: 7.0, resets_at: null },
       });
 
-      const snap = await fetchClaudeUsage("oauth-token", "subscription", fetch);
+      const snap = await fetchClaudeUsage("tok", "subscription", fetch);
 
-      expect(snap!.window5hPct).toBe(100);
-      expect(snap!.resetAt5h?.toISOString()).toBe("2025-06-13T15:00:00.000Z");
+      expect(snap!.window7dPct).toBe(98);
+      expect(snap!.limits.map((l) => l.kind)).toEqual([
+        "session",
+        "weekly_all",
+        "weekly_scoped",
+      ]);
     });
 
-    it("reads headers from a 429 response (over the limit)", async () => {
-      const { fetch } = fakeFetch(429, {
-        "anthropic-ratelimit-unified-5h-limit": "1000",
-        "anthropic-ratelimit-unified-5h-remaining": "0", // 100% used
+    it("round-trips unknown kind / severity / group values instead of crashing", async () => {
+      const { fetch } = jsonFetch({
+        limits: [
+          {
+            kind: "monthly_experimental",
+            group: "monthly",
+            percent: 42,
+            severity: "elevated",
+            resets_at: "2026-08-01T00:00:00Z",
+            scope: { model: { id: null, display_name: "Mythos" }, surface: "cli" },
+            is_active: false,
+          },
+        ],
       });
 
-      const snap = await fetchClaudeUsage("oauth-token", "subscription", fetch);
+      const snap = await fetchClaudeUsage("tok", "subscription", fetch);
 
       expect(snap).not.toBeNull();
-      expect(snap!.window5hPct).toBe(100);
-    });
-
-    it("returns null when no usage headers are present", async () => {
-      const { fetch } = fakeFetch(200, { "content-type": "application/json" });
-      const snap = await fetchClaudeUsage("oauth-token", "subscription", fetch);
-      expect(snap).toBeNull();
-    });
-
-    it("leaves a window null when its limit is missing or zero", async () => {
-      const { fetch } = fakeFetch(200, {
-        // 5h has only a reset, no limit/remaining → pct null but reset present
-        "anthropic-ratelimit-unified-5h-reset": "1749826800",
-        // 7d has a zero limit → not derivable → null
-        "anthropic-ratelimit-unified-7d-limit": "0",
-        "anthropic-ratelimit-unified-7d-remaining": "0",
-      });
-
-      const snap = await fetchClaudeUsage("oauth-token", "subscription", fetch);
-
-      expect(snap).not.toBeNull();
+      expect(snap!.limits[0].kind).toBe("monthly_experimental");
+      expect(snap!.limits[0].severity).toBe("elevated");
+      expect(snap!.limits[0].group).toBe("monthly");
+      expect(snap!.limits[0].scopeModel).toBe("Mythos");
+      expect(snap!.limits[0].scopeSurface).toBe("cli");
+      // No session / weekly_all entry and no five_hour / seven_day fallback.
       expect(snap!.window5hPct).toBeNull();
-      expect(snap!.resetAt5h?.getTime()).toBe(1749826800 * 1000);
       expect(snap!.window7dPct).toBeNull();
     });
 
-    it("sends Bearer + oauth beta for a subscription probe (token not leaked elsewhere)", async () => {
-      const { fetch, calls } = fakeFetch(200, {
-        "anthropic-ratelimit-unified-5h-limit": "10",
-        "anthropic-ratelimit-unified-5h-remaining": "5",
+    it("drops malformed entries (no usable kind) and defaults a missing percent to 0", async () => {
+      const { fetch } = jsonFetch({
+        limits: [
+          "not-an-object",
+          { group: "weekly" }, // no kind → dropped
+          { kind: "   " }, // blank kind → dropped
+          { kind: "session", is_active: true }, // no percent → 0
+        ],
       });
 
-      await fetchClaudeUsage("secret-oauth", "subscription", fetch);
+      const snap = await fetchClaudeUsage("tok", "subscription", fetch);
 
-      const [, init] = calls[0];
-      expect(init.headers["authorization"]).toBe("Bearer secret-oauth");
-      expect(init.headers["anthropic-beta"]).toBe("oauth-2025-04-20");
-      expect(init.headers["x-api-key"]).toBeUndefined();
+      expect(snap!.limits).toHaveLength(1);
+      expect(snap!.limits[0]).toEqual({
+        kind: "session",
+        group: null,
+        percent: 0,
+        severity: null,
+        resetAt: null,
+        scopeModel: null,
+        scopeSurface: null,
+        isActive: true,
+      });
+      expect(snap!.window5hPct).toBe(0);
+    });
+
+    it("clamps and rounds percent into 0-100", async () => {
+      const { fetch } = jsonFetch({
+        limits: [
+          { kind: "session", percent: 60.6 },
+          { kind: "weekly_all", percent: 140 },
+          { kind: "other", percent: -3 },
+        ],
+      });
+
+      const snap = await fetchClaudeUsage("tok", "subscription", fetch);
+
+      expect(snap!.limits.map((l) => l.percent)).toEqual([61, 100, 0]);
     });
   });
 
-  describe("api_key (documented rate-limit headers)", () => {
-    it("uses the worst-case utilization across rate families + soonest reset", async () => {
-      const soon = "2025-06-13T15:00:00Z";
-      const later = "2025-06-13T16:00:00Z";
-      const { fetch } = fakeFetch(200, {
+  describe("limits[] absent (five_hour / seven_day fallback)", () => {
+    it("falls back to the flat windows when limits[] is missing", async () => {
+      const { fetch } = jsonFetch({
+        five_hour: { utilization: 12.4, resets_at: "2026-07-28T14:40:00Z" },
+        seven_day: { utilization: 77.5, resets_at: "2026-07-30T23:00:00Z" },
+      });
+
+      const snap = await fetchClaudeUsage("tok", "subscription", fetch);
+
+      expect(snap).not.toBeNull();
+      expect(snap!.limits).toEqual([]);
+      expect(snap!.window5hPct).toBe(12);
+      expect(snap!.window7dPct).toBe(78);
+      expect(snap!.resetAt5h?.toISOString()).toBe("2026-07-28T14:40:00.000Z");
+      expect(snap!.resetAt7d?.toISOString()).toBe("2026-07-30T23:00:00.000Z");
+    });
+
+    it("falls back when limits[] is an empty array", async () => {
+      const { fetch } = jsonFetch({
+        limits: [],
+        five_hour: { utilization: 5.0, resets_at: null },
+        seven_day: null,
+      });
+
+      const snap = await fetchClaudeUsage("tok", "subscription", fetch);
+
+      expect(snap!.window5hPct).toBe(5);
+      expect(snap!.window7dPct).toBeNull();
+    });
+
+    it("fills only the dimensions limits[] did not supply", async () => {
+      // A session entry but no weekly_all → 7d comes from seven_day.
+      const { fetch } = jsonFetch({
+        limits: [
+          { kind: "session", percent: 30, resets_at: "2026-07-28T14:40:00Z" },
+        ],
+        seven_day: { utilization: 88.0, resets_at: "2026-07-30T23:00:00Z" },
+      });
+
+      const snap = await fetchClaudeUsage("tok", "subscription", fetch);
+
+      expect(snap!.window5hPct).toBe(30);
+      expect(snap!.window7dPct).toBe(88);
+    });
+
+    it("returns null when nothing usable is reported", async () => {
+      const { fetch } = jsonFetch({
+        limits: [],
+        five_hour: null,
+        seven_day: null,
+        extra_usage: { is_enabled: false },
+      });
+
+      expect(await fetchClaudeUsage("tok", "subscription", fetch)).toBeNull();
+    });
+  });
+
+  describe("failure paths", () => {
+    it.each([401, 403, 429, 500])("returns null on HTTP %i", async (status) => {
+      const { fetch } = jsonFetch(LIVE_BODY, status);
+      expect(await fetchClaudeUsage("tok", "subscription", fetch)).toBeNull();
+    });
+
+    it("returns null on malformed JSON", async () => {
+      const { fetch } = fakeFetch(200, "{not json");
+      expect(await fetchClaudeUsage("tok", "subscription", fetch)).toBeNull();
+    });
+
+    it("returns null on a non-object JSON body", async () => {
+      const { fetch } = fakeFetch(200, "[1, 2, 3]");
+      expect(await fetchClaudeUsage("tok", "subscription", fetch)).toBeNull();
+    });
+
+    it("returns null when reading the body throws", async () => {
+      const fetch: FetchLike = async () => ({
+        status: 200,
+        headers: new Headers(),
+        text: async () => {
+          throw new Error("stream aborted");
+        },
+      });
+      expect(await fetchClaudeUsage("tok", "subscription", fetch)).toBeNull();
+    });
+  });
+});
+
+describe("apiKeyUsageFromHeaders", () => {
+  it("uses the worst-case utilization across rate families + soonest reset", () => {
+    const soon = "2025-06-13T15:00:00Z";
+    const later = "2025-06-13T16:00:00Z";
+    const snap = apiKeyUsageFromHeaders(
+      new Headers({
         // requests: 20% used
         "anthropic-ratelimit-requests-limit": "1000",
         "anthropic-ratelimit-requests-remaining": "800",
@@ -146,90 +367,52 @@ describe("fetchClaudeUsage", () => {
         "anthropic-ratelimit-output-tokens-limit": "20000",
         "anthropic-ratelimit-output-tokens-remaining": "10000",
         "anthropic-ratelimit-output-tokens-reset": later,
-      });
+      })
+    );
 
-      const snap = await fetchClaudeUsage("sk-ant-key", "api_key", fetch);
+    expect(snap.orgPct).toBe(90);
+    expect(snap.resetAtOrg?.toISOString()).toBe("2025-06-13T15:00:00.000Z");
+    // Subscription dimensions stay null for an api_key read.
+    expect(snap.window5hPct).toBeNull();
+    expect(snap.window7dPct).toBeNull();
+    expect(snap.resetAt5h).toBeNull();
+    expect(snap.resetAt7d).toBeNull();
+    expect(snap.limits).toEqual([]);
+  });
 
-      expect(snap).not.toBeNull();
-      // Worst case across families is 90%.
-      expect(snap!.orgPct).toBe(90);
-      // Soonest reset is the input-tokens one.
-      expect(snap!.resetAtOrg?.toISOString()).toBe("2025-06-13T15:00:00.000Z");
-      // Subscription windows stay null for an api_key read.
-      expect(snap!.window5hPct).toBeNull();
-      expect(snap!.window7dPct).toBeNull();
-      expect(snap!.resetAt5h).toBeNull();
-      expect(snap!.resetAt7d).toBeNull();
-    });
-
-    it("pins utilization to 100 and uses retry-after on a 429", async () => {
-      const nowBefore = Date.now();
-      const { fetch } = fakeFetch(429, {
+  it("pins utilization to 100 and uses retry-after on a 429", () => {
+    const nowBefore = Date.now();
+    const snap = apiKeyUsageFromHeaders(
+      new Headers({
         "anthropic-ratelimit-requests-limit": "1000",
         "anthropic-ratelimit-requests-remaining": "500", // would be 50%
         "retry-after": "30",
-      });
+      })
+    );
 
-      const snap = await fetchClaudeUsage("sk-ant-key", "api_key", fetch);
-
-      expect(snap).not.toBeNull();
-      // retry-after overrides the per-family pct → fully limited right now.
-      expect(snap!.orgPct).toBe(100);
-      const resetMs = snap!.resetAtOrg!.getTime();
-      // ~30s in the future (allow a small window for clock drift in the test).
-      expect(resetMs).toBeGreaterThanOrEqual(nowBefore + 29_000);
-      expect(resetMs).toBeLessThanOrEqual(Date.now() + 31_000);
-    });
-
-    it("sends x-api-key (not Bearer) for an api_key probe", async () => {
-      const { fetch, calls } = fakeFetch(200, {
-        "anthropic-ratelimit-requests-limit": "10",
-        "anthropic-ratelimit-requests-remaining": "5",
-      });
-
-      await fetchClaudeUsage("sk-ant-secret", "api_key", fetch);
-
-      const [, init] = calls[0];
-      expect(init.headers["x-api-key"]).toBe("sk-ant-secret");
-      expect(init.headers["authorization"]).toBeUndefined();
-      expect(init.headers["anthropic-beta"]).toBeUndefined();
-    });
-
-    it("returns null when no rate-limit headers are present", async () => {
-      const { fetch } = fakeFetch(401, {});
-      const snap = await fetchClaudeUsage("sk-ant-key", "api_key", fetch);
-      expect(snap).toBeNull();
-    });
+    expect(snap.orgPct).toBe(100);
+    const resetMs = snap.resetAtOrg!.getTime();
+    expect(resetMs).toBeGreaterThanOrEqual(nowBefore + 29_000);
+    expect(resetMs).toBeLessThanOrEqual(Date.now() + 31_000);
   });
 
-  describe("probe shape", () => {
-    it("POSTs a minimal one-token probe with the pinned anthropic-version", async () => {
-      const { fetch, calls } = fakeFetch(200, {
-        "anthropic-ratelimit-unified-5h-limit": "10",
-        "anthropic-ratelimit-unified-5h-remaining": "5",
-      });
+  it("parses a unix-epoch reset as well as RFC 3339", () => {
+    const epoch = 1749826800;
+    const snap = apiKeyUsageFromHeaders(
+      new Headers({
+        "anthropic-ratelimit-tokens-limit": "10",
+        "anthropic-ratelimit-tokens-remaining": "5",
+        "anthropic-ratelimit-tokens-reset": String(epoch),
+      })
+    );
 
-      await fetchClaudeUsage("tok", "subscription", fetch);
+    expect(snap.orgPct).toBe(50);
+    expect(snap.resetAtOrg?.getTime()).toBe(epoch * 1000);
+  });
 
-      const [url, init] = calls[0];
-      expect(url).toBe("https://api.anthropic.com/v1/messages");
-      expect(init.method).toBe("POST");
-      expect(init.headers["anthropic-version"]).toBe("2023-06-01");
-      const body = JSON.parse(init.body) as { max_tokens: number };
-      expect(body.max_tokens).toBe(1);
-      expect(init.signal).toBeInstanceOf(AbortSignal);
-    });
-
-    it("defaults to subscription when no kind is given", async () => {
-      const { fetch, calls } = fakeFetch(200, {
-        "anthropic-ratelimit-unified-5h-limit": "10",
-        "anthropic-ratelimit-unified-5h-remaining": "5",
-      });
-
-      await fetchClaudeUsage("tok", undefined, fetch);
-
-      const [, init] = calls[0];
-      expect(init.headers["authorization"]).toBe("Bearer tok");
-    });
+  it("leaves the org dimension null when no rate headers are present", () => {
+    const snap = apiKeyUsageFromHeaders(new Headers());
+    expect(snap.orgPct).toBeNull();
+    expect(snap.resetAtOrg).toBeNull();
   });
 });

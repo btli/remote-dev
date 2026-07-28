@@ -56,10 +56,10 @@ beforeEach(() => {
 });
 
 describe("UsageEndpointPoller.supports", () => {
-  it("supports subscription and api_key when the flag is on", () => {
+  it("supports subscription only when the flag is on (the usage endpoint is OAuth-only)", () => {
     const poller = new UsageEndpointPoller();
     expect(poller.supports("subscription")).toBe(true);
-    expect(poller.supports("api_key")).toBe(true);
+    expect(poller.supports("api_key")).toBe(false);
   });
 
   it("supports nothing when the flag is off", () => {
@@ -95,6 +95,7 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
         resetAt7d: null,
         orgPct: null,
         resetAtOrg: null,
+        limits: [],
       });
 
       const poller = new UsageEndpointPoller();
@@ -126,6 +127,7 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
         resetAt7d: null,
         orgPct: null,
         resetAtOrg: null,
+        limits: [],
       });
 
       const poller = new UsageEndpointPoller();
@@ -160,14 +162,14 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
   });
 
   describe("api_key", () => {
-    it("returns null without probing — the raw key isn't wired in this path", async () => {
+    it("returns null without reading — the usage endpoint is subscription-only", async () => {
       claudeAccountsFindFirst.mockResolvedValue({ accountKind: "api_key" });
 
       const poller = new UsageEndpointPoller();
       const result = await poller.fetchLimitState("profile-1");
 
       expect(result).toBeNull();
-      // No OAuth file read and no probe for api_key (credential not available).
+      // No OAuth file read and no HTTP read for api_key.
       expect(agentProfilesFindFirst).not.toHaveBeenCalled();
       expect(fetchUsageMock).not.toHaveBeenCalled();
     });
@@ -188,6 +190,7 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
         resetAt7d: null,
         orgPct: 100,
         resetAtOrg: orgReset,
+        limits: [],
       });
 
       const poller = new UsageEndpointPoller();
@@ -197,6 +200,41 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
       expect(result?.resetAt5h).toBe(orgReset);
       expect(result?.isLimited).toBe(true);
     });
+  });
+
+  it("passes a per-model scoped limit through without disturbing the 5h/7d rollup", async () => {
+    claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
+    agentProfilesFindFirst.mockResolvedValue({ configDir: "/cfg/dir" });
+    readFileMock.mockResolvedValue(OAUTH_CREDS);
+    fetchUsageMock.mockResolvedValue({
+      window5hPct: 61,
+      window7dPct: 98,
+      resetAt5h: null,
+      resetAt7d: null,
+      orgPct: null,
+      resetAtOrg: null,
+      limits: [
+        {
+          kind: "weekly_scoped",
+          group: "weekly",
+          percent: 100,
+          severity: "critical",
+          resetAt: null,
+          scopeModel: "Fable",
+          scopeSurface: null,
+          isActive: true,
+        },
+      ],
+    });
+
+    const poller = new UsageEndpointPoller();
+    const result = await poller.fetchLimitState("profile-1");
+
+    // The account is NOT limited overall even though one model's window is
+    // exhausted — model-aware selection is tracked separately.
+    expect(result?.window5hPct).toBe(61);
+    expect(result?.window7dPct).toBe(98);
+    expect(result?.isLimited).toBe(false);
   });
 
   it("never throws — a DB error resolves to null", async () => {

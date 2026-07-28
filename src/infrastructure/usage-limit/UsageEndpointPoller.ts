@@ -1,26 +1,28 @@
 /**
  * UsageEndpointPoller - UsageLimitGateway that proactively reads a Claude
- * account's rate-limit headroom from the (flagged) Messages API rate-limit
- * headers via the isolated adapter.
+ * account's usage headroom from the structured OAuth usage endpoint via the
+ * isolated adapter (`anthropic-usage-adapter.fetchClaudeUsage`).
  *
  * Gated by `RDV_CLAUDE_USAGE_POLL_ENABLED === "1"` — DEFAULT OFF. When the flag
  * is off, `supports()` returns false and `fetchLimitState()` returns null, so
- * the poller never touches the network. When on, it resolves the profile's
- * account kind, loads the matching credential (subscription → OAuth token from
- * `.claude/.credentials.json`; api_key → not yet wired, see below), delegates
- * the HTTP probe to `anthropic-usage-adapter.fetchClaudeUsage`, and normalizes
- * the snapshot into a `LimitDetectionResult`.
+ * the poller never touches the network. When on, it loads the profile's OAuth
+ * access token from `.claude/.credentials.json`, asks the adapter for a
+ * snapshot, and normalizes it into a `LimitDetectionResult`. The read is FREE —
+ * a GET against `/api/oauth/usage`, no message send, no quota burn.
  *
- *   subscription → 5h/7d rolling-window utilization + reset.
- *   api_key      → a single rate/credit "org" dimension (worst-case rate-limit
- *                  utilization + soonest replenish/retry-after), mapped onto the
- *                  5h slot of the LimitDetectionResult (the use-case/repo carry
- *                  5h/7d only). The adapter parses the api_key headers for real;
- *                  loading + decrypting the raw key lives in the account-login /
- *                  secrets path (a separate change), so this poller does not
- *                  reach into profile_secrets_config — when no key is available
- *                  it returns null (a safe no-op) rather than crossing that
- *                  boundary.
+ * **Subscription accounts only.** [remote-dev-n4x4.1] The usage endpoint
+ * describes claude.ai's rolling 5h/7d windows, which a raw API key does not
+ * have; a key's headroom lives in the documented per-minute rate-limit headers
+ * on Messages API responses, and there is no free endpoint that reports them
+ * (nor does this poller have access to the raw key — that lives behind the
+ * account-login / secrets path). So `supports()` covers `subscription` only,
+ * and an api_key profile resolves to "no gateway" in the composite rather than
+ * to a poller that would always return null.
+ *
+ * The snapshot's per-window `limits[]` — including per-model `weekly_scoped`
+ * entries — is richer than the 5h/7d `LimitDetectionResult` the use-case and
+ * repository carry. It is logged for observability here; persisting it (and
+ * making profile selection model-aware) is tracked separately.
  *
  * Best-effort throughout: any failure (no token, read error, adapter error)
  * logs and returns null — it must never throw.
@@ -47,9 +49,9 @@ const log = createLogger("UsageEndpointPoller");
 
 export class UsageEndpointPoller implements UsageLimitGateway {
   supports(kind: ClaudeAccountKind): boolean {
-    // The adapter can read rate-limit headers for both kinds; the poller is
-    // only ever active when the feature flag is enabled.
-    return isUsagePollEnabled() && (kind === "subscription" || kind === "api_key");
+    // Subscription only — the usage endpoint has no api_key equivalent (see the
+    // module docblock). The poller is also only ever active behind the flag.
+    return isUsagePollEnabled() && kind === "subscription";
   }
 
   async fetchLimitState(
@@ -59,11 +61,15 @@ export class UsageEndpointPoller implements UsageLimitGateway {
 
     try {
       const kind = await this.resolveKind(profileId);
+      if (kind !== "subscription") {
+        log.debug("Account kind has no free usage read; skipping poll", {
+          profileId,
+          kind,
+        });
+        return null;
+      }
 
-      const token =
-        kind === "subscription"
-          ? await this.loadOAuthToken(profileId)
-          : null; // api_key: raw key lives in the secrets path (not wired here)
+      const token = await this.loadOAuthToken(profileId);
       if (!token) {
         log.debug("No credential for profile; skipping poll", { profileId, kind });
         return null;
@@ -72,6 +78,7 @@ export class UsageEndpointPoller implements UsageLimitGateway {
       const snapshot = await fetchClaudeUsage(token, kind);
       if (!snapshot) return null;
 
+      logScopedLimits(profileId, snapshot);
       return snapshotToResult(profileId, snapshot);
     } catch (error) {
       log.warn("Usage poll failed (best-effort)", {
@@ -124,6 +131,27 @@ export class UsageEndpointPoller implements UsageLimitGateway {
     } catch {
       return null;
     }
+  }
+}
+
+/**
+ * Surface the windows the 5h/7d `LimitDetectionResult` cannot represent —
+ * notably per-model `weekly_scoped` entries, where an account can read
+ * "available" overall while one model's weekly window is exhausted. Debug-level
+ * only: nothing downstream consumes these yet.
+ */
+function logScopedLimits(profileId: string, snapshot: ClaudeUsageSnapshot): void {
+  for (const limit of snapshot.limits) {
+    if (limit.scopeModel === null && !limit.isActive) continue;
+    log.debug("Usage window reported", {
+      profileId,
+      kind: limit.kind,
+      group: limit.group,
+      percent: limit.percent,
+      severity: limit.severity,
+      scopeModel: limit.scopeModel,
+      isActive: limit.isActive,
+    });
   }
 }
 
