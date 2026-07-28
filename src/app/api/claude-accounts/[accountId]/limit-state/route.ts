@@ -21,17 +21,18 @@ import {
   trackUsageLimitUseCase,
 } from "@/infrastructure/container";
 import { serializeLimitState } from "@/app/api/_lib/serialize-limit-state";
+import { requireAccountId } from "@/app/api/_lib/claude-account-params";
 
 export const dynamic = "force-dynamic";
 
 export const GET = withApiAuth(async (_request, { userId, params }) => {
-  const accountId = params?.accountId;
-  if (!accountId) return errorResponse("Account ID is required", 400);
+  const id = requireAccountId(params);
+  if ("error" in id) return id.error;
 
-  const account = await getAccount(accountId, userId);
+  const account = await getAccount(id.accountId, userId);
   if (!account) return errorResponse("Account not found", 404);
 
-  const state = await usageLimitStateRepository.findByAccountId(accountId);
+  const state = await usageLimitStateRepository.findByAccountId(id.accountId);
   return NextResponse.json(serializeLimitState(state));
 });
 
@@ -41,8 +42,9 @@ export const GET = withApiAuth(async (_request, { userId, params }) => {
  * account is a detection concern, not a manual one.
  */
 export const PATCH = withApiAuth(async (request, { userId, params }) => {
-  const accountId = params?.accountId;
-  if (!accountId) return errorResponse("Account ID is required", 400);
+  const id = requireAccountId(params);
+  if ("error" in id) return id.error;
+  const { accountId } = id;
 
   const account = await getAccount(accountId, userId);
   if (!account) return errorResponse("Account not found", 404);

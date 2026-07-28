@@ -16,14 +16,15 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import { verifyAccount } from "@/services/claude-account-service";
+import { requireAccountId } from "@/app/api/_lib/claude-account-params";
 
 export const dynamic = "force-dynamic";
 
 export const POST = withApiAuth(async (_request, { userId, params }) => {
-  const accountId = params?.accountId;
-  if (!accountId) return errorResponse("Account ID is required", 400);
+  const id = requireAccountId(params);
+  if ("error" in id) return id.error;
 
-  const result = await verifyAccount(accountId, userId);
+  const result = await verifyAccount(id.accountId, userId);
   if (!result) return errorResponse("Account not found", 404);
 
   return NextResponse.json({

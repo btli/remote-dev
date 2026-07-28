@@ -53,8 +53,9 @@ export type ClaudeAutoRelaunchMode = "notify" | "auto" | "disabled";
 /**
  * The serialized usage-limit block returned by `/api/profiles`,
  * `/api/claude-accounts/[accountId]/limit-state`, `/api/claude/usage`, and the
- * pool routes.
- * All timestamps are epoch-ms numbers; null means "unknown".
+ * pool routes (also exported from `_lib/serialize-limit-state` as
+ * `SerializedLimitState`). All timestamps are epoch-ms numbers; null means
+ * "unknown".
  */
 export interface LimitStateBlock {
   limitStatus: ClaudeLimitStatus;
@@ -69,9 +70,10 @@ export interface LimitStateBlock {
 }
 
 /**
- * A Claude account as returned by `GET /api/claude-accounts`. Token-free by
- * construction: `hasToken` reports whether an encrypted OAuth token is stored,
- * and the token itself never crosses the wire.
+ * A Claude account as returned by `GET /api/claude-accounts` (and by
+ * `claude-account-service` as `ClaudeAccountView`). Token-free by construction:
+ * `hasToken` reports whether an encrypted OAuth token is stored, and the token
+ * itself never crosses the wire.
  */
 export interface ClaudeAccountSummary {
   id: string;

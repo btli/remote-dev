@@ -1,8 +1,9 @@
 /**
  * Shared serialization for Claude usage-limit API responses. [remote-dev-wb0q]
  *
- * One small DRY helper so every route emits the same `limitState` JSON shape.
- * Wave D (UI / ProfileContext) depends on this exact shape — keep it stable.
+ * One small DRY helper so every route emits the same `limitState` JSON shape
+ * (`LimitStateBlock` / `SerializedLimitState`). Wave D (UI / ProfileContext)
+ * depends on this exact shape — keep it stable.
  *
  * A profile with no stored row serializes as an available/unknown default
  * (all numeric/timestamp fields null, status "unknown"). Timestamps are emitted
@@ -11,24 +12,20 @@
  */
 
 import type { LimitState } from "@/domain/value-objects/LimitState";
-import type { ClaudeAccountKind, ClaudeLimitStatus } from "@/types/claude-limits";
+import type {
+  ClaudeAccountKind,
+  LimitStateBlock,
+} from "@/types/claude-limits";
 import type { AgentProvider } from "@/types/agent";
 import { db } from "@/db";
 import { claudeAccounts } from "@/db/schema";
 import { inArray } from "drizzle-orm";
 
-/** The serialized limit-state block shared across all profile/pool routes. */
-export interface SerializedLimitState {
-  limitStatus: ClaudeLimitStatus;
-  /** 0-100, or null if that window has not been observed. */
-  window5hPct: number | null;
-  window7dPct: number | null;
-  /** Epoch-ms timestamps, or null if unknown. */
-  resetAt5h: number | null;
-  resetAt7d: number | null;
-  /** min(resetAt5h, resetAt7d): soonest the account is available again. */
-  effectiveResetAt: number | null;
-}
+/**
+ * Wire shape for limit-state API responses. Alias of the shared client type so
+ * routes and UI cannot drift apart.
+ */
+export type SerializedLimitState = LimitStateBlock;
 
 /**
  * Serialize a domain `LimitState` (or null) into the wire shape.

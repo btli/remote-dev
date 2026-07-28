@@ -15,6 +15,7 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import { profilePoolRepository } from "@/infrastructure/container";
 import { getAccount } from "@/services/claude-account-service";
+import { requireOwnedPool } from "@/app/api/_lib/claude-pool";
 
 export const dynamic = "force-dynamic";
 
@@ -22,13 +23,10 @@ export const dynamic = "force-dynamic";
  * GET /api/claude-pools/:poolId/members - members by ascending priority.
  */
 export const GET = withApiAuth(async (_request, { userId, params }) => {
-  const poolId = params?.poolId;
-  if (!poolId) return errorResponse("Pool ID is required", 400);
+  const owned = await requireOwnedPool(params, userId);
+  if ("error" in owned) return owned.error;
 
-  const pool = await profilePoolRepository.getPool(poolId, userId);
-  if (!pool) return errorResponse("Pool not found", 404);
-
-  const members = await profilePoolRepository.membersOfPool(poolId);
+  const members = await profilePoolRepository.membersOfPool(owned.poolId);
   return NextResponse.json({ members });
 });
 
@@ -36,11 +34,8 @@ export const GET = withApiAuth(async (_request, { userId, params }) => {
  * POST /api/claude-pools/:poolId/members - add or upsert a member.
  */
 export const POST = withApiAuth(async (request, { userId, params }) => {
-  const poolId = params?.poolId;
-  if (!poolId) return errorResponse("Pool ID is required", 400);
-
-  const pool = await profilePoolRepository.getPool(poolId, userId);
-  if (!pool) return errorResponse("Pool not found", 404);
+  const owned = await requireOwnedPool(params, userId);
+  if ("error" in owned) return owned.error;
 
   const result = await parseJsonBody<{
     accountId?: string;
@@ -66,9 +61,12 @@ export const POST = withApiAuth(async (request, { userId, params }) => {
   if (!account) return errorResponse("Account not found", 404);
 
   // addMember upserts (priority is updated on conflict).
-  await profilePoolRepository.addMember(poolId, accountId, priority);
+  await profilePoolRepository.addMember(owned.poolId, accountId, priority);
 
-  return NextResponse.json({ poolId, accountId, priority }, { status: 201 });
+  return NextResponse.json(
+    { poolId: owned.poolId, accountId, priority },
+    { status: 201 }
+  );
 });
 
 /**
@@ -77,11 +75,8 @@ export const POST = withApiAuth(async (request, { userId, params }) => {
  * `accountId` may come from the JSON body or the `?accountId=` query param.
  */
 export const DELETE = withApiAuth(async (request, { userId, params }) => {
-  const poolId = params?.poolId;
-  if (!poolId) return errorResponse("Pool ID is required", 400);
-
-  const pool = await profilePoolRepository.getPool(poolId, userId);
-  if (!pool) return errorResponse("Pool not found", 404);
+  const owned = await requireOwnedPool(params, userId);
+  if ("error" in owned) return owned.error;
 
   // Prefer the query param; fall back to a JSON body if present.
   let accountId = new URL(request.url).searchParams.get("accountId") ?? undefined;
@@ -92,7 +87,7 @@ export const DELETE = withApiAuth(async (request, { userId, params }) => {
   }
   if (!accountId) return errorResponse("accountId is required", 400);
 
-  await profilePoolRepository.removeMember(poolId, accountId);
+  await profilePoolRepository.removeMember(owned.poolId, accountId);
 
   return new NextResponse(null, { status: 204 });
 });

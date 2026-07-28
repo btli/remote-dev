@@ -31,7 +31,10 @@ import { and, eq } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { encrypt, decrypt } from "@/lib/encryption";
 import { createLogger } from "@/lib/logger";
-import type { ClaudeAccountKind } from "@/types/claude-limits";
+import type {
+  ClaudeAccountKind,
+  ClaudeAccountSummary,
+} from "@/types/claude-limits";
 
 const log = createLogger("ClaudeAccountService");
 
@@ -262,25 +265,12 @@ export function tokenFingerprint(token: string): string {
   return createHash("sha256").update(token.trim()).digest("hex").slice(0, 32);
 }
 
-/** The token-free projection of an account, safe to return over the API. */
-export interface ClaudeAccountView {
-  id: string;
-  alias: string | null;
-  accountKind: ClaudeAccountKind;
-  emailAddress: string | null;
-  organizationId: string | null;
-  organizationName: string | null;
-  rateLimitTier: string | null;
-  authMethod: string | null;
-  authHealthy: boolean;
-  lastVerifiedAt: number | null;
-  /** True when an encrypted OAuth token is stored (the token itself never is). */
-  hasToken: boolean;
-  /** Legacy origin profile, when this account was migrated from one. */
-  profileId: string | null;
-  createdAt: number;
-  updatedAt: number;
-}
+/**
+ * Token-free projection of an account, safe to return over the API.
+ * Same shape as the client wire type — kept as an alias so service callers and
+ * UI types cannot drift.
+ */
+export type ClaudeAccountView = ClaudeAccountSummary;
 
 type AccountRow = typeof claudeAccounts.$inferSelect;
 
@@ -414,12 +404,7 @@ export async function saveAccountToken(
 
   const columns = {
     alias: input.alias ?? existing?.alias ?? null,
-    emailAddress: identity.email ?? existing?.emailAddress ?? null,
-    organizationId: identity.orgId ?? existing?.organizationId ?? null,
-    organizationName: identity.orgName ?? existing?.organizationName ?? null,
-    rateLimitTier:
-      identity.subscriptionType ?? existing?.rateLimitTier ?? null,
-    authMethod: identity.authMethod ?? existing?.authMethod ?? null,
+    ...identityDisplayColumns(identity, existing),
     authHealthy: identity.loggedIn,
     lastVerifiedAt: now,
     oauthTokenEncrypted: encrypt(token),
@@ -522,28 +507,12 @@ export async function verifyAccount(
   if (!row) return null;
 
   if (!row.oauthTokenEncrypted) {
-    await db
-      .update(claudeAccounts)
-      .set({ authHealthy: false, lastVerifiedAt: now, updatedAt: now })
-      .where(ownedBy(accountId, userId));
-    const refreshed = await findOwnedRow(accountId, userId);
-    return {
-      account: toAccountView(refreshed as AccountRow),
-      identity: { ...UNKNOWN_IDENTITY },
-    };
+    return markAccountUnhealthy(accountId, userId, now);
   }
 
   const token = decryptToken(row.oauthTokenEncrypted, accountId);
   if (!token) {
-    await db
-      .update(claudeAccounts)
-      .set({ authHealthy: false, lastVerifiedAt: now, updatedAt: now })
-      .where(ownedBy(accountId, userId));
-    const refreshed = await findOwnedRow(accountId, userId);
-    return {
-      account: toAccountView(refreshed as AccountRow),
-      identity: { ...UNKNOWN_IDENTITY },
-    };
+    return markAccountUnhealthy(accountId, userId, now);
   }
 
   const identity = await probeIdentity(token, runner);
@@ -552,11 +521,7 @@ export async function verifyAccount(
     .set({
       // Keep the last-known display fields when a probe comes back blank
       // (offline / CLI missing) instead of wiping a working account's UI.
-      emailAddress: identity.email ?? row.emailAddress ?? null,
-      organizationId: identity.orgId ?? row.organizationId ?? null,
-      organizationName: identity.orgName ?? row.organizationName ?? null,
-      rateLimitTier: identity.subscriptionType ?? row.rateLimitTier ?? null,
-      authMethod: identity.authMethod ?? row.authMethod ?? null,
+      ...identityDisplayColumns(identity, row),
       authHealthy: identity.loggedIn,
       lastVerifiedAt: now,
       updatedAt: now,
@@ -565,6 +530,41 @@ export async function verifyAccount(
 
   const refreshed = await findOwnedRow(accountId, userId);
   return { account: toAccountView(refreshed as AccountRow), identity };
+}
+
+/**
+ * Map a probed identity onto the display columns of `claude_account`, keeping
+ * any previously-known values when the probe returns blanks.
+ */
+function identityDisplayColumns(
+  identity: ClaudeIdentity,
+  fallback: AccountRow | null | undefined
+) {
+  return {
+    emailAddress: identity.email ?? fallback?.emailAddress ?? null,
+    organizationId: identity.orgId ?? fallback?.organizationId ?? null,
+    organizationName: identity.orgName ?? fallback?.organizationName ?? null,
+    rateLimitTier:
+      identity.subscriptionType ?? fallback?.rateLimitTier ?? null,
+    authMethod: identity.authMethod ?? fallback?.authMethod ?? null,
+  };
+}
+
+/** Mark an account unhealthy and return the UNKNOWN identity projection. */
+async function markAccountUnhealthy(
+  accountId: string,
+  userId: string,
+  now: Date
+): Promise<{ account: ClaudeAccountView; identity: ClaudeIdentity }> {
+  await db
+    .update(claudeAccounts)
+    .set({ authHealthy: false, lastVerifiedAt: now, updatedAt: now })
+    .where(ownedBy(accountId, userId));
+  const refreshed = await findOwnedRow(accountId, userId);
+  return {
+    account: toAccountView(refreshed as AccountRow),
+    identity: { ...UNKNOWN_IDENTITY },
+  };
 }
 
 /** Rename / relabel an account. Returns null when it isn't the user's. */

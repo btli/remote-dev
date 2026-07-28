@@ -20,23 +20,25 @@ import {
   deleteAccount,
 } from "@/services/claude-account-service";
 import type { ClaudeAccountKind } from "@/types/claude-limits";
+import { requireAccountId } from "@/app/api/_lib/claude-account-params";
 
 export const dynamic = "force-dynamic";
 
 const VALID_KINDS: ClaudeAccountKind[] = ["subscription", "api_key"];
 
 export const GET = withApiAuth(async (_request, { userId, params }) => {
-  const accountId = params?.accountId;
-  if (!accountId) return errorResponse("Account ID is required", 400);
+  const id = requireAccountId(params);
+  if ("error" in id) return id.error;
 
-  const account = await getAccount(accountId, userId);
+  const account = await getAccount(id.accountId, userId);
   if (!account) return errorResponse("Account not found", 404);
   return NextResponse.json({ account });
 });
 
 export const PATCH = withApiAuth(async (request, { userId, params }) => {
-  const accountId = params?.accountId;
-  if (!accountId) return errorResponse("Account ID is required", 400);
+  const id = requireAccountId(params);
+  if ("error" in id) return id.error;
+  const { accountId } = id;
 
   const result = await parseJsonBody<{
     alias?: unknown;
@@ -80,10 +82,10 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
 });
 
 export const DELETE = withApiAuth(async (_request, { userId, params }) => {
-  const accountId = params?.accountId;
-  if (!accountId) return errorResponse("Account ID is required", 400);
+  const id = requireAccountId(params);
+  if ("error" in id) return id.error;
 
-  const deleted = await deleteAccount(accountId, userId);
+  const deleted = await deleteAccount(id.accountId, userId);
   if (!deleted) return errorResponse("Account not found", 404);
   return new NextResponse(null, { status: 204 });
 });
