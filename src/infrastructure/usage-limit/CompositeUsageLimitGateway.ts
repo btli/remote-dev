@@ -9,9 +9,10 @@
  * object so an unrecognized stored brand falls through to "no gateway" rather
  * than throwing. Dispatch is purely "first adapter that `supports(kind)`":
  * subscription accounts (rolling 5h/7d windows) are served by the reactive
- * detector and the proactive poller; api_key accounts (rate/credits) are served
- * by the poller only (when its flag is on, via the documented rate-limit
- * headers). Each adapter's `supports()` is authoritative.
+ * detector and the proactive poller. api_key accounts (rate/credits) currently
+ * resolve to "no gateway" — the poller's usage endpoint is subscription-only
+ * and the reactive detector keys off subscription reset headers
+ * [remote-dev-n4x4.1]. Each adapter's `supports()` is authoritative.
  */
 
 import { db } from "@/db";
