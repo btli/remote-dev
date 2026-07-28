@@ -21,7 +21,7 @@
  * at "Add account"; all states "unknown"/available → bars at 0 / muted badges.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Loader2, Plus, RefreshCw, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api-fetch";
@@ -75,12 +75,9 @@ export function ClaudeAccountsDashboard() {
   }, [load, refreshPools]);
 
   // Live clock for countdowns (cheap; only re-renders this subtree).
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
-    intervalRef.current = setInterval(() => setNow(Date.now()), CLOCK_INTERVAL_MS);
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
+    const id = setInterval(() => setNow(Date.now()), CLOCK_INTERVAL_MS);
+    return () => clearInterval(id);
   }, []);
 
   // Any mutation here (add / verify / rename / remove) also invalidates the

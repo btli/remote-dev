@@ -1672,11 +1672,15 @@ export async function resumeSession(
     // [remote-dev-n4x4.6] Claude reads the real `~/.claude` (its
     // `CLAUDE_CONFIG_DIR` is deliberately unset), so refresh hooks THERE.
     // Other providers keep their per-profile config dir.
+    // Note: when a non-Claude session has a profileId but the profile row is
+    // gone, configDir stays undefined so ensureAgentConfig is skipped — do not
+    // coalesce to HOME (that would install hooks in the wrong place).
     const configDir =
       agentProvider === "claude"
         ? process.env.HOME
         : session.profileId
-          ? (await AgentProfileService.getProfile(session.profileId, userId))?.configDir
+          ? (await AgentProfileService.getProfile(session.profileId, userId))
+              ?.configDir
           : process.env.HOME;
 
     // Refresh RDV + GitHub account env vars on resume (may be missing on older

@@ -158,7 +158,7 @@ const SETUP_TOKEN_PATTERN = /sk-ant-oat\d{2}-[A-Za-z0-9_-]{20,}/g;
 export function extractSetupToken(text: string): string | null {
   if (typeof text !== "string" || text.length === 0) return null;
   const matches = text.match(SETUP_TOKEN_PATTERN);
-  if (!matches || matches.length === 0) return null;
+  if (!matches?.length) return null;
   return matches[matches.length - 1];
 }
 
@@ -331,10 +331,7 @@ async function findOwnedRow(
   userId: string
 ): Promise<AccountRow | null> {
   const row = await db.query.claudeAccounts.findFirst({
-    where: and(
-      eq(claudeAccounts.id, accountId),
-      eq(claudeAccounts.userId, userId)
-    ),
+    where: ownedBy(accountId, userId),
   });
   return row ?? null;
 }
@@ -418,12 +415,7 @@ export async function saveAccountToken(
       .set(columns)
       // userId in the predicate, not just the pre-read: the ownership check and
       // the write must not be separable (TOCTOU).
-      .where(
-        and(
-          eq(claudeAccounts.id, existing.id),
-          eq(claudeAccounts.userId, input.userId)
-        )
-      );
+      .where(ownedBy(existing.id, input.userId));
     const row = await findOwnedRow(existing.id, input.userId);
     log.info("Updated Claude account from token", {
       accountId: existing.id,

@@ -178,11 +178,14 @@ export class LimitState {
     const w5h = windows.find((w) => w.getDuration() === "5h");
     const w7d = windows.find((w) => w.getDuration() === "7d");
 
-    const limitStatus: ClaudeLimitStatus = this.limited
-      ? "limited"
-      : this.source === null
-        ? "unknown"
-        : "available";
+    let limitStatus: ClaudeLimitStatus;
+    if (this.limited) {
+      limitStatus = "limited";
+    } else if (this.source === null) {
+      limitStatus = "unknown";
+    } else {
+      limitStatus = "available";
+    }
 
     return {
       limitStatus,

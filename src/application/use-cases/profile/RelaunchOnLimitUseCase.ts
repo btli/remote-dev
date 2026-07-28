@@ -81,29 +81,20 @@ export class RelaunchOnLimitUseCase {
       );
 
     if (mode === "notify") {
-      if (next) {
-        await this.notificationPort.notifyLimit({
-          userId: input.userId,
-          sessionId: input.sessionId,
-          sessionName: input.sessionName,
-          title: "Claude usage limit reached",
-          body: "Tap to relaunch under an available account.",
-          relaunch: {
-            projectId: input.projectId,
-            accountId: next.accountId,
-            profileId: next.profileId,
-            agentProvider: input.agentProvider,
-          },
-        });
-        log.info("Notified limit with relaunch CTA", {
-          sessionId: input.sessionId,
-          relaunchAccountId: next.accountId,
-        });
-        return { kind: "notified", relaunchAccountId: next.accountId };
+      if (!next) {
+        await this.notifyAllLimited(input);
+        return { kind: "notified_all_limited" };
       }
-
-      await this.notifyAllLimited(input);
-      return { kind: "notified_all_limited" };
+      const action = await this.notifyWithRelaunch(
+        input,
+        next,
+        "Tap to relaunch under an available account."
+      );
+      log.info("Notified limit with relaunch CTA", {
+        sessionId: input.sessionId,
+        relaunchAccountId: next.accountId,
+      });
+      return action;
     }
 
     // mode === "auto"
@@ -134,21 +125,34 @@ export class RelaunchOnLimitUseCase {
         accountId: next.accountId,
         error: String(error),
       });
-      await this.notificationPort.notifyLimit({
-        userId: input.userId,
-        sessionId: input.sessionId,
-        sessionName: input.sessionName,
-        title: "Claude usage limit reached",
-        body: "Auto-relaunch failed. Tap to relaunch under an available account.",
-        relaunch: {
-          projectId: input.projectId,
-          accountId: next.accountId,
-          profileId: next.profileId,
-          agentProvider: input.agentProvider,
-        },
-      });
-      return { kind: "notified", relaunchAccountId: next.accountId };
+      return this.notifyWithRelaunch(
+        input,
+        next,
+        "Auto-relaunch failed. Tap to relaunch under an available account."
+      );
     }
+  }
+
+  /** Notify with a 1-click relaunch CTA for an alternate account. */
+  private async notifyWithRelaunch(
+    input: RelaunchOnLimitInput,
+    next: SelectedAccount,
+    body: string
+  ): Promise<RelaunchAction> {
+    await this.notificationPort.notifyLimit({
+      userId: input.userId,
+      sessionId: input.sessionId,
+      sessionName: input.sessionName,
+      title: "Claude usage limit reached",
+      body,
+      relaunch: {
+        projectId: input.projectId,
+        accountId: next.accountId,
+        profileId: next.profileId,
+        agentProvider: input.agentProvider,
+      },
+    });
+    return { kind: "notified", relaunchAccountId: next.accountId };
   }
 
   /** Notify that every candidate account is limited (no relaunch CTA). */

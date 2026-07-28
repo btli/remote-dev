@@ -43,7 +43,6 @@ export async function runUsagePollSweep(): Promise<void> {
 
   let polled = 0;
   let recorded = 0;
-  let skipped = 0;
   try {
     // Only accounts that still carry an origin profile can be polled through
     // the (profile-keyed) gateway — see the TODO above.
@@ -53,14 +52,14 @@ export async function runUsagePollSweep(): Promise<void> {
     });
 
     for (const account of accounts) {
-      if (!account.profileId) {
-        skipped += 1;
-        continue;
-      }
+      // Query filters nulls; narrow for the (still-nullable) column type.
+      const profileId = account.profileId;
+      if (!profileId) continue;
+
       polled += 1;
       try {
         const result = await usageLimitGateway.fetchLimitState(
-          account.profileId,
+          profileId,
           account.userId
         );
         if (!result) continue; // poller disabled for kind, no token, or stub
@@ -84,7 +83,7 @@ export async function runUsagePollSweep(): Promise<void> {
       }
     }
 
-    log.debug("Usage poll sweep complete", { polled, recorded, skipped });
+    log.debug("Usage poll sweep complete", { polled, recorded });
   } catch (error) {
     log.error("Usage poll sweep failed", { error: String(error) });
   }

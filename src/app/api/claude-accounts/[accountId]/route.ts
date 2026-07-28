@@ -66,12 +66,14 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
     return errorResponse("alias must be a string or null", 400);
   }
 
-  const alias =
-    result.data.alias === undefined
-      ? undefined
-      : result.data.alias === null
-        ? null
-        : (result.data.alias as string).trim() || null;
+  let alias: string | null | undefined;
+  if (result.data.alias === undefined) {
+    alias = undefined;
+  } else if (result.data.alias === null) {
+    alias = null;
+  } else {
+    alias = (result.data.alias as string).trim() || null;
+  }
 
   const account = await updateAccount(accountId, userId, {
     ...(alias !== undefined ? { alias } : {}),

@@ -99,8 +99,10 @@ function formatRelativeAge(atMs: number | null, now: number): string | null {
 /** A small labelled utilization bar (5h / 7d window). */
 function UsageBar({ label, pct }: { label: string; pct: number | null }) {
   const value = pct ?? 0;
-  const high = value >= 90;
-  const mid = value >= 70 && value < 90;
+  let barClass = "[&>div]:bg-emerald-500";
+  if (value >= 90) barClass = "[&>div]:bg-amber-500";
+  else if (value >= 70) barClass = "[&>div]:bg-yellow-500";
+
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-[11px] text-muted-foreground">
@@ -108,23 +110,14 @@ function UsageBar({ label, pct }: { label: string; pct: number | null }) {
         <span
           className={cn(
             "tabular-nums",
-            high && "text-amber-400",
+            value >= 90 && "text-amber-400",
             pct === null && "text-muted-foreground/60"
           )}
         >
           {formatPct(pct)}
         </span>
       </div>
-      <Progress
-        value={value}
-        className={cn(
-          high
-            ? "[&>div]:bg-amber-500"
-            : mid
-              ? "[&>div]:bg-yellow-500"
-              : "[&>div]:bg-emerald-500"
-        )}
-      />
+      <Progress value={value} className={barClass} />
     </div>
   );
 }
