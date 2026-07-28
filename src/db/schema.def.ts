@@ -1321,6 +1321,11 @@ export const schema: SchemaDefinition = [
       // the same AES-256-GCM helper `profile_secrets_config` uses
       // (`src/lib/encryption.ts`). Never logged, never returned over the API.
       { field: "oauthTokenEncrypted", dbName: "oauth_token_encrypted", kind: "text" },
+      // Non-reversible sha256 prefix of the stored token. ONLY used to dedupe
+      // "same credential re-added" when the identity probe could not supply an
+      // email (offline / no CLI); without it every retry of a failing probe
+      // would insert another row. Never returned by the API. [remote-dev-n4x4.6]
+      { field: "tokenFingerprint", dbName: "token_fingerprint", kind: "text" },
       // First 8 chars only; the full key stays in profile_secrets_config.
       { field: "apiKeyPrefix", dbName: "api_key_prefix", kind: "text" },
       { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },

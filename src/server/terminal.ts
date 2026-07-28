@@ -455,6 +455,30 @@ async function trackAndBroadcastLimit(input: {
 }
 
 /**
+ * Resolve a pre-n4x4.6 session's account from its profile, via the retained
+ * `claude_account.profile_id` origin breadcrumb. Scoped to the owner so a
+ * session can never attribute a limit to another user's account. Returns null
+ * when the profile never had an account (nothing to attribute to).
+ */
+async function resolveLegacyAccountId(
+  profileId: string,
+  userId: string
+): Promise<string | null> {
+  try {
+    const { findAccountIdForProfile } = await import(
+      "@/services/claude-account-service"
+    );
+    return await findAccountIdForProfile(profileId, userId);
+  } catch (err) {
+    usageLog.debug("Legacy account resolution failed", {
+      profileId,
+      error: String(err),
+    });
+    return null;
+  }
+}
+
+/**
  * Scan a session's recent scrollback for a Claude usage-limit signal when it
  * goes idle. Only runs for Claude agent sessions that ran under a Claude
  * ACCOUNT (a limit attributes to the subscription, not the config dir).
@@ -465,10 +489,20 @@ async function trackAndBroadcastLimit(input: {
 async function scanSessionScrollbackForLimit(
   session: LimitSessionRow
 ): Promise<void> {
-  if (!session.claudeAccountId) return;
   // Reactive detection only recognizes the subscription "usage limit reached"
   // phrase; non-Claude providers never print it.
   if (session.agentProvider !== "claude") return;
+
+  // Sessions created BEFORE the n4x4.6 migration have no `claude_account_id`
+  // (the column did not exist), so fall back through their profile's origin
+  // account. Without this, reactive detection would be silently dead for every
+  // pre-migration session until it was restarted. [remote-dev-n4x4.6]
+  const accountId =
+    session.claudeAccountId ??
+    (session.profileId
+      ? await resolveLegacyAccountId(session.profileId, session.userId)
+      : null);
+  if (!accountId) return;
 
   try {
     // Cheap performance guard (NOT the relaunch dedup — that now lives in the
@@ -478,9 +512,7 @@ async function scanSessionScrollbackForLimit(
     const { usageLimitStateRepository } = await import(
       "@/infrastructure/container"
     );
-    const existing = await usageLimitStateRepository.findByAccountId(
-      session.claudeAccountId
-    );
+    const existing = await usageLimitStateRepository.findByAccountId(accountId);
     const now = new Date();
     if (existing && existing.isLimited() && !existing.isAvailableNow(now)) {
       return;
@@ -507,12 +539,12 @@ async function scanSessionScrollbackForLimit(
 
     usageLog.info("Reactive usage-limit detected on idle", {
       sessionId: session.id,
-      accountId: session.claudeAccountId,
+      accountId,
       hasReset: parsed.resetAt5h !== null || parsed.resetAt7d !== null,
     });
 
     await trackAndBroadcastLimit({
-      accountId: session.claudeAccountId,
+      accountId,
       userId: session.userId,
       source: "reactive",
       isLimited: true,

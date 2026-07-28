@@ -39,11 +39,13 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
   if (!accountId) return errorResponse("Account ID is required", 400);
 
   const result = await parseJsonBody<{
-    alias?: string | null;
-    accountKind?: string;
+    alias?: unknown;
+    accountKind?: unknown;
   }>(request);
   if ("error" in result) return result.error;
 
+  // Runtime-validate: the body is only known to be JSON, so guard the types
+  // before any string method runs (otherwise `{"alias": 12}` 500s).
   const { accountKind } = result.data;
   if (
     accountKind !== undefined &&
@@ -54,13 +56,20 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
       400
     );
   }
+  if (
+    result.data.alias !== undefined &&
+    result.data.alias !== null &&
+    typeof result.data.alias !== "string"
+  ) {
+    return errorResponse("alias must be a string or null", 400);
+  }
 
   const alias =
     result.data.alias === undefined
       ? undefined
       : result.data.alias === null
         ? null
-        : result.data.alias.trim() || null;
+        : (result.data.alias as string).trim() || null;
 
   const account = await updateAccount(accountId, userId, {
     ...(alias !== undefined ? { alias } : {}),

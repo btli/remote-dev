@@ -61,6 +61,44 @@ export interface SessionEnvLayers {
   rdv?: Record<string, string>;
 }
 
+/**
+ * The Claude config dir every Claude session must share. `undefined` means
+ * "leave `CLAUDE_CONFIG_DIR` UNSET", which resolves to the user's real
+ * `~/.claude`. [remote-dev-n4x4.6]
+ *
+ * Setting it explicitly — even to `$HOME/.claude` — is NOT equivalent: Claude
+ * Code derives its macOS Keychain service name from the SETTING, so an explicit
+ * path lands in a different (`Claude Code-credentials-<hash>`) credential
+ * namespace. Verified live against Claude Code 2.1.220. The account's token is
+ * injected instead, so the Keychain namespace must never be load-bearing.
+ */
+
+/**
+ * Remove the profile's `CLAUDE_CONFIG_DIR` from an env overlay for Claude
+ * sessions, keeping everything else (XDG paths, git identity, SSH command).
+ *
+ * A Claude ACCOUNT is a credential layered on top of the user's real `~/.claude`
+ * — not an isolated config directory. If the profile overlay kept pointing
+ * `CLAUDE_CONFIG_DIR` at `<profileDir>/.claude`, two accounts would NOT share
+ * one config/context (no shared skills, `CLAUDE.md`, MCP servers, settings or
+ * agents), and rotating accounts could rotate back into a stale profile-specific
+ * Claude context. Non-Claude overlays are returned untouched so
+ * `CODEX_HOME` / `OPENCODE_CONFIG_DIR` isolation is unaffected.
+ *
+ * Exported for testing: the guarantee "two accounts, one config dir, different
+ * tokens" is asserted directly against this + {@link buildInitialEnv}.
+ */
+export function applySharedClaudeConfig(
+  profileEnv: Record<string, string> | undefined,
+  isClaudeSession: boolean
+): Record<string, string> | undefined {
+  if (!profileEnv || !isClaudeSession) return profileEnv;
+  if (!("CLAUDE_CONFIG_DIR" in profileEnv)) return profileEnv;
+  // Delete, never blank: an empty string is still "explicitly set".
+  const { CLAUDE_CONFIG_DIR: _dropped, ...rest } = profileEnv;
+  return rest;
+}
+
 export function buildInitialEnv(layers: SessionEnvLayers): Record<string, string> {
   return {
     ...(layers.claudeAgentDefaults ?? {}),
@@ -366,6 +404,10 @@ export async function createSessionWithDedupFlag(
   // primary→pool selection policy.
   let effectiveAccountId: string | undefined =
     input.claudeAccountId ?? undefined;
+  // An EXPLICIT pin is a user/CTA instruction: if it can't produce a credential
+  // we must fail loudly rather than silently launch on ambient credentials. An
+  // AUTO-selected account degrades instead (see the resolution block below).
+  const accountWasPinned = !!input.claudeAccountId;
 
   if (input.profileId) {
     effectiveProfile = await AgentProfileService.getProfile(
@@ -434,6 +476,41 @@ export async function createSessionWithDedupFlag(
         profileId: effectiveProfileId,
         error: String(error),
       });
+    }
+  }
+
+  // [remote-dev-n4x4.6] Resolve the account into its session credential ONCE,
+  // through the single ownership-scoped operation, BEFORE anything records or
+  // launches with it. `claudeAccountEnv` carries the secret
+  // `CLAUDE_CODE_OAUTH_TOKEN`; it is merged into the PTY env far below and is
+  // never logged (`initialEnv` is only ever logged by KEY).
+  //
+  // The invariant this enforces: `effectiveAccountId` is recorded on the
+  // session row ONLY when a token was actually produced. Otherwise the session
+  // would launch on whatever ambient credential the shared config dir resolves
+  // to while usage limits were attributed to an account it never used.
+  let claudeAccountEnv: Record<string, string> = {};
+  if (effectiveAccountId) {
+    const { resolveAccountEnv, describeAccountEnvFailure } = await import(
+      "@/services/claude-account-service"
+    );
+    const resolved = await resolveAccountEnv(effectiveAccountId, userId);
+    if (resolved.ok) {
+      claudeAccountEnv = resolved.env;
+    } else if (accountWasPinned) {
+      // Explicit pin (wizard / relaunch CTA / API caller): refuse to launch.
+      throw new SessionServiceError(
+        describeAccountEnvFailure(resolved.reason),
+        "CLAUDE_ACCOUNT_UNAVAILABLE",
+        sessionId
+      );
+    } else {
+      // Auto-selected: never block a launch. Drop the attribution instead.
+      log.warn(
+        "Auto-selected Claude account produced no credential; launching without one",
+        { accountId: effectiveAccountId, reason: resolved.reason }
+      );
+      effectiveAccountId = undefined;
     }
   }
 
@@ -693,6 +770,13 @@ export async function createSessionWithDedupFlag(
       );
     }
   }
+  // [remote-dev-n4x4.6] Claude sessions share ONE config dir (the user's real
+  // `~/.claude`) and differ only by the injected account token, so the profile
+  // overlay must not re-point `CLAUDE_CONFIG_DIR`. See applySharedClaudeConfig.
+  profileEnv = applySharedClaudeConfig(
+    profileEnv,
+    mergedAgentProvider === "claude"
+  );
 
   // Fetch folder environment variables for the session
   const folderEnv = await getEnvironmentForSession(userId, input.projectId);
@@ -821,7 +905,14 @@ export async function createSessionWithDedupFlag(
   // SSH/loop-without-provider sessions would otherwise pollute settings.json
   // with hooks that never fire.
   if (isAgentRuntime) {
-    const configDir = profile?.configDir ?? process.env.HOME;
+    // [remote-dev-n4x4.6] Hooks must land where the agent will actually READ
+    // them. Claude sessions no longer set `CLAUDE_CONFIG_DIR`, so Claude reads
+    // the real `~/.claude` — installing into the profile dir would write hooks
+    // that never fire. Other providers keep their per-profile config dir.
+    const configDir =
+      effectiveAgentProvider === "claude"
+        ? process.env.HOME
+        : (profile?.configDir ?? process.env.HOME);
     if (configDir) {
       // Previously this also sniffed `startupCommand` for an inline `HOME=`
       // override (e.g. `HOME=/foo claude`) so hooks could be installed in
@@ -872,26 +963,6 @@ export async function createSessionWithDedupFlag(
   // that still read from the returned config.
   if (plugin.useTmux) {
     const gitCredentialEnv = await resolveGitCredentialEnv(sessionId, !!profile);
-    // [remote-dev-n4x4.6] `CLAUDE_CODE_OAUTH_TOKEN` for the selected account.
-    // This is what makes one shared Claude config dir serve N accounts: the env
-    // var selects the account per-process, so parallel sessions never contend
-    // over credentials. Empty when no account is resolved / no token stored.
-    // SECRET — never logged (`initialEnv` is logged by KEY only, below).
-    let claudeAccountEnv: Record<string, string> = {};
-    if (isAgentRuntime && effectiveAccountId) {
-      try {
-        const { buildAccountEnv } = await import(
-          "@/services/claude-account-service"
-        );
-        claudeAccountEnv = await buildAccountEnv(effectiveAccountId, userId);
-      } catch (error) {
-        log.warn("Failed to build Claude account env; launching without a token", {
-          sessionId,
-          accountId: effectiveAccountId,
-          error: String(error),
-        });
-      }
-    }
     const folderGitIdentityEnv = await resolveFolderGitIdentityEnv(userId, input.projectId);
 
     // Claude Code agent defaults (lowest precedence — overridable via profile/folder env).
@@ -915,7 +986,10 @@ export async function createSessionWithDedupFlag(
       folderGitIdentity: folderGitIdentityEnv,
       gitCredential: gitCredentialEnv,
       ghAccount: ghAccountEnv ?? {},
-      claudeAccount: claudeAccountEnv,
+      // Only an actual agent runtime reads the Claude credential; a plain shell
+      // session (e.g. the `claude setup-token` onboarding session) must not
+      // inherit it.
+      claudeAccount: isAgentRuntime ? claudeAccountEnv : {},
       rdv: rdvEnv,
     });
     log.debug("Session initial env keys", { sessionId, keys: Object.keys(initialEnv) });
@@ -1638,9 +1712,15 @@ export async function resumeSession(
   // were installed.
   if (supportsAgentLifecycle(session)) {
     const agentProvider = (session.agentProvider ?? "claude") as AgentProviderType;
-    const configDir = session.profileId
-      ? (await AgentProfileService.getProfile(session.profileId, userId))?.configDir
-      : process.env.HOME;
+    // [remote-dev-n4x4.6] Claude reads the real `~/.claude` (its
+    // `CLAUDE_CONFIG_DIR` is deliberately unset), so refresh hooks THERE.
+    // Other providers keep their per-profile config dir.
+    const configDir =
+      agentProvider === "claude"
+        ? process.env.HOME
+        : session.profileId
+          ? (await AgentProfileService.getProfile(session.profileId, userId))?.configDir
+          : process.env.HOME;
 
     // Refresh RDV + GitHub account env vars on resume (may be missing on older
     // sessions, or stale if the folder's account binding or OAuth token changed)

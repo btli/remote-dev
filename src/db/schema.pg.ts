@@ -1223,6 +1223,7 @@ export const claudeAccounts = pgTable(
     authHealthy: boolean("auth_healthy").notNull().default(false),
     lastVerifiedAt: timestamp("last_verified_at", { withTimezone: true, mode: "date" }),
     oauthTokenEncrypted: text("oauth_token_encrypted"),
+    tokenFingerprint: text("token_fingerprint"),
     apiKeyPrefix: text("api_key_prefix"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
     updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),

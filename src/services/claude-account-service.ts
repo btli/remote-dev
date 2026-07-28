@@ -28,6 +28,7 @@
 import { db } from "@/db";
 import { claudeAccounts, projectProfileLinks } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { encrypt, decrypt } from "@/lib/encryption";
 import { createLogger } from "@/lib/logger";
 import type { ClaudeAccountKind } from "@/types/claude-limits";
@@ -42,6 +43,14 @@ export const CLAUDE_SETUP_TOKEN_COMMAND = "claude setup-token";
 
 /** The env var that selects the account for a `claude` process. */
 export const CLAUDE_OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
+
+/**
+ * `typeMetadata` marker stamped on the session `POST /api/claude-accounts/
+ * setup-session` creates. `POST /api/claude-accounts/capture` refuses to read a
+ * token out of any session lacking it, so the capture endpoint cannot be aimed
+ * at an unrelated terminal. [remote-dev-n4x4.7]
+ */
+export const CLAUDE_SETUP_SESSION_MARKER = "rdvClaudeSetupSession";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Identity (`claude auth status --json`)
@@ -240,6 +249,19 @@ export async function probeIdentity(
 // Account CRUD
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * A stable, non-reversible fingerprint of a token: `sha256(token)` truncated to
+ * 128 bits, hex. Used ONLY to recognize "this is the same credential I already
+ * stored" when the identity probe could not supply an email (offline, CLI
+ * missing) — without it, every retry of a failing probe inserts another row.
+ *
+ * Safe to persist and compare: a SHA-256 preimage of a 100+ bit random token is
+ * not recoverable, and the fingerprint is never returned by the API.
+ */
+export function tokenFingerprint(token: string): string {
+  return createHash("sha256").update(token.trim()).digest("hex").slice(0, 32);
+}
+
 /** The token-free projection of an account, safe to return over the API. */
 export interface ClaudeAccountView {
   id: string;
@@ -302,6 +324,18 @@ export async function getAccount(
   return row ? toAccountView(row) : null;
 }
 
+/**
+ * Predicate matching an account BY ID AND OWNER. Every mutation uses it so the
+ * ownership check is inseparable from the write — a pre-read alone leaves a
+ * TOCTOU window.
+ */
+function ownedBy(accountId: string, userId: string) {
+  return and(
+    eq(claudeAccounts.id, accountId),
+    eq(claudeAccounts.userId, userId)
+  );
+}
+
 async function findOwnedRow(
   accountId: string,
   userId: string
@@ -355,12 +389,28 @@ export async function saveAccountToken(
   }
 
   const identity = await probeIdentity(token, runner);
+  const fingerprint = tokenFingerprint(token);
 
-  const existing = input.accountId
-    ? await findOwnedRow(input.accountId, input.userId)
-    : identity.email
-      ? await findRowByEmail(input.userId, identity.email)
-      : null;
+  // Dedupe, in priority order:
+  //   1. an explicit accountId — the caller said WHICH account to update;
+  //   2. the probed email — "re-adding a known email updates in place";
+  //   3. the token fingerprint — the identity probe told us nothing (offline,
+  //      no CLI), so fall back to "same credential ⇒ same account" instead of
+  //      inserting a fresh row on every retry.
+  let existing: AccountRow | null = null;
+  if (input.accountId) {
+    existing = await findOwnedRow(input.accountId, input.userId);
+    if (!existing) {
+      // The caller asked to update a specific account and it isn't theirs (or
+      // doesn't exist). Silently creating a NEW one would be a surprising,
+      // duplicate-producing answer to "update X" — fail instead.
+      throw new AccountNotFoundError(input.accountId);
+    }
+  } else if (identity.email) {
+    existing = await findRowByEmail(input.userId, identity.email);
+  } else {
+    existing = await findRowByFingerprint(input.userId, fingerprint);
+  }
 
   const columns = {
     alias: input.alias ?? existing?.alias ?? null,
@@ -373,6 +423,7 @@ export async function saveAccountToken(
     authHealthy: identity.loggedIn,
     lastVerifiedAt: now,
     oauthTokenEncrypted: encrypt(token),
+    tokenFingerprint: fingerprint,
     updatedAt: now,
   };
 
@@ -380,7 +431,14 @@ export async function saveAccountToken(
     await db
       .update(claudeAccounts)
       .set(columns)
-      .where(eq(claudeAccounts.id, existing.id));
+      // userId in the predicate, not just the pre-read: the ownership check and
+      // the write must not be separable (TOCTOU).
+      .where(
+        and(
+          eq(claudeAccounts.id, existing.id),
+          eq(claudeAccounts.userId, input.userId)
+        )
+      );
     const row = await findOwnedRow(existing.id, input.userId);
     log.info("Updated Claude account from token", {
       accountId: existing.id,
@@ -408,6 +466,29 @@ export async function saveAccountToken(
     hasEmail: identity.email !== null,
   });
   return { account: toAccountView(row as AccountRow), identity, updated: false };
+}
+
+/** Thrown when a caller names an account that is not theirs (or absent). */
+export class AccountNotFoundError extends Error {
+  constructor(accountId: string) {
+    super("Claude account not found");
+    this.name = "AccountNotFoundError";
+    this.accountId = accountId;
+  }
+  readonly accountId: string;
+}
+
+async function findRowByFingerprint(
+  userId: string,
+  fingerprint: string
+): Promise<AccountRow | null> {
+  const row = await db.query.claudeAccounts.findFirst({
+    where: and(
+      eq(claudeAccounts.userId, userId),
+      eq(claudeAccounts.tokenFingerprint, fingerprint)
+    ),
+  });
+  return row ?? null;
 }
 
 async function findRowByEmail(
@@ -444,7 +525,7 @@ export async function verifyAccount(
     await db
       .update(claudeAccounts)
       .set({ authHealthy: false, lastVerifiedAt: now, updatedAt: now })
-      .where(eq(claudeAccounts.id, accountId));
+      .where(ownedBy(accountId, userId));
     const refreshed = await findOwnedRow(accountId, userId);
     return {
       account: toAccountView(refreshed as AccountRow),
@@ -457,7 +538,7 @@ export async function verifyAccount(
     await db
       .update(claudeAccounts)
       .set({ authHealthy: false, lastVerifiedAt: now, updatedAt: now })
-      .where(eq(claudeAccounts.id, accountId));
+      .where(ownedBy(accountId, userId));
     const refreshed = await findOwnedRow(accountId, userId);
     return {
       account: toAccountView(refreshed as AccountRow),
@@ -480,7 +561,7 @@ export async function verifyAccount(
       lastVerifiedAt: now,
       updatedAt: now,
     })
-    .where(eq(claudeAccounts.id, accountId));
+    .where(ownedBy(accountId, userId));
 
   const refreshed = await findOwnedRow(accountId, userId);
   return { account: toAccountView(refreshed as AccountRow), identity };
@@ -502,7 +583,7 @@ export async function updateAccount(
       ...(patch.accountKind ? { accountKind: patch.accountKind } : {}),
       updatedAt: now,
     })
-    .where(eq(claudeAccounts.id, accountId));
+    .where(ownedBy(accountId, userId));
   const refreshed = await findOwnedRow(accountId, userId);
   return refreshed ? toAccountView(refreshed) : null;
 }
@@ -523,7 +604,7 @@ export async function deleteAccount(
     .update(projectProfileLinks)
     .set({ accountId: null })
     .where(eq(projectProfileLinks.accountId, accountId));
-  await db.delete(claudeAccounts).where(eq(claudeAccounts.id, accountId));
+  await db.delete(claudeAccounts).where(ownedBy(accountId, userId));
   log.info("Deleted Claude account", { accountId });
   return true;
 }
@@ -533,29 +614,64 @@ export async function deleteAccount(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * The env fragment a session must run with to act as this account:
- * `{ CLAUDE_CODE_OAUTH_TOKEN: <token> }`. Returns an EMPTY object when the
- * account is missing, foreign, or has no stored token — an empty fragment
- * leaves the session on whatever the shared config dir resolves to, which is
- * exactly the pre-n4x4.6 behavior.
- *
- * Callers must treat the result as a secret: merge it into the PTY env and
- * never log or echo it.
+ * Why an account could not supply a session credential.
+ *  - `not_found`    — no such account, OR it belongs to another user. The two
+ *                     are deliberately indistinguishable so nothing leaks.
+ *  - `no_token`     — the account exists but has no stored OAuth token yet
+ *                     (e.g. migrated from a pre-n4x4.6 profile; the user has
+ *                     not run "Add account" for it).
+ *  - `decrypt_failed` — a token is stored but could not be decrypted, e.g.
+ *                     `AUTH_SECRET` was rotated.
  */
-export async function buildAccountEnv(
+export type AccountEnvFailure = "not_found" | "no_token" | "decrypt_failed";
+
+/** The single ownership-scoped resolution of an account into session env. */
+export type AccountEnvResolution =
+  | { ok: true; accountId: string; env: Record<string, string> }
+  | { ok: false; reason: AccountEnvFailure };
+
+/** Human-readable reason, safe to return in an API error body. */
+export function describeAccountEnvFailure(reason: AccountEnvFailure): string {
+  switch (reason) {
+    case "not_found":
+      return "Claude account not found";
+    case "no_token":
+      return "That Claude account has no stored credential yet — add it again from Settings → Claude Accounts";
+    case "decrypt_failed":
+      return "That Claude account's stored credential could not be decrypted — re-add the account";
+  }
+}
+
+/**
+ * Resolve an account into the env fragment a session must run with to act as
+ * it: `{ CLAUDE_CODE_OAUTH_TOKEN: <token> }`.
+ *
+ * This is the ONE ownership-scoped operation callers should use: it checks
+ * ownership, presence of a token, and decryptability together, and reports
+ * exactly which of those failed. Callers must NOT record the account id on a
+ * session unless this returns `ok: true` — otherwise the session launches on
+ * whatever ambient credential the shared config dir resolves to while usage
+ * limits get attributed to an account it never actually used.
+ *
+ * Callers must treat `env` as a secret: merge it into the PTY env and never log
+ * or echo it.
+ */
+export async function resolveAccountEnv(
   accountId: string,
   userId: string
-): Promise<Record<string, string>> {
+): Promise<AccountEnvResolution> {
   const row = await findOwnedRow(accountId, userId);
-  if (!row?.oauthTokenEncrypted) {
-    if (row) {
-      log.debug("Account has no stored token; no env injected", { accountId });
-    }
-    return {};
+  if (!row) {
+    log.debug("Claude account not resolvable for user", { accountId });
+    return { ok: false, reason: "not_found" };
+  }
+  if (!row.oauthTokenEncrypted) {
+    log.debug("Claude account has no stored token", { accountId });
+    return { ok: false, reason: "no_token" };
   }
   const token = decryptToken(row.oauthTokenEncrypted, accountId);
-  if (!token) return {};
-  return { [CLAUDE_OAUTH_TOKEN_ENV]: token };
+  if (!token) return { ok: false, reason: "decrypt_failed" };
+  return { ok: true, accountId, env: { [CLAUDE_OAUTH_TOKEN_ENV]: token } };
 }
 
 /**

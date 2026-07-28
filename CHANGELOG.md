@@ -26,9 +26,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Migration notes
 
-- Run `bun run db:presync-claude-accounts` **before** `bun run db:push` on SQLite (a one-time pre-step that works around a `drizzle-kit` SQLite rebuild limitation), then `bun run db:backfill-claude-accounts` after. PostgreSQL uses `drizzle/pg/0014_*.sql`.
-- `claude_account` rows are preserved. Existing **pool membership** is not: its member column changed identity from profile to account with no mechanical translation, so pools survive but their members must be re-added once, now as accounts. Recorded usage-limit observations are also cleared; the detector re-derives them within one 5h window.
-- Migrated accounts have **no stored token** until the user runs "Add account" — a credential the CLI put in the macOS Keychain cannot be recovered.
+> [!IMPORTANT]
+> **BREAKING (one-time data loss): every Claude fallback pool comes out of this
+> upgrade EMPTY.** `claude_profile_pool_member` changed its member identity from
+> profile to account, and there is no mechanical translation (one profile could
+> map to zero or several accounts), so the rows are cleared rather than
+> mis-migrated. **The pools themselves, their names, and every project/group
+> pool assignment survive — only the membership lists must be re-populated, once,
+> by adding accounts to each pool in Settings → Claude Accounts.** Until you do,
+> those projects fall back to their primary account with no rotation. The cleared
+> rows are dumped to `<data-dir>/migration-backups/claude-accounts-presync-<timestamp>.json`
+> before deletion if you want to reconstruct the old lists by hand.
+
+- **Deploy order is `db:presync-claude-accounts` → `db:push` → `db:backfill-claude-accounts`.** All three are wired into `scripts/deploy.ts`; the pre-sync is gated on the migration not having run yet, so it is a complete no-op on every subsequent deploy. PostgreSQL applies `drizzle/pg/0014_*.sql` + `0015_*.sql` via migrate-on-boot instead of the pre-sync.
+- Recorded usage-limit observations are also cleared. These are ephemeral — the reactive detector and poller re-derive them within one 5h window — so the only cost is a window of `unknown` status.
+- `claude_account` rows are preserved, but migrated accounts have **no stored token** until the user runs "Add account" for them: a credential Claude Code put in the macOS Keychain cannot be recovered. Sessions for a token-less account behave exactly as they did before this change (they use whatever the shared config dir resolves to).
 
 ### Changed
 

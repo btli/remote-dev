@@ -417,6 +417,32 @@ export async function captureOutput(
 }
 
 /**
+ * Discard a session's scrollback buffer (`tmux clear-history`).
+ *
+ * Used to destroy secrets a command printed into the pane — e.g. the OAuth
+ * token `claude setup-token` emits, which would otherwise stay readable through
+ * `captureOutput`, `rdv session scrollback`, and a plain `tmux attach` for as
+ * long as the session lived. [remote-dev-n4x4.7]
+ *
+ * Best-effort by design: a session that has already gone away is not an error,
+ * because the caller's next step is usually to kill it anyway.
+ *
+ * @param sessionName - Tmux session name
+ */
+export async function clearHistory(sessionName: string): Promise<void> {
+  if (!(await sessionExists(sessionName))) return;
+  try {
+    await execFile("tmux", ["clear-history", "-t", sessionName]);
+  } catch (error) {
+    throw new TmuxServiceError(
+      `Failed to clear history: ${(error as Error).message}`,
+      "CLEAR_HISTORY_FAILED",
+      (error as Error).message
+    );
+  }
+}
+
+/**
  * Get the current pane content (visible area only, no scrollback)
  *
  * Useful for getting just the current visible state of the terminal.

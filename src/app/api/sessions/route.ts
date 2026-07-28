@@ -67,6 +67,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       terminalType?: "shell" | "agent" | "ssh" | "file" | "browser" | "loop";
       filePath?: string;
       profileId?: string;
+      claudeAccountId?: string;
       agentProvider?: string;
       autoLaunchAgent?: boolean;
       agentFlags?: string[];
@@ -117,6 +118,18 @@ export const POST = withApiAuth(async (request, { userId }) => {
       terminalType: body.terminalType,
       filePath: validatedFilePath,
       profileId: body.profileId,
+      // [remote-dev-n4x4.6] Pin the Claude ACCOUNT to run as. Required for the
+      // usage-limit relaunch CTA to actually rotate: the alternate account
+      // usually has no origin profile, so `profileId` alone cannot express it
+      // and the launch would fall back to auto-selection — potentially picking
+      // the very account that just hit its limit. Ownership + credential
+      // availability are enforced in session-service, which refuses to launch
+      // (400 CLAUDE_ACCOUNT_UNAVAILABLE) rather than silently using ambient
+      // credentials.
+      claudeAccountId:
+        typeof body.claudeAccountId === "string" && body.claudeAccountId
+          ? body.claudeAccountId
+          : undefined,
       agentProvider: body.agentProvider as CreateSessionInput["agentProvider"],
       autoLaunchAgent: body.autoLaunchAgent,
       agentFlags: body.agentFlags,

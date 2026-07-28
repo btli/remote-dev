@@ -1,6 +1,11 @@
 # Implementation notes — remote-dev-n4x4.6 / .7 / .8
 
-Branch `feat/claude-accounts-decouple`. Implements `CONTRACT.md` in full.
+Branch `feat/claude-accounts-decouple`. Claude accounts decoupled from agent
+profiles, `claude setup-token` onboarding, and the dead-Sync-button fix.
+
+**Round 2** — this document now also records the fixes made in response to the
+adversarial + independent cross-vendor review passes. See
+[§6 Review-round-2 fixes](#6-review-round-2-fixes).
 
 ---
 
@@ -142,16 +147,11 @@ Clean (no output).
 ### `bun run test:run`
 
 ```
- Test Files  296 passed | 1 skipped (297)
-      Tests  2976 passed | 8 skipped (2984)
-   Start at  08:02:58
-   Duration  23.33s (transform 26.03s, setup 17.21s, import 83.00s, tests 119.72s, environment 33.95s)
+ Test Files  297 passed | 1 skipped (298)
+      Tests  2996 passed | 8 skipped (3004)
+   Start at  08:26:13
+   Duration  24.79s (transform 21.67s, setup 18.46s, import 95.88s, tests 125.18s, environment 34.18s)
 ```
-
-(Baseline before this change was 297 files / 2992 tests. The deltas are: −2 files
-from deleting `claude-login-service.test.ts` and `ClaudeCredentials.test.ts`,
-+3 new files, so net +1 file — reported as 297 including the skipped one; and
-−16 net tests, the 60 new ones minus the 76 deleted with those two suites.)
 
 ### New tests added
 
@@ -160,6 +160,7 @@ from deleting `claude-login-service.test.ts` and `ClaudeCredentials.test.ts`,
 | `src/services/claude-account-service.test.ts` (45 tests) | identity parsing incl. `loggedIn:false`, malformed/empty/non-object/wrong-type output and banner noise; `probeIdentity` env + non-zero-exit + throwing-runner; `extractSetupToken` / `looksLikeOAuthToken`; account CRUD; **token encrypt/decrypt round-trip** and the assertion that ciphertext ≠ plaintext and the token never appears in an API projection; email dedupe (update-in-place); ownership isolation on every read/write; `buildAccountEnv` incl. the undecryptable-ciphertext degradation |
 | `src/services/__tests__/session-env-precedence.test.ts` (8 tests) | **env injection at session launch** — the account token is injected, beats a stale token in profile/folder env, does not beat `RDV_*`, and the account layer never injects `CLAUDE_CONFIG_DIR` (contract fact #3) |
 | `src/db/__tests__/backfill-claude-accounts.test.ts` (7 tests) | **the data migration** — an account is created for every claude-capable profile that lacks one, existing accounts are never duplicated or overwritten, non-Claude profiles are ignored, project primaries get linked, and a second run is a no-op |
+| `src/db/__tests__/presync-claude-accounts.test.ts` (8 tests) | **the pre-push step, against REAL temporary SQLite databases** — columns added, re-keyed tables cleared, rows backed up before deletion, indexes dropped, and above all the **idempotence gate**: once migrated it is a complete no-op that does not delete rows or drop indexes, verified across repeated runs |
 
 Existing suites (`LimitState`, `RotationPolicy`, `TrackUsageLimitUseCase`,
 `SelectProfileUseCase`, `RelaunchOnLimitUseCase`,
@@ -329,3 +330,219 @@ Three contract *instructions* needed adjustment:
 4. **`CONTRACT.md` is committed on the branch.** It was untracked in the worktree
    when I started. It is useful to reviewers, but say so if it should not land on
    `master`.
+
+
+---
+
+## 6. Review-round-2 fixes
+
+All five blocking findings, both user decisions, and every non-blocking item
+were addressed. Nothing was deferred except the one item ruled out of scope.
+
+### F1 — pre-sync was destructive on re-run (BLOCKING)
+
+Correct and serious; both reviewers were right. The column-adds were guarded but
+`DELETE FROM claude_usage_limit_state`, `DELETE FROM claude_profile_pool_member`
+and the index drops ran unconditionally. Wired into deploy (F6) that would have
+wiped pool membership and limit state on **every deploy** and left
+`claude_pool_member_pool_account_unique` dropped until the next push.
+
+Fixed with an explicit gate: `isMigrationPending()` looks for the pre-n4x4.6
+marker columns (`claude_account.credential_mode`,
+`claude_usage_limit_state.profile_id`, `claude_profile_pool_member.profile_id`),
+all of which `db:push` drops. Once push has run, the script returns
+`{ pending: false, … }` having touched nothing. The false "re-running is a no-op"
+comment is replaced by an IDEMPOTENCE section that states exactly what is gated
+and why the gate is load-bearing.
+
+To make this *testable* rather than merely asserted, the logic moved to
+`src/db/presync-claude-accounts.ts` (matching the existing
+`src/db/backfill-user-emails.ts` + `scripts/…` convention) with the libsql client
+injected, and `src/db/__tests__/presync-claude-accounts.test.ts` exercises it
+against real temporary SQLite files — including a test that seeds post-migration
+pool membership and asserts three further runs leave it and the unique index
+untouched.
+
+### F2 — sessions still got a per-profile `CLAUDE_CONFIG_DIR` (BLOCKING)
+
+The most important finding: the contract's central goal was not actually met.
+`ProfileIsolation.toEnvironment()` sets `CLAUDE_CONFIG_DIR` to
+`<profileDir>/.claude`, and session-service applied that overlay to an
+auto-selected account's origin profile — so two accounts did **not** share one
+config/context, and rotation could land back in a stale profile-specific Claude
+context.
+
+Fixed with `applySharedClaudeConfig()` in `session-service.ts`: for Claude
+sessions it **deletes** `CLAUDE_CONFIG_DIR` from the profile overlay while
+leaving XDG paths, `GIT_CONFIG_GLOBAL`, git identity and `GIT_SSH_COMMAND`
+intact. Non-Claude overlays pass through untouched, so `CODEX_HOME` /
+`OPENCODE_CONFIG_DIR` isolation is unaffected.
+
+Per verified fact #3 it deletes rather than blanks or re-points: any explicit
+value — including `$HOME/.claude` — re-namespaces the macOS Keychain, so the
+variable must be genuinely absent. There is a dedicated test for that specific
+distinction.
+
+**Second-order fix the finding implied but did not name:** `ensureAgentConfig()`
+installed RDV hooks into `profile.configDir`. With `CLAUDE_CONFIG_DIR` now unset,
+Claude reads `~/.claude`, so those hooks would have been written somewhere the
+agent never looks — silently breaking status reporting. Both the create path and
+the resume path now install Claude hooks into `process.env.HOME` and keep the
+per-profile dir for other providers. Resume/session discovery already defaulted
+to `~/.claude` when the env var is absent (`claude-session-service.getProjectsDir`),
+so that path needed no change.
+
+The requested proof is `"two accounts launch with the SAME Claude config dir and
+DIFFERENT tokens"` in `session-env-precedence.test.ts`.
+
+### F3 — account not pinnable through the public API + unchecked ownership (BLOCKING)
+
+Both halves were real.
+
+`POST /api/sessions` now accepts `claudeAccountId` (runtime-typechecked). Without
+it the notify-mode relaunch CTA could not work end-to-end: the alternate account
+usually has `profileId: null`, so `profileId` alone cannot express the choice and
+the launch fell back to auto-selection — potentially re-picking the very account
+that just hit its limit.
+
+Ownership is now enforced through **one** operation. `buildAccountEnv()` (which
+returned `{}` indistinguishably for foreign / token-less / undecryptable
+accounts) is replaced by `resolveAccountEnv()` returning a discriminated
+`{ ok: true, accountId, env } | { ok: false, reason: "not_found" | "no_token" |
+"decrypt_failed" }`. `not_found` deliberately covers both "absent" and "another
+user's" so nothing leaks. Resolution moved earlier in `createSession`, before
+anything records or launches, and enforces the invariant **`claudeAccountId` is
+persisted only when a token was actually produced**:
+
+- **explicit pin** → refuse to launch, `400 CLAUDE_ACCOUNT_UNAVAILABLE` with a
+  reason-specific message;
+- **auto-selected** → never block the launch, but drop the attribution
+  (`effectiveAccountId = undefined`) and warn, so limits are never misattributed
+  to an account the session did not use.
+
+The credential is also only injected for actual agent runtimes, so the
+`claude setup-token` shell session cannot inherit an unrelated account's token.
+
+### F4 — captured token left in plaintext scrollback (BLOCKING)
+
+Correct. After a successful encrypted save, `capture` now wipes the pane's
+scrollback (new `TmuxService.clearHistory`) **and then** closes the session —
+clear-history first so even a failed close leaves nothing readable. Both are
+best-effort so a teardown hiccup cannot lose an already-saved account, but a
+failed close logs at `error` (a live token is still exposed) and the response
+carries `sessionClosed` so the UI can warn.
+
+On "make sure scrollback persistence excludes setup-token sessions": I checked
+and there is **no** automatic scrollback persistence — `recording-service` is
+only ever driven by an explicit `POST /api/recordings`. So the exposure was
+purely the live tmux buffer, which closing the session removes. I added a
+provenance marker anyway (`CLAUDE_SETUP_SESSION_MARKER` in `typeMetadata`) so any
+future persistence feature can exclude these panes.
+
+That marker also closes a hole neither reviewer raised: `capture` previously
+accepted **any** session id belonging to the caller, making it a "scrape any of
+my terminals for something token-shaped" endpoint. It now returns
+`400 NOT_A_SETUP_SESSION` for sessions the Add-account flow did not create.
+
+### F5 — deletes happened before the schema change with no recovery (BLOCKING)
+
+Fixed: `dumpRows()` writes every affected row to
+`<data-dir>/migration-backups/claude-accounts-presync-<timestamp>.json`
+(mode `0600`) **before** any `DELETE`, with a note explaining what was cleared
+and why. Covered by a test asserting the file exists and contains the pre-delete
+rows, and by one asserting no file is written when there is nothing to clear.
+
+### F6 — wire into `scripts/deploy.ts` (USER DECISION)
+
+Done, after F1. `db:presync-claude-accounts` runs immediately before `db:push`
+(SQLite-only, alongside the existing `db:reconcile-fk-drop` pre-push step) and
+**aborts the deploy on failure**, since a failure means push would crash.
+`db:backfill-claude-accounts` runs after push next to the other backfills and is
+best-effort, *not* deploy-gating: a missing account row degrades to pre-n4x4.6
+behaviour, which is not worth failing a deploy over.
+
+**Verification status:** I ran the full sequence against the real dev database
+(pre-sync → push → backfill, then re-ran pre-sync and backfill to confirm both
+are no-ops, with pool membership and account rows intact). I could **not**
+exercise `scripts/deploy.ts` itself — it performs a blue/green slot swap against
+a live host. The two steps it invokes are verified; their orchestration inside
+`deploy.ts` is code-reviewed only.
+
+### F7 — pool membership loss (USER DECISION)
+
+Accepted; no preservation script written. It is now the first thing under
+"Migration notes" in `CHANGELOG.md`, in a `> [!IMPORTANT]` block that states
+plainly that **every pool comes out of the upgrade empty**, that pools/names/
+assignments survive and only membership must be re-added, what the interim
+behaviour is (primary account, no rotation), and where the pre-delete dump lives.
+
+### F8 — working docs in the wrong place (USER DECISION)
+
+`CONTRACT.md` removed from the branch. `IMPLEMENTATION.md` moved to
+`docs/claude/2026-07-28-claude-accounts-decouple.md` per the documented
+convention. Repo root is clean.
+
+### F9–F13 (non-blocking — all fixed)
+
+- **F9** `scanSessionScrollbackForLimit` now falls back through the session's
+  `profileId` to that profile's origin account, so reactive detection is not dead
+  for pre-migration sessions. The lookup is owner-scoped, so a session can never
+  attribute a limit to another user's account.
+- **F10** Added a `token_fingerprint` column (`sha256(token)` truncated to 128
+  bits). When the identity probe learns nothing (offline / no CLI) dedupe falls
+  back to "same credential ⇒ same account" instead of inserting a row per retry.
+  It is non-reversible, scoped per user, and never leaves the server — asserted
+  by test. This does **not** fix the concurrent-insert race for the same email;
+  see the open questions below.
+- **F11** `saveAccountToken` with an unowned/absent `accountId` now throws
+  `AccountNotFoundError` (→ `404` from `capture`) instead of silently creating a
+  new account in answer to "update X".
+- **F12** `token`, `alias`, `accountId`, `sessionId`, `projectId` and
+  `profileId` are runtime-typechecked on all four account routes plus
+  `claudeAccountId` on `POST /api/sessions`. `{"token": 12}` now returns 400.
+- **F13** Every mutation uses a shared `ownedBy(accountId, userId)` predicate, so
+  the ownership check is inseparable from the write rather than living only in a
+  pre-read.
+
+### F14 — WS payload key change vs. other clients (VERIFY)
+
+Checked `mobile/` (Flutter), `packages/mobile/` (Expo), `crates/` (the `rdv` CLI)
+and `electron/`. **Zero** references to `profile_limit_changed`, to the removed
+`/api/profiles/:id/limit-state`, or to the removed `claude-login` endpoints —
+they are consumed only by the web client, which is updated in this branch and
+ships from the same deploy. No compatibility shim is needed and no mobile change
+is in scope.
+
+One residual, called out rather than fixed: a **browser tab still running the
+pre-deploy JS bundle** is technically an "old client" and would silently drop
+every `profile_limit_changed` event until reloaded. That is transient and
+self-healing on refresh. I left the event name unchanged rather than renaming it
+to `claude_account_limit_changed`, on the grounds that a rename helps nobody who
+isn't already reloading — but say the word if you'd rather the break be loud.
+
+### Out of scope, as directed
+
+`claude-account-service.ts` was **not** refactored behind repository ports.
+Noted as a legitimate follow-up.
+
+---
+
+## 7. Open questions after round 2
+
+1. **`deploy.ts` orchestration is code-reviewed only** (see F6). The individual
+   steps are verified against a real database; the blue/green deploy path is not
+   something I can exercise from a worktree.
+2. **Concurrent `POST /api/claude-accounts` for the same email still double-
+   inserts.** F10's fingerprint fixes the *retry* case, not the *race*: two
+   simultaneous requests both read "no existing row" and both insert. The proper
+   fix is a partial unique index on `(user_id, email_address) WHERE email_address
+   IS NOT NULL`, which SQLite and PG express differently and which drizzle's
+   schema-def layer here does not model. Given that adding an account is a
+   deliberate, human-paced action, I judged the DB-level constraint not worth the
+   dual-dialect complexity in this PR — but it is a real gap, and I'd file it as
+   a follow-up rather than leave it undocumented.
+3. **`ProfileIsolation` still emits `CLAUDE_CONFIG_DIR`.** F2 strips it at the
+   session-assembly boundary rather than at the source, because that VO is also
+   used by resume-binding and migration export where the profile-scoped value is
+   still the right answer. If a reviewer would rather the VO stop emitting it for
+   Claude entirely, that is a larger blast radius and worth doing deliberately.

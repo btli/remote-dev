@@ -1224,6 +1224,7 @@ export const claudeAccounts = sqliteTable(
     authHealthy: integer("auth_healthy", { mode: "boolean" }).notNull().default(false),
     lastVerifiedAt: integer("last_verified_at", { mode: "timestamp_ms" }),
     oauthTokenEncrypted: text("oauth_token_encrypted"),
+    tokenFingerprint: text("token_fingerprint"),
     apiKeyPrefix: text("api_key_prefix"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),

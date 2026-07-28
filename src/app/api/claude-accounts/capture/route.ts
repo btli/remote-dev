@@ -8,7 +8,15 @@
  * `claude auth status --json`. Creating or updating in place is decided by the
  * probed email, so re-adding a known account never duplicates it.
  *
- * The captured token is never returned in the response and never logged.
+ * The captured token is never returned in the response and never logged. Once
+ * it is safely encrypted at rest, the setup session's scrollback is wiped and
+ * the session is CLOSED — otherwise the long-lived token stays readable in
+ * cleartext through the scrollback API, `rdv session scrollback`, and a plain
+ * `tmux attach` for as long as that session lives. [remote-dev-n4x4.7]
+ *
+ * Only sessions created by `POST /api/claude-accounts/setup-session` (which
+ * stamps `CLAUDE_SETUP_SESSION_MARKER` into `typeMetadata`) can be captured
+ * from, so this endpoint can never be aimed at an unrelated terminal.
  */
 
 import { NextResponse } from "next/server";
@@ -18,6 +26,8 @@ import * as TmuxService from "@/services/tmux-service";
 import {
   extractSetupToken,
   saveAccountToken,
+  AccountNotFoundError,
+  CLAUDE_SETUP_SESSION_MARKER,
 } from "@/services/claude-account-service";
 import { createLogger } from "@/lib/logger";
 
@@ -27,18 +37,42 @@ const log = createLogger("api/claude-accounts/capture");
 
 export const POST = withApiAuth(async (request, { userId }) => {
   const result = await parseJsonBody<{
-    sessionId?: string;
-    alias?: string;
-    accountId?: string;
+    sessionId?: unknown;
+    alias?: unknown;
+    accountId?: unknown;
   }>(request);
   if ("error" in result) return result.error;
 
+  // Runtime-validate before any string method runs.
   const { sessionId } = result.data;
-  if (!sessionId) return errorResponse("sessionId is required", 400);
+  if (typeof sessionId !== "string" || !sessionId) {
+    return errorResponse("sessionId is required and must be a string", 400);
+  }
+  if (result.data.alias !== undefined && typeof result.data.alias !== "string") {
+    return errorResponse("alias must be a string", 400);
+  }
+  if (
+    result.data.accountId !== undefined &&
+    result.data.accountId !== null &&
+    typeof result.data.accountId !== "string"
+  ) {
+    return errorResponse("accountId must be a string", 400);
+  }
 
   // Ownership: getSession is userId-scoped, so a foreign session 404s.
   const session = await SessionService.getSession(sessionId, userId);
   if (!session) return errorResponse("Session not found", 404);
+
+  // Provenance: only a session we launched for `claude setup-token` may be
+  // scraped, so this can't be turned into a "read any of my terminals" probe.
+  const metadata = session.typeMetadata as Record<string, unknown> | null;
+  if (!metadata?.[CLAUDE_SETUP_SESSION_MARKER]) {
+    return errorResponse(
+      "That session was not started by the Add Claude account flow",
+      400,
+      "NOT_A_SETUP_SESSION"
+    );
+  }
 
   let output: string;
   try {
@@ -65,23 +99,60 @@ export const POST = withApiAuth(async (request, { userId }) => {
   }
 
   const alias = result.data.alias?.trim() || null;
-  const { account, identity, updated } = await saveAccountToken({
-    userId,
-    token,
-    alias,
-    accountId: result.data.accountId ?? null,
-  });
+  let saved: Awaited<ReturnType<typeof saveAccountToken>>;
+  try {
+    saved = await saveAccountToken({
+      userId,
+      token,
+      alias,
+      accountId: (result.data.accountId as string | undefined) ?? null,
+    });
+  } catch (error) {
+    if (error instanceof AccountNotFoundError) {
+      // The caller named an account that isn't theirs. Creating a new one would
+      // be a surprising answer to "update this account".
+      return errorResponse("Claude account not found", 404);
+    }
+    throw error;
+  }
+  const { account, identity, updated } = saved;
+
+  // The token is now encrypted at rest, so destroy the cleartext copy sitting
+  // in the pane. Wipe the scrollback FIRST (so even a failed close leaves
+  // nothing readable), then close the session. Both are best-effort: the
+  // account is already saved and must not be lost to a teardown hiccup — but a
+  // failure is logged loudly because it means a live token is still exposed.
+  let sessionClosed = true;
+  try {
+    await TmuxService.clearHistory(session.tmuxSessionName);
+  } catch (error) {
+    log.warn("Could not clear setup-session scrollback", {
+      sessionId,
+      error: String(error),
+    });
+  }
+  try {
+    await SessionService.closeSession(sessionId, userId);
+  } catch (error) {
+    sessionClosed = false;
+    log.error(
+      "Could not close setup session; its scrollback may still hold the token",
+      { sessionId, error: String(error) }
+    );
+  }
 
   log.info("Captured Claude account token from setup session", {
     sessionId,
     accountId: account.id,
     updated,
     loggedIn: identity.loggedIn,
+    sessionClosed,
   });
 
   return NextResponse.json({
     account,
     loggedIn: identity.loggedIn,
     updated,
+    sessionClosed,
   });
 });

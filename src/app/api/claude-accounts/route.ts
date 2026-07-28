@@ -33,12 +33,21 @@ export const GET = withApiAuth(async (_request, { userId }) => {
 });
 
 export const POST = withApiAuth(async (request, { userId }) => {
-  const result = await parseJsonBody<{ token?: string; alias?: string }>(
+  const result = await parseJsonBody<{ token?: unknown; alias?: unknown }>(
     request
   );
   if ("error" in result) return result.error;
 
-  const token = result.data.token?.trim();
+  // Runtime-validate: `parseJsonBody` only proves the body is JSON, so a
+  // non-string `token` would otherwise reach `.trim()` and 500 instead of 400.
+  if (typeof result.data.token !== "string") {
+    return errorResponse("token is required and must be a string", 400);
+  }
+  if (result.data.alias !== undefined && typeof result.data.alias !== "string") {
+    return errorResponse("alias must be a string", 400);
+  }
+
+  const token = result.data.token.trim();
   if (!token) return errorResponse("token is required", 400);
   if (!looksLikeOAuthToken(token)) {
     return errorResponse(

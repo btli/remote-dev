@@ -36,6 +36,7 @@ vi.mock("@/db/schema", () => ({
     userId: "userId",
     profileId: "profileId",
     emailAddress: "emailAddress",
+    tokenFingerprint: "tokenFingerprint",
   },
   projectProfileLinks: { accountId: "accountId" },
 }));
@@ -104,7 +105,10 @@ import {
   getAccount,
   updateAccount,
   deleteAccount,
-  buildAccountEnv,
+  resolveAccountEnv,
+  tokenFingerprint,
+  AccountNotFoundError,
+  describeAccountEnvFailure,
   findAccountIdForProfile,
   UNKNOWN_IDENTITY,
   CLAUDE_OAUTH_TOKEN_ENV,
@@ -356,6 +360,60 @@ describe("saveAccountToken", () => {
     expect(account.emailAddress).toBeNull();
   });
 
+  it("dedupes on the TOKEN FINGERPRINT when the identity probe learns nothing", async () => {
+    // Offline / no CLI: no email, so the email dedupe cannot fire. Without a
+    // fingerprint fallback every retry would insert another row.
+    const offline = runnerWith("claude: command not found");
+
+    const first = await saveAccountToken({ userId: USER, token: TOKEN }, offline);
+    const second = await saveAccountToken({ userId: USER, token: TOKEN }, offline);
+    const third = await saveAccountToken({ userId: USER, token: TOKEN }, offline);
+
+    expect(first.updated).toBe(false);
+    expect(second.updated).toBe(true);
+    expect(third.updated).toBe(true);
+    expect(second.account.id).toBe(first.account.id);
+    expect(rows.size).toBe(1);
+  });
+
+  it("still creates a separate account for a DIFFERENT unknown-identity token", async () => {
+    const offline = runnerWith("");
+    await saveAccountToken({ userId: USER, token: TOKEN }, offline);
+    await saveAccountToken({ userId: USER, token: OTHER_TOKEN }, offline);
+    expect(rows.size).toBe(2);
+  });
+
+  it("does not let one user's fingerprint match another user's account", async () => {
+    const offline = runnerWith("");
+    await saveAccountToken({ userId: USER, token: TOKEN }, offline);
+    await saveAccountToken({ userId: "other-user", token: TOKEN }, offline);
+    expect(rows.size).toBe(2);
+  });
+
+  it("throws AccountNotFoundError for an unowned accountId instead of creating one", async () => {
+    const { account } = await saveAccountToken(
+      { userId: USER, token: TOKEN },
+      runnerWith(LOGGED_IN_JSON)
+    );
+
+    await expect(
+      saveAccountToken(
+        { userId: "someone-else", token: OTHER_TOKEN, accountId: account.id },
+        runnerWith(LOGGED_IN_JSON)
+      )
+    ).rejects.toBeInstanceOf(AccountNotFoundError);
+
+    await expect(
+      saveAccountToken(
+        { userId: USER, token: OTHER_TOKEN, accountId: "no-such-account" },
+        runnerWith(LOGGED_IN_JSON)
+      )
+    ).rejects.toBeInstanceOf(AccountNotFoundError);
+
+    // The caller asked to UPDATE, so nothing new may appear.
+    expect(rows.size).toBe(1);
+  });
+
   it("rejects an empty token", async () => {
     await expect(
       saveAccountToken({ userId: USER, token: "   " }, runnerWith(LOGGED_IN_JSON))
@@ -487,30 +545,45 @@ describe("list / get / update / delete", () => {
 // Session env injection  [remote-dev-n4x4.6]
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("buildAccountEnv", () => {
+describe("resolveAccountEnv — the single ownership-scoped resolution", () => {
   it("injects CLAUDE_CODE_OAUTH_TOKEN for the account", async () => {
     const { account } = await saveAccountToken(
       { userId: USER, token: TOKEN },
       runnerWith(LOGGED_IN_JSON)
     );
 
-    const env = await buildAccountEnv(account.id, USER);
-    expect(env).toEqual({ [CLAUDE_OAUTH_TOKEN_ENV]: TOKEN });
+    const resolved = await resolveAccountEnv(account.id, USER);
+
+    expect(resolved).toEqual({
+      ok: true,
+      accountId: account.id,
+      env: { [CLAUDE_OAUTH_TOKEN_ENV]: TOKEN },
+    });
     // Crucially it does NOT set CLAUDE_CONFIG_DIR: the shared config dir is
-    // what makes skills / CLAUDE.md / MCP servers visible to every account.
-    expect(Object.keys(env)).toEqual([CLAUDE_OAUTH_TOKEN_ENV]);
+    // what makes skills / CLAUDE.md / MCP servers visible to every account,
+    // and an explicit value would re-namespace the macOS Keychain.
+    expect(Object.keys((resolved as { env: Record<string, string> }).env)).toEqual([
+      CLAUDE_OAUTH_TOKEN_ENV,
+    ]);
   });
 
-  it("returns an empty fragment for a missing or foreign account", async () => {
+  it("reports not_found for a missing OR foreign account (indistinguishable)", async () => {
     const { account } = await saveAccountToken(
       { userId: USER, token: TOKEN },
       runnerWith(LOGGED_IN_JSON)
     );
-    expect(await buildAccountEnv("nope", USER)).toEqual({});
-    expect(await buildAccountEnv(account.id, "someone-else")).toEqual({});
+
+    expect(await resolveAccountEnv("nope", USER)).toEqual({
+      ok: false,
+      reason: "not_found",
+    });
+    expect(await resolveAccountEnv(account.id, "someone-else")).toEqual({
+      ok: false,
+      reason: "not_found",
+    });
   });
 
-  it("returns an empty fragment for an account with no stored token", async () => {
+  it("reports no_token for an account that has never been credentialed", async () => {
     rows.set("acct-notoken", {
       id: "acct-notoken",
       userId: USER,
@@ -520,10 +593,13 @@ describe("buildAccountEnv", () => {
       createdAt: new Date(0),
       updatedAt: new Date(0),
     });
-    expect(await buildAccountEnv("acct-notoken", USER)).toEqual({});
+    expect(await resolveAccountEnv("acct-notoken", USER)).toEqual({
+      ok: false,
+      reason: "no_token",
+    });
   });
 
-  it("degrades to no env (never throws) when the ciphertext is undecryptable", async () => {
+  it("reports decrypt_failed (never throws) when the ciphertext is unreadable", async () => {
     rows.set("acct-corrupt", {
       id: "acct-corrupt",
       userId: USER,
@@ -533,7 +609,19 @@ describe("buildAccountEnv", () => {
       createdAt: new Date(0),
       updatedAt: new Date(0),
     });
-    expect(await buildAccountEnv("acct-corrupt", USER)).toEqual({});
+    expect(await resolveAccountEnv("acct-corrupt", USER)).toEqual({
+      ok: false,
+      reason: "decrypt_failed",
+    });
+  });
+
+  it("describes every failure reason without leaking whose account it is", () => {
+    for (const reason of ["not_found", "no_token", "decrypt_failed"] as const) {
+      const message = describeAccountEnvFailure(reason);
+      expect(message.length).toBeGreaterThan(0);
+      expect(message).not.toContain(TOKEN);
+      expect(message).not.toContain(USER);
+    }
   });
 });
 
@@ -553,5 +641,26 @@ describe("findAccountIdForProfile", () => {
     expect(await findAccountIdForProfile("prof-1", USER)).toBe("acct-origin");
     expect(await findAccountIdForProfile("prof-1", "someone-else")).toBeNull();
     expect(await findAccountIdForProfile("prof-unknown", USER)).toBeNull();
+  });
+});
+
+describe("tokenFingerprint", () => {
+  it("is stable, non-reversible, and never contains the token", () => {
+    const fp = tokenFingerprint(TOKEN);
+
+    expect(fp).toBe(tokenFingerprint(TOKEN));
+    expect(fp).toBe(tokenFingerprint(`  ${TOKEN}  `)); // trimmed
+    expect(fp).not.toBe(tokenFingerprint(OTHER_TOKEN));
+    expect(fp).not.toContain(TOKEN);
+    expect(fp).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it("is never exposed through the account API projection", async () => {
+    const { account } = await saveAccountToken(
+      { userId: USER, token: TOKEN },
+      runnerWith(LOGGED_IN_JSON)
+    );
+    expect(Object.keys(account)).not.toContain("tokenFingerprint");
+    expect(JSON.stringify(account)).not.toContain(tokenFingerprint(TOKEN));
   });
 });

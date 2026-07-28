@@ -20,7 +20,10 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as SessionService from "@/services/session-service";
 import * as TmuxService from "@/services/tmux-service";
-import { CLAUDE_SETUP_TOKEN_COMMAND } from "@/services/claude-account-service";
+import {
+  CLAUDE_SETUP_TOKEN_COMMAND,
+  CLAUDE_SETUP_SESSION_MARKER,
+} from "@/services/claude-account-service";
 import { createLogger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
@@ -29,13 +32,19 @@ const log = createLogger("api/claude-accounts/setup-session");
 
 export const POST = withApiAuth(async (request, { userId }) => {
   const result = await parseJsonBody<{
-    projectId?: string;
-    profileId?: string;
+    projectId?: unknown;
+    profileId?: unknown;
   }>(request);
   if ("error" in result) return result.error;
 
+  // Runtime-validate before these ids reach the session-create path.
   const { projectId, profileId } = result.data;
-  if (!projectId) return errorResponse("projectId is required", 400);
+  if (typeof projectId !== "string" || !projectId) {
+    return errorResponse("projectId is required and must be a string", 400);
+  }
+  if (profileId !== undefined && typeof profileId !== "string") {
+    return errorResponse("profileId must be a string", 400);
+  }
 
   const session = await SessionService.createSession(userId, {
     name: "Add Claude account",
@@ -45,6 +54,12 @@ export const POST = withApiAuth(async (request, { userId }) => {
     // ourselves and must not have an agent auto-launched over it.
     autoLaunchAgent: false,
     ...(profileId ? { profileId } : {}),
+    // Provenance marker. `POST /api/claude-accounts/capture` refuses to scrape
+    // a token out of any session that does not carry it, so the capture
+    // endpoint can never be pointed at an unrelated terminal. It also lets any
+    // future scrollback-persisting feature exclude these panes — they transit a
+    // long-lived OAuth token in cleartext until capture wipes them.
+    typeMetadata: { [CLAUDE_SETUP_SESSION_MARKER]: true },
   });
 
   // Type the command into the live pane. Best-effort: if this fails the session
@@ -71,7 +86,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       commandSent,
       instructions: [
         "Complete the Claude sign-in in the browser window that opens.",
-        "When the CLI prints your token, return here and choose Finish — the token is captured and stored encrypted.",
+        "When the CLI prints your token, return here and choose Finish — the token is captured, stored encrypted, and this session is closed so the token does not linger in its scrollback.",
         "No local browser? Run `claude setup-token` anywhere and paste the token instead.",
       ],
     },
