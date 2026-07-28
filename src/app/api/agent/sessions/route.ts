@@ -50,18 +50,19 @@ export const GET = withApiAuth(async (request, { userId }) => {
   }
 
   // Resolve the profile-isolated env so discovery scans the right CLI home dir.
+  //
+  // Claude is excluded [remote-dev-n4x4.6]: its sessions run with
+  // `CLAUDE_CONFIG_DIR` UNSET and therefore write their transcripts to the
+  // user's real `~/.claude/projects`, which is what discovery falls back to
+  // when the var is absent. Pointing it at `<profileDir>/.claude` would scan a
+  // directory Claude never writes to and return an empty resume picker.
   const env: Record<string, string> = {};
-  if (profileId) {
+  if (profileId && provider !== "claude") {
     const profile = await AgentProfileService.getProfile(profileId, userId);
     if (profile) {
       const spec = getResumeSpec(provider);
       if (spec.sessionIdSource.homeEnvVar && profile.configDir) {
-        // claude joins ".claude" itself; pass the bare config dir for it, and
-        // the provider home dir for the rest.
         env[spec.sessionIdSource.homeEnvVar] = profile.configDir;
-      }
-      if (provider === "claude") {
-        env.CLAUDE_CONFIG_DIR = profile.configDir;
       }
     }
   }

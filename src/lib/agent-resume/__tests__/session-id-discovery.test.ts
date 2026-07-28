@@ -152,3 +152,68 @@ describe("listResumableSessions — picker shape", () => {
     expect(readdir).not.toHaveBeenCalled();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [remote-dev-n4x4.6] Claude sessions run with CLAUDE_CONFIG_DIR UNSET, so
+// their transcripts land in the user's real ~/.claude/projects. Discovery must
+// therefore work from an env that does NOT carry the variable — the case that
+// is now the norm rather than the exception.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("claude discovery with CLAUDE_CONFIG_DIR unset (the n4x4.6 default)", () => {
+  it("passes profileConfigDir: undefined so listSessions falls back to ~/.claude", async () => {
+    listSessions.mockResolvedValue([
+      { sessionId: "claude-uuid-shared", lastModified: "2026-07-28T00:00:00.000Z" },
+    ]);
+
+    const id = await discoverLatestSessionId("claude", "/proj", {});
+
+    expect(id).toBe("claude-uuid-shared");
+    // undefined — NOT "" and NOT an explicit $HOME/.claude. claude-session-service
+    // maps undefined to homedir()/.claude, which is where Claude actually wrote.
+    expect(listSessions).toHaveBeenCalledWith("/proj", {
+      limit: 1,
+      profileConfigDir: undefined,
+    });
+  });
+
+  it("lists resumable sessions from the shared config dir", async () => {
+    listSessions.mockResolvedValue([
+      {
+        sessionId: "claude-uuid-shared",
+        lastModified: "2026-07-28T00:00:00.000Z",
+        firstUserMessage: "ship the thing",
+        gitBranch: "master",
+      },
+    ]);
+
+    const list = await listResumableSessions("claude", "/proj", {});
+
+    expect(list[0]).toMatchObject({
+      sessionId: "claude-uuid-shared",
+      firstUserMessage: "ship the thing",
+    });
+    expect(listSessions).toHaveBeenCalledWith("/proj", {
+      limit: 20,
+      profileConfigDir: undefined,
+    });
+  });
+
+  it("still honours an explicit CLAUDE_CONFIG_DIR (legacy sessions, other tools)", async () => {
+    // A session created BEFORE n4x4.6 has the variable in its resume binding;
+    // its transcripts really are under the profile dir, so discovery must keep
+    // using it rather than silently reading the shared dir.
+    listSessions.mockResolvedValue([
+      { sessionId: "legacy-uuid", lastModified: "2026-01-01T00:00:00.000Z" },
+    ]);
+
+    await discoverLatestSessionId("claude", "/proj", {
+      CLAUDE_CONFIG_DIR: "/profiles/p1",
+    });
+
+    expect(listSessions).toHaveBeenCalledWith("/proj", {
+      limit: 1,
+      profileConfigDir: "/profiles/p1",
+    });
+  });
+});

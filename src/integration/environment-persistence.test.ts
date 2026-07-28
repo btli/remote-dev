@@ -269,8 +269,11 @@ describe("Environment Persistence Integration", () => {
       // (we rely on the real HOME being preserved)
       expect(env.HOME).toBeUndefined();
 
-      // CLAUDE_CONFIG_DIR should point to profile's .claude
-      expect(env.CLAUDE_CONFIG_DIR).toBe("/tmp/test-profile/.claude");
+      // CLAUDE_CONFIG_DIR must be ABSENT [remote-dev-n4x4.6]: Claude sessions
+      // share the user's real ~/.claude and differ only by the injected
+      // CLAUDE_CODE_OAUTH_TOKEN. Setting it — even to the default path — would
+      // re-namespace the macOS Keychain.
+      expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
     });
 
     it("ProfileIsolation includes SSH key path when provided", () => {

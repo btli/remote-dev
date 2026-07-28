@@ -3,9 +3,11 @@
 Branch `feat/claude-accounts-decouple`. Claude accounts decoupled from agent
 profiles, `claude setup-token` onboarding, and the dead-Sync-button fix.
 
-**Round 2** — this document now also records the fixes made in response to the
-adversarial + independent cross-vendor review passes. See
-[§6 Review-round-2 fixes](#6-review-round-2-fixes).
+**Round 2** — fixes from the adversarial + independent cross-vendor review
+passes. See [§6](#6-review-round-2-fixes).
+
+**Round 3** — `CLAUDE_CONFIG_DIR` fixed at the source instead of stripped
+downstream. See [§8](#8-round-3--profileisolation-fixed-at-the-source).
 
 ---
 
@@ -541,8 +543,100 @@ Noted as a legitimate follow-up.
    deliberate, human-paced action, I judged the DB-level constraint not worth the
    dual-dialect complexity in this PR — but it is a real gap, and I'd file it as
    a follow-up rather than leave it undocumented.
-3. **`ProfileIsolation` still emits `CLAUDE_CONFIG_DIR`.** F2 strips it at the
-   session-assembly boundary rather than at the source, because that VO is also
-   used by resume-binding and migration export where the profile-scoped value is
-   still the right answer. If a reviewer would rather the VO stop emitting it for
-   Claude entirely, that is a larger blast radius and worth doing deliberately.
+3. ~~**`ProfileIsolation` still emits `CLAUDE_CONFIG_DIR`.**~~ **RESOLVED in
+   round 3 — and my justification here was wrong on the facts.** See [§8](#8-round-3--profileisolation-fixed-at-the-source).
+
+
+---
+
+## 8. Round 3 — `ProfileIsolation` fixed at the source
+
+The user overruled my round-2 pushback and was right to: stripping the variable
+downstream left the isolation still *produced*, so the next caller of the value
+object would silently reintroduce the bug.
+
+### What I found about each consumer
+
+I claimed in round 2 that resume-binding and migration export needed the
+profile-scoped value. **I was wrong about both**, and I had not verified either
+claim — I inferred them from the old isolation model. Enumerating every consumer:
+
+| Consumer | Uses the VO's value? | Genuinely needs profile-scoped? |
+|---|---|---|
+| `agent-profile-service.getProfileEnvironment` → session PTY env | yes | **No** — this is the path n4x4.6 exists to fix |
+| `application/services/EnvironmentManager` | yes | **No** — same profile-isolation layer, and it is not wired into anything (its only instantiation is its own test) |
+| `lib/agent-resume/resume-binding` | reads it from session env | **No** — it captures whatever the session had; with the var gone nothing is captured, and discovery falls back to `~/.claude`, which is where Claude actually wrote |
+| `lib/agent-resume/session-id-discovery` | reads it from session env | **No** — `claude-session-service.getProjectsDir(undefined)` already resolves `~/.claude/projects`. It is *more* correct without |
+| `services/migration-file-service.agentSettingsDirs` | **no** — reads `process.env.CLAUDE_CONFIG_DIR`, the SERVER's own env | **No, and unaffected**. This was my clearest error: it never touched `ProfileIsolation`. With the server's own value unset it resolves `~/.claude` — exactly the shared config we now want to export |
+| `app/api/agent/sessions` (resume picker) | **no — a SECOND producer**, sets `CLAUDE_CONFIG_DIR = profile.configDir` itself | **No — and it was a live bug** (see below) |
+
+So: **no consumer genuinely needs it.** That put the fix on the simple branch —
+remove the emission outright, no conditional and no flag.
+
+I verified the resume claim empirically rather than by reading, on this machine:
+
+```
+~/.claude/projects                    → 734 project dirs
+~/.remote-dev/profiles/9020dcf5…      →   0 project dirs
+~/.remote-dev/profiles/a04f4587…      →   2 project dirs
+```
+
+Claude writes transcripts to the shared dir. Which surfaced a **live bug the
+review had not identified**: `GET /api/agent/sessions` (the resume picker) is a
+second, independent producer that set `CLAUDE_CONFIG_DIR = profile.configDir`,
+so after n4x4.6 it would have scanned `<profileDir>/.claude/projects` — a
+directory Claude never writes to — and returned an **empty resume picker** for
+every Claude session. Fixed by excluding Claude from that block, with the reason
+stated inline.
+
+### The change
+
+- `ProfileIsolation.toEnvironment()` no longer emits `CLAUDE_CONFIG_DIR` for any
+  provider, and there is no option to re-enable it. A header section explains
+  why, and an inline comment sits exactly where the emission used to be so the
+  next reader does not "fix" its absence.
+- `getClaudeConfigDir()` deleted. It became dead, and an unused getter returning
+  a profile-scoped Claude path is the same trap one call away.
+- `applySharedClaudeConfig()` and its call site deleted — dead once the source
+  stopped emitting. Keeping both would have left a reader unable to tell which
+  was load-bearing.
+- `GET /api/agent/sessions` no longer sets it (above).
+
+### Tests
+
+The "two accounts, same config dir, different tokens" test now builds its
+overlay from the **real `ProfileIsolation`** rather than a hand-written fixture,
+so it fails if the emission ever comes back — the guarantee is enforced where it
+is produced, with no downstream strip to mask a regression. The unset-vs-blank
+distinction (verified fact #3) is still asserted explicitly.
+
+Added: `ProfileIsolation` never emits the var for **any** of the six provider
+values; the Claude resume path works with the var absent (`profileConfigDir:
+undefined`, not `""`) while still honouring an explicit value from a
+pre-n4x4.6 session's resume binding; and migration export ships the shared
+`~/.claude` (settings, `CLAUDE.md`, skills) when the server's own
+`CLAUDE_CONFIG_DIR` is unset — pinning that `agentSettingsDirs()` is independent
+of the value object.
+
+Updated: `EnvironmentManager`, `environment-persistence`, and `ProfileIsolation`
+suites now assert absence, each with the reason inline.
+
+### Docs
+
+`docs/AGENTS.md` was wrong in **three** places, not one:
+
+1. §1 provider table — "Isolation env var" for `claude` said `CLAUDE_CONFIG_DIR`;
+   now "none — shared config" plus a block quote explaining the model and the
+   unset-not-`$HOME/.claude` rule.
+2. §2 isolation-var table — listed it among the per-provider config roots; now
+   names the four that remain and states Claude's absence is deliberate.
+3. §4 resume matrix — sourced Claude session ids from
+   `$CLAUDE_CONFIG_DIR/.claude/projects/…`; now `~/.claude/projects/…`, noting
+   the var is only honoured for pre-n4x4.6 resume bindings.
+
+### Residual, called out
+
+`agent-profile-service` still creates an empty `<profileDir>/.claude` when
+scaffolding a profile (`mkdir` at line ~872). It is now vestigial. I left it
+alone because removing it changes profile-creation behaviour, which is outside
+this task — but it is dead weight and worth a follow-up.

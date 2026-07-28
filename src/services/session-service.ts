@@ -61,44 +61,6 @@ export interface SessionEnvLayers {
   rdv?: Record<string, string>;
 }
 
-/**
- * The Claude config dir every Claude session must share. `undefined` means
- * "leave `CLAUDE_CONFIG_DIR` UNSET", which resolves to the user's real
- * `~/.claude`. [remote-dev-n4x4.6]
- *
- * Setting it explicitly — even to `$HOME/.claude` — is NOT equivalent: Claude
- * Code derives its macOS Keychain service name from the SETTING, so an explicit
- * path lands in a different (`Claude Code-credentials-<hash>`) credential
- * namespace. Verified live against Claude Code 2.1.220. The account's token is
- * injected instead, so the Keychain namespace must never be load-bearing.
- */
-
-/**
- * Remove the profile's `CLAUDE_CONFIG_DIR` from an env overlay for Claude
- * sessions, keeping everything else (XDG paths, git identity, SSH command).
- *
- * A Claude ACCOUNT is a credential layered on top of the user's real `~/.claude`
- * — not an isolated config directory. If the profile overlay kept pointing
- * `CLAUDE_CONFIG_DIR` at `<profileDir>/.claude`, two accounts would NOT share
- * one config/context (no shared skills, `CLAUDE.md`, MCP servers, settings or
- * agents), and rotating accounts could rotate back into a stale profile-specific
- * Claude context. Non-Claude overlays are returned untouched so
- * `CODEX_HOME` / `OPENCODE_CONFIG_DIR` isolation is unaffected.
- *
- * Exported for testing: the guarantee "two accounts, one config dir, different
- * tokens" is asserted directly against this + {@link buildInitialEnv}.
- */
-export function applySharedClaudeConfig(
-  profileEnv: Record<string, string> | undefined,
-  isClaudeSession: boolean
-): Record<string, string> | undefined {
-  if (!profileEnv || !isClaudeSession) return profileEnv;
-  if (!("CLAUDE_CONFIG_DIR" in profileEnv)) return profileEnv;
-  // Delete, never blank: an empty string is still "explicitly set".
-  const { CLAUDE_CONFIG_DIR: _dropped, ...rest } = profileEnv;
-  return rest;
-}
-
 export function buildInitialEnv(layers: SessionEnvLayers): Record<string, string> {
   return {
     ...(layers.claudeAgentDefaults ?? {}),
@@ -753,7 +715,9 @@ export async function createSessionWithDedupFlag(
 
   // Fetch the profile's environment overlay if a profile is resolved. Uses
   // `effectiveProfileId` so an auto-selected Claude profile contributes its
-  // CLAUDE_CONFIG_DIR / env overlay just like an explicitly chosen one. The
+  // env overlay just like an explicitly chosen one. That overlay carries XDG
+  // paths, git identity and SSH — but NOT `CLAUDE_CONFIG_DIR`, which
+  // ProfileIsolation deliberately no longer emits [remote-dev-n4x4.6]. The
   // explicit-pin path already resolved `effectiveProfile` above (reused here,
   // no double-fetch); the auto-select path only set the id, so fetch it once.
   let profileEnv: Record<string, string> | undefined;
@@ -770,13 +734,6 @@ export async function createSessionWithDedupFlag(
       );
     }
   }
-  // [remote-dev-n4x4.6] Claude sessions share ONE config dir (the user's real
-  // `~/.claude`) and differ only by the injected account token, so the profile
-  // overlay must not re-point `CLAUDE_CONFIG_DIR`. See applySharedClaudeConfig.
-  profileEnv = applySharedClaudeConfig(
-    profileEnv,
-    mergedAgentProvider === "claude"
-  );
 
   // Fetch folder environment variables for the session
   const folderEnv = await getEnvironmentForSession(userId, input.projectId);

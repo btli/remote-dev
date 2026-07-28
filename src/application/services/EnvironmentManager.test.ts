@@ -96,9 +96,10 @@ describe("EnvironmentManager", () => {
       expect(stack.profile.get("XDG_CONFIG_HOME")).toBe(
         "/home/user/.remote-dev/profiles/profile-1/.config"
       );
-      expect(stack.profile.get("CLAUDE_CONFIG_DIR")).toBe(
-        "/home/user/.remote-dev/profiles/profile-1/.claude"
-      );
+      // [remote-dev-n4x4.6] Claude is deliberately NOT config-dir isolated:
+      // its identity is the injected CLAUDE_CODE_OAUTH_TOKEN, layered over the
+      // user's real ~/.claude so all accounts share one config.
+      expect(stack.profile.has("CLAUDE_CONFIG_DIR")).toBe(false);
       // HOME should NOT be in profile (we don't override it)
       expect(stack.profile.has("HOME")).toBe(false);
     });
@@ -250,10 +251,12 @@ describe("EnvironmentManager", () => {
         agentProvider: "claude",
       });
 
-      // Should have Claude-specific config
-      expect(stack.profile.get("CLAUDE_CONFIG_DIR")).toBeDefined();
-      // Should not have Codex (since provider is specifically claude)
+      // Claude contributes no config-dir isolation [remote-dev-n4x4.6]…
+      expect(stack.profile.has("CLAUDE_CONFIG_DIR")).toBe(false);
+      // …and scoping to claude still excludes the other providers' dirs.
       expect(stack.profile.has("CODEX_HOME")).toBe(false);
+      // The rest of the profile layer is unaffected.
+      expect(stack.profile.has("XDG_CONFIG_HOME")).toBe(true);
     });
   });
 });

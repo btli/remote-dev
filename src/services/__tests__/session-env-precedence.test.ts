@@ -8,7 +8,8 @@
  * without standing up tmux, a DB, or a project.
  */
 import { describe, it, expect } from "vitest";
-import { applySharedClaudeConfig, buildInitialEnv } from "../session-service";
+import { buildInitialEnv } from "../session-service";
+import { ProfileIsolation } from "@/domain/value-objects/ProfileIsolation";
 
 const TOKEN = "sk-ant-oat01-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const STALE = "sk-ant-oat01-STALESTALESTALESTALESTALE0";
@@ -99,51 +100,64 @@ describe("buildInitialEnv — existing layer order is preserved", () => {
   });
 });
 
-describe("applySharedClaudeConfig — accounts share ONE Claude config dir", () => {
-  /** What `AgentProfileService.getProfileEnvironment` produces for a profile. */
+describe("accounts share ONE Claude config dir", () => {
+  /**
+   * The REAL profile overlay, straight from the value object that
+   * `AgentProfileService.getProfileEnvironment` uses — not a hand-written
+   * fixture. If ProfileIsolation ever starts emitting CLAUDE_CONFIG_DIR again,
+   * these tests fail, which is the point: the guarantee is enforced at the
+   * source now, with no downstream strip to paper over a regression.
+   */
   function profileOverlay(profileDir: string): Record<string, string> {
-    return {
-      CLAUDE_CONFIG_DIR: `${profileDir}/.claude`,
-      XDG_CONFIG_HOME: `${profileDir}/.config`,
-      XDG_DATA_HOME: `${profileDir}/.local/share`,
-      GIT_CONFIG_GLOBAL: `${profileDir}/.gitconfig`,
-      GIT_AUTHOR_NAME: "Me",
-      GIT_SSH_COMMAND: "ssh -i '/keys/id' -o IdentitiesOnly=yes",
-    };
+    return ProfileIsolation.create({
+      profileDir,
+      realHome: "/home/user",
+      provider: "claude",
+      sshKeyPath: "/keys/id",
+      gitIdentity: { name: "Me", email: "me@example.com" },
+    })
+      .toEnvironment()
+      .toRecord();
   }
 
-  it("drops CLAUDE_CONFIG_DIR for a Claude session and keeps the rest of the overlay", () => {
-    const out = applySharedClaudeConfig(profileOverlay("/profiles/p1"), true);
+  it("the profile overlay carries no CLAUDE_CONFIG_DIR but keeps the rest", () => {
+    const overlay = profileOverlay("/profiles/p1");
 
-    expect(out).not.toHaveProperty("CLAUDE_CONFIG_DIR");
-    // Everything else the profile provides must survive.
-    expect(out).toMatchObject({
+    expect(overlay).not.toHaveProperty("CLAUDE_CONFIG_DIR");
+    expect(overlay).toMatchObject({
       XDG_CONFIG_HOME: "/profiles/p1/.config",
       XDG_DATA_HOME: "/profiles/p1/.local/share",
       GIT_CONFIG_GLOBAL: "/profiles/p1/.gitconfig",
       GIT_AUTHOR_NAME: "Me",
+      GIT_AUTHOR_EMAIL: "me@example.com",
       GIT_SSH_COMMAND: "ssh -i '/keys/id' -o IdentitiesOnly=yes",
     });
   });
 
-  it("DELETES the key rather than blanking it (an empty value is still 'set')", () => {
-    // Contract fact #3: Claude Code derives its macOS Keychain service name from
-    // the SETTING, so any explicit value — including "" or $HOME/.claude — lands
-    // in a different credential namespace. It must be absent entirely.
-    const out = applySharedClaudeConfig(profileOverlay("/profiles/p1"), true);
-    expect(Object.keys(out as Record<string, string>)).not.toContain(
-      "CLAUDE_CONFIG_DIR"
-    );
-    expect((out as Record<string, string>).CLAUDE_CONFIG_DIR).toBeUndefined();
+  it("the key is ABSENT, not blanked (an empty value is still 'explicitly set')", () => {
+    // Contract fact #3: Claude Code derives its macOS Keychain service name
+    // from the SETTING, so any explicit value — "" or even $HOME/.claude — lands
+    // in a different credential namespace. It must not appear at all.
+    const env = buildInitialEnv({
+      profile: profileOverlay("/profiles/p1"),
+      claudeAccount: { CLAUDE_CODE_OAUTH_TOKEN: TOKEN },
+    });
+
+    expect(Object.keys(env)).not.toContain("CLAUDE_CONFIG_DIR");
+    expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
   });
 
-  it("leaves non-Claude sessions' overlays untouched", () => {
-    const overlay = { ...profileOverlay("/profiles/p1"), CODEX_HOME: "/profiles/p1/.codex" };
-    expect(applySharedClaudeConfig(overlay, false)).toEqual(overlay);
-  });
+  it("non-Claude providers keep their own config-dir isolation", () => {
+    const codex = ProfileIsolation.create({
+      profileDir: "/profiles/p1",
+      realHome: "/home/user",
+      provider: "codex",
+    })
+      .toEnvironment()
+      .toRecord();
 
-  it("handles an absent overlay", () => {
-    expect(applySharedClaudeConfig(undefined, true)).toBeUndefined();
+    expect(codex.CODEX_HOME).toBe("/profiles/p1/.codex");
+    expect(codex).not.toHaveProperty("CLAUDE_CONFIG_DIR");
   });
 
   it("two accounts launch with the SAME Claude config dir and DIFFERENT tokens", () => {
@@ -154,11 +168,11 @@ describe("applySharedClaudeConfig — accounts share ONE Claude config dir", () 
     const accountB = "sk-ant-oat01-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
 
     const envA = buildInitialEnv({
-      profile: applySharedClaudeConfig(profileOverlay("/profiles/p1"), true),
+      profile: profileOverlay("/profiles/p1"),
       claudeAccount: { CLAUDE_CODE_OAUTH_TOKEN: accountA },
     });
     const envB = buildInitialEnv({
-      profile: applySharedClaudeConfig(profileOverlay("/profiles/p2"), true),
+      profile: profileOverlay("/profiles/p2"),
       claudeAccount: { CLAUDE_CODE_OAUTH_TOKEN: accountB },
     });
 

@@ -18,11 +18,21 @@ not a runnable provider).
 
 | Provider id | CLI command | Config file | Config dir (rel. to `HOME`) | Required env | Isolation env var |
 |-------------|-------------|-------------|-----------------------------|--------------|-------------------|
-| `claude` | `claude` | `CLAUDE.md` | `.claude` | `ANTHROPIC_API_KEY` | `CLAUDE_CONFIG_DIR` |
+| `claude` | `claude` | `CLAUDE.md` | `.claude` | `ANTHROPIC_API_KEY` | **none — shared config, see below** |
 | `codex` | `codex` | `AGENTS.md` | `.codex` | `OPENAI_API_KEY` | `CODEX_HOME` |
 | `gemini` | `gemini` | `GEMINI.md` | `.gemini` | `GOOGLE_API_KEY` | `GEMINI_HOME` |
 | `antigravity` | `agy` | `ANTIGRAVITY.md` | `.gemini` (shares Gemini's dir) | `GOOGLE_API_KEY` | `ANTIGRAVITY_HOME` |
 | `opencode` | `opencode` | `OPENCODE.md` | `.config/opencode` | _none required_ | `OPENCODE_HOME` |
+
+> **Claude is deliberately NOT config-dir isolated** [remote-dev-n4x4.6].
+> `ProfileIsolation` emits no `CLAUDE_CONFIG_DIR`, so every Claude session uses
+> the user's real `~/.claude` and they all share one config: the same skills,
+> `CLAUDE.md`, MCP servers, settings and agents. A session's Claude *identity*
+> comes from an injected `CLAUDE_CODE_OAUTH_TOKEN` instead (see
+> [§2 Claude accounts](#claude-accounts-usage-limits--fallback-pools)). The
+> variable must stay **unset** rather than be pointed at `$HOME/.claude`: Claude
+> Code derives its macOS Keychain service name from the setting, so any explicit
+> value lands in a different credential namespace.
 
 Notes confirmed against source:
 
@@ -97,7 +107,7 @@ interface in [`src/types/agent.ts`](../src/types/agent.ts)):
 | Var | Role |
 |-----|------|
 | `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` | Redirect config/data/cache into the profile dir |
-| `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GEMINI_HOME`, `ANTIGRAVITY_HOME`, `OPENCODE_HOME` | Per-provider config roots |
+| `CODEX_HOME`, `GEMINI_HOME`, `ANTIGRAVITY_HOME`, `OPENCODE_HOME` | Per-provider config roots. **`CLAUDE_CONFIG_DIR` is deliberately absent** — Claude shares the real `~/.claude`; identity comes from an injected `CLAUDE_CODE_OAUTH_TOKEN` [remote-dev-n4x4.6] |
 | `GIT_CONFIG_GLOBAL`, `GIT_SSH_COMMAND` | Point git at the profile's `.gitconfig` / SSH key |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY` | Injected per provider |
 
@@ -304,7 +314,7 @@ cold-attach recreate).
 
 | Provider | Resumes? | Mechanism | Session-id source | Id capture |
 |----------|----------|-----------|-------------------|------------|
-| `claude` | ✅ | `claude --resume <id>` (flag) | `.jsonl` filename / header `sessionId` under `$CLAUDE_CONFIG_DIR/.claude/projects/<encodePath(cwd)>/` | Push (Stop hook → `/internal/agent-session-id`) **+** disk fallback |
+| `claude` | ✅ | `claude --resume <id>` (flag) | `.jsonl` filename / header `sessionId` under `~/.claude/projects/<encodePath(cwd)>/` (the shared config dir — `CLAUDE_CONFIG_DIR` is unset, and is only honoured if a pre-n4x4.6 session's resume binding still carries it) | Push (Stop hook → `/internal/agent-session-id`) **+** disk fallback |
 | `codex` | ✅ | `codex resume <id>` (**subcommand**, argv override) | newest rollout file under `$CODEX_HOME` (default `~/.codex/sessions`) | Disk discovery at relaunch |
 | `gemini` | ✅ | `gemini --resume <id>` (flag) | newest checkpoint under `$GEMINI_HOME` (default `~/.gemini/tmp`) | Disk discovery at relaunch |
 | `opencode` | ✅ | `opencode --session <id>` (flag) | newest session under `$OPENCODE_HOME` (default `~/.local/share/opencode`) | Disk discovery at relaunch |
