@@ -19,8 +19,10 @@ const VALID_PROVIDERS: AgentProvider[] = ["claude", "codex", "gemini", "opencode
  * - `accountKind`: from `claude_account`, defaulting to "subscription" for
  *   claude-capable profiles without a row (non-claude profiles also default,
  *   but their limit state is always the unknown default).
- * - `limitState`: the serialized Claude usage-limit block (available/unknown
- *   default when no row exists). See `_lib/serialize-limit-state`.
+ * - `claudeAccountId`: the profile's origin Claude account, or null.
+ * - `limitState`: the serialized Claude usage-limit block for that account
+ *   (available/unknown default when there is none). See
+ *   `_lib/serialize-limit-state`.
  */
 export const GET = withAuth(async (_request, { userId }) => {
   const [profiles, folderLinks] = await Promise.all([
@@ -34,17 +36,25 @@ export const GET = withAuth(async (_request, { userId }) => {
     .filter((p) => isClaudeCapable(p.provider))
     .map((p) => p.id);
 
-  const [limitStates, accountInfo] = await Promise.all([
-    usageLimitStateRepository.findManyByProfileIds(claudeProfileIds),
-    getClaudeAccountInfoMany(claudeProfileIds),
-  ]);
+  // [remote-dev-n4x4.6] Limit state is keyed on the ACCOUNT now, so resolve
+  // each claude-capable profile's origin account first and look the state up by
+  // that. A profile with no account keeps the unknown default.
+  const accountInfo = await getClaudeAccountInfoMany(claudeProfileIds);
+  const accountIds = [...accountInfo.values()]
+    .map((a) => a.accountId)
+    .filter((id): id is string => id !== null);
+  const limitStates =
+    await usageLimitStateRepository.findManyByAccountIds(accountIds);
 
   const augmented = profiles.map((profile) => {
     const account = accountInfo.get(profile.id) ?? defaultClaudeAccountInfo();
     return {
       ...profile,
       accountKind: account.accountKind,
-      limitState: serializeLimitState(limitStates.get(profile.id) ?? null),
+      claudeAccountId: account.accountId,
+      limitState: serializeLimitState(
+        account.accountId ? (limitStates.get(account.accountId) ?? null) : null
+      ),
     };
   });
 

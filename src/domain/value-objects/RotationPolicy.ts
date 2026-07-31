@@ -1,8 +1,8 @@
 /**
- * RotationPolicy - Pure profile-selection strategy for pool rotation.
+ * RotationPolicy - Pure account-selection strategy for pool rotation.
  *
- * Given a set of candidate profiles (each with a rotation priority and current
- * limit state), pick the one to use: the available profile with the lowest
+ * Given a set of candidate accounts (each with a rotation priority and current
+ * limit state), pick the one to use: the available account with the lowest
  * priority value (lower = higher priority / earlier in rotation). Returns null
  * when every candidate is currently limited.
  *
@@ -14,7 +14,7 @@ import { InvalidValueError } from "../errors/DomainError";
 import { LimitState } from "./LimitState";
 
 export interface RotationCandidate {
-  profileId: string;
+  accountId: string;
   /** Lower = higher priority / earlier in rotation. */
   priority: number;
   limitState: LimitState;
@@ -34,7 +34,7 @@ export class RotationPolicy {
    * Select the available candidate with the lowest priority value.
    *
    * Ties on priority are broken by input order (stable). Skips any candidate
-   * whose limit state is not available at `now`. Returns the chosen profileId,
+   * whose limit state is not available at `now`. Returns the chosen accountId,
    * or null if no candidate is available (all limited).
    *
    * @throws InvalidValueError if a candidate has a non-finite priority.
@@ -55,7 +55,7 @@ export class RotationPolicy {
         best = candidate;
       }
     }
-    return best ? best.profileId : null;
+    return best ? best.accountId : null;
   }
 
   /** Instance form of {@link RotationPolicy.select}. */

@@ -1,22 +1,23 @@
 /**
- * Types for Claude profile usage-limit management (cswap-style).
+ * Types for Claude ACCOUNT usage-limit management (cswap-style).
  *
- * Each remote-dev profile maps ~1:1 onto a Claude account (it sets its own
- * `CLAUDE_CONFIG_DIR`). These brands describe the Claude-specific identity,
- * usage-limit state, and rotation behavior layered on top of the
- * provider-agnostic `agent_profile`. Used as `.$type<X>()` schema brands and
- * across the domain / application / infrastructure layers.
+ * [remote-dev-n4x4.6] A Claude account is a first-class row, decoupled from
+ * `agent_profile`: sessions share one Claude config dir and select their
+ * account by having `CLAUDE_CODE_OAUTH_TOKEN` injected. These brands describe
+ * the Claude-specific identity, usage-limit state, and rotation behavior. Used
+ * as `.$type<X>()` schema brands and across the domain / application /
+ * infrastructure layers.
  */
 
 /**
- * Whether a Claude profile authenticates via an OAuth subscription login or a
+ * Whether a Claude account authenticates via an OAuth subscription login or a
  * raw API key. Both kinds coexist side by side; window semantics differ
  * (subscription = rolling 5h/7d windows, api_key = rate/credits).
  */
 export type ClaudeAccountKind = "subscription" | "api_key";
 
 /**
- * Authoritative availability of a profile's Claude account.
+ * Authoritative availability of a Claude account.
  * - available: not currently rate-limited (or never observed limited).
  * - limited: a usage limit was hit; becomes available again at the reset time.
  * - unknown: never observed (no detection has run yet).
@@ -51,8 +52,10 @@ export type ClaudeAutoRelaunchMode = "notify" | "auto" | "disabled";
 
 /**
  * The serialized usage-limit block returned by `/api/profiles`,
- * `/api/profiles/[id]/limit-state`, `/api/claude/usage`, and the pool routes.
- * All timestamps are epoch-ms numbers; null means "unknown".
+ * `/api/claude-accounts/[accountId]/limit-state`, `/api/claude/usage`, and the
+ * pool routes (also exported from `_lib/serialize-limit-state` as
+ * `SerializedLimitState`). All timestamps are epoch-ms numbers; null means
+ * "unknown".
  */
 export interface LimitStateBlock {
   limitStatus: ClaudeLimitStatus;
@@ -66,15 +69,37 @@ export interface LimitStateBlock {
   effectiveResetAt: number | null;
 }
 
-/** A profile in the `/api/claude/usage` dashboard payload. */
-export interface ClaudeUsageProfile {
+/**
+ * A Claude account as returned by `GET /api/claude-accounts` (and by
+ * `claude-account-service` as `ClaudeAccountView`). Token-free by construction:
+ * `hasToken` reports whether an encrypted OAuth token is stored, and the token
+ * itself never crosses the wire.
+ */
+export interface ClaudeAccountSummary {
   id: string;
-  name: string;
+  alias: string | null;
   accountKind: ClaudeAccountKind;
   emailAddress: string | null;
+  organizationId: string | null;
   organizationName: string | null;
+  rateLimitTier: string | null;
+  /** Verbatim `authMethod` from `claude auth status --json` (open set). */
+  authMethod: string | null;
+  /** Whether the last identity probe reported `loggedIn: true`. */
+  authHealthy: boolean;
+  /** Epoch-ms of the last identity probe, or null. */
+  lastVerifiedAt: number | null;
+  hasToken: boolean;
+  /** Legacy origin profile, when this account was migrated from one. */
+  profileId: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** An account in the `/api/claude/usage` dashboard payload. */
+export interface ClaudeUsageAccount extends ClaudeAccountSummary {
   limitState: LimitStateBlock;
-  /** Ids of the user's pools this profile is a member of. */
+  /** Ids of the user's pools this account is a member of. */
   pools: string[];
 }
 
@@ -85,9 +110,10 @@ export interface ClaudePoolSummary {
   memberCount: number;
 }
 
-/** A pool member resolved to a profile name + serialized limit state. */
+/** A pool member resolved to an account label + serialized limit state. */
 export interface ClaudePoolMember {
-  profileId: string;
+  accountId: string;
+  /** Alias, else email, else null. */
   name: string | null;
   priority: number;
   limitState: LimitStateBlock;
@@ -102,12 +128,13 @@ export interface ClaudePoolDetail {
 
 /**
  * The `profile_limit_changed` WebSocket payload broadcast by the terminal
- * server when a profile's limit state changes. Timestamps are ISO strings on
+ * server when an ACCOUNT's limit state changes. Timestamps are ISO strings on
  * the wire (the broadcaster serializes Dates via `toISOString()`), distinct
- * from the epoch-ms numbers the REST routes emit.
+ * from the epoch-ms numbers the REST routes emit. The event name is retained
+ * for wire compatibility; the payload keys on `accountId` [remote-dev-n4x4.6].
  */
 export interface ProfileLimitChangedEvent {
-  profileId: string;
+  accountId: string;
   limitStatus: ClaudeLimitStatus;
   resetAt5h: string | null;
   resetAt7d: string | null;

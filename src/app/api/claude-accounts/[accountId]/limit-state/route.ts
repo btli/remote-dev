@@ -1,54 +1,53 @@
 /**
- * GET | PATCH /api/profiles/[id]/limit-state - per-profile Claude usage limit.
- * [remote-dev-wb0q]
+ * GET | PATCH /api/claude-accounts/[accountId]/limit-state - Claude usage limit
+ * for one ACCOUNT. [remote-dev-wb0q / remote-dev-n4x4.6]
  *
- * GET returns the profile's serialized limit state (available/unknown default
+ * (Replaces `/api/profiles/[id]/limit-state`: a usage limit belongs to the
+ * subscription, not to the config dir a session happened to run under.)
+ *
+ * GET returns the account's serialized limit state (available/unknown default
  * when none recorded). PATCH `{ status: "available" }` is a manual override
  * that clears a limit: it calls TrackUsageLimitUseCase with `source: "manual"`,
  * which bypasses the staleness guard (a user action is authoritative).
  *
- * Both verbs enforce ownership: the profile must belong to the caller.
+ * Both verbs enforce ownership: the account must belong to the caller.
  */
 
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
-import * as AgentProfileService from "@/services/agent-profile-service";
+import { getAccount } from "@/services/claude-account-service";
 import {
   usageLimitStateRepository,
   trackUsageLimitUseCase,
 } from "@/infrastructure/container";
 import { serializeLimitState } from "@/app/api/_lib/serialize-limit-state";
+import { requireAccountId } from "@/app/api/_lib/claude-account-params";
 
 export const dynamic = "force-dynamic";
 
-/**
- * GET /api/profiles/:id/limit-state - read the serialized limit state.
- */
 export const GET = withApiAuth(async (_request, { userId, params }) => {
-  const profileId = params?.id;
-  if (!profileId) return errorResponse("Profile ID is required", 400);
+  const id = requireAccountId(params);
+  if ("error" in id) return id.error;
 
-  // Ownership: getProfile is already userId-scoped.
-  const profile = await AgentProfileService.getProfile(profileId, userId);
-  if (!profile) return errorResponse("Profile not found", 404);
+  const account = await getAccount(id.accountId, userId);
+  if (!account) return errorResponse("Account not found", 404);
 
-  const state = await usageLimitStateRepository.findByProfileId(profileId);
+  const state = await usageLimitStateRepository.findByAccountId(id.accountId);
   return NextResponse.json(serializeLimitState(state));
 });
 
 /**
- * PATCH /api/profiles/:id/limit-state - manual override.
- *
- * Body: `{ status: "available" }`. Marks the profile available again (clears a
- * limit). Any other status is rejected — limiting a profile is a detection
- * concern, not a manual one.
+ * PATCH - manual override. Body: `{ status: "available" }`. Marks the account
+ * available again (clears a limit). Any other status is rejected — limiting an
+ * account is a detection concern, not a manual one.
  */
 export const PATCH = withApiAuth(async (request, { userId, params }) => {
-  const profileId = params?.id;
-  if (!profileId) return errorResponse("Profile ID is required", 400);
+  const id = requireAccountId(params);
+  if ("error" in id) return id.error;
+  const { accountId } = id;
 
-  const profile = await AgentProfileService.getProfile(profileId, userId);
-  if (!profile) return errorResponse("Profile not found", 404);
+  const account = await getAccount(accountId, userId);
+  if (!account) return errorResponse("Account not found", 404);
 
   const result = await parseJsonBody<{ status?: string }>(request);
   if ("error" in result) return result.error;
@@ -64,7 +63,7 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
 
   // Manual source bypasses the staleness guard in the use-case.
   const { state } = await trackUsageLimitUseCase.execute({
-    profileId,
+    accountId,
     userId,
     source: "manual",
     isLimited: false,

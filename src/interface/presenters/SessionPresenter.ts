@@ -24,6 +24,7 @@ export class SessionPresenter {
       worktreeType: (session.worktreeType as TerminalSession["worktreeType"]) ?? null,
       projectId: session.projectId,
       profileId: session.profileId,
+      claudeAccountId: session.claudeAccountId ?? null,
       terminalType: session.terminalType,
       agentProvider: session.agentProvider,
       agentExitState: session.agentExitState,

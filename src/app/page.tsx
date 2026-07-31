@@ -84,6 +84,7 @@ export default async function Home() {
     worktreeType: s.worktreeType ?? null,
     projectId: s.projectId ?? null,
     profileId: s.profileId,
+    claudeAccountId: s.claudeAccountId ?? null,
     terminalType: s.terminalType ?? "shell",
     scopeKey: s.scopeKey ?? null,
     agentProvider: s.agentProvider as "claude" | "codex" | "gemini" | "opencode" | "none" | null,

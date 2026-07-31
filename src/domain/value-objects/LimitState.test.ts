@@ -9,7 +9,7 @@ describe("LimitState", () => {
   describe("creation", () => {
     it("available() builds a not-limited state", () => {
       const s = LimitState.available("p1");
-      expect(s.getProfileId()).toBe("p1");
+      expect(s.getAccountId()).toBe("p1");
       expect(s.isLimited()).toBe(false);
     });
 
@@ -20,10 +20,10 @@ describe("LimitState", () => {
       expect(s.getLastCheckedAt()?.getTime()).toBe(NOW.getTime());
     });
 
-    it("throws on empty profileId", () => {
+    it("throws on empty accountId", () => {
       expect(() =>
         LimitState.create({
-          profileId: "",
+          accountId: "",
           isLimited: false,
           windows: [],
           source: null,

@@ -18,11 +18,21 @@ not a runnable provider).
 
 | Provider id | CLI command | Config file | Config dir (rel. to `HOME`) | Required env | Isolation env var |
 |-------------|-------------|-------------|-----------------------------|--------------|-------------------|
-| `claude` | `claude` | `CLAUDE.md` | `.claude` | `ANTHROPIC_API_KEY` | `CLAUDE_CONFIG_DIR` |
+| `claude` | `claude` | `CLAUDE.md` | `.claude` | `ANTHROPIC_API_KEY` | **none — shared config, see below** |
 | `codex` | `codex` | `AGENTS.md` | `.codex` | `OPENAI_API_KEY` | `CODEX_HOME` |
 | `gemini` | `gemini` | `GEMINI.md` | `.gemini` | `GOOGLE_API_KEY` | `GEMINI_HOME` |
 | `antigravity` | `agy` | `ANTIGRAVITY.md` | `.gemini` (shares Gemini's dir) | `GOOGLE_API_KEY` | `ANTIGRAVITY_HOME` |
 | `opencode` | `opencode` | `OPENCODE.md` | `.config/opencode` | _none required_ | `OPENCODE_HOME` |
+
+> **Claude is deliberately NOT config-dir isolated** [remote-dev-n4x4.6].
+> `ProfileIsolation` emits no `CLAUDE_CONFIG_DIR`, so every Claude session uses
+> the user's real `~/.claude` and they all share one config: the same skills,
+> `CLAUDE.md`, MCP servers, settings and agents. A session's Claude *identity*
+> comes from an injected `CLAUDE_CODE_OAUTH_TOKEN` instead (see
+> [§2 Claude accounts](#claude-accounts-usage-limits--fallback-pools)). The
+> variable must stay **unset** rather than be pointed at `$HOME/.claude`: Claude
+> Code derives its macOS Keychain service name from the setting, so any explicit
+> value lands in a different credential namespace.
 
 Notes confirmed against source:
 
@@ -97,7 +107,7 @@ interface in [`src/types/agent.ts`](../src/types/agent.ts)):
 | Var | Role |
 |-----|------|
 | `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` | Redirect config/data/cache into the profile dir |
-| `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GEMINI_HOME`, `ANTIGRAVITY_HOME`, `OPENCODE_HOME` | Per-provider config roots |
+| `CODEX_HOME`, `GEMINI_HOME`, `ANTIGRAVITY_HOME`, `OPENCODE_HOME` | Per-provider config roots. **`CLAUDE_CONFIG_DIR` is deliberately absent** — Claude shares the real `~/.claude`; identity comes from an injected `CLAUDE_CODE_OAUTH_TOKEN` [remote-dev-n4x4.6] |
 | `GIT_CONFIG_GLOBAL`, `GIT_SSH_COMMAND` | Point git at the profile's `.gitconfig` / SSH key |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY` | Injected per provider |
 
@@ -121,23 +131,41 @@ interface in [`src/types/agent.ts`](../src/types/agent.ts)):
   `getProjectProfile`), binding that project's agent sessions to the profile via the
   `project_profile_link` table.
 
-### Claude usage limits & fallback pools
+### Claude accounts, usage limits & fallback pools
 
-Claude profiles additionally carry a Claude-specific identity + account kind
-(`subscription` | `api_key`, in `claude_account`) and a per-profile usage-limit
-state (5h/7d window utilization + reset times, in `claude_usage_limit_state`). A
-project's `project_profile_link` can also reference a **fallback pool**
-(`claude_profile_pool` / `claude_profile_pool_member`, ordered by rotation
-priority), and `node_preferences` carries an inherited `claudeProfilePoolId` so a
-pool can be set at the group level and inherited by its projects. When a `claude`
-session is created **without an explicit profile**, the project's profile is now
-resolved server-side (primary → pool rotation to the first available profile) and
-injected as `RDV_PROFILE_ID` — previously the project→profile link existed but was
-never applied at session creation.
+A **Claude account** (`claude_account`) is one Claude subscription (or API key)
+and is **independent of any agent profile** (remote-dev-n4x4.6). Every session
+shares the user's real Claude config dir — identical skills, `CLAUDE.md`, MCP
+servers, settings and agents for all of them — and selects its account by having
+`CLAUDE_CODE_OAUTH_TOKEN` injected into its process env. That env var picks the
+account per-process independently of `CLAUDE_CONFIG_DIR`, so N accounts run in
+parallel with no credential swapping, locking, or restarts. The token is stored
+encrypted (AES-256-GCM) on the account row and never leaves the server.
+
+Because the limit belongs to the subscription, usage-limit state
+(`claude_usage_limit_state`: 5h/7d window utilization + reset times) and
+**fallback pools** (`claude_profile_pool` / `claude_profile_pool_member`, ordered
+by rotation priority) both key on `claude_account.id`. A project's
+`project_profile_link` references a primary account plus an optional pool, and
+`node_preferences` carries an inherited `claudeProfilePoolId` so a pool can be
+set at the group level and inherited by its projects. When a `claude` session is
+created **without an explicit profile**, the project's account is resolved
+server-side (primary → pool rotation to the first available account), its token
+is injected, and the id is recorded on `terminal_session.claude_account_id`; the
+account's origin profile (when it has one) still supplies the config dir / env
+overlay and `RDV_PROFILE_ID`.
+
+**Adding an account** is a single "Add account" action in Settings → Claude
+Accounts. It launches a live terminal session running `claude setup-token`; once
+the user finishes the browser sign-in, remote-dev captures the printed token,
+stores it encrypted, and reads identity from `claude auth status --json`. A
+paste-a-token fallback covers remote/PWA use where no local browser exists. There
+is no "Sync" step — the old file-reading sync parsed a `.credentials.json` that
+never exists on macOS (the CLI writes to the Keychain) and was silently dead.
 
 **Detecting a limit is reactive by default.** When a Claude session goes idle or
 ends, its recent scrollback is scanned for the usage-limit phrase
-(`ReactiveOutputDetector`); a hit marks the profile limited. A proactive
+(`ReactiveOutputDetector`); a hit marks the session's ACCOUNT limited. A proactive
 Anthropic usage poller also exists but is **experimental and OFF by default**
 behind `RDV_CLAUDE_USAGE_POLL_ENABLED` — it is not the shipped default, and the
 once-planned `rdv` Stop-hook limit detector was never built. **On a limit**, the
@@ -145,8 +173,8 @@ default `notify` mode records the limit and posts a notification; the
 notification payload carries a relaunch CTA, **but no client renders an inline
 "relaunch" button yet** — so today `notify` mode surfaces a notification only. An
 optional per-project **`auto`** mode does work: it spawns a *parallel* session
-under an available profile (it never force-kills the running one). See
-[`API.md`](./API.md) → "Claude usage limits & pools" and the
+under an available account (it never force-kills the running one). See
+[`API.md`](./API.md) → "Claude accounts, usage limits & pools" and the
 `RDV_CLAUDE_USAGE_POLL_ENABLED` flag in [`SETUP.md`](./SETUP.md).
 
 ---
@@ -286,7 +314,7 @@ cold-attach recreate).
 
 | Provider | Resumes? | Mechanism | Session-id source | Id capture |
 |----------|----------|-----------|-------------------|------------|
-| `claude` | ✅ | `claude --resume <id>` (flag) | `.jsonl` filename / header `sessionId` under `$CLAUDE_CONFIG_DIR/.claude/projects/<encodePath(cwd)>/` | Push (Stop hook → `/internal/agent-session-id`) **+** disk fallback |
+| `claude` | ✅ | `claude --resume <id>` (flag) | `.jsonl` filename / header `sessionId` under `~/.claude/projects/<encodePath(cwd)>/` (the shared config dir — `CLAUDE_CONFIG_DIR` is unset, and is only honoured if a pre-n4x4.6 session's resume binding still carries it) | Push (Stop hook → `/internal/agent-session-id`) **+** disk fallback |
 | `codex` | ✅ | `codex resume <id>` (**subcommand**, argv override) | newest rollout file under `$CODEX_HOME` (default `~/.codex/sessions`) | Disk discovery at relaunch |
 | `gemini` | ✅ | `gemini --resume <id>` (flag) | newest checkpoint under `$GEMINI_HOME` (default `~/.gemini/tmp`) | Disk discovery at relaunch |
 | `opencode` | ✅ | `opencode --session <id>` (flag) | newest session under `$OPENCODE_HOME` (default `~/.local/share/opencode`) | Disk discovery at relaunch |

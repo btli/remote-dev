@@ -6,7 +6,10 @@ import type {
   NotificationPort,
   UsageLimitNotification,
 } from "@/application/ports/NotificationPort";
-import type { ProfileSelectionPolicy } from "@/application/ports/ProfileSelectionPolicy";
+import type {
+  ProfileSelectionPolicy,
+  SelectedAccount,
+} from "@/application/ports/ProfileSelectionPolicy";
 import type {
   SessionLauncherPort,
   LaunchReplacementInput,
@@ -22,14 +25,17 @@ class FakeMode implements AutoRelaunchModePort {
 
 /** Policy whose `selectNextAvailable` returns a scripted value. */
 class FakePolicy implements ProfileSelectionPolicy {
-  constructor(private readonly nextAvailable: string | null) {}
-  async selectForProject(): Promise<string | null> {
+  constructor(private readonly nextAvailable: SelectedAccount | null) {}
+  async selectForProject(): Promise<SelectedAccount | null> {
     return null;
   }
-  async selectNextAvailable(): Promise<string | null> {
+  async selectNextAvailable(): Promise<SelectedAccount | null> {
     return this.nextAvailable;
   }
 }
+
+/** The alternate account the policy hands back in the "available" cases. */
+const ALT: SelectedAccount = { accountId: "acct-alt", profileId: "prof-alt" };
 
 class FakeNotifier implements NotificationPort {
   readonly sent: UsageLimitNotification[] = [];
@@ -52,7 +58,7 @@ const baseInput = {
   sessionId: "sess-1",
   userId: "u1",
   projectId: "proj-1",
-  currentProfileId: "prof-current",
+  currentAccountId: "acct-current",
   agentProvider: "claude",
   sessionName: "Work",
 };
@@ -63,7 +69,7 @@ describe("RelaunchOnLimitUseCase", () => {
     const launcher = new FakeLauncher();
     const useCase = new RelaunchOnLimitUseCase(
       new FakeMode("disabled"),
-      new FakePolicy("prof-alt"),
+      new FakePolicy(ALT),
       notifier,
       launcher
     );
@@ -80,18 +86,19 @@ describe("RelaunchOnLimitUseCase", () => {
     const launcher = new FakeLauncher();
     const useCase = new RelaunchOnLimitUseCase(
       new FakeMode("notify"),
-      new FakePolicy("prof-alt"),
+      new FakePolicy(ALT),
       notifier,
       launcher
     );
 
     const action = await useCase.execute(baseInput);
 
-    expect(action).toEqual({ kind: "notified", relaunchProfileId: "prof-alt" });
+    expect(action).toEqual({ kind: "notified", relaunchAccountId: "acct-alt" });
     expect(launcher.launched).toHaveLength(0);
     expect(notifier.sent).toHaveLength(1);
     expect(notifier.sent[0].relaunch).toEqual({
       projectId: "proj-1",
+      accountId: "acct-alt",
       profileId: "prof-alt",
       agentProvider: "claude",
     });
@@ -114,12 +121,12 @@ describe("RelaunchOnLimitUseCase", () => {
     expect(notifier.sent[0].relaunch).toBeUndefined();
   });
 
-  it("auto mode: launches a NEW session under the alternate profile (old left running)", async () => {
+  it("auto mode: launches a NEW session under the alternate account (old left running)", async () => {
     const notifier = new FakeNotifier();
     const launcher = new FakeLauncher("ok");
     const useCase = new RelaunchOnLimitUseCase(
       new FakeMode("auto"),
-      new FakePolicy("prof-alt"),
+      new FakePolicy(ALT),
       notifier,
       launcher
     );
@@ -129,12 +136,13 @@ describe("RelaunchOnLimitUseCase", () => {
     expect(action).toEqual({
       kind: "relaunched",
       newSessionId: "new-session-1",
-      profileId: "prof-alt",
+      accountId: "acct-alt",
     });
     expect(launcher.launched).toHaveLength(1);
     expect(launcher.launched[0]).toEqual({
       userId: "u1",
       projectId: "proj-1",
+      accountId: "acct-alt",
       profileId: "prof-alt",
       agentProvider: "claude",
       originatingSessionId: "sess-1",
@@ -165,16 +173,31 @@ describe("RelaunchOnLimitUseCase", () => {
     const launcher = new FakeLauncher("throw");
     const useCase = new RelaunchOnLimitUseCase(
       new FakeMode("auto"),
-      new FakePolicy("prof-alt"),
+      new FakePolicy(ALT),
       notifier,
       launcher
     );
 
     const action = await useCase.execute(baseInput);
 
-    expect(action).toEqual({ kind: "notified", relaunchProfileId: "prof-alt" });
+    expect(action).toEqual({ kind: "notified", relaunchAccountId: "acct-alt" });
     expect(launcher.launched).toHaveLength(1);
     expect(notifier.sent).toHaveLength(1);
-    expect(notifier.sent[0].relaunch?.profileId).toBe("prof-alt");
+    expect(notifier.sent[0].relaunch?.accountId).toBe("acct-alt");
+  });
+
+  it("relays a standalone account (no origin profile) to the launcher as null", async () => {
+    const launcher = new FakeLauncher("ok");
+    const useCase = new RelaunchOnLimitUseCase(
+      new FakeMode("auto"),
+      new FakePolicy({ accountId: "acct-solo", profileId: null }),
+      new FakeNotifier(),
+      launcher
+    );
+
+    await useCase.execute(baseInput);
+
+    expect(launcher.launched[0].accountId).toBe("acct-solo");
+    expect(launcher.launched[0].profileId).toBeNull();
   });
 });

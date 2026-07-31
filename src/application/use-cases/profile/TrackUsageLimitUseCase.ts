@@ -1,11 +1,11 @@
 /**
- * TrackUsageLimitUseCase - Record a usage-limit observation for a profile.
+ * TrackUsageLimitUseCase - Record a usage-limit observation for an ACCOUNT.
  *
  * Builds a domain `LimitState` from a raw detection input and upserts it via
  * the repository with a staleness guard: a slower/older source must not
  * clobber a strictly-newer observation (the repo compares `lastCheckedAt`).
  * Returns the built state plus `wasNewlyLimited` — true only when this
- * observation flips the profile from not-limited (or never-observed) into
+ * observation flips the account from not-limited (or never-observed) into
  * limited. Callers use that flag to fire relaunch handling exactly once per
  * limit episode (a repeat "still limited" observation must not re-relaunch).
  *
@@ -21,7 +21,7 @@ import { createLogger } from "@/lib/logger";
 const log = createLogger("TrackUsageLimit");
 
 export interface TrackUsageLimitInput {
-  profileId: string;
+  accountId: string;
   userId: string;
   source: UsageDetectionSource;
   /** Whether the account is currently limited. Defaults to false. */
@@ -39,7 +39,7 @@ export interface TrackUsageLimitResult {
   /** The state built from this observation (the caller broadcasts it). */
   state: LimitState;
   /**
-   * True when this observation transitions the profile INTO limited — i.e. the
+   * True when this observation transitions the account INTO limited — i.e. the
    * prior stored state was absent, not-limited, OR limited-but-already-expired
    * (a brand-new limit episode after a previous one's reset passed). Used to
    * gate one-shot relaunch.
@@ -69,7 +69,7 @@ export class TrackUsageLimitUseCase {
     // flips an expired `limited` row back to available, so compare against
     // `isAvailableNow(observedAt)` instead: a prior limit whose reset has
     // already passed counts as available, making a fresh limit a NEW episode.
-    const prior = await this.stateRepository.findByProfileId(input.profileId);
+    const prior = await this.stateRepository.findByAccountId(input.accountId);
     const wasNewlyLimited =
       isLimited && (!prior || prior.isAvailableNow(observedAt));
 
@@ -83,12 +83,12 @@ export class TrackUsageLimitUseCase {
     if (w7d) windows.push(w7d);
 
     const state = isLimited
-      ? LimitState.limited(input.profileId, {
+      ? LimitState.limited(input.accountId, {
           windows,
           source: input.source,
           lastCheckedAt: observedAt,
         })
-      : LimitState.available(input.profileId, {
+      : LimitState.available(input.accountId, {
           windows,
           source: input.source,
           lastCheckedAt: observedAt,
@@ -102,7 +102,7 @@ export class TrackUsageLimitUseCase {
     const wrote = await this.stateRepository.upsert(state, opts);
 
     log.debug("Tracked usage-limit observation", {
-      profileId: input.profileId,
+      accountId: input.accountId,
       source: input.source,
       isLimited,
       wasNewlyLimited,

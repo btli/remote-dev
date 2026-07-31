@@ -164,13 +164,34 @@ describe("ProfileIsolation", () => {
       });
 
       const env = isolation.toEnvironment();
-      expect(env.has("CLAUDE_CONFIG_DIR")).toBe(true);
       expect(env.has("CODEX_HOME")).toBe(true);
       expect(env.has("GEMINI_HOME")).toBe(true);
       expect(env.has("OPENCODE_CONFIG_DIR")).toBe(true);
     });
 
-    it("should only include claude config when provider is 'claude'", () => {
+    // [remote-dev-n4x4.6] Claude is deliberately NOT isolated. Its identity is
+    // a per-process credential (CLAUDE_CODE_OAUTH_TOKEN) layered over the
+    // user's real ~/.claude, so every account shares one config: the same
+    // skills, CLAUDE.md, MCP servers, settings and agents.
+    it("NEVER emits CLAUDE_CONFIG_DIR, for any provider", () => {
+      for (const provider of [
+        "all",
+        "claude",
+        "codex",
+        "gemini",
+        "antigravity",
+        "opencode",
+      ] as const) {
+        const env = ProfileIsolation.create({
+          profileDir,
+          realHome,
+          provider,
+        }).toEnvironment();
+        expect(env.has("CLAUDE_CONFIG_DIR")).toBe(false);
+      }
+    });
+
+    it("emits NOTHING for provider 'claude' beyond the shared XDG/git vars", () => {
       const isolation = ProfileIsolation.create({
         profileDir,
         realHome,
@@ -178,21 +199,16 @@ describe("ProfileIsolation", () => {
       });
 
       const env = isolation.toEnvironment();
-      expect(env.has("CLAUDE_CONFIG_DIR")).toBe(true);
+      expect(env.has("CLAUDE_CONFIG_DIR")).toBe(false);
       expect(env.has("CODEX_HOME")).toBe(false);
       expect(env.has("GEMINI_HOME")).toBe(false);
       expect(env.has("OPENCODE_CONFIG_DIR")).toBe(false);
-    });
-
-    it("should generate correct Claude config path", () => {
-      const isolation = ProfileIsolation.create({
-        profileDir,
-        realHome,
-        provider: "claude",
-      });
-
-      expect(isolation.getClaudeConfigDir()).toBe(
-        "/home/user/.remote-dev/profiles/test-profile/.claude"
+      // The rest of the isolation is unaffected.
+      expect(env.get("XDG_CONFIG_HOME")).toBe(
+        "/home/user/.remote-dev/profiles/test-profile/.config"
+      );
+      expect(env.get("GIT_CONFIG_GLOBAL")).toBe(
+        "/home/user/.remote-dev/profiles/test-profile/.gitconfig"
       );
     });
 
@@ -254,7 +270,10 @@ describe("ProfileIsolation", () => {
       });
 
       const env = isolation.toEnvironmentForProvider("claude");
-      expect(env.has("CLAUDE_CONFIG_DIR")).toBe(true);
+      // Claude carries no config-dir isolation (see above); the shared XDG/git
+      // vars still come through.
+      expect(env.has("CLAUDE_CONFIG_DIR")).toBe(false);
+      expect(env.has("XDG_CONFIG_HOME")).toBe(true);
     });
 
     it("should return environment with specific provider from 'all'", () => {

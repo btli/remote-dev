@@ -67,6 +67,12 @@ export class CompositeUsageLimitGateway implements UsageLimitGateway {
    * behavior, where `supports()` rejected the unknown brand).
    */
   private async resolveKind(profileId: string): Promise<AccountKind | null> {
+    // [remote-dev-n4x4.6] `claude_account.profile_id` is now a nullable,
+    // NON-unique origin breadcrumb, so this resolves the *first* account that
+    // originated from the profile. That is exactly the pre-n4x4.6 semantics for
+    // migrated data, and unresolved profiles still default to "subscription".
+    // TODO(remote-dev-n4x4.4): key the gateway on accountId directly once the
+    // poller reads its token from `claude_account.oauth_token_encrypted`.
     const account = await db.query.claudeAccounts.findFirst({
       where: eq(claudeAccounts.profileId, profileId),
       columns: { accountKind: true },

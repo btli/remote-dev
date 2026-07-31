@@ -33,6 +33,51 @@ import { createLogger } from "@/lib/logger";
 
 const log = createLogger("SessionService");
 
+/**
+ * The ordered env layers a tmux session is spawned with, lowest precedence
+ * first. Extracted as a pure function so the precedence contract is unit-
+ * testable without standing up a session. [remote-dev-n4x4.6]
+ *
+ * Precedence (low → high):
+ *   claudeAgentDefaults < plugin < profile < proxy < modelProxy < folder
+ *   < folderGitIdentity < gitCredential < ghAccount < claudeAccount < rdv
+ *
+ * `claudeAccount` (the injected `CLAUDE_CODE_OAUTH_TOKEN`) sits in the
+ * server-resolved credential tier next to `ghAccount`: the account the user or
+ * the rotation policy selected must beat a stale token left in folder env, but
+ * must not beat the RDV_* callback vars.
+ */
+export interface SessionEnvLayers {
+  claudeAgentDefaults?: Record<string, string>;
+  plugin?: Record<string, string>;
+  profile?: Record<string, string>;
+  proxy?: Record<string, string>;
+  modelProxy?: Record<string, string>;
+  folder?: Record<string, string>;
+  folderGitIdentity?: Record<string, string>;
+  gitCredential?: Record<string, string>;
+  ghAccount?: Record<string, string>;
+  claudeAccount?: Record<string, string>;
+  rdv?: Record<string, string>;
+}
+
+export function buildInitialEnv(layers: SessionEnvLayers): Record<string, string> {
+  return {
+    ...(layers.claudeAgentDefaults ?? {}),
+    ...(layers.plugin ?? {}),
+    ...(layers.profile ?? {}),
+    ...(layers.proxy ?? {}),
+    ...(layers.modelProxy ?? {}),
+    ...(layers.folder ?? {}),
+    ...(layers.folderGitIdentity ?? {}),
+    ...(layers.gitCredential ?? {}),
+    ...(layers.ghAccount ?? {}),
+    ...(layers.claudeAccount ?? {}),
+    ...(layers.rdv ?? {}),
+  };
+}
+
+
 // Initialize server-side plugins on module load. Uses the server-only
 // registry so this module graph never transitively imports React / Lucide.
 initializeServerPlugins();
@@ -314,6 +359,17 @@ export async function createSessionWithDedupFlag(
   // RDV_PROFILE_ID, DB insert).
   let effectiveProfileId: string | undefined;
   let effectiveProfile: AgentProfile | null = null;
+  // [remote-dev-n4x4.6] The Claude ACCOUNT the session runs as. Independent of
+  // the profile: the profile supplies the config dir / env overlay, the account
+  // supplies `CLAUDE_CODE_OAUTH_TOKEN`. Resolved from (in order) an explicit
+  // `input.claudeAccountId` pin, the pinned profile's origin account, or the
+  // primary→pool selection policy.
+  let effectiveAccountId: string | undefined =
+    input.claudeAccountId ?? undefined;
+  // An EXPLICIT pin is a user/CTA instruction: if it can't produce a credential
+  // we must fail loudly rather than silently launch on ambient credentials. An
+  // AUTO-selected account degrades instead (see the resolution block below).
+  const accountWasPinned = !!input.claudeAccountId;
 
   if (input.profileId) {
     effectiveProfile = await AgentProfileService.getProfile(
@@ -346,9 +402,15 @@ export async function createSessionWithDedupFlag(
       });
       if (result.profileId) {
         effectiveProfileId = result.profileId;
-        log.info("Auto-selected Claude profile for session", {
+      }
+      if (result.accountId && !effectiveAccountId) {
+        effectiveAccountId = result.accountId;
+      }
+      if (result.profileId || result.accountId) {
+        log.info("Auto-selected Claude account for session", {
           projectId: input.projectId,
           profileId: result.profileId,
+          accountId: result.accountId,
           wasAutoSelected: result.wasAutoSelected,
         });
       }
@@ -358,6 +420,59 @@ export async function createSessionWithDedupFlag(
         projectId: input.projectId,
         error: String(error),
       });
+    }
+  }
+
+  // An explicitly-pinned profile bypasses the selection policy, so bridge it to
+  // its origin account here — otherwise a pinned profile would silently launch
+  // with no injected token.
+  if (!effectiveAccountId && effectiveProfileId) {
+    try {
+      const { findAccountIdForProfile } = await import(
+        "@/services/claude-account-service"
+      );
+      effectiveAccountId =
+        (await findAccountIdForProfile(effectiveProfileId, userId)) ?? undefined;
+    } catch (error) {
+      log.warn("Failed to resolve Claude account for pinned profile", {
+        profileId: effectiveProfileId,
+        error: String(error),
+      });
+    }
+  }
+
+  // [remote-dev-n4x4.6] Resolve the account into its session credential ONCE,
+  // through the single ownership-scoped operation, BEFORE anything records or
+  // launches with it. `claudeAccountEnv` carries the secret
+  // `CLAUDE_CODE_OAUTH_TOKEN`; it is merged into the PTY env far below and is
+  // never logged (`initialEnv` is only ever logged by KEY).
+  //
+  // The invariant this enforces: `effectiveAccountId` is recorded on the
+  // session row ONLY when a token was actually produced. Otherwise the session
+  // would launch on whatever ambient credential the shared config dir resolves
+  // to while usage limits were attributed to an account it never used.
+  let claudeAccountEnv: Record<string, string> = {};
+  if (effectiveAccountId) {
+    const { resolveAccountEnv, describeAccountEnvFailure } = await import(
+      "@/services/claude-account-service"
+    );
+    const resolved = await resolveAccountEnv(effectiveAccountId, userId);
+    if (resolved.ok) {
+      claudeAccountEnv = resolved.env;
+    } else if (accountWasPinned) {
+      // Explicit pin (wizard / relaunch CTA / API caller): refuse to launch.
+      throw new SessionServiceError(
+        describeAccountEnvFailure(resolved.reason),
+        "CLAUDE_ACCOUNT_UNAVAILABLE",
+        sessionId
+      );
+    } else {
+      // Auto-selected: never block a launch. Drop the attribution instead.
+      log.warn(
+        "Auto-selected Claude account produced no credential; launching without one",
+        { accountId: effectiveAccountId, reason: resolved.reason }
+      );
+      effectiveAccountId = undefined;
     }
   }
 
@@ -600,7 +715,9 @@ export async function createSessionWithDedupFlag(
 
   // Fetch the profile's environment overlay if a profile is resolved. Uses
   // `effectiveProfileId` so an auto-selected Claude profile contributes its
-  // CLAUDE_CONFIG_DIR / env overlay just like an explicitly chosen one. The
+  // env overlay just like an explicitly chosen one. That overlay carries XDG
+  // paths, git identity and SSH — but NOT `CLAUDE_CONFIG_DIR`, which
+  // ProfileIsolation deliberately no longer emits [remote-dev-n4x4.6]. The
   // explicit-pin path already resolved `effectiveProfile` above (reused here,
   // no double-fetch); the auto-select path only set the id, so fetch it once.
   let profileEnv: Record<string, string> | undefined;
@@ -745,7 +862,14 @@ export async function createSessionWithDedupFlag(
   // SSH/loop-without-provider sessions would otherwise pollute settings.json
   // with hooks that never fire.
   if (isAgentRuntime) {
-    const configDir = profile?.configDir ?? process.env.HOME;
+    // [remote-dev-n4x4.6] Hooks must land where the agent will actually READ
+    // them. Claude sessions no longer set `CLAUDE_CONFIG_DIR`, so Claude reads
+    // the real `~/.claude` — installing into the profile dir would write hooks
+    // that never fire. Other providers keep their per-profile config dir.
+    const configDir =
+      effectiveAgentProvider === "claude"
+        ? process.env.HOME
+        : (profile?.configDir ?? process.env.HOME);
     if (configDir) {
       // Previously this also sniffed `startupCommand` for an inline `HOME=`
       // override (e.g. `HOME=/foo claude`) so hooks could be installed in
@@ -805,21 +929,26 @@ export async function createSessionWithDedupFlag(
       ? { CLAUDE_CODE_NO_FLICKER: "1" }
       : {};
 
-    // Initial environment — all must be present at PTY spawn so agent processes inherit them immediately.
-    // Precedence (low → high): claudeAgentDefaults < pluginEnv < profileEnv < proxyEnv < modelProxyEnv
-    //   < folderEnv < folderGitIdentityEnv < gitCredentialEnv < ghAccountEnv < rdvEnv.
-    const initialEnv: Record<string, string> = {
-      ...claudeAgentDefaults,
-      ...(sessionConfig.environment ?? {}),
-      ...(profileEnv ?? {}),
-      ...proxyEnv,
-      ...modelProxyEnv, // [aehq] proxy token + base URL win over LiteLLM (proxyEnv) + profile
-      ...(folderEnv ?? {}),
-      ...folderGitIdentityEnv,
-      ...gitCredentialEnv,
-      ...(ghAccountEnv ?? {}),
-      ...rdvEnv,
-    };
+    // Initial environment — all must be present at PTY spawn so agent processes
+    // inherit them immediately. Layer precedence lives in `buildInitialEnv`
+    // (see its doc comment); [aehq] modelProxyEnv still wins over LiteLLM
+    // (proxyEnv) + profile by sitting above them there.
+    const initialEnv: Record<string, string> = buildInitialEnv({
+      claudeAgentDefaults,
+      plugin: sessionConfig.environment ?? {},
+      profile: profileEnv,
+      proxy: proxyEnv,
+      modelProxy: modelProxyEnv,
+      folder: folderEnv ?? {},
+      folderGitIdentity: folderGitIdentityEnv,
+      gitCredential: gitCredentialEnv,
+      ghAccount: ghAccountEnv ?? {},
+      // Only an actual agent runtime reads the Claude credential; a plain shell
+      // session (e.g. the `claude setup-token` onboarding session) must not
+      // inherit it.
+      claudeAccount: isAgentRuntime ? claudeAccountEnv : {},
+      rdv: rdvEnv,
+    });
     log.debug("Session initial env keys", { sessionId, keys: Object.keys(initialEnv) });
 
     // Prefer the plugin-provided shell command when set — e.g. the agent
@@ -942,6 +1071,9 @@ export async function createSessionWithDedupFlag(
         worktreeType: input.worktreeType ?? null,
         projectId: input.projectId,
         profileId: effectiveProfileId ?? null,
+        // [remote-dev-n4x4.6] Which Claude account's token was injected. Drives
+        // account-keyed reactive limit attribution in the terminal server.
+        claudeAccountId: effectiveAccountId ?? null,
         parentSessionId: input.parentSessionId ?? null,
         terminalType,
         typeMetadata,
@@ -1537,9 +1669,19 @@ export async function resumeSession(
   // were installed.
   if (supportsAgentLifecycle(session)) {
     const agentProvider = (session.agentProvider ?? "claude") as AgentProviderType;
-    const configDir = session.profileId
-      ? (await AgentProfileService.getProfile(session.profileId, userId))?.configDir
-      : process.env.HOME;
+    // [remote-dev-n4x4.6] Claude reads the real `~/.claude` (its
+    // `CLAUDE_CONFIG_DIR` is deliberately unset), so refresh hooks THERE.
+    // Other providers keep their per-profile config dir.
+    // Note: when a non-Claude session has a profileId but the profile row is
+    // gone, configDir stays undefined so ensureAgentConfig is skipped — do not
+    // coalesce to HOME (that would install hooks in the wrong place).
+    const configDir =
+      agentProvider === "claude"
+        ? process.env.HOME
+        : session.profileId
+          ? (await AgentProfileService.getProfile(session.profileId, userId))
+              ?.configDir
+          : process.env.HOME;
 
     // Refresh RDV + GitHub account env vars on resume (may be missing on older
     // sessions, or stale if the folder's account binding or OAuth token changed)
@@ -1821,6 +1963,7 @@ export function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferS
     worktreeType: dbSession.worktreeType as WorktreeType | null,
     projectId: dbSession.projectId ?? null,
     profileId: dbSession.profileId,
+    claudeAccountId: dbSession.claudeAccountId ?? null,
     terminalType: dbSession.terminalType ?? "shell",
     agentProvider: dbSession.agentProvider as AgentProviderType | null,
     agentExitState: dbSession.agentExitState as TerminalSession["agentExitState"],

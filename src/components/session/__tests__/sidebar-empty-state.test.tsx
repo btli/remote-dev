@@ -87,6 +87,7 @@ function makeSession(overrides: Partial<TerminalSession> = {}): TerminalSession 
     worktreeType: null,
     projectId: "project-1",
     profileId: null,
+    claudeAccountId: null,
     terminalType: "shell" as TerminalSession["terminalType"],
     agentProvider: null,
     agentExitState: null,

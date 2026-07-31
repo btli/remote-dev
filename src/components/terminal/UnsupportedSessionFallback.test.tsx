@@ -22,6 +22,7 @@ function makeSession(
     worktreeType: null,
     projectId: "project-1",
     profileId: null,
+    claudeAccountId: null,
     terminalType: "futuristic-type" as TerminalSession["terminalType"],
     agentProvider: null,
     agentExitState: null,

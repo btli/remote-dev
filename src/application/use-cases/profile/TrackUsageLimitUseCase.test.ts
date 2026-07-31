@@ -11,11 +11,11 @@ import { LimitState } from "@/domain/value-objects/LimitState";
 class FakeStateRepo implements UsageLimitStateRepository {
   readonly store = new Map<string, LimitState>();
 
-  async findByProfileId(profileId: string): Promise<LimitState | null> {
-    return this.store.get(profileId) ?? null;
+  async findByAccountId(accountId: string): Promise<LimitState | null> {
+    return this.store.get(accountId) ?? null;
   }
 
-  async findManyByProfileIds(ids: string[]): Promise<Map<string, LimitState>> {
+  async findManyByAccountIds(ids: string[]): Promise<Map<string, LimitState>> {
     const out = new Map<string, LimitState>();
     for (const id of ids) {
       const s = this.store.get(id);
@@ -26,14 +26,14 @@ class FakeStateRepo implements UsageLimitStateRepository {
 
   async upsert(state: LimitState, opts?: { onlyIfNewer?: Date }): Promise<boolean> {
     if (opts?.onlyIfNewer) {
-      const existing = this.store.get(state.getProfileId());
+      const existing = this.store.get(state.getAccountId());
       const existingChecked = existing?.getLastCheckedAt();
       // Skip when a strictly-newer observation already won.
       if (existingChecked && existingChecked.getTime() > opts.onlyIfNewer.getTime()) {
         return false;
       }
     }
-    this.store.set(state.getProfileId(), state);
+    this.store.set(state.getAccountId(), state);
     return true;
   }
 
@@ -53,7 +53,7 @@ describe("TrackUsageLimitUseCase", () => {
 
   it("records an available state with no windows", async () => {
     const { state } = await useCase.execute({
-      profileId: "p1",
+      accountId: "p1",
       userId: "u1",
       source: "reactive",
       isLimited: false,
@@ -68,7 +68,7 @@ describe("TrackUsageLimitUseCase", () => {
   it("builds a limited state with a 5h reset window", async () => {
     const reset = new Date("2026-06-13T15:00:00Z");
     const { state } = await useCase.execute({
-      profileId: "p1",
+      accountId: "p1",
       userId: "u1",
       source: "reactive",
       isLimited: true,
@@ -86,7 +86,7 @@ describe("TrackUsageLimitUseCase", () => {
 
   it("builds both 5h and 7d windows from percentages", async () => {
     const { state } = await useCase.execute({
-      profileId: "p1",
+      accountId: "p1",
       userId: "u1",
       source: "poller",
       isLimited: false,
@@ -102,7 +102,7 @@ describe("TrackUsageLimitUseCase", () => {
 
   it("clamps out-of-range percentages into 0-100", async () => {
     const { state } = await useCase.execute({
-      profileId: "p1",
+      accountId: "p1",
       userId: "u1",
       source: "poller",
       window5hPct: 150,
@@ -116,7 +116,7 @@ describe("TrackUsageLimitUseCase", () => {
   describe("wasNewlyLimited", () => {
     it("is true on the first limited observation (no prior state)", async () => {
       const { wasNewlyLimited } = await useCase.execute({
-        profileId: "p1",
+        accountId: "p1",
         userId: "u1",
         source: "reactive",
         isLimited: true,
@@ -127,14 +127,14 @@ describe("TrackUsageLimitUseCase", () => {
 
     it("is true when transitioning available → limited", async () => {
       await useCase.execute({
-        profileId: "p1",
+        accountId: "p1",
         userId: "u1",
         source: "poller",
         isLimited: false,
         observedAt: new Date("2026-06-13T10:00:00Z"),
       });
       const { wasNewlyLimited } = await useCase.execute({
-        profileId: "p1",
+        accountId: "p1",
         userId: "u1",
         source: "reactive",
         isLimited: true,
@@ -145,14 +145,14 @@ describe("TrackUsageLimitUseCase", () => {
 
     it("is FALSE on a repeat 'still limited' observation (no double-relaunch)", async () => {
       await useCase.execute({
-        profileId: "p1",
+        accountId: "p1",
         userId: "u1",
         source: "reactive",
         isLimited: true,
         observedAt: new Date("2026-06-13T10:00:00Z"),
       });
       const { wasNewlyLimited } = await useCase.execute({
-        profileId: "p1",
+        accountId: "p1",
         userId: "u1",
         source: "reactive",
         isLimited: true,
@@ -163,7 +163,7 @@ describe("TrackUsageLimitUseCase", () => {
 
     it("is FALSE for an available observation", async () => {
       const { wasNewlyLimited } = await useCase.execute({
-        profileId: "p1",
+        accountId: "p1",
         userId: "u1",
         source: "manual",
         isLimited: false,
@@ -179,7 +179,7 @@ describe("TrackUsageLimitUseCase", () => {
       const priorObservedAt = new Date("2026-06-13T05:00:00Z");
       const priorReset = new Date("2026-06-13T06:00:00Z"); // already past below
       await useCase.execute({
-        profileId: "p1",
+        accountId: "p1",
         userId: "u1",
         source: "reactive",
         isLimited: true,
@@ -188,13 +188,13 @@ describe("TrackUsageLimitUseCase", () => {
       });
 
       const observedAt = new Date("2026-06-13T10:00:00Z"); // after priorReset
-      const prior = await repo.findByProfileId("p1");
+      const prior = await repo.findByAccountId("p1");
       // Sanity: the prior row reads as available at the new observation time.
       expect(prior?.isLimited()).toBe(true);
       expect(prior?.isAvailableNow(observedAt)).toBe(true);
 
       const { wasNewlyLimited } = await useCase.execute({
-        profileId: "p1",
+        accountId: "p1",
         userId: "u1",
         source: "reactive",
         isLimited: true,
@@ -208,7 +208,7 @@ describe("TrackUsageLimitUseCase", () => {
   describe("wrote", () => {
     it("is true on a normal write", async () => {
       const { wrote } = await useCase.execute({
-        profileId: "p1",
+        accountId: "p1",
         userId: "u1",
         source: "reactive",
         isLimited: true,
@@ -222,7 +222,7 @@ describe("TrackUsageLimitUseCase", () => {
       const older = new Date("2026-06-13T11:00:00Z");
 
       await useCase.execute({
-        profileId: "p1",
+        accountId: "p1",
         userId: "u1",
         source: "poller",
         isLimited: true,
@@ -231,7 +231,7 @@ describe("TrackUsageLimitUseCase", () => {
 
       // A stale automated reading arrives late — the guard drops it.
       const { wrote } = await useCase.execute({
-        profileId: "p1",
+        accountId: "p1",
         userId: "u1",
         source: "reactive",
         isLimited: false,
@@ -245,7 +245,7 @@ describe("TrackUsageLimitUseCase", () => {
       const older = new Date("2026-06-13T11:00:00Z");
 
       await useCase.execute({
-        profileId: "p1",
+        accountId: "p1",
         userId: "u1",
         source: "poller",
         isLimited: true,
@@ -253,7 +253,7 @@ describe("TrackUsageLimitUseCase", () => {
       });
 
       const { wrote } = await useCase.execute({
-        profileId: "p1",
+        accountId: "p1",
         userId: "u1",
         source: "manual",
         isLimited: false,
@@ -269,7 +269,7 @@ describe("TrackUsageLimitUseCase", () => {
 
     // A fresh reading lands first.
     await useCase.execute({
-      profileId: "p1",
+      accountId: "p1",
       userId: "u1",
       source: "poller",
       isLimited: true,
@@ -279,7 +279,7 @@ describe("TrackUsageLimitUseCase", () => {
 
     // A stale reactive reading arrives late — must be ignored.
     await useCase.execute({
-      profileId: "p1",
+      accountId: "p1",
       userId: "u1",
       source: "reactive",
       isLimited: false,
@@ -297,7 +297,7 @@ describe("TrackUsageLimitUseCase", () => {
     const older = new Date("2026-06-13T11:00:00Z");
 
     await useCase.execute({
-      profileId: "p1",
+      accountId: "p1",
       userId: "u1",
       source: "poller",
       isLimited: true,
@@ -306,7 +306,7 @@ describe("TrackUsageLimitUseCase", () => {
 
     // Manual "mark available" with an older timestamp must still take effect.
     const { state: result } = await useCase.execute({
-      profileId: "p1",
+      accountId: "p1",
       userId: "u1",
       source: "manual",
       isLimited: false,

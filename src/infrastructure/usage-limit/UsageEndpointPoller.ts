@@ -106,6 +106,15 @@ export class UsageEndpointPoller implements UsageLimitGateway {
    * `.claude/.credentials.json`. Returns null when the file is absent or
    * malformed (best-effort). The token is handed straight to the adapter and is
    * never logged or persisted.
+   *
+   * TODO(remote-dev-n4x4.4): this path is a NO-OP on macOS — Claude Code writes
+   * credentials to the Keychain (service name derived from `CLAUDE_CONFIG_DIR`),
+   * so `<configDir>/.claude/.credentials.json` never exists. remote-dev-n4x4.6
+   * now stores an encrypted `CLAUDE_CODE_OAUTH_TOKEN` per Claude ACCOUNT
+   * (`claude_account.oauth_token_encrypted`); switch this poller to take an
+   * `accountId` and read that token via `claude-account-service.buildAccountEnv`
+   * / a sibling accessor, and drop the file read entirely. Left untouched here
+   * to keep this file's diff off the remote-dev-n4x4.1 rewrite in flight.
    */
   private async loadOAuthToken(profileId: string): Promise<string | null> {
     const profile = await db.query.agentProfiles.findFirst({

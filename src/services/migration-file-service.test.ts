@@ -244,6 +244,36 @@ describe("MigrationFileService", () => {
     expect(noCredsListing).toContain("agent-settings/codex/config.toml");
   });
 
+  // [remote-dev-n4x4.6] Claude sessions no longer set CLAUDE_CONFIG_DIR, so the
+  // SERVER process's own value is normally unset too and this default path is
+  // now the norm rather than an edge case. `agentSettingsDirs()` reads
+  // `process.env`, NOT the per-profile ProfileIsolation overlay, so removing
+  // Claude from that value object cannot affect it — this test pins that.
+  it("agent-settings exports the SHARED ~/.claude when CLAUDE_CONFIG_DIR is unset", async () => {
+    const home = join(fixtureRoot, "home-shared-claude");
+    process.env.HOME = home;
+    mkdirSync(home, { recursive: true });
+    delete process.env.CLAUDE_CONFIG_DIR;
+
+    write("home-shared-claude/.claude/settings.json", '{"shared":true}');
+    write("home-shared-claude/.claude/CLAUDE.md", "# shared context");
+    mkdirSync(join(home, ".claude", "skills"), { recursive: true });
+    write("home-shared-claude/.claude/skills/my-skill.md", "skill");
+
+    const built = await buildArchives({
+      jobId: "job-as-shared",
+      workingDir: null,
+      options: { ...OPTIONS, workingTreeMode: "none" },
+      profiles: [],
+    });
+
+    const listing = await tarList(built.archivePaths["agent-settings"]!);
+    // The user's real, shared Claude context — the thing every account now sees.
+    expect(listing).toContain("agent-settings/claude/settings.json");
+    expect(listing).toContain("agent-settings/claude/CLAUDE.md");
+    expect(listing).toContain("agent-settings/claude/skills/my-skill.md");
+  });
+
   it("agent-settings honors CLAUDE_CONFIG_DIR and skips silently when nothing exists", async () => {
     const home = join(fixtureRoot, "home-empty");
     process.env.HOME = home;

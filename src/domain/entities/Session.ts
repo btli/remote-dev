@@ -29,6 +29,11 @@ export interface SessionProps {
   worktreeType: string | null;
   projectId: string | null;
   profileId: string | null;
+  /**
+   * The Claude account this session runs as (whose `CLAUDE_CODE_OAUTH_TOKEN`
+   * was injected). Independent of `profileId`. [remote-dev-n4x4.6]
+   */
+  claudeAccountId: string | null;
   // Terminal type: shell, agent, file, or custom
   terminalType: TerminalType;
   agentProvider: AgentProviderType | null;
@@ -62,6 +67,8 @@ export interface CreateSessionProps {
   worktreeType?: string | null;
   projectId?: string | null;
   profileId?: string | null;
+  /** The Claude account this session runs as. [remote-dev-n4x4.6] */
+  claudeAccountId?: string | null;
   // Terminal type: shell, agent, file, or custom (default: shell)
   terminalType?: TerminalType;
   agentProvider?: AgentProviderType | null;
@@ -107,6 +114,7 @@ export class Session {
       worktreeType: props.worktreeType ?? null,
       projectId: props.projectId ?? null,
       profileId: props.profileId ?? null,
+      claudeAccountId: props.claudeAccountId ?? null,
       terminalType,
       agentProvider: props.agentProvider ?? null,
       // Agent state: set to "running" for agent type, null otherwise
@@ -180,6 +188,10 @@ export class Session {
 
   get profileId(): string | null {
     return this.props.profileId;
+  }
+
+  get claudeAccountId(): string | null {
+    return this.props.claudeAccountId;
   }
 
   get terminalType(): TerminalType {

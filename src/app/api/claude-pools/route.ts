@@ -1,7 +1,7 @@
 /**
  * GET | POST /api/claude-pools - Claude fallback-pool collection. [remote-dev-wb0q]
  *
- * A pool is a named, ordered set of Claude profiles a project rotates through
+ * A pool is a named, ordered set of Claude accounts a project rotates through
  * when its primary is limited. All pools are scoped to the authenticated user.
  *
  * GET  -> the user's pools, each with a cheap member count.

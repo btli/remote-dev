@@ -11,6 +11,23 @@
  * - Agent configs are isolated to profile-specific directories
  * - Most modern tools respect XDG variables
  *
+ * CLAUDE IS DELIBERATELY EXCLUDED [remote-dev-n4x4.6]
+ * ---------------------------------------------------
+ * This VO emits `CODEX_HOME` / `GEMINI_HOME` / `ANTIGRAVITY_HOME` /
+ * `OPENCODE_CONFIG_DIR` but NOT `CLAUDE_CONFIG_DIR`, and there is no option to
+ * turn it back on. Claude identity is now a per-process credential
+ * (`CLAUDE_CODE_OAUTH_TOKEN`, injected by session-service from the selected
+ * `claude_account`), layered over the user's REAL `~/.claude` so every account
+ * shares one config: the same skills, `CLAUDE.md`, MCP servers, settings and
+ * agents. Isolating the config dir per profile would defeat that and would let
+ * account rotation land back in a stale profile-specific context.
+ *
+ * It must end up UNSET rather than blanked or re-pointed at `$HOME/.claude`:
+ * Claude Code derives its macOS Keychain service name from the SETTING, so any
+ * explicit value — including the default path spelled out — lands in a
+ * different, usually empty credential namespace. Verified live against Claude
+ * Code 2.1.220.
+ *
  * XDG Base Directory Spec: https://specifications.freedesktop.org/basedir-spec/latest/
  */
 
@@ -159,13 +176,6 @@ export class ProfileIsolation {
   }
 
   /**
-   * Get the Claude Code config directory.
-   */
-  getClaudeConfigDir(): string {
-    return join(this.profileDir, ".claude");
-  }
-
-  /**
    * Get the Codex config directory.
    */
   getCodexHome(): string {
@@ -228,10 +238,12 @@ export class ProfileIsolation {
       env.GIT_SSH_COMMAND = `ssh -i '${escapedPath}' -o IdentitiesOnly=yes`;
     }
 
-    // Agent-specific config directories
-    if (this.provider === "all" || this.provider === "claude") {
-      env.CLAUDE_CONFIG_DIR = this.getClaudeConfigDir();
-    }
+    // Agent-specific config directories.
+    //
+    // NOTE: Claude is absent ON PURPOSE — see the "CLAUDE IS DELIBERATELY
+    // EXCLUDED" note in the file header. Claude sessions share the user's real
+    // `~/.claude` and differ only by the injected `CLAUDE_CODE_OAUTH_TOKEN`, so
+    // `CLAUDE_CONFIG_DIR` must stay UNSET. Do not add it back here.
     if (this.provider === "all" || this.provider === "codex") {
       env.CODEX_HOME = this.getCodexHome();
     }

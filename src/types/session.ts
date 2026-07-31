@@ -37,6 +37,12 @@ export interface TerminalSession {
   projectId: string | null;
   // Agent profile for environment isolation
   profileId: string | null;
+  /**
+   * The Claude account this session launched under (whose
+   * `CLAUDE_CODE_OAUTH_TOKEN` was injected). Independent of `profileId`.
+   * [remote-dev-n4x4.6]
+   */
+  claudeAccountId: string | null;
   // Terminal type: shell, agent, file, or custom
   terminalType: TerminalType;
   // Agent-aware session fields
@@ -80,6 +86,11 @@ export interface CreateSessionInput {
   projectId: string;
   // Agent profile for environment isolation
   profileId?: string;
+  /**
+   * Pin the Claude account to run as (overrides primary→pool selection).
+   * [remote-dev-n4x4.6]
+   */
+  claudeAccountId?: string | null;
   // Terminal type: shell, agent, file (default: determined by agentProvider)
   terminalType?: TerminalType;
   // Agent-aware session fields

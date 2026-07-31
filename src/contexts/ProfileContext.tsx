@@ -27,6 +27,7 @@ import type {
 } from "@/types/agent";
 import type {
   LimitStateBlock,
+  ClaudeAccountSummary,
   ClaudePoolSummary,
   ClaudePoolDetail,
   ProfileLimitChangedEvent,
@@ -42,15 +43,31 @@ interface ProfileContextValue {
   loading: boolean;
   error: string | null;
 
-  // Claude usage-limit state [remote-dev-0yix]
-  /** profileId -> serialized limit-state block (seeded from GET /api/profiles,
-   *  updated live via the `profile_limit_changed` WS event). */
-  limitStates: Map<string, LimitStateBlock>;
-  getLimitState: (profileId: string) => LimitStateBlock | null;
-  /** Manual override: clear a profile's limit (PATCH /api/profiles/:id/limit-state). */
-  markProfileAvailable: (profileId: string) => Promise<void>;
+  // Claude accounts [remote-dev-n4x4.6] — accounts are first-class rows,
+  // decoupled from agent profiles. Usage limits key on the ACCOUNT.
+  /** The user's Claude accounts (GET /api/claude-accounts). Token-free. */
+  accounts: ClaudeAccountSummary[];
+  refreshAccounts: () => Promise<void>;
 
-  // Claude fallback pools [remote-dev-0yix] — thin wrappers over the pool routes.
+  // Claude usage-limit state [remote-dev-0yix / remote-dev-n4x4.6]
+  /** accountId -> serialized limit-state block (seeded from GET /api/profiles'
+   *  back-compat `claudeAccountId` shim + GET /api/claude-accounts, updated
+   *  live via the `profile_limit_changed` WS event, which carries accountId). */
+  limitStates: Map<string, LimitStateBlock>;
+  getAccountLimitState: (accountId: string) => LimitStateBlock | null;
+  /**
+   * Profile-oriented convenience: resolve a profile's origin Claude account
+   * (the `claudeAccountId` shim on GET /api/profiles) and return that
+   * account's limit state. Used by profile-facing UI (e.g. ProfileSelector)
+   * that still labels a profile as "limited".
+   */
+  getLimitState: (profileId: string) => LimitStateBlock | null;
+  /** Manual override: clear an account's limit
+   *  (PATCH /api/claude-accounts/:accountId/limit-state). */
+  markAccountAvailable: (accountId: string) => Promise<void>;
+
+  // Claude fallback pools [remote-dev-0yix] — thin wrappers over the pool
+  // routes. Pools are pools of ACCOUNTS [remote-dev-n4x4.6].
   pools: ClaudePoolSummary[];
   refreshPools: () => Promise<void>;
   createPool: (name: string) => Promise<ClaudePoolSummary>;
@@ -59,10 +76,10 @@ interface ProfileContextValue {
   getPoolDetail: (poolId: string) => Promise<ClaudePoolDetail>;
   addPoolMember: (
     poolId: string,
-    profileId: string,
+    accountId: string,
     priority?: number
   ) => Promise<void>;
-  removePoolMember: (poolId: string, profileId: string) => Promise<void>;
+  removePoolMember: (poolId: string, accountId: string) => Promise<void>;
 
   /** Recommended profile for a project (primary → fallback pool with rotation). */
   getRecommendedProfile: (
@@ -119,6 +136,11 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
   const [limitStates, setLimitStates] = useState<Map<string, LimitStateBlock>>(
     new Map()
   );
+  // profileId -> the profile's origin Claude account (back-compat shim).
+  const [profileAccountIds, setProfileAccountIds] = useState<
+    Map<string, string>
+  >(new Map());
+  const [accounts, setAccounts] = useState<ClaudeAccountSummary[]>([]);
   const [pools, setPools] = useState<ClaudePoolSummary[]>([]);
 
   // Initial fetch on mount
@@ -133,11 +155,13 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       }
 
       const data = await response.json();
-      // The route augments each profile with `limitState` + `accountKind`
-      // (additive — see GET /api/profiles). We keep `profiles` typed as
-      // AgentProfile and lift `limitState` into its own map.
+      // The route augments each profile with `limitState`, `accountKind`, and
+      // `claudeAccountId` (additive — see GET /api/profiles). We keep
+      // `profiles` typed as AgentProfile and lift the Claude-account bits into
+      // their own maps. [remote-dev-n4x4.6]
       const rawProfiles: (AgentProfile & {
         limitState?: LimitStateBlock;
+        claudeAccountId?: string | null;
       })[] = data.profiles || [];
       const profileList: AgentProfile[] = rawProfiles;
       const rawLinks = data.folderLinks || [];
@@ -147,16 +171,32 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         ? new Map(rawLinks.map((l: FolderProfileLink) => [l.projectId, l.profileId]))
         : new Map(Object.entries(rawLinks));
 
-      // Seed the limit-state cache from the augmented payload. Live updates
-      // arrive via the `profile_limit_changed` WS event (below).
+      // Seed the ACCOUNT-keyed limit-state cache from the augmented payload,
+      // plus the profile → account index that backs `getLimitState`. Live
+      // updates arrive via the `profile_limit_changed` WS event (below), which
+      // also keys on accountId. [remote-dev-n4x4.6]
       const seededLimits = new Map<string, LimitStateBlock>();
+      const seededAccountIds = new Map<string, string>();
       for (const p of rawProfiles) {
-        if (p.limitState) seededLimits.set(p.id, p.limitState);
+        const accountId = p.claudeAccountId ?? null;
+        if (!accountId) continue;
+        seededAccountIds.set(p.id, accountId);
+        if (p.limitState) seededLimits.set(accountId, p.limitState);
       }
 
       setProfiles(profileList);
       setFolderProfileLinks(linksMap);
-      setLimitStates(seededLimits);
+      setProfileAccountIds(seededAccountIds);
+      setLimitStates((prev) => {
+        // Merge rather than replace: a `/api/claude-accounts` refresh or a live
+        // WS update may already hold fresher state for accounts that no
+        // profile points at.
+        const next = new Map(prev);
+        for (const [accountId, state] of seededLimits) {
+          next.set(accountId, state);
+        }
+        return next;
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       setError(message);
@@ -172,13 +212,47 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
   }, [refreshProfiles]);
 
   // ───────────────────────────────────────────────────────────────────────
-  // Claude usage-limit state [remote-dev-0yix]
+  // Claude accounts [remote-dev-n4x4.6]
   // ───────────────────────────────────────────────────────────────────────
 
-  const getLimitState = useCallback(
-    (profileId: string): LimitStateBlock | null =>
-      limitStates.get(profileId) ?? null,
+  const refreshAccounts = useCallback(async (): Promise<void> => {
+    // Accounts are an optional layer (a fresh install has none); never throw on
+    // read so the dashboard and the pool picker stay usable.
+    try {
+      const response = await apiFetch("/api/claude-accounts");
+      if (!response.ok) {
+        console.error("Failed to fetch Claude accounts:", response.status);
+        return;
+      }
+      const data = await response.json();
+      setAccounts((data.accounts as ClaudeAccountSummary[]) ?? []);
+    } catch (err) {
+      console.error("Failed to fetch Claude accounts:", err);
+      setAccounts([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshAccounts();
+  }, [refreshAccounts]);
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Claude usage-limit state [remote-dev-0yix / remote-dev-n4x4.6]
+  // ───────────────────────────────────────────────────────────────────────
+
+  const getAccountLimitState = useCallback(
+    (accountId: string): LimitStateBlock | null =>
+      limitStates.get(accountId) ?? null,
     [limitStates]
+  );
+
+  const getLimitState = useCallback(
+    (profileId: string): LimitStateBlock | null => {
+      const accountId = profileAccountIds.get(profileId);
+      if (!accountId) return null;
+      return limitStates.get(accountId) ?? null;
+    },
+    [limitStates, profileAccountIds]
   );
 
   // Live updates: fold each `profile_limit_changed` broadcast into the map.
@@ -193,7 +267,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
     const effectiveResetAt = candidates.length ? Math.min(...candidates) : null;
     setLimitStates((prev) => {
       const next = new Map(prev);
-      next.set(event.profileId, {
+      next.set(event.accountId, {
         limitStatus: event.limitStatus,
         window5hPct: event.window5hPct,
         window7dPct: event.window7dPct,
@@ -207,10 +281,10 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
   useProfileLimitSocket({ onLimitChanged });
 
-  const markProfileAvailable = useCallback(
-    async (profileId: string): Promise<void> => {
+  const markAccountAvailable = useCallback(
+    async (accountId: string): Promise<void> => {
       const response = await apiFetch(
-        `/api/profiles/${profileId}/limit-state`,
+        `/api/claude-accounts/${accountId}/limit-state`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -224,7 +298,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       const cleared: LimitStateBlock = await response.json();
       setLimitStates((prev) => {
         const next = new Map(prev);
-        next.set(profileId, cleared);
+        next.set(accountId, cleared);
         return next;
       });
     },
@@ -324,7 +398,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
   const addPoolMember = useCallback(
     async (
       poolId: string,
-      profileId: string,
+      accountId: string,
       priority?: number
     ): Promise<void> => {
       const response = await apiFetch(
@@ -333,7 +407,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(
-            priority === undefined ? { profileId } : { profileId, priority }
+            priority === undefined ? { accountId } : { accountId, priority }
           ),
         }
       );
@@ -348,9 +422,9 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
   );
 
   const removePoolMember = useCallback(
-    async (poolId: string, profileId: string): Promise<void> => {
+    async (poolId: string, accountId: string): Promise<void> => {
       const response = await apiFetch(
-        `/api/claude-pools/${poolId}/members?profileId=${encodeURIComponent(profileId)}`,
+        `/api/claude-pools/${poolId}/members?accountId=${encodeURIComponent(accountId)}`,
         { method: "DELETE" }
       );
       if (!response.ok && response.status !== 204) {
@@ -652,9 +726,12 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       folderProfileLinks,
       loading,
       error,
+      accounts,
+      refreshAccounts,
       limitStates,
+      getAccountLimitState,
       getLimitState,
-      markProfileAvailable,
+      markAccountAvailable,
       pools,
       refreshPools,
       createPool,
@@ -688,9 +765,12 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       folderProfileLinks,
       loading,
       error,
+      accounts,
+      refreshAccounts,
       limitStates,
+      getAccountLimitState,
       getLimitState,
-      markProfileAvailable,
+      markAccountAvailable,
       pools,
       refreshPools,
       createPool,

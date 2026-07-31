@@ -1,13 +1,18 @@
 /**
- * ProfilePoolRepository - Port for Claude profile fallback pools.
+ * ProfilePoolRepository - Port for Claude fallback pools.
  *
- * A pool is a named, ordered set of Claude profiles a project rotates through
- * when its primary profile is limited. Members carry a rotation `priority`
+ * A pool is a named, ordered set of Claude ACCOUNTS a project rotates through
+ * when its primary account is limited. Members carry a rotation `priority`
  * (lower = higher priority / earlier in rotation).
+ *
+ * Members used to be agent profiles; they are accounts as of
+ * [remote-dev-n4x4.6] — rotation swaps the injected `CLAUDE_CODE_OAUTH_TOKEN`,
+ * not the config dir. The port/table names are retained so the diff stays
+ * legible; only the member identity changed.
  */
 
 export interface PoolEntry {
-  profileId: string;
+  accountId: string;
   /** Lower = higher priority / earlier in rotation. */
   priority: number;
 }
@@ -38,14 +43,14 @@ export interface ProfilePoolRepository {
 
   deletePool(poolId: string): Promise<void>;
 
-  /** Add (or upsert) a profile into a pool at the given priority. */
-  addMember(poolId: string, profileId: string, priority: number): Promise<void>;
+  /** Add (or upsert) an account into a pool at the given priority. */
+  addMember(poolId: string, accountId: string, priority: number): Promise<void>;
 
-  removeMember(poolId: string, profileId: string): Promise<void>;
+  removeMember(poolId: string, accountId: string): Promise<void>;
 
   setPriority(
     poolId: string,
-    profileId: string,
+    accountId: string,
     priority: number
   ): Promise<void>;
 }

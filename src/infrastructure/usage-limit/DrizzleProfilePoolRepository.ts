@@ -23,7 +23,7 @@ export class DrizzleProfilePoolRepository implements ProfilePoolRepository {
       where: eq(claudeProfilePoolMembers.poolId, poolId),
       orderBy: [asc(claudeProfilePoolMembers.priority)],
     });
-    return rows.map((r) => ({ profileId: r.profileId, priority: r.priority }));
+    return rows.map((r) => ({ accountId: r.accountId, priority: r.priority }));
   }
 
   async poolsForUser(userId: string): Promise<PoolSummary[]> {
@@ -72,35 +72,35 @@ export class DrizzleProfilePoolRepository implements ProfilePoolRepository {
 
   async addMember(
     poolId: string,
-    profileId: string,
+    accountId: string,
     priority: number
   ): Promise<void> {
     await db
       .insert(claudeProfilePoolMembers)
-      .values({ id: crypto.randomUUID(), poolId, profileId, priority })
+      .values({ id: crypto.randomUUID(), poolId, accountId, priority })
       .onConflictDoUpdate({
         target: [
           claudeProfilePoolMembers.poolId,
-          claudeProfilePoolMembers.profileId,
+          claudeProfilePoolMembers.accountId,
         ],
         set: { priority },
       });
   }
 
-  async removeMember(poolId: string, profileId: string): Promise<void> {
+  async removeMember(poolId: string, accountId: string): Promise<void> {
     await db
       .delete(claudeProfilePoolMembers)
       .where(
         and(
           eq(claudeProfilePoolMembers.poolId, poolId),
-          eq(claudeProfilePoolMembers.profileId, profileId)
+          eq(claudeProfilePoolMembers.accountId, accountId)
         )
       );
   }
 
   async setPriority(
     poolId: string,
-    profileId: string,
+    accountId: string,
     priority: number
   ): Promise<void> {
     const result = await db
@@ -109,12 +109,12 @@ export class DrizzleProfilePoolRepository implements ProfilePoolRepository {
       .where(
         and(
           eq(claudeProfilePoolMembers.poolId, poolId),
-          eq(claudeProfilePoolMembers.profileId, profileId)
+          eq(claudeProfilePoolMembers.accountId, accountId)
         )
       );
-    // No row to update means the profile isn't a member yet — add it.
+    // No row to update means the account isn't a member yet — add it.
     if (affectedRows(result) === 0) {
-      await this.addMember(poolId, profileId, priority);
+      await this.addMember(poolId, accountId, priority);
     }
   }
 }

@@ -388,6 +388,12 @@ export const schema: SchemaDefinition = [
       { field: "worktreeType", dbName: "worktree_type", kind: "text", typeBrand: "WorktreeType" },
       { field: "projectId", dbName: "project_id", kind: "text", notNull: true, references: { table: "projects", column: "id", onDelete: "cascade" } },
       { field: "profileId", dbName: "profile_id", kind: "text", references: { table: "agentProfiles", column: "id", onDelete: "set null" } },
+      // The Claude ACCOUNT this session launched under — i.e. whose
+      // `CLAUDE_CODE_OAUTH_TOKEN` was injected into its env. Independent of
+      // `profile_id` (which supplies the config dir / env overlay). Reactive
+      // limit detection attributes a "usage limit reached" to THIS, because the
+      // limit belongs to the subscription, not the config dir. [remote-dev-n4x4.6]
+      { field: "claudeAccountId", dbName: "claude_account_id", kind: "text", references: { table: "claudeAccounts", column: "id", onDelete: "set null" } },
       { field: "terminalType", dbName: "terminal_type", kind: "text", typeBrand: "TerminalType", default: { kind: "value", value: "\"shell\"" } },
       { field: "agentProvider", dbName: "agent_provider", kind: "text", typeBrand: "AgentProviderType" },
       { field: "agentExitState", dbName: "agent_exit_state", kind: "text", typeBrand: "AgentExitState" },
@@ -1279,21 +1285,47 @@ export const schema: SchemaDefinition = [
     ],
   },
   {
-    // Claude-specific identity + account kind, kept off the provider-agnostic
-    // agent_profile. 1:1 with a profile. [remote-dev-3b3l]
+    // A Claude *account* (one subscription / API key), independent of any agent
+    // profile. [remote-dev-n4x4.6]
+    //
+    // Accounts used to be 1:1 with an `agent_profile` (`profile_id` unique NOT
+    // NULL). They no longer are: a session runs under a SHARED Claude config dir
+    // and gets its account by having `CLAUDE_CODE_OAUTH_TOKEN` injected into its
+    // env, so N accounts can run in parallel against one config dir with no
+    // credential swapping. `profile_id` is retained ONLY as a nullable,
+    // non-unique "origin profile" breadcrumb for rows migrated from the old
+    // layout — it is NOT the identity and nothing may key off it.
     exportName: "claudeAccounts",
     sqlName: "claude_account",
     columns: [
       { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
-      { field: "profileId", dbName: "profile_id", kind: "text", notNull: true, unique: true, references: { table: "agentProfiles", column: "id", onDelete: "cascade" } },
+      // Legacy origin profile (nullable, NON-unique). See note above.
+      { field: "profileId", dbName: "profile_id", kind: "text", references: { table: "agentProfiles", column: "id", onDelete: "set null" } },
       { field: "userId", dbName: "user_id", kind: "text", notNull: true, references: { table: "users", column: "id", onDelete: "cascade" } },
+      // User-facing label ("Personal Max", "Work"). Falls back to email in the UI.
+      { field: "alias", dbName: "alias", kind: "text" },
       { field: "accountKind", dbName: "account_kind", kind: "text", notNull: true, typeBrand: "ClaudeAccountKind", default: { kind: "value", value: "\"subscription\"" } },
-      // "file" | "keychain"; null = unknown (P2 fills it).
-      { field: "credentialMode", dbName: "credential_mode", kind: "text" },
-      // Display fields sourced from ~/.claude.json oauthAccount.
+      // Display fields read from `claude auth status --json` run under this
+      // account's env. NEVER parsed out of credential files. [remote-dev-n4x4.8]
       { field: "emailAddress", dbName: "email_address", kind: "text" },
+      { field: "organizationId", dbName: "organization_id", kind: "text" },
       { field: "organizationName", dbName: "organization_name", kind: "text" },
       { field: "rateLimitTier", dbName: "rate_limit_tier", kind: "text" },
+      // `authMethod` from `claude auth status --json` ("claude.ai" |
+      // "oauth_token" | "none" | …). Treated as an OPEN set — stored verbatim.
+      { field: "authMethod", dbName: "auth_method", kind: "text" },
+      // Whether the last identity probe reported `loggedIn: true`.
+      { field: "authHealthy", dbName: "auth_healthy", kind: "boolean", notNull: true, default: { kind: "value", value: "false" } },
+      { field: "lastVerifiedAt", dbName: "last_verified_at", kind: "timestampMs" },
+      // The long-lived `claude setup-token` OAuth token, ENCRYPTED at rest with
+      // the same AES-256-GCM helper `profile_secrets_config` uses
+      // (`src/lib/encryption.ts`). Never logged, never returned over the API.
+      { field: "oauthTokenEncrypted", dbName: "oauth_token_encrypted", kind: "text" },
+      // Non-reversible sha256 prefix of the stored token. ONLY used to dedupe
+      // "same credential re-added" when the identity probe could not supply an
+      // email (offline / no CLI); without it every retry of a failing probe
+      // would insert another row. Never returned by the API. [remote-dev-n4x4.6]
+      { field: "tokenFingerprint", dbName: "token_fingerprint", kind: "text" },
       // First 8 chars only; the full key stays in profile_secrets_config.
       { field: "apiKeyPrefix", dbName: "api_key_prefix", kind: "text" },
       { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
@@ -1302,14 +1334,19 @@ export const schema: SchemaDefinition = [
     indexes: [
       { name: "claude_account_profile_idx", columns: ["profileId"] },
       { name: "claude_account_user_idx", columns: ["userId"] },
+      // Dedupe lookup for "re-adding a known email updates in place". NOT unique
+      // at the DB level: `email_address` is nullable (a token can be stored
+      // before its identity probe lands) and SQLite/PG differ on NULL uniqueness.
+      { name: "claude_account_user_email_idx", columns: ["userId","emailAddress"] },
     ],
   },
   {
-    // Authoritative per-profile Claude usage-limit store. [remote-dev-3b3l]
+    // Authoritative per-ACCOUNT Claude usage-limit store. [remote-dev-n4x4.6]
+    // (Was per-profile; limits belong to the subscription, not the config dir.)
     exportName: "claudeUsageLimitStates",
     sqlName: "claude_usage_limit_state",
     columns: [
-      { field: "profileId", dbName: "profile_id", kind: "text", primaryKey: true, references: { table: "agentProfiles", column: "id", onDelete: "cascade" } },
+      { field: "accountId", dbName: "account_id", kind: "text", primaryKey: true, references: { table: "claudeAccounts", column: "id", onDelete: "cascade" } },
       { field: "userId", dbName: "user_id", kind: "text", notNull: true, references: { table: "users", column: "id", onDelete: "cascade" } },
       { field: "limitStatus", dbName: "limit_status", kind: "text", notNull: true, typeBrand: "ClaudeLimitStatus", default: { kind: "value", value: "\"unknown\"" } },
       // 0-100, null if unknown.
@@ -1330,8 +1367,8 @@ export const schema: SchemaDefinition = [
     ],
   },
   {
-    // A named, ordered fallback pool of Claude profiles to rotate through when
-    // the primary is limited. [remote-dev-3b3l]
+    // A named, ordered fallback pool of Claude ACCOUNTS to rotate through when
+    // the primary is limited. [remote-dev-3b3l / remote-dev-n4x4.6]
     exportName: "claudeProfilePools",
     sqlName: "claude_profile_pool",
     columns: [
@@ -1346,21 +1383,22 @@ export const schema: SchemaDefinition = [
     ],
   },
   {
-    // Membership of a profile in a pool, with rotation priority
-    // (lower = higher priority / earlier in rotation). [remote-dev-3b3l]
+    // Membership of an ACCOUNT in a pool, with rotation priority
+    // (lower = higher priority / earlier in rotation).
+    // [remote-dev-3b3l / remote-dev-n4x4.6]
     exportName: "claudeProfilePoolMembers",
     sqlName: "claude_profile_pool_member",
     columns: [
       { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
       { field: "poolId", dbName: "pool_id", kind: "text", notNull: true, references: { table: "claudeProfilePools", column: "id", onDelete: "cascade" } },
-      { field: "profileId", dbName: "profile_id", kind: "text", notNull: true, references: { table: "agentProfiles", column: "id", onDelete: "cascade" } },
+      { field: "accountId", dbName: "account_id", kind: "text", notNull: true, references: { table: "claudeAccounts", column: "id", onDelete: "cascade" } },
       { field: "priority", dbName: "priority", kind: "integer", notNull: true, default: { kind: "value", value: "0" } },
       { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
     ],
     indexes: [
-      { name: "claude_pool_member_pool_profile_unique", columns: ["poolId","profileId"], unique: true },
+      { name: "claude_pool_member_pool_account_unique", columns: ["poolId","accountId"], unique: true },
       { name: "claude_pool_member_pool_priority_idx", columns: ["poolId","priority"] },
-      { name: "claude_pool_member_profile_idx", columns: ["profileId"] },
+      { name: "claude_pool_member_account_idx", columns: ["accountId"] },
     ],
   },
   {
@@ -1442,6 +1480,12 @@ export const schema: SchemaDefinition = [
       // (it re-plans a full table rebuild every push and dies with
       // "index … already exists"). [remote-dev-3b3l]
       { field: "poolId", dbName: "pool_id", kind: "text" },
+      // Primary Claude ACCOUNT for the project (null = derive from the primary
+      // profile's origin account, else pool-only). Same no-DB-level-FK rule as
+      // `pool_id` above — this is a pre-existing table and adding a table-level
+      // FOREIGN KEY breaks `db:push` idempotency on libsql/SQLite. App-level
+      // set-null lives in ClaudeAccountService.deleteAccount. [remote-dev-n4x4.6]
+      { field: "accountId", dbName: "account_id", kind: "text" },
       { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
     ],
     indexes: [

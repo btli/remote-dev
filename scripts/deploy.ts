@@ -924,6 +924,33 @@ function runMigration(): boolean {
     return false;
   }
 
+  // Pre-push Claude-account re-key (remote-dev-n4x4.6). n4x4.6 relaxes
+  // claude_account.profile_id from `unique NOT NULL` and moves the identity of
+  // claude_usage_limit_state / claude_profile_pool_member from profile_id to
+  // account_id. SQLite can't do either in place, so drizzle-kit rebuilds those
+  // tables — and its rebuild both SELECTs columns that don't exist yet
+  // (`no such column: alias`) and re-issues CREATE INDEX without dropping the
+  // originals (`index … already exists`), hard-aborting the push. This step
+  // adds the columns, backs up + clears the two re-keyed tables, and drops the
+  // to-be-rebuilt indexes, making the db:push below clean.
+  //
+  // Gated on the migration not having run yet: once db:push has dropped the
+  // pre-n4x4.6 marker columns this is a COMPLETE no-op, so it is safe on every
+  // deploy (it does NOT re-clear pool membership). SQLite-only — PG applies
+  // drizzle/pg/0014 via migrate-on-boot. Must run BEFORE db:push; a failure
+  // ABORTS rather than letting the push crash.
+  if (shouldRunSqlitePush(process.env.DATABASE_URL) && !runCommand(
+    ["bun", "run", "db:presync-claude-accounts"],
+    DEPLOY_SRC,
+    "Claude account re-key (pre-push)",
+  )) {
+    logError(
+      "Claude account pre-sync FAILED — refusing to run db:push (it would crash on the " +
+        "claude_account table rebuild). Aborting deploy.",
+    );
+    return false;
+  }
+
   // db:push is `drizzle-kit push --dialect sqlite`, whose getDatabasePath()
   // returns DATABASE_URL verbatim. The webhook now forwards DATABASE_URL
   // (remote-dev-6lf3), so on a Postgres host a `postgresql://…` URL would be fed
@@ -985,6 +1012,21 @@ function runMigration(): boolean {
   )) {
     return false;
   }
+
+  // Backfill Claude accounts (remote-dev-n4x4.6): every claude-capable profile
+  // that has no claude_account row gets a standalone one carrying that profile
+  // as its origin, and project primaries are linked to their account. Runs
+  // AFTER db:push created the columns. Idempotent.
+  //
+  // Best-effort like the github-accounts backfill above, NOT deploy-gating: a
+  // missing account row degrades to "no token injected → session uses the
+  // shared config dir's ambient credential", which is exactly pre-n4x4.6
+  // behaviour. Failing the whole deploy over it would be worse than the gap.
+  runCommand(
+    ["bun", "run", "db:backfill-claude-accounts"],
+    DEPLOY_SRC,
+    "Claude account backfill"
+  );
 
   // GENERALIZABLE POST-CONDITION GUARD (remote-dev-6lf3). After migrations +
   // backfills, assert each registered backfill actually TOOK EFFECT against the

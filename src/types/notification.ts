@@ -82,15 +82,18 @@ export interface NotificationMeta {
   /** Terminal result, e.g. "success" | "failed" | exit code as string. */
   result?: string;
   /**
-   * [remote-dev-3b3l] 1-click "relaunch under an available profile" CTA payload
-   * for Claude usage-limit notifications. Present only when an alternate
-   * profile is available; carries everything `POST /api/sessions` needs to
-   * spawn the replacement session. The Wave D client reads this to offer the
-   * relaunch button.
+   * [remote-dev-3b3l / remote-dev-n4x4.6] 1-click "relaunch under an available
+   * account" CTA payload for Claude usage-limit notifications. Present only
+   * when an alternate ACCOUNT is available; carries everything
+   * `POST /api/sessions` needs to spawn the replacement session. The client
+   * reads this to offer the relaunch button.
    */
   relaunch?: {
     projectId: string;
-    profileId: string;
+    /** The Claude account to relaunch under (decides the injected token). */
+    accountId: string;
+    /** The account's origin profile, when it has one (config dir / env). */
+    profileId: string | null;
     agentProvider: string;
   };
 }

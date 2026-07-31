@@ -6,14 +6,14 @@
  * `notifyLimit` onto `createNotification` (type `agent_waiting` for the
  * relaunchable case so it is actionable + push-eligible; `info`/`agent_error`
  * for the all-limited case), packing `relaunch` into the notification `meta`
- * so the client can offer a 1-click "relaunch under <profile>" CTA that POSTs
+ * so the client can offer a 1-click "relaunch under <account>" CTA that POSTs
  * to `/api/sessions`.
  */
 
 /**
  * Payload for a "your account is limited" notification with an optional
  * 1-click relaunch CTA. When `relaunch` is present the client can spawn a new
- * session under `relaunch.profileId`; when it is absent (e.g. all profiles
+ * session under `relaunch.accountId`; when it is absent (e.g. all accounts
  * limited) the notification is informational only.
  */
 export interface UsageLimitNotification {
@@ -25,13 +25,16 @@ export interface UsageLimitNotification {
   title: string;
   body?: string;
   /**
-   * Relaunch call-to-action. Present when an alternate profile is available;
+   * Relaunch call-to-action. Present when an alternate account is available;
    * carries everything `POST /api/sessions` needs to spawn the replacement.
    * Absent when there is nothing to relaunch to (all limited).
    */
   relaunch?: {
     projectId: string;
-    profileId: string;
+    /** The Claude account to relaunch under (decides the injected token). */
+    accountId: string;
+    /** The account's origin profile, when it has one (config dir / env). */
+    profileId: string | null;
     agentProvider: string;
   };
 }
