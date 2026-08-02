@@ -46,11 +46,30 @@ vi.mock("@/db/schema", () => ({
 }));
 
 import { db } from "@/db";
+import type { UsageLimitWindow } from "@/application/ports/UsageLimitWindowRepository";
 import { DrizzleUsageLimitWindowRepository } from "./DrizzleUsageLimitWindowRepository";
 
 const repo = new DrizzleUsageLimitWindowRepository();
 const findMany = db.query.claudeUsageLimitWindows.findMany as Mock;
 const accountFindFirst = db.query.claudeAccounts.findFirst as Mock;
+
+/**
+ * Port-shape window for write-path tests. Defaults to the live exhausted-Fable
+ * case; override fields for open-set / clamp / null-scope cases.
+ */
+function makeWindow(over: Partial<UsageLimitWindow> = {}): UsageLimitWindow {
+  return {
+    kind: "weekly_scoped",
+    group: "weekly",
+    percent: 100,
+    severity: "critical",
+    resetsAt: null,
+    scopeModel: "Fable",
+    scopeSurface: null,
+    isActive: true,
+    ...over,
+  };
+}
 
 /** A stored row with sensible defaults. */
 function makeRow(over: Record<string, unknown> = {}): Record<string, unknown> {
@@ -86,18 +105,11 @@ beforeEach(() => {
 
 describe("DrizzleUsageLimitWindowRepository.replaceForAccount", () => {
   it("deletes the account's existing windows before inserting the new set", async () => {
-    const ok = await repo.replaceForAccount("acct-1", [
-      {
-        kind: "weekly_scoped",
-        group: "weekly",
-        percent: 100,
-        severity: "critical",
-        resetsAt: new Date("2026-07-30T22:59:59Z"),
-        scopeModel: "Fable",
-        scopeSurface: null,
-        isActive: true,
-      },
-    ], OBSERVED);
+    const ok = await repo.replaceForAccount(
+      "acct-1",
+      [makeWindow({ resetsAt: new Date("2026-07-30T22:59:59Z") })],
+      OBSERVED
+    );
 
     expect(ok).toBe(true);
     expect(calls.deletes).toBe(1);
@@ -123,18 +135,21 @@ describe("DrizzleUsageLimitWindowRepository.replaceForAccount", () => {
   });
 
   it("stores unknown kind/group/severity verbatim (open string sets)", async () => {
-    await repo.replaceForAccount("acct-1", [
-      {
-        kind: "monthly_scoped",
-        group: "monthly",
-        percent: 55,
-        severity: "elevated",
-        resetsAt: null,
-        scopeModel: "Cowork",
-        scopeSurface: "code",
-        isActive: false,
-      },
-    ], OBSERVED);
+    await repo.replaceForAccount(
+      "acct-1",
+      [
+        makeWindow({
+          kind: "monthly_scoped",
+          group: "monthly",
+          percent: 55,
+          severity: "elevated",
+          scopeModel: "Cowork",
+          scopeSurface: "code",
+          isActive: false,
+        }),
+      ],
+      OBSERVED
+    );
 
     expect(calls.inserted[0][0]).toMatchObject({
       kind: "monthly_scoped",
@@ -146,38 +161,36 @@ describe("DrizzleUsageLimitWindowRepository.replaceForAccount", () => {
   });
 
   it("clamps and rounds percent into the 0-100 integer column", async () => {
-    await repo.replaceForAccount("acct-1", [
-      {
-        kind: "a",
-        group: null,
-        percent: 133.7,
-        severity: null,
-        resetsAt: null,
-        scopeModel: null,
-        scopeSurface: null,
-        isActive: false,
-      },
-      {
-        kind: "b",
-        group: null,
-        percent: -5,
-        severity: null,
-        resetsAt: null,
-        scopeModel: null,
-        scopeSurface: null,
-        isActive: false,
-      },
-      {
-        kind: "c",
-        group: null,
-        percent: 60.6,
-        severity: null,
-        resetsAt: null,
-        scopeModel: null,
-        scopeSurface: null,
-        isActive: false,
-      },
-    ], OBSERVED);
+    await repo.replaceForAccount(
+      "acct-1",
+      [
+        makeWindow({
+          kind: "a",
+          group: null,
+          percent: 133.7,
+          severity: null,
+          scopeModel: null,
+          isActive: false,
+        }),
+        makeWindow({
+          kind: "b",
+          group: null,
+          percent: -5,
+          severity: null,
+          scopeModel: null,
+          isActive: false,
+        }),
+        makeWindow({
+          kind: "c",
+          group: null,
+          percent: 60.6,
+          severity: null,
+          scopeModel: null,
+          isActive: false,
+        }),
+      ],
+      OBSERVED
+    );
 
     expect(calls.inserted[0].map((r) => r.percent)).toEqual([100, 0, 61]);
   });
@@ -197,18 +210,18 @@ describe("DrizzleUsageLimitWindowRepository concurrency guards", () => {
   it("folds a null scopeModel into scopeModelKey so the unique index is portable", async () => {
     // The logical key is (accountId, kind, scopeModel), but scopeModel is
     // nullable and SQLite/PG disagree on NULL collision in a unique index.
-    await repo.replaceForAccount("acct-1", [
-      {
-        kind: "weekly_all",
-        group: "weekly",
-        percent: 98,
-        severity: "critical",
-        resetsAt: null,
-        scopeModel: null,
-        scopeSurface: null,
-        isActive: false,
-      },
-    ], OBSERVED);
+    await repo.replaceForAccount(
+      "acct-1",
+      [
+        makeWindow({
+          kind: "weekly_all",
+          percent: 98,
+          scopeModel: null,
+          isActive: false,
+        }),
+      ],
+      OBSERVED
+    );
 
     expect(calls.inserted[0][0]).toMatchObject({
       scopeModel: null,
@@ -217,16 +230,11 @@ describe("DrizzleUsageLimitWindowRepository concurrency guards", () => {
   });
 
   it("de-dupes on the logical key so a repeated pair cannot fail the write", async () => {
-    const dup = {
-      kind: "weekly_scoped",
-      group: "weekly",
+    const dup = makeWindow({
       percent: 50,
       severity: "normal",
-      resetsAt: null,
-      scopeModel: "Fable",
-      scopeSurface: null,
       isActive: false,
-    };
+    });
     await repo.replaceForAccount(
       "acct-1",
       [dup, { ...dup, percent: 100, severity: "critical" }],
@@ -259,18 +267,7 @@ describe("DrizzleUsageLimitWindowRepository concurrency guards", () => {
   });
 
   it("stamps every row with the observation time", async () => {
-    await repo.replaceForAccount("acct-1", [
-      {
-        kind: "weekly_scoped",
-        group: "weekly",
-        percent: 100,
-        severity: "critical",
-        resetsAt: null,
-        scopeModel: "Fable",
-        scopeSurface: null,
-        isActive: true,
-      },
-    ], OBSERVED);
+    await repo.replaceForAccount("acct-1", [makeWindow()], OBSERVED);
 
     expect(calls.inserted[0][0]).toMatchObject({ observedAt: OBSERVED });
   });
@@ -284,17 +281,10 @@ describe("DrizzleUsageLimitWindowRepository reads", () => {
     const windows = await repo.findByAccountId("acct-1");
 
     expect(windows).toEqual([
-      {
-        kind: "weekly_scoped",
-        group: "weekly",
-        percent: 100,
-        severity: "critical",
+      makeWindow({
         resetsAt: reset,
-        scopeModel: "Fable",
-        scopeSurface: null,
-        isActive: true,
         observedAt: new Date("2026-08-02T09:00:00Z"),
-      },
+      }),
     ]);
   });
 

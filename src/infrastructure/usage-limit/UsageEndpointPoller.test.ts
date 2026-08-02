@@ -42,6 +42,39 @@ let tokenReader: ReturnType<typeof vi.fn>;
 
 const TARGET = { accountId: "acct-1", userId: "u1", profileId: null };
 
+/** Adapter snapshot with null rollup fields; override what a case cares about. */
+function makeSnapshot(
+  over: {
+    window5hPct?: number | null;
+    window7dPct?: number | null;
+    resetAt5h?: Date | null;
+    resetAt7d?: Date | null;
+    orgPct?: number | null;
+    resetAtOrg?: Date | null;
+    limits?: Array<{
+      kind: string;
+      group: string | null;
+      percent: number;
+      severity: string | null;
+      resetAt: Date | null;
+      scopeModel: string | null;
+      scopeSurface: string | null;
+      isActive: boolean;
+    }>;
+  } = {}
+) {
+  return {
+    window5hPct: null as number | null,
+    window7dPct: null as number | null,
+    resetAt5h: null as Date | null,
+    resetAt7d: null as Date | null,
+    orgPct: null as number | null,
+    resetAtOrg: null as Date | null,
+    limits: [] as NonNullable<(typeof over)["limits"]>,
+    ...over,
+  };
+}
+
 function makePoller(): UsageEndpointPoller {
   return new UsageEndpointPoller(
     tokenReader as unknown as (
@@ -89,15 +122,13 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
     it("reads the ACCOUNT's decrypted token, probes, and maps the 5h/7d snapshot", async () => {
       claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
       const reset5h = new Date("2025-06-13T15:00:00Z");
-      fetchUsageMock.mockResolvedValue({
-        window5hPct: 80,
-        window7dPct: 40,
-        resetAt5h: reset5h,
-        resetAt7d: null,
-        orgPct: null,
-        resetAtOrg: null,
-        limits: [],
-      });
+      fetchUsageMock.mockResolvedValue(
+        makeSnapshot({
+          window5hPct: 80,
+          window7dPct: 40,
+          resetAt5h: reset5h,
+        })
+      );
 
       const poller = makePoller();
       const result = await poller.fetchLimitState(TARGET);
@@ -121,15 +152,9 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
 
     it("marks limited when a window is at/over 100%", async () => {
       claudeAccountsFindFirst.mockResolvedValue(undefined); // absent → subscription
-      fetchUsageMock.mockResolvedValue({
-        window5hPct: 100,
-        window7dPct: 50,
-        resetAt5h: null,
-        resetAt7d: null,
-        orgPct: null,
-        resetAtOrg: null,
-        limits: [],
-      });
+      fetchUsageMock.mockResolvedValue(
+        makeSnapshot({ window5hPct: 100, window7dPct: 50 })
+      );
 
       const poller = makePoller();
       const result = await poller.fetchLimitState(TARGET);
@@ -179,15 +204,9 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
       // subscription-kind probe returning an org-only snapshot.)
       claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
       const orgReset = new Date("2025-06-13T16:00:00Z");
-      fetchUsageMock.mockResolvedValue({
-        window5hPct: null,
-        window7dPct: null,
-        resetAt5h: null,
-        resetAt7d: null,
-        orgPct: 100,
-        resetAtOrg: orgReset,
-        limits: [],
-      });
+      fetchUsageMock.mockResolvedValue(
+        makeSnapshot({ orgPct: 100, resetAtOrg: orgReset })
+      );
 
       const poller = makePoller();
       const result = await poller.fetchLimitState(TARGET);
@@ -201,26 +220,24 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
   it("passes a per-model scoped limit through without disturbing the 5h/7d rollup", async () => {
     claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
     const scopedReset = new Date("2026-07-30T22:59:59Z");
-    fetchUsageMock.mockResolvedValue({
-      window5hPct: 61,
-      window7dPct: 98,
-      resetAt5h: null,
-      resetAt7d: null,
-      orgPct: null,
-      resetAtOrg: null,
-      limits: [
-        {
-          kind: "weekly_scoped",
-          group: "weekly",
-          percent: 100,
-          severity: "critical",
-          resetAt: scopedReset,
-          scopeModel: "Fable",
-          scopeSurface: null,
-          isActive: true,
-        },
-      ],
-    });
+    fetchUsageMock.mockResolvedValue(
+      makeSnapshot({
+        window5hPct: 61,
+        window7dPct: 98,
+        limits: [
+          {
+            kind: "weekly_scoped",
+            group: "weekly",
+            percent: 100,
+            severity: "critical",
+            resetAt: scopedReset,
+            scopeModel: "Fable",
+            scopeSurface: null,
+            isActive: true,
+          },
+        ],
+      })
+    );
 
     const poller = makePoller();
     const result = await poller.fetchLimitState(TARGET);
@@ -248,26 +265,23 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
 
   it("round-trips an unknown kind/severity verbatim (the vocabularies are open sets)", async () => {
     claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
-    fetchUsageMock.mockResolvedValue({
-      window5hPct: 10,
-      window7dPct: null,
-      resetAt5h: null,
-      resetAt7d: null,
-      orgPct: null,
-      resetAtOrg: null,
-      limits: [
-        {
-          kind: "monthly_scoped",
-          group: "monthly",
-          percent: 42,
-          severity: "elevated",
-          resetAt: null,
-          scopeModel: "Mythos",
-          scopeSurface: "code",
-          isActive: false,
-        },
-      ],
-    });
+    fetchUsageMock.mockResolvedValue(
+      makeSnapshot({
+        window5hPct: 10,
+        limits: [
+          {
+            kind: "monthly_scoped",
+            group: "monthly",
+            percent: 42,
+            severity: "elevated",
+            resetAt: null,
+            scopeModel: "Mythos",
+            scopeSurface: "code",
+            isActive: false,
+          },
+        ],
+      })
+    );
 
     const poller = makePoller();
     const result = await poller.fetchLimitState(TARGET);
@@ -290,15 +304,9 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
 
   it("never leaks the token into the result", async () => {
     claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
-    fetchUsageMock.mockResolvedValue({
-      window5hPct: 5,
-      window7dPct: 5,
-      resetAt5h: null,
-      resetAt7d: null,
-      orgPct: null,
-      resetAtOrg: null,
-      limits: [],
-    });
+    fetchUsageMock.mockResolvedValue(
+      makeSnapshot({ window5hPct: 5, window7dPct: 5 })
+    );
 
     const poller = makePoller();
     const result = await poller.fetchLimitState(TARGET);

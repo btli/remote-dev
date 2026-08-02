@@ -399,113 +399,96 @@ describe("PriorityProfileSelectionPolicy model awareness", () => {
     ).toBe("primary");
   });
 
-  it("keeps the primary when the scoped window is for a DIFFERENT model", async () => {
-    const policy = twoAccountPolicy(new Map([["primary", [scopedWindow()]]]));
-
-    const selected = await policy.selectForProject(
-      "proj",
-      "u1",
-      NOW,
-      "claude-haiku-4-5"
-    );
-
-    expect(selected?.accountId).toBe("primary");
-  });
-
-  it("keeps the primary when it has NO scoped row for the requested model", async () => {
-    const policy = twoAccountPolicy(new Map()); // no windows recorded at all
-
-    const selected = await policy.selectForProject(
-      "proj",
-      "u1",
-      NOW,
-      "claude-fable-5"
-    );
-
-    expect(selected?.accountId).toBe("primary");
-  });
-
-  it("keeps the primary when the matching scoped window is NOT exhausted", async () => {
-    const policy = twoAccountPolicy(
-      new Map([
-        ["primary", [scopedWindow({ percent: 61, severity: "normal" })]],
-      ])
-    );
-
-    const selected = await policy.selectForProject(
-      "proj",
-      "u1",
-      NOW,
-      "claude-fable-5"
-    );
-
-    expect(selected?.accountId).toBe("primary");
-  });
-
-  it("ignores an exhausted scoped window whose reset has already passed", async () => {
-    const policy = twoAccountPolicy(
-      new Map([
-        [
-          "primary",
-          [scopedWindow({ resetsAt: new Date("2026-06-13T11:00:00Z") })],
-        ],
-      ])
-    );
-
-    const selected = await policy.selectForProject(
-      "proj",
-      "u1",
-      NOW,
-      "claude-fable-5"
-    );
-
-    expect(selected?.accountId).toBe("primary");
-  });
-
-  it("ignores ACCOUNT-level windows (scopeModel null) — they belong to the rollup", async () => {
-    const policy = twoAccountPolicy(
-      new Map([
-        [
-          "primary",
-          [
-            scopedWindow({
-              kind: "weekly_all",
-              scopeModel: null,
-              percent: 100,
-              severity: "critical",
-            }),
-          ],
-        ],
-      ])
-    );
-
-    const selected = await policy.selectForProject(
-      "proj",
-      "u1",
-      NOW,
-      "claude-fable-5"
-    );
-
-    expect(selected?.accountId).toBe("primary");
-  });
-
-  it("does NOT block on a model-scoped window of an unknown kind", async () => {
+  // Mechanical fail-open matrix: primary stays selected. Load-bearing review
+  // rationale sits above the rows that encode it.
+  it.each([
+    {
+      name: "scoped window is for a DIFFERENT model",
+      windows: [scopedWindow()],
+      model: "claude-haiku-4-5",
+    },
+    {
+      name: "primary has NO scoped row for the requested model",
+      windows: [] as UsageLimitWindow[],
+      model: "claude-fable-5",
+      emptyMap: true,
+    },
+    {
+      name: "matching scoped window is NOT exhausted",
+      windows: [scopedWindow({ percent: 61, severity: "normal" })],
+      model: "claude-fable-5",
+    },
+    {
+      name: "exhausted scoped window whose reset has already passed",
+      windows: [scopedWindow({ resetsAt: new Date("2026-06-13T11:00:00Z") })],
+      model: "claude-fable-5",
+    },
+    {
+      name: "ACCOUNT-level windows (scopeModel null) — they belong to the rollup",
+      windows: [
+        scopedWindow({
+          kind: "weekly_all",
+          scopeModel: null,
+          percent: 100,
+          severity: "critical",
+        }),
+      ],
+      model: "claude-fable-5",
+    },
     // [review G5] `kind` is an open set, but consuming an UNKNOWN future kind
     // as blocking would let a new diagnostic/daily/surface-scoped row silently
     // change account selection with no authorization. Only `weekly_scoped`
     // blocks; anything else is logged and ignored.
+    {
+      name: "model-scoped window of an unknown kind",
+      windows: [scopedWindow({ kind: "monthly_scoped" })],
+      model: "claude-fable-5",
+    },
+    // [review G3] A null reset would make LimitState treat the account as
+    // permanently unavailable for this model, and the row can only be cleared
+    // by a later SUCCESSFUL poll — a revoked token would pin it off forever.
+    {
+      name: "exhausted window with a NULL reset",
+      windows: [scopedWindow({ resetsAt: null })],
+      model: "claude-fable-5",
+    },
+    // [review G3] Older than the age ceiling → the poller has not confirmed it
+    // recently, so it must expire on its own.
+    {
+      name: "stale window nobody has refreshed",
+      windows: [scopedWindow({ observedAt: new Date("2026-06-13T09:00:00Z") })],
+      model: "claude-fable-5",
+    },
+    {
+      name: "window with no observedAt at all",
+      windows: [scopedWindow({ observedAt: null })],
+      model: "claude-fable-5",
+    },
+    {
+      name: "exhausted window the endpoint did not mark active",
+      windows: [scopedWindow({ isActive: false })],
+      model: "claude-fable-5",
+    },
+    // [review G4] An unknown family is never compared against a scoped row.
+    {
+      name: "unrecognized model id",
+      windows: [scopedWindow({ scopeModel: "Cowork" })],
+      model: "claude-cowork-6",
+    },
+    // [review G11] `opusplan` plans on Opus but executes on Sonnet.
+    {
+      name: "alias that names no single family (opusplan)",
+      windows: [scopedWindow({ scopeModel: "Opus" })],
+      model: "opusplan",
+    },
+  ])("keeps the primary when $name", async ({ windows, model, emptyMap }) => {
     const policy = twoAccountPolicy(
-      new Map([["primary", [scopedWindow({ kind: "monthly_scoped" })]]])
+      emptyMap ? new Map() : new Map([["primary", windows]])
     );
 
-    const selected = await policy.selectForProject(
-      "proj",
-      "u1",
-      NOW,
-      "claude-fable-5"
-    );
-
-    expect(selected?.accountId).toBe("primary");
+    expect(
+      (await policy.selectForProject("proj", "u1", NOW, model))?.accountId
+    ).toBe("primary");
   });
 
   it("matches the blocking kind case-insensitively", async () => {
@@ -517,80 +500,6 @@ describe("PriorityProfileSelectionPolicy model awareness", () => {
       (await policy.selectForProject("proj", "u1", NOW, "claude-fable-5"))
         ?.accountId
     ).toBe("fallback");
-  });
-
-  it("does NOT block on an exhausted window with a NULL reset", async () => {
-    // [review G3] A null reset would make LimitState treat the account as
-    // permanently unavailable for this model, and the row can only be cleared
-    // by a later SUCCESSFUL poll — a revoked token would pin it off forever.
-    const policy = twoAccountPolicy(
-      new Map([["primary", [scopedWindow({ resetsAt: null })]]])
-    );
-
-    expect(
-      (await policy.selectForProject("proj", "u1", NOW, "claude-fable-5"))
-        ?.accountId
-    ).toBe("primary");
-  });
-
-  it("does NOT block on a stale window nobody has refreshed", async () => {
-    // [review G3] Older than the age ceiling → the poller has not confirmed it
-    // recently, so it must expire on its own.
-    const policy = twoAccountPolicy(
-      new Map([
-        ["primary", [scopedWindow({ observedAt: new Date("2026-06-13T09:00:00Z") })]],
-      ])
-    );
-
-    expect(
-      (await policy.selectForProject("proj", "u1", NOW, "claude-fable-5"))
-        ?.accountId
-    ).toBe("primary");
-  });
-
-  it("does NOT block on a window with no observedAt at all", async () => {
-    const policy = twoAccountPolicy(
-      new Map([["primary", [scopedWindow({ observedAt: null })]]])
-    );
-
-    expect(
-      (await policy.selectForProject("proj", "u1", NOW, "claude-fable-5"))
-        ?.accountId
-    ).toBe("primary");
-  });
-
-  it("does NOT block on an exhausted window the endpoint did not mark active", async () => {
-    const policy = twoAccountPolicy(
-      new Map([["primary", [scopedWindow({ isActive: false })]]])
-    );
-
-    expect(
-      (await policy.selectForProject("proj", "u1", NOW, "claude-fable-5"))
-        ?.accountId
-    ).toBe("primary");
-  });
-
-  it("does NOT block for an unrecognized model id", async () => {
-    // [review G4] An unknown family is never compared against a scoped row.
-    const policy = twoAccountPolicy(
-      new Map([["primary", [scopedWindow({ scopeModel: "Cowork" })]]])
-    );
-
-    expect(
-      (await policy.selectForProject("proj", "u1", NOW, "claude-cowork-6"))
-        ?.accountId
-    ).toBe("primary");
-  });
-
-  it("does NOT block for an alias that names no single family", async () => {
-    // [review G11] `opusplan` plans on Opus but executes on Sonnet.
-    const policy = twoAccountPolicy(
-      new Map([["primary", [scopedWindow({ scopeModel: "Opus" })]]])
-    );
-
-    expect(
-      (await policy.selectForProject("proj", "u1", NOW, "opusplan"))?.accountId
-    ).toBe("primary");
   });
 
   it("falls back to account-level selection when the window read THROWS", async () => {
