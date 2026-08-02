@@ -1,10 +1,5 @@
-export const SETTLE_MIN_WIDTH = 100;
-export const SETTLE_MIN_HEIGHT = 80;
 export const MIN_COLS = 10;
 export const MIN_ROWS = 3;
-export const SETTLE_STABLE_FRAMES = 2;
-export const SETTLE_MAX_FRAMES = 10;
-export const OBSERVER_DEBOUNCE_MS = 16;
 
 export type ReconcileReason =
   | "panel-visible"
@@ -52,13 +47,13 @@ interface RectSize {
 }
 
 const DEFAULT_LIMITS: ReconcilerLimits = {
-  minWidth: SETTLE_MIN_WIDTH,
-  minHeight: SETTLE_MIN_HEIGHT,
+  minWidth: 100,
+  minHeight: 80,
   minCols: MIN_COLS,
   minRows: MIN_ROWS,
-  stableFrames: SETTLE_STABLE_FRAMES,
-  maxFrames: SETTLE_MAX_FRAMES,
-  observerDebounceMs: OBSERVER_DEBOUNCE_MS,
+  stableFrames: 2,
+  maxFrames: 10,
+  observerDebounceMs: 16,
 };
 
 export class ResizeReconciler {
@@ -66,11 +61,10 @@ export class ResizeReconciler {
   private disposed = false;
   private epoch = 0;
   private generation = 0;
-  private pendingWhileHidden = false;
   private committedRect: RectSize | null = null;
   private desiredDims: FitResult | null = null;
   private observerTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly pendingFrames = new Map<number, (current: boolean) => void>();
+  private readonly pendingFrames = new Map<number, () => void>();
 
   constructor(
     private readonly host: ReconcilerHost,
@@ -91,7 +85,8 @@ export class ResizeReconciler {
     if (this.disposed) return;
 
     if (!visible) {
-      this.pendingWhileHidden = true;
+      // Dropping the committed rect is what makes an identical-size reveal
+      // reconcile again instead of being deduped away (RC-A).
       this.committedRect = null;
       this.generation++;
       this.cancelPendingFrames();
@@ -102,7 +97,6 @@ export class ResizeReconciler {
       return;
     }
 
-    this.pendingWhileHidden = false;
     this.request("panel-visible");
   }
 
@@ -153,24 +147,15 @@ export class ResizeReconciler {
     const epoch = this.epoch;
     const generation = ++this.generation;
     this.cancelPendingFrames();
+    if (!this.isLive(epoch, generation)) return null;
 
-    if (!this.isVisible()) {
-      this.pendingWhileHidden = true;
-      return null;
-    }
-
-    this.pendingWhileHidden = false;
     let lastWidth = 0;
     let lastHeight = 0;
     let stableFrames = 0;
 
     for (let attempt = 0; attempt < this.limits.maxFrames; attempt++) {
-      if (!(await this.nextFrame(epoch, generation))) return null;
-      if (!this.isCurrent(epoch, generation)) return null;
-      if (!this.isVisible()) {
-        this.pendingWhileHidden = true;
-        return null;
-      }
+      await this.nextFrame();
+      if (!this.isLive(epoch, generation)) return null;
 
       const rect = this.getRect();
       if (!rect || !this.isMeasurable(rect)) continue;
@@ -185,11 +170,7 @@ export class ResizeReconciler {
       }
     }
 
-    if (!this.isCurrent(epoch, generation)) return null;
-    if (!this.isVisible()) {
-      this.pendingWhileHidden = true;
-      return null;
-    }
+    if (!this.isLive(epoch, generation)) return null;
 
     const rect = this.getRect();
     if (!rect || !this.isMeasurable(rect)) return null;
@@ -204,16 +185,15 @@ export class ResizeReconciler {
     this.desiredDims = { ...dims };
     const socket = this.host.getWebSocket();
     if (socket?.readyState === WebSocket.OPEN) this.sendResize(socket, dims);
-    if (!this.isCurrent(epoch, generation)) return null;
     this.host.onDimensions?.(dims.cols, dims.rows);
     return { ...dims };
   }
 
-  private nextFrame(epoch: number, generation: number): Promise<boolean> {
+  private nextFrame(): Promise<void> {
     return new Promise((resolve) => {
       const id = this.host.raf(() => {
         this.pendingFrames.delete(id);
-        resolve(this.isCurrent(epoch, generation));
+        resolve();
       });
       this.pendingFrames.set(id, resolve);
     });
@@ -222,7 +202,7 @@ export class ResizeReconciler {
   private cancelPendingFrames() {
     for (const [id, resolve] of this.pendingFrames) {
       this.host.caf(id);
-      resolve(false);
+      resolve();
     }
     this.pendingFrames.clear();
   }
@@ -233,6 +213,12 @@ export class ResizeReconciler {
       epoch === this.epoch &&
       generation === this.generation
     );
+  }
+
+  /** Re-checked after every async boundary: a superseded or hidden generation
+   *  must abort before it can measure or fit (RC-B). */
+  private isLive(epoch: number, generation: number) {
+    return this.isCurrent(epoch, generation) && this.isVisible();
   }
 
   private isVisible() {

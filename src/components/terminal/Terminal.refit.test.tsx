@@ -70,7 +70,7 @@ const fitAddonInstances: Array<{
 
 // ── Recording WebSocket mock ──────────────────────────────────────────────
 // The focus-frame assertion needs an OPEN socket that records sent frames.
-// Terminal.tsx's sendFocusSignal only sends when ws.readyState === OPEN, so a
+// Terminal.tsx only sends a focus signal when ws.readyState === OPEN, so a
 // plain 401 (no socket) wouldn't exercise the dedupe path. This minimal mock
 // opens synchronously-ish (onopen fired on a microtask) and captures every
 // JSON frame the component sends.
@@ -361,9 +361,9 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
       ref.current?.refit();
     });
 
-    // refit() calls scrollToBottom directly (the settle+fit half no-ops in a
-    // zero-size jsdom container, but scrollToBottom is unconditional and is a
-    // faithful proxy that the imperative path executed).
+    // refit() calls scrollToBottom directly — an unconditional, synchronous
+    // proxy that the imperative path executed (the reconcile half is async and
+    // is asserted separately).
     expect(xterm.scrollToBottom).toHaveBeenCalledTimes(1);
   });
 

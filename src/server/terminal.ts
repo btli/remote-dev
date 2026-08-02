@@ -301,14 +301,10 @@ export class PrimaryPromotionCoordinator {
       if (this.pendingTimers.get(sessionId) !== timer) return;
       this.pendingTimers.delete(sessionId);
 
+      // Only the still-mapped candidate may promote; requestPromotion
+      // re-validates it and drops the pending entry when it no longer
+      // qualifies (closed socket, hidden panel).
       if (this.pendingCandidates.get(sessionId) !== connectionId) return;
-      const candidate = this.host.getConnection(connectionId);
-      if (!candidate?.isSocketOpen || !candidate.isVisible) {
-        this.pendingCandidates.delete(sessionId);
-        return;
-      }
-      if (this.pendingCandidates.get(sessionId) !== connectionId) return;
-
       this.requestPromotion(sessionId, connectionId, false);
     }, Math.max(0, delayMs));
     this.pendingTimers.set(sessionId, timer);
@@ -371,12 +367,8 @@ const primaryPromotions = new PrimaryPromotionCoordinator(
         { force: true },
       );
     },
-    broadcastPrimaryChanged(sessionId) {
-      broadcastPrimaryChanged(sessionId);
-    },
-    now() {
-      return Date.now();
-    },
+    broadcastPrimaryChanged,
+    now: () => Date.now(),
   },
   PROMOTION_COOLDOWN_MS,
 );
@@ -864,7 +856,8 @@ function broadcastPrimaryChanged(sessionId: string): void {
 
 /**
  * Promote `connectionId` to be the session's primary (tmux-resize controller).
- * Honors a per-session cooldown unless `force` is true.
+ * A request blocked by the per-session cooldown is deferred until the cooldown
+ * expires, not dropped, unless `force` is true.
  */
 function tryPromoteToPrimary(sessionId: string, connectionId: string, force: boolean): void {
   const result = primaryPromotions.requestPromotion(sessionId, connectionId, force);

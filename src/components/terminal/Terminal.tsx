@@ -362,6 +362,15 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     []
   );
 
+  /** Keyboard focus belongs to this terminal only while it is the active
+   *  session in a presented panel, and never in mobile mode where the native
+   *  shell owns the keyboard. */
+  const focusIfPresented = useCallback(() => {
+    if (!isActiveRef.current || !visibleRef.current) return;
+    if (document.hidden || mobileModeRef.current) return;
+    xtermRef.current?.focus();
+  }, []);
+
   useEffect(() => {
     if (!terminalRef.current || xtermRef.current) return;
 
@@ -375,6 +384,15 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     // open is a FIRST connect, not a reconnect. (Stays true across reconnect
     // attempts within this same effect run.)
     hasConnectedBeforeRef.current = false;
+
+    const releaseReconciler = (instance: ResizeReconciler | null) => {
+      if (!instance) return;
+      instance.dispose();
+      if (reconcilerRef.current === instance) {
+        reconcilerRef.current = null;
+        syncFocusToServerRef.current = null;
+      }
+    };
 
     // Dynamically import xterm modules (browser-only)
     async function initTerminal() {
@@ -507,10 +525,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         visibleRef.current &&
         !document.hidden &&
         (windowFocusedRef.current || textareaFocusedRef.current);
-      const syncFocusToServer = (
-        force = false,
-        socket = wsRef.current,
-      ) => {
+      const syncFocusToServer = (force = false) => {
+        const socket = wsRef.current;
         const next = getDesiredFocus() ? "focus" : "blur";
         if (!force && lastSentFocusStateRef.current === next) return;
         if (!socket || socket.readyState !== WebSocket.OPEN) return;
@@ -525,8 +541,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           // The desired state remains available for the next socket-open flush.
         }
       };
-      syncFocusToServerRef.current = (force = false) =>
-        syncFocusToServer(force);
+      syncFocusToServerRef.current = syncFocusToServer;
 
       // Load WebGL renderer for better performance (falls back to DOM renderer)
       try {
@@ -826,7 +841,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           reconnectAttemptsRef.current = 0;
           lastSentFocusStateRef.current = null;
           onWebSocketReadyRef.current?.(ws);
-          syncFocusToServer(true, ws);
+          syncFocusToServer(true);
           reconciler.notifySocketOpen(ws);
 
           // [remote-dev-d5ci] On a RE-open (not the first connect), dispatch the
@@ -1067,14 +1082,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         // reveal signal replays reconciliation once the panel is measurable.
         await reconciler.reconcileOnce("post-init");
         if (!mounted || reconcilerRef.current !== reconciler) return;
-        if (
-          isActiveRef.current &&
-          visibleRef.current &&
-          !document.hidden &&
-          !mobileModeRef.current
-        ) {
-          terminal.focus();
-        }
+        focusIfPresented();
         void connect();
       };
 
@@ -1112,18 +1120,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       }
 
       const handleVisibilityChange = () => {
+        syncFocusToServer();
         if (!document.hidden) {
-          syncFocusToServer();
           reconciler.request("page-visible");
-          if (
-            isActiveRef.current &&
-            visibleRef.current &&
-            !mobileModeRef.current
-          ) {
-            terminal.focus();
-          }
-        } else {
-          syncFocusToServer();
+          focusIfPresented();
         }
       };
 
@@ -1171,11 +1171,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
       // Store cleanup in closure
       return () => {
-        if (reconcilerRef.current === reconciler) {
-          reconcilerRef.current = null;
-          syncFocusToServerRef.current = null;
-        }
-        reconciler.dispose();
+        releaseReconciler(reconciler);
         window.removeEventListener("resize", handleWindowResize);
         document.removeEventListener("visibilitychange", handleVisibilityChange);
         window.removeEventListener("focus", handleWindowFocus);
@@ -1203,11 +1199,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       mounted = false;
       isUnmountingRef.current = true;
       cleanup?.();
-      liveReconciler?.dispose();
-      if (reconcilerRef.current === liveReconciler) {
-        reconcilerRef.current = null;
-        syncFocusToServerRef.current = null;
-      }
+      releaseReconciler(liveReconciler);
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
@@ -1224,7 +1216,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       webglAddonRef.current = null;
       wsRef.current = null;
     };
-  }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, terminalType, markIntentionalExit]);
+  }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, terminalType, markIntentionalExit, focusIfPresented]);
 
   useEffect(() => {
     syncFocusToServerRef.current?.();
@@ -1281,24 +1273,16 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   useEffect(() => {
     if (!isActive) return;
     const reconciler = reconcilerRef.current;
-    const terminal = xtermRef.current;
-    if (!reconciler || !terminal) return;
+    if (!reconciler) return;
     let cancelled = false;
     void reconciler.reconcileOnce("active").then(() => {
-      if (
-        !cancelled &&
-        visibleRef.current &&
-        !document.hidden &&
-        !mobileModeRef.current
-      ) {
-        terminal.focus();
-      }
+      if (!cancelled) focusIfPresented();
     });
 
     return () => {
       cancelled = true;
     };
-  }, [isActive, visible]);
+  }, [isActive, visible, focusIfPresented]);
 
   // Update terminal theme when appearance changes
   useEffect(() => {
