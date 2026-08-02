@@ -7,20 +7,12 @@ vi.mock("@/db", () => ({
   db: {
     query: {
       claudeAccounts: { findFirst: vi.fn() },
-      agentProfiles: { findFirst: vi.fn() },
     },
   },
 }));
 
 vi.mock("@/db/schema", () => ({
-  claudeAccounts: { profileId: "profile_id" },
-  agentProfiles: { id: "id" },
-}));
-
-vi.mock("node:fs/promises", () => ({ readFile: vi.fn() }));
-
-vi.mock("@/lib/dynamic-fs", () => ({
-  runtimeJoin: (...parts: string[]) => parts.join("/"),
+  claudeAccounts: { id: "id" },
 }));
 
 vi.mock("@/infrastructure/external/anthropic-usage-adapter", () => ({
@@ -33,38 +25,48 @@ vi.mock("./poll-config", () => ({
 }));
 
 import { db } from "@/db";
-import { readFile } from "node:fs/promises";
 import { fetchClaudeUsage } from "@/infrastructure/external/anthropic-usage-adapter";
 import { UsageEndpointPoller } from "./UsageEndpointPoller";
 
 const claudeAccountsFindFirst = db.query.claudeAccounts.findFirst as ReturnType<
   typeof vi.fn
 >;
-const agentProfilesFindFirst = db.query.agentProfiles.findFirst as ReturnType<
-  typeof vi.fn
->;
-const readFileMock = readFile as unknown as ReturnType<typeof vi.fn>;
 const fetchUsageMock = fetchClaudeUsage as unknown as ReturnType<typeof vi.fn>;
 
-const OAUTH_CREDS = JSON.stringify({
-  claudeAiOauth: { accessToken: "oauth-access-token" },
-});
+/**
+ * Stand-in for the account→credential resolution. Never a real token shape —
+ * fixtures must not carry anything that resembles a credential.
+ */
+const TOKEN = "test-account-token";
+let tokenReader: ReturnType<typeof vi.fn>;
+
+const TARGET = { accountId: "acct-1", userId: "u1", profileId: null };
+
+function makePoller(): UsageEndpointPoller {
+  return new UsageEndpointPoller(
+    tokenReader as unknown as (
+      accountId: string,
+      userId: string
+    ) => Promise<string | null>
+  );
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
   pollEnabled.value = true;
+  tokenReader = vi.fn().mockResolvedValue(TOKEN);
 });
 
 describe("UsageEndpointPoller.supports", () => {
   it("supports subscription only when the flag is on (the usage endpoint is OAuth-only)", () => {
-    const poller = new UsageEndpointPoller();
+    const poller = makePoller();
     expect(poller.supports("subscription")).toBe(true);
     expect(poller.supports("api_key")).toBe(false);
   });
 
   it("supports nothing when the flag is off", () => {
     pollEnabled.value = false;
-    const poller = new UsageEndpointPoller();
+    const poller = makePoller();
     expect(poller.supports("subscription")).toBe(false);
     expect(poller.supports("api_key")).toBe(false);
   });
@@ -73,20 +75,19 @@ describe("UsageEndpointPoller.supports", () => {
 describe("UsageEndpointPoller.fetchLimitState", () => {
   it("returns null immediately when the flag is off (no DB/network)", async () => {
     pollEnabled.value = false;
-    const poller = new UsageEndpointPoller();
+    const poller = makePoller();
 
-    const result = await poller.fetchLimitState("profile-1");
+    const result = await poller.fetchLimitState(TARGET);
 
     expect(result).toBeNull();
     expect(claudeAccountsFindFirst).not.toHaveBeenCalled();
+    expect(tokenReader).not.toHaveBeenCalled();
     expect(fetchUsageMock).not.toHaveBeenCalled();
   });
 
   describe("subscription", () => {
-    it("loads the OAuth token, probes, and maps the 5h/7d snapshot", async () => {
+    it("reads the ACCOUNT's decrypted token, probes, and maps the 5h/7d snapshot", async () => {
       claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
-      agentProfilesFindFirst.mockResolvedValue({ configDir: "/cfg/dir" });
-      readFileMock.mockResolvedValue(OAUTH_CREDS);
       const reset5h = new Date("2025-06-13T15:00:00Z");
       fetchUsageMock.mockResolvedValue({
         window5hPct: 80,
@@ -98,28 +99,28 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
         limits: [],
       });
 
-      const poller = new UsageEndpointPoller();
-      const result = await poller.fetchLimitState("profile-1");
+      const poller = makePoller();
+      const result = await poller.fetchLimitState(TARGET);
 
-      expect(fetchUsageMock).toHaveBeenCalledWith(
-        "oauth-access-token",
-        "subscription"
-      );
+      // [remote-dev-n4x4.4] The credential comes from the account (via
+      // resolveAccountEnv), NOT from a `.claude/.credentials.json` file — that
+      // path does not exist on macOS and left the poller permanently inert.
+      expect(tokenReader).toHaveBeenCalledWith("acct-1", "u1");
+      expect(fetchUsageMock).toHaveBeenCalledWith(TOKEN, "subscription");
       expect(result).toEqual({
-        profileId: "profile-1",
+        accountId: "acct-1",
         isLimited: false,
         resetAt5h: reset5h,
         resetAt7d: null,
         window5hPct: 80,
         window7dPct: 40,
         source: "poller",
+        windows: [],
       });
     });
 
     it("marks limited when a window is at/over 100%", async () => {
       claudeAccountsFindFirst.mockResolvedValue(undefined); // absent → subscription
-      agentProfilesFindFirst.mockResolvedValue({ configDir: "/cfg/dir" });
-      readFileMock.mockResolvedValue(OAUTH_CREDS);
       fetchUsageMock.mockResolvedValue({
         window5hPct: 100,
         window7dPct: 50,
@@ -130,19 +131,18 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
         limits: [],
       });
 
-      const poller = new UsageEndpointPoller();
-      const result = await poller.fetchLimitState("profile-1");
+      const poller = makePoller();
+      const result = await poller.fetchLimitState(TARGET);
 
       expect(result?.isLimited).toBe(true);
     });
 
-    it("returns null (no probe) when the credentials file is absent", async () => {
+    it("returns null (no probe) when the account has no usable credential", async () => {
       claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
-      agentProfilesFindFirst.mockResolvedValue({ configDir: "/cfg/dir" });
-      readFileMock.mockRejectedValue(new Error("ENOENT"));
+      tokenReader.mockResolvedValue(null);
 
-      const poller = new UsageEndpointPoller();
-      const result = await poller.fetchLimitState("profile-1");
+      const poller = makePoller();
+      const result = await poller.fetchLimitState(TARGET);
 
       expect(result).toBeNull();
       expect(fetchUsageMock).not.toHaveBeenCalled();
@@ -150,12 +150,10 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
 
     it("returns null when the adapter reports no snapshot", async () => {
       claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
-      agentProfilesFindFirst.mockResolvedValue({ configDir: "/cfg/dir" });
-      readFileMock.mockResolvedValue(OAUTH_CREDS);
       fetchUsageMock.mockResolvedValue(null);
 
-      const poller = new UsageEndpointPoller();
-      const result = await poller.fetchLimitState("profile-1");
+      const poller = makePoller();
+      const result = await poller.fetchLimitState(TARGET);
 
       expect(result).toBeNull();
     });
@@ -165,12 +163,12 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
     it("returns null without reading — the usage endpoint is subscription-only", async () => {
       claudeAccountsFindFirst.mockResolvedValue({ accountKind: "api_key" });
 
-      const poller = new UsageEndpointPoller();
-      const result = await poller.fetchLimitState("profile-1");
+      const poller = makePoller();
+      const result = await poller.fetchLimitState(TARGET);
 
       expect(result).toBeNull();
-      // No OAuth file read and no HTTP read for api_key.
-      expect(agentProfilesFindFirst).not.toHaveBeenCalled();
+      // No credential resolution and no HTTP read for api_key.
+      expect(tokenReader).not.toHaveBeenCalled();
       expect(fetchUsageMock).not.toHaveBeenCalled();
     });
 
@@ -180,8 +178,6 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
       // credential path is not yet wired, so we exercise the mapping via a
       // subscription-kind probe returning an org-only snapshot.)
       claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
-      agentProfilesFindFirst.mockResolvedValue({ configDir: "/cfg/dir" });
-      readFileMock.mockResolvedValue(OAUTH_CREDS);
       const orgReset = new Date("2025-06-13T16:00:00Z");
       fetchUsageMock.mockResolvedValue({
         window5hPct: null,
@@ -193,8 +189,8 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
         limits: [],
       });
 
-      const poller = new UsageEndpointPoller();
-      const result = await poller.fetchLimitState("profile-1");
+      const poller = makePoller();
+      const result = await poller.fetchLimitState(TARGET);
 
       expect(result?.window5hPct).toBe(100);
       expect(result?.resetAt5h).toBe(orgReset);
@@ -204,8 +200,7 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
 
   it("passes a per-model scoped limit through without disturbing the 5h/7d rollup", async () => {
     claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
-    agentProfilesFindFirst.mockResolvedValue({ configDir: "/cfg/dir" });
-    readFileMock.mockResolvedValue(OAUTH_CREDS);
+    const scopedReset = new Date("2026-07-30T22:59:59Z");
     fetchUsageMock.mockResolvedValue({
       window5hPct: 61,
       window7dPct: 98,
@@ -219,7 +214,7 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
           group: "weekly",
           percent: 100,
           severity: "critical",
-          resetAt: null,
+          resetAt: scopedReset,
           scopeModel: "Fable",
           scopeSurface: null,
           isActive: true,
@@ -227,20 +222,87 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
       ],
     });
 
-    const poller = new UsageEndpointPoller();
-    const result = await poller.fetchLimitState("profile-1");
+    const poller = makePoller();
+    const result = await poller.fetchLimitState(TARGET);
 
     // The account is NOT limited overall even though one model's window is
-    // exhausted — model-aware selection is tracked separately.
+    // exhausted — that distinction is exactly the point of the epic.
     expect(result?.window5hPct).toBe(61);
     expect(result?.window7dPct).toBe(98);
     expect(result?.isLimited).toBe(false);
+
+    // …and the scoped window rides out for persistence + model-aware selection.
+    expect(result?.windows).toEqual([
+      {
+        kind: "weekly_scoped",
+        group: "weekly",
+        percent: 100,
+        severity: "critical",
+        resetsAt: scopedReset,
+        scopeModel: "Fable",
+        scopeSurface: null,
+        isActive: true,
+      },
+    ]);
+  });
+
+  it("round-trips an unknown kind/severity verbatim (the vocabularies are open sets)", async () => {
+    claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
+    fetchUsageMock.mockResolvedValue({
+      window5hPct: 10,
+      window7dPct: null,
+      resetAt5h: null,
+      resetAt7d: null,
+      orgPct: null,
+      resetAtOrg: null,
+      limits: [
+        {
+          kind: "monthly_scoped",
+          group: "monthly",
+          percent: 42,
+          severity: "elevated",
+          resetAt: null,
+          scopeModel: "Mythos",
+          scopeSurface: "code",
+          isActive: false,
+        },
+      ],
+    });
+
+    const poller = makePoller();
+    const result = await poller.fetchLimitState(TARGET);
+
+    expect(result?.windows[0]).toMatchObject({
+      kind: "monthly_scoped",
+      group: "monthly",
+      severity: "elevated",
+      scopeModel: "Mythos",
+      scopeSurface: "code",
+    });
   });
 
   it("never throws — a DB error resolves to null", async () => {
     claudeAccountsFindFirst.mockRejectedValue(new Error("db down"));
 
-    const poller = new UsageEndpointPoller();
-    await expect(poller.fetchLimitState("profile-1")).resolves.toBeNull();
+    const poller = makePoller();
+    await expect(poller.fetchLimitState(TARGET)).resolves.toBeNull();
+  });
+
+  it("never leaks the token into the result", async () => {
+    claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
+    fetchUsageMock.mockResolvedValue({
+      window5hPct: 5,
+      window7dPct: 5,
+      resetAt5h: null,
+      resetAt7d: null,
+      orgPct: null,
+      resetAtOrg: null,
+      limits: [],
+    });
+
+    const poller = makePoller();
+    const result = await poller.fetchLimitState(TARGET);
+
+    expect(JSON.stringify(result)).not.toContain(TOKEN);
   });
 });

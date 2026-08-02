@@ -15,6 +15,18 @@
  *   - The candidate set is the pool members UNION the primary, with the
  *     primary pinned to the most-preferred slot (priority < every member).
  *
+ * Model awareness [remote-dev-n4x4.3]:
+ *   - Selection answers "is this account available FOR MODEL M", not just "is
+ *     this account available". An account is unavailable for M when it has a
+ *     model-scoped usage window (`scopeModel` non-null) matching M that is
+ *     `critical` or at/over 100%% and has not yet reset — even while the
+ *     ACCOUNT-level status still reads "allowed". That is the real-world case:
+ *     a per-model weekly window taps out long before the subscription does.
+ *   - It FAILS OPEN by construction. No model requested, no stored windows, an
+ *     unrecognizable model name, or an expired window → behaviour is
+ *     byte-for-byte what it was before this change. A bug here would degrade
+ *     rotation for everyone, so nothing may narrow availability by accident.
+ *
  * Semantics:
  *   - `selectForProject`: the selected AVAILABLE candidate by priority. When
  *     NOTHING is currently available — whether that's a limited primary with no
@@ -41,6 +53,12 @@ import type {
   PoolEntry,
 } from "@/application/ports/ProfilePoolRepository";
 import type { UsageLimitStateRepository } from "@/application/ports/UsageLimitStateRepository";
+import type {
+  UsageLimitWindow,
+  UsageLimitWindowRepository,
+} from "@/application/ports/UsageLimitWindowRepository";
+import { UsageWindow } from "@/domain/value-objects/UsageWindow";
+import { claudeModelIdentityMatches } from "@/domain/value-objects/ClaudeModelIdentity";
 
 /** The primary + pool wiring for a project, as read from its link row. */
 export interface ProjectProfileLink {
@@ -90,15 +108,27 @@ export class PriorityProfileSelectionPolicy implements ProfileSelectionPolicy {
     private readonly readProjectLink: ProjectLinkReader,
     private readonly readInheritedPoolId: InheritedPoolReader,
     private readonly readAccountForProfile: AccountForProfileReader,
-    private readonly readProfilesForAccounts: ProfileForAccountReader
+    private readonly readProfilesForAccounts: ProfileForAccountReader,
+    /**
+     * Per-model window store. Optional: without it the policy is exactly the
+     * pre-n4x4.3 account-level policy, which is also what happens when no model
+     * is requested. [remote-dev-n4x4.3]
+     */
+    private readonly windowRepository?: UsageLimitWindowRepository
   ) {}
 
   async selectForProject(
     projectId: string,
     userId: string,
-    now: Date
+    now: Date,
+    requestedModel?: string | null
   ): Promise<SelectedAccount | null> {
-    const candidates = await this.gatherCandidates(projectId, userId);
+    const candidates = await this.gatherCandidates(
+      projectId,
+      userId,
+      now,
+      requestedModel
+    );
     if (candidates.length === 0) return null; // nothing configured
 
     const selected = RotationPolicy.select(candidates, now);
@@ -117,9 +147,15 @@ export class PriorityProfileSelectionPolicy implements ProfileSelectionPolicy {
     currentAccountId: string,
     projectId: string,
     userId: string,
-    now: Date
+    now: Date,
+    requestedModel?: string | null
   ): Promise<SelectedAccount | null> {
-    const candidates = await this.gatherCandidates(projectId, userId);
+    const candidates = await this.gatherCandidates(
+      projectId,
+      userId,
+      now,
+      requestedModel
+    );
     const alternates = candidates.filter((c) => c.accountId !== currentAccountId);
     // First available by ascending priority; null when none.
     const accountId = RotationPolicy.select(alternates, now);
@@ -140,7 +176,9 @@ export class PriorityProfileSelectionPolicy implements ProfileSelectionPolicy {
    */
   private async gatherCandidates(
     projectId: string,
-    userId: string
+    userId: string,
+    now: Date,
+    requestedModel?: string | null
   ): Promise<RotationCandidate[]> {
     const link = await this.readProjectLink(projectId);
 
@@ -177,19 +215,114 @@ export class PriorityProfileSelectionPolicy implements ProfileSelectionPolicy {
     }
 
     const states = await this.stateRepository.findManyByAccountIds(accountIds);
+    const modelBlocks = await this.blockingWindowsForModel(
+      accountIds,
+      requestedModel,
+      now
+    );
 
-    const candidates: RotationCandidate[] = accountIds.map((accountId) => ({
-      accountId,
-      priority: byAccount.get(accountId) as number,
+    const candidates: RotationCandidate[] = accountIds.map((accountId) => {
       // No recorded state → treat as available (never observed limited).
-      limitState: states.get(accountId) ?? LimitState.available(accountId),
-    }));
+      const accountState =
+        states.get(accountId) ?? LimitState.available(accountId);
+      const blocking = modelBlocks.get(accountId);
+      return {
+        accountId,
+        priority: byAccount.get(accountId) as number,
+        limitState: blocking
+          ? limitedForModel(accountId, accountState, blocking)
+          : accountState,
+      };
+    });
 
     // Sort by priority so best-effort + selection are order-stable.
     candidates.sort((a, b) => a.priority - b.priority);
 
     return candidates;
   }
+
+  /**
+   * Which of `accountIds` are exhausted FOR `requestedModel`, and by which
+   * window. [remote-dev-n4x4.3]
+   *
+   * Every early return here is a fail-open: no window repository, no model, or
+   * no stored windows all yield an empty map, leaving availability exactly as
+   * the account-level state reports it.
+   *
+   * Matching is deliberately NOT restricted to `kind === "weekly_scoped"`:
+   * `kind` is an OPEN string set upstream, so pinning to today's spelling is
+   * precisely the thing most likely to rot. The discriminator that actually
+   * matters is structural — a non-null `scopeModel` means "this window is
+   * scoped to one model" regardless of what the kind is called.
+   */
+  private async blockingWindowsForModel(
+    accountIds: string[],
+    requestedModel: string | null | undefined,
+    now: Date
+  ): Promise<Map<string, UsageLimitWindow>> {
+    const blocked = new Map<string, UsageLimitWindow>();
+    if (!this.windowRepository) return blocked;
+    if (typeof requestedModel !== "string" || requestedModel.trim() === "") {
+      return blocked;
+    }
+
+    const byAccount =
+      await this.windowRepository.findManyByAccountIds(accountIds);
+
+    for (const [accountId, windows] of byAccount) {
+      for (const window of windows) {
+        // Account-level window: already reflected in the rollup state.
+        if (window.scopeModel === null) continue;
+        if (!claudeModelIdentityMatches(requestedModel, window.scopeModel)) {
+          continue;
+        }
+        if (!isExhausted(window)) continue;
+        // An elapsed reset means the window has already rolled over; the next
+        // poll will confirm, but until then it must not block.
+        if (window.resetsAt !== null && window.resetsAt.getTime() <= now.getTime()) {
+          continue;
+        }
+        blocked.set(accountId, window);
+        break;
+      }
+    }
+
+    return blocked;
+  }
+}
+
+/**
+ * Whether a model-scoped window leaves no headroom. `critical` is the
+ * endpoint's own verdict; `percent >= 100` catches the case where severity is
+ * absent or spelled in a way we do not recognize.
+ */
+function isExhausted(window: UsageLimitWindow): boolean {
+  if (typeof window.severity === "string") {
+    if (window.severity.trim().toLowerCase() === "critical") return true;
+  }
+  return typeof window.percent === "number" && window.percent >= 100;
+}
+
+/**
+ * A state that reports the account as unavailable *because* a model-scoped
+ * window is exhausted, carrying that window's reset so the account frees itself
+ * again once the window rolls over (mirroring how account-level limits expire).
+ *
+ * The source and lastCheckedAt are inherited from the account-level state so
+ * the derived state stays attributable to the observation it came from.
+ */
+function limitedForModel(
+  accountId: string,
+  accountState: LimitState,
+  blocking: UsageLimitWindow
+): LimitState {
+  return LimitState.limited(accountId, {
+    // The "7d" slot is the weekly dimension the scoped window lives in; the
+    // reset is what makes this expire rather than pin the account forever.
+    windows: [UsageWindow.create("7d", 100, blocking.resetsAt)],
+    source: accountState.getSource(),
+    lastCheckedAt: accountState.getLastCheckedAt(),
+  });
 }
 
 /** The most-preferred candidate (already priority-sorted ascending). */

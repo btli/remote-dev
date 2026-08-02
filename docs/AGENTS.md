@@ -163,12 +163,30 @@ paste-a-token fallback covers remote/PWA use where no local browser exists. Ther
 is no "Sync" step — the old file-reading sync parsed a `.credentials.json` that
 never exists on macOS (the CLI writes to the Keychain) and was silently dead.
 
-**Detecting a limit is reactive by default.** When a Claude session goes idle or
-ends, its recent scrollback is scanned for the usage-limit phrase
-(`ReactiveOutputDetector`); a hit marks the session's ACCOUNT limited. A proactive
-Anthropic usage poller also exists but is **experimental and OFF by default**
-behind `RDV_CLAUDE_USAGE_POLL_ENABLED` — it is not the shipped default, and the
-once-planned `rdv` Stop-hook limit detector was never built. **On a limit**, the
+**Limits are detected two ways, both on by default.** When a Claude session goes
+idle or ends, its recent scrollback is scanned for the usage-limit phrase
+(`ReactiveOutputDetector`); a hit marks the session's ACCOUNT limited. In
+parallel, a proactive **usage poller** sweeps every Claude account about every
+10 minutes, reading Anthropic's structured usage endpoint with that account's
+stored OAuth token — a free GET that sends no message and burns no quota. It was
+experimental and OFF while it POSTed a real probe per poll; that probe is gone,
+so it now runs by default with `RDV_CLAUDE_USAGE_POLL_ENABLED` retained as a
+kill switch (`=0` disables). The once-planned `rdv` Stop-hook limit detector was
+never built.
+
+**Rotation is model-aware.** The poller is the only source of per-model
+`weekly_scoped` windows, which are stored per account in
+`claude_usage_limit_window`. A Claude subscription can exhaust one model's
+weekly window — premium models hard-reject with 429 — while the account-level
+status still reads "allowed". When a session requests a model (`--model` in its
+resolved agent flags), account selection treats an account with a matching
+scoped window at `critical`/100% as unavailable *for that model* and rotates to
+a sibling account with headroom. Matching is on the endpoint's model display
+name (`"Fable"`), which is the only per-model identity it reports, and is
+case- and whitespace-tolerant. If no model is requested, or the account has no
+matching scoped window, behaviour is exactly the account-level behaviour —
+model awareness can only ever widen the rejected set for a named model, never
+narrow availability by accident. **On a limit**, the
 default `notify` mode records the limit and posts a notification; the
 notification payload carries a relaunch CTA, **but no client renders an inline
 "relaunch" button yet** — so today `notify` mode surfaces a notification only. An

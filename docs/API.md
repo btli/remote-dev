@@ -989,10 +989,13 @@ returns `{ poolId, name, members: [{ accountId, name, priority, limitState }] }`
 where `name` is the account's alias or email; members that resolve to an account
 not owned by the caller are omitted.
 
-The proactive Anthropic usage poller that can populate this state on a timer is
-**OFF by default** — see `RDV_CLAUDE_USAGE_POLL_ENABLED` in
-[SETUP.md](./SETUP.md). Reactive detection (session-output scan + a `Stop` hook)
-is always on.
+The proactive Anthropic usage poller that populates this state on a ~10-minute
+timer is **ON by default** (free GET, no quota burn); set
+`RDV_CLAUDE_USAGE_POLL_ENABLED=0` to disable — see [SETUP.md](./SETUP.md).
+Reactive detection (session-output scan + a `Stop` hook) is always on. The
+poller additionally records per-model `weekly_scoped` windows in
+`claude_usage_limit_window`, which is what makes account rotation model-aware
+(see [AGENTS.md](./AGENTS.md)).
 
 ---
 

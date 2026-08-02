@@ -15,6 +15,10 @@
 import { LimitState } from "@/domain/value-objects/LimitState";
 import { UsageWindow } from "@/domain/value-objects/UsageWindow";
 import type { UsageLimitStateRepository } from "@/application/ports/UsageLimitStateRepository";
+import type {
+  UsageLimitWindow,
+  UsageLimitWindowRepository,
+} from "@/application/ports/UsageLimitWindowRepository";
 import type { UsageDetectionSource } from "@/types/claude-limits";
 import { createLogger } from "@/lib/logger";
 
@@ -30,6 +34,17 @@ export interface TrackUsageLimitInput {
   resetAt7d?: Date | null;
   window5hPct?: number | null;
   window7dPct?: number | null;
+  /**
+   * Every window the source reported, including per-model (`weekly_scoped`)
+   * ones the 5h/7d rollup above cannot represent. When provided, it REPLACES
+   * the account's stored windows. [remote-dev-n4x4.2]
+   *
+   * Omit it (undefined) when the source has no per-window detail — a reactive
+   * output parse, say — so its narrower observation never wipes richer windows
+   * a poll recorded. An explicit empty array DOES clear them (the endpoint
+   * genuinely reported none).
+   */
+  windows?: UsageLimitWindow[];
   /** Observation time; defaults to now. Drives the staleness guard. */
   observedAt?: Date;
 }
@@ -56,7 +71,13 @@ export interface TrackUsageLimitResult {
 
 export class TrackUsageLimitUseCase {
   constructor(
-    private readonly stateRepository: UsageLimitStateRepository
+    private readonly stateRepository: UsageLimitStateRepository,
+    /**
+     * Optional: when absent, per-window detail is simply not persisted and the
+     * account-level rollup behaves exactly as before. Keeps the existing
+     * single-argument construction (and its tests) valid. [remote-dev-n4x4.2]
+     */
+    private readonly windowRepository?: UsageLimitWindowRepository
   ) {}
 
   async execute(input: TrackUsageLimitInput): Promise<TrackUsageLimitResult> {
@@ -100,6 +121,24 @@ export class TrackUsageLimitUseCase {
       input.source === "manual" ? undefined : { onlyIfNewer: observedAt };
 
     const wrote = await this.stateRepository.upsert(state, opts);
+
+    // Persist per-window detail only when the rollup write actually landed —
+    // otherwise a stale observation would leave the windows describing one
+    // moment and the rollup another. Best-effort: a window-write failure must
+    // never fail the observation the rollup already accepted.
+    if (wrote && input.windows !== undefined && this.windowRepository) {
+      try {
+        await this.windowRepository.replaceForAccount(
+          input.accountId,
+          input.windows
+        );
+      } catch (error) {
+        log.warn("Failed to persist usage windows (rollup still recorded)", {
+          accountId: input.accountId,
+          error: String(error),
+        });
+      }
+    }
 
     log.debug("Tracked usage-limit observation", {
       accountId: input.accountId,

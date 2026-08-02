@@ -113,6 +113,13 @@
       "when": 1785252334000,
       "tag": "0015_even_wendigo",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1785687008012,
+      "tag": "0016_mute_quasimodo",
+      "breakpoints": true
     }
   ]
 }

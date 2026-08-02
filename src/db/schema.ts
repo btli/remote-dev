@@ -72,6 +72,7 @@ export const {
   projects,
   claudeAccounts,
   claudeUsageLimitStates,
+  claudeUsageLimitWindows,
   claudeProfilePools,
   claudeProfilePoolMembers,
   nodePreferences,

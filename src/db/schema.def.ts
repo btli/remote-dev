@@ -1367,6 +1367,57 @@ export const schema: SchemaDefinition = [
     ],
   },
   {
+    // One row per window the `/api/oauth/usage` endpoint reported for an
+    // account — the variable-length `limits[]` array the fixed
+    // `claude_usage_limit_state` rollup cannot represent. [remote-dev-n4x4.2]
+    //
+    // The load-bearing case is `kind = "weekly_scoped"` with a non-null
+    // `scope_model`: a PER-MODEL weekly window that can read 100%/critical
+    // while the ACCOUNT-level status still says "allowed". Selection consults
+    // these rows to answer "is this account available *for model M*".
+    //
+    // `kind`, `limit_group` and `severity` are OPEN string sets — the endpoint's
+    // vocabularies grow, so unknown values round-trip verbatim rather than
+    // being dropped or coerced. Nothing here is an enum for that reason.
+    //
+    // Write semantics: the repository REPLACES an account's rows on every poll
+    // (delete-then-insert in one transaction) so a window that disappears
+    // upstream cannot linger as stale state. There is deliberately NO unique
+    // index on (account_id, kind, scope_model): `scope_model` is nullable and
+    // SQLite/PostgreSQL disagree on whether NULLs collide in a unique index,
+    // and wholesale replacement already makes duplicates unreachable.
+    exportName: "claudeUsageLimitWindows",
+    sqlName: "claude_usage_limit_window",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true, default: { kind: "fn", fn: "uuid" } },
+      { field: "accountId", dbName: "account_id", kind: "text", notNull: true, references: { table: "claudeAccounts", column: "id", onDelete: "cascade" } },
+      { field: "userId", dbName: "user_id", kind: "text", notNull: true, references: { table: "users", column: "id", onDelete: "cascade" } },
+      // Open set. Observed: "session" | "weekly_all" | "weekly_scoped".
+      { field: "kind", dbName: "kind", kind: "text", notNull: true },
+      // Open set. Observed: "session" | "weekly". `group` is reserved SQL, so
+      // the column is `limit_group`.
+      { field: "limitGroup", dbName: "limit_group", kind: "text" },
+      // Utilization 0-100 (integer, clamped).
+      { field: "percent", dbName: "percent", kind: "integer", notNull: true, default: { kind: "value", value: "0" } },
+      // Open set. Observed: "normal" | "critical".
+      { field: "severity", dbName: "severity", kind: "text" },
+      { field: "resetsAt", dbName: "resets_at", kind: "timestampMs" },
+      // The scoped model's DISPLAY NAME (e.g. "Fable"); `scope.model.id` is
+      // null upstream, so the display name is the only per-model identity.
+      { field: "scopeModel", dbName: "scope_model", kind: "text" },
+      { field: "scopeSurface", dbName: "scope_surface", kind: "text" },
+      // Whether this window is the one actually binding right now.
+      { field: "isActive", dbName: "is_active", kind: "boolean", notNull: true, default: { kind: "value", value: "false" } },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+      { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "claude_usage_limit_window_account_idx", columns: ["accountId"] },
+      { name: "claude_usage_limit_window_account_scope_idx", columns: ["accountId","scopeModel"] },
+      { name: "claude_usage_limit_window_user_idx", columns: ["userId"] },
+    ],
+  },
+  {
     // A named, ordered fallback pool of Claude ACCOUNTS to rotate through when
     // the primary is limited. [remote-dev-3b3l / remote-dev-n4x4.6]
     exportName: "claudeProfilePools",

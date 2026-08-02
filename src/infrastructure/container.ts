@@ -142,6 +142,7 @@ import { createLogger } from "@/lib/logger";
 
 // Claude Usage Limits + Profile Pools [remote-dev-3b3l]
 import { DrizzleUsageLimitStateRepository } from "./usage-limit/DrizzleUsageLimitStateRepository";
+import { DrizzleUsageLimitWindowRepository } from "./usage-limit/DrizzleUsageLimitWindowRepository";
 import { DrizzleProfilePoolRepository } from "./usage-limit/DrizzleProfilePoolRepository";
 import { PriorityProfileSelectionPolicy } from "./usage-limit/PriorityProfileSelectionPolicy";
 import type { ProjectProfileLink } from "./usage-limit/PriorityProfileSelectionPolicy";
@@ -153,6 +154,7 @@ import {
   SelectProfileUseCase,
 } from "@/application/use-cases/profile";
 import type { UsageLimitStateRepository } from "@/application/ports/UsageLimitStateRepository";
+import type { UsageLimitWindowRepository } from "@/application/ports/UsageLimitWindowRepository";
 import type { ProfilePoolRepository } from "@/application/ports/ProfilePoolRepository";
 import type { ProfileSelectionPolicy } from "@/application/ports/ProfileSelectionPolicy";
 import type { UsageLimitGateway } from "@/application/ports/UsageLimitGateway";
@@ -599,6 +601,13 @@ export const autoUpdateOrchestrator = new AutoUpdateOrchestrator(
 export const usageLimitStateRepository: UsageLimitStateRepository =
   new DrizzleUsageLimitStateRepository();
 
+/**
+ * Per-window usage detail (incl. per-model `weekly_scoped` windows) that the
+ * fixed 5h/7d rollup cannot represent. [remote-dev-n4x4.2]
+ */
+export const usageLimitWindowRepository: UsageLimitWindowRepository =
+  new DrizzleUsageLimitWindowRepository();
+
 /** Claude fallback-pool persistence. */
 export const profilePoolRepository: ProfilePoolRepository =
   new DrizzleProfilePoolRepository();
@@ -688,12 +697,14 @@ export const profileSelectionPolicy: ProfileSelectionPolicy =
     readProjectProfileLink,
     readInheritedPoolId,
     readAccountForProfile,
-    readProfilesForAccounts
+    readProfilesForAccounts,
+    usageLimitWindowRepository
   );
 
 /** Record a usage-limit observation (with the staleness guard). */
 export const trackUsageLimitUseCase = new TrackUsageLimitUseCase(
-  usageLimitStateRepository
+  usageLimitStateRepository,
+  usageLimitWindowRepository
 );
 
 /** Resolve which profile to launch for a project (explicit → primary → pool). */
