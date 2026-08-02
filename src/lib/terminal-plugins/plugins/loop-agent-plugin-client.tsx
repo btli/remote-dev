@@ -25,6 +25,7 @@ function LoopAgentSessionComponent({
   scrollback,
   tmuxHistoryLimit,
   isActive,
+  visible,
   environmentVars,
   onAgentActivityStatus,
   onBeadsIssuesUpdated,
@@ -47,6 +48,7 @@ function LoopAgentSessionComponent({
       scrollback={scrollback}
       tmuxHistoryLimit={tmuxHistoryLimit}
       isActive={isActive}
+      parentVisible={visible}
       environmentVars={environmentVars}
       onAgentActivityStatus={onAgentActivityStatus}
       onBeadsIssuesUpdated={onBeadsIssuesUpdated}

@@ -23,14 +23,49 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, render, cleanup, waitFor } from "@testing-library/react";
-import { createRef } from "react";
+import { createRef, StrictMode } from "react";
 
 import type { TerminalRef } from "./Terminal";
+
+const reconcilerState = vi.hoisted(() => ({
+  instances: [] as Array<{ wasDisposed: boolean; callsAfterDispose: number }>,
+}));
+
+vi.mock("./resize-reconciler", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./resize-reconciler")>();
+  class TrackingResizeReconciler extends actual.ResizeReconciler {
+    wasDisposed = false;
+    callsAfterDispose = 0;
+
+    constructor(
+      ...args: ConstructorParameters<typeof actual.ResizeReconciler>
+    ) {
+      super(...args);
+      reconcilerState.instances.push(this);
+    }
+
+    request(reason: Parameters<typeof actual.ResizeReconciler.prototype.request>[0]) {
+      if (this.wasDisposed) this.callsAfterDispose++;
+      return super.request(reason);
+    }
+
+    dispose() {
+      this.wasDisposed = true;
+      super.dispose();
+    }
+  }
+  return { ...actual, ResizeReconciler: TrackingResizeReconciler };
+});
 
 // Capture every XTerm instance so we can assert against its methods + textarea.
 const xtermInstances: Array<{
   scrollToBottom: ReturnType<typeof vi.fn>;
+  focus: ReturnType<typeof vi.fn>;
+  dispose: ReturnType<typeof vi.fn>;
   textarea: HTMLTextAreaElement;
+}> = [];
+const fitAddonInstances: Array<{
+  fit: ReturnType<typeof vi.fn>;
 }> = [];
 
 // ── Recording WebSocket mock ──────────────────────────────────────────────
@@ -94,7 +129,9 @@ vi.mock("@xterm/xterm", () => {
       this.textarea = document.createElement("textarea");
       xtermInstances.push(this);
     }
-    loadAddon() {}
+    loadAddon(addon: { activate?: (terminal: FakeTerminal) => void }) {
+      addon.activate?.(this);
+    }
     open() {}
     onData() {
       return { dispose: () => {} };
@@ -106,10 +143,10 @@ vi.mock("@xterm/xterm", () => {
       return { dispose: () => {} };
     }
     attachCustomKeyEventHandler() {}
-    focus() {}
+    focus = vi.fn();
     write() {}
     writeln() {}
-    dispose() {}
+    dispose = vi.fn();
     clear() {}
   }
   return { Terminal: FakeTerminal };
@@ -117,9 +154,22 @@ vi.mock("@xterm/xterm", () => {
 
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class {
-    activate() {}
+    private terminal: { cols: number; rows: number } | null = null;
+    fit = vi.fn(() => {
+      if (!this.terminal) return;
+      this.terminal.cols = 100;
+      this.terminal.rows = 30;
+    });
+    constructor() {
+      fitAddonInstances.push(this);
+    }
+    activate(terminal: { cols: number; rows: number }) {
+      this.terminal = terminal;
+    }
+    proposeDimensions() {
+      return { cols: 100, rows: 30 };
+    }
     dispose() {}
-    fit() {}
   },
 }));
 
@@ -197,6 +247,7 @@ vi.mock("@/hooks/useNotifications", () => ({
 
 const originalFetch = globalThis.fetch;
 const originalWebSocket = globalThis.WebSocket;
+let rectSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   // Token endpoint succeeds so connect() proceeds to open a WebSocket; any
   // other URL resolves benignly. The focus-frame test needs a live socket.
@@ -216,6 +267,19 @@ beforeEach(() => {
     } as Response);
   }) as unknown as typeof fetch;
   globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+  rectSpy = vi
+    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+    .mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 800,
+      bottom: 480,
+      width: 800,
+      height: 480,
+      toJSON: () => ({}),
+    });
   if (!("fonts" in document)) {
     Object.defineProperty(document, "fonts", {
       configurable: true,
@@ -227,7 +291,10 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = originalFetch;
   globalThis.WebSocket = originalWebSocket;
+  rectSpy.mockRestore();
   xtermInstances.length = 0;
+  fitAddonInstances.length = 0;
+  reconcilerState.instances.length = 0;
   wsInstances.length = 0;
   cleanup();
 });
@@ -360,5 +427,117 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
     });
 
     expect(ws.sentTypes()).toContain("client_focus");
+  });
+
+  it("reconciles and sends dimensions when a hidden panel becomes visible", async () => {
+    const Terminal = await getTerminal();
+    const view = render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible={false}
+      />,
+    );
+
+    await waitFor(() => expect(wsInstances.length).toBeGreaterThan(0));
+    const ws = wsInstances.at(-1)!;
+    ws.sent.length = 0;
+
+    view.rerender(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        ws.sent
+          .map((frame) => JSON.parse(frame) as { type: string; cols?: number; rows?: number })
+          .find((frame) => frame.type === "resize"),
+      ).toEqual({ type: "resize", cols: 100, rows: 30 });
+    });
+  });
+
+  it("StrictMode leaves one live terminal and teardown prevents later fits", async () => {
+    const Terminal = await getTerminal();
+    const view = render(
+      <StrictMode>
+        <Terminal
+          sessionId="s1"
+          tmuxSessionName="rdv-s1"
+          wsUrl="ws://localhost:0"
+          terminalType="shell"
+          visible
+        />
+      </StrictMode>,
+    );
+
+    await waitFor(() => {
+      expect(
+        reconcilerState.instances.filter((reconciler) => !reconciler.wasDisposed),
+      ).toHaveLength(1);
+    });
+
+    view.unmount();
+    act(() => window.dispatchEvent(new Event("resize")));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(
+      reconcilerState.instances.filter((reconciler) => !reconciler.wasDisposed),
+    ).toHaveLength(0);
+    expect(
+      reconcilerState.instances.reduce(
+        (total, reconciler) => total + reconciler.callsAfterDispose,
+        0,
+      ),
+    ).toBe(0);
+  });
+
+  it("does not send client_focus for a hidden panel on window focus", async () => {
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sent.length).toBeGreaterThan(0);
+    });
+    const ws = wsInstances.at(-1)!;
+    ws.sent.length = 0;
+
+    act(() => window.dispatchEvent(new Event("focus")));
+
+    expect(ws.sentTypes()).not.toContain("client_focus");
+  });
+
+  it("replays activation after async initialization with resize and keyboard focus", async () => {
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        isActive
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("resize");
+      expect(xtermInstances.at(-1)?.focus).toHaveBeenCalled();
+    });
   });
 });

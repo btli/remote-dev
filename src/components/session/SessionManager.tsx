@@ -2424,6 +2424,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           notificationsEnabled={notificationsEnabled}
                           isRecording={isRecording}
                           isActive={session.id === activeSessionId}
+                          visible={effectiveActiveView === "terminal"}
                           environmentVars={getEnvironmentWithSecrets(folderId)}
                           onOutput={isRecording ? recordOutput : undefined}
                           onDimensionsChange={isRecording ? updateDimensions : undefined}

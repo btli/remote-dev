@@ -14,73 +14,13 @@ import { sendImageToTerminal } from "@/lib/image-upload";
 import { AuthErrorOverlay } from "./AuthErrorOverlay";
 import { createTouchScrollHandlers } from "./touch-scroll";
 import { createTouchInteractions, createTouchModeRef } from "./useTouchInteractions";
+import {
+  MIN_COLS,
+  MIN_ROWS,
+  ResizeReconciler,
+} from "./resize-reconciler";
 
 import { apiFetch } from "@/lib/api-fetch";
-const SETTLE_MIN_WIDTH = 100;
-const SETTLE_MIN_HEIGHT = 80;
-const SETTLE_MIN_COLS = 10;
-const SETTLE_MIN_ROWS = 3;
-const SETTLE_STABLE_FRAMES = 2;
-const SETTLE_MAX_FRAMES = 10;
-
-interface SettleAndFitOptions {
-  container: HTMLDivElement | null;
-  terminal: XTermType | null;
-  fitAddon: FitAddonType | null;
-  ws: WebSocket | null;
-  isCurrent: () => boolean;
-  onDimensions?: (cols: number, rows: number) => void;
-}
-
-async function settleAndFit(opts: SettleAndFitOptions): Promise<void> {
-  const { container, terminal, fitAddon, ws, isCurrent, onDimensions } = opts;
-  if (!container || !terminal || !fitAddon) return;
-  if (typeof document !== "undefined" && document.hidden) return;
-  if (container.offsetParent === null) return;
-
-  const initialRect = container.getBoundingClientRect();
-  if (initialRect.width < SETTLE_MIN_WIDTH || initialRect.height < SETTLE_MIN_HEIGHT) return;
-
-  let lastWidth = 0;
-  let lastHeight = 0;
-  let stableFrames = 0;
-  for (let attempt = 0; attempt < SETTLE_MAX_FRAMES; attempt++) {
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    if (!isCurrent()) return;
-    const rect = container.getBoundingClientRect();
-    if (rect.width < SETTLE_MIN_WIDTH || rect.height < SETTLE_MIN_HEIGHT) continue;
-    if (rect.width === lastWidth && rect.height === lastHeight) {
-      stableFrames++;
-      if (stableFrames >= SETTLE_STABLE_FRAMES) break;
-    } else {
-      stableFrames = 0;
-      lastWidth = rect.width;
-      lastHeight = rect.height;
-    }
-  }
-
-  if (!isCurrent()) return;
-  fitAddon.fit();
-
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-  if (!isCurrent()) return;
-  fitAddon.fit();
-
-  if (!isCurrent()) return;
-  if (terminal.cols < SETTLE_MIN_COLS || terminal.rows < SETTLE_MIN_ROWS) return;
-
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(
-      JSON.stringify({
-        type: "resize",
-        cols: terminal.cols,
-        rows: terminal.rows,
-      })
-    );
-  }
-  if (!isCurrent()) return;
-  onDimensions?.(terminal.cols, terminal.rows);
-}
 
 export interface TerminalRef {
   focus: () => void;
@@ -116,7 +56,7 @@ export interface TerminalRef {
   toggleSearch: () => void;
 }
 
-interface TerminalProps {
+export interface TerminalProps {
   sessionId: string;
   tmuxSessionName: string;
   sessionName?: string;
@@ -131,6 +71,8 @@ interface TerminalProps {
   notificationsEnabled?: boolean;
   isRecording?: boolean;
   isActive?: boolean;
+  /** Whether the containing panel is currently presented to the user. */
+  visible?: boolean;
   /** Environment variables to inject into new terminal sessions */
   environmentVars?: Record<string, string> | null;
   /** Terminal type for agent exit detection */
@@ -190,6 +132,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   notificationsEnabled = true,
   isRecording = false,
   isActive = false,
+  visible = true,
   environmentVars,
   terminalType = "shell",
   mobileMode = false,
@@ -221,23 +164,15 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const searchAddonRef = useRef<SearchAddonType | null>(null);
   const webglAddonRef = useRef<WebglAddonType | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  // Last focus signal sent to the server, tracked across reconnects so that a
-  // fresh socket starts with a clean baseline (the server's debounce state
-  // resets per-connection on its side too).
-  const lastSentFocusStateRef = useRef<"focus" | "blur" | null>(null);
-  // Points at the init-effect's `handleResize` (settle → fit → ws-resize →
-  // onDimensions) while the terminal is mounted, so the imperative `refit()`
-  // can drive the exact same pipeline the in-page resize listeners use. Set
-  // inside the init effect after `handleResize` is defined; cleared on
-  // teardown so a post-unmount call is a safe no-op (remote-dev-u5q5.2).
-  const handleResizeRef = useRef<(() => void) | null>(null);
-  // Focus-signal sender for the imperative `refit()`, mirroring the
-  // `handleVisibilityChange` intent (tell the server this client is active
-  // so it promotes us as primary before the resize lands). Set alongside
-  // `handleResizeRef` inside the init effect; cleared on teardown.
-  const sendFocusSignalRef = useRef<((next: "focus" | "blur") => void) | null>(
-    null,
+  const reconcilerRef = useRef<ResizeReconciler | null>(null);
+  const visibleRef = useRef(visible);
+  const isActiveRef = useRef(isActive);
+  const windowFocusedRef = useRef(
+    typeof document !== "undefined" && document.hasFocus(),
   );
+  const textareaFocusedRef = useRef(false);
+  const lastSentFocusStateRef = useRef<"focus" | "blur" | null>(null);
+  const syncFocusToServerRef = useRef<((force?: boolean) => void) | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -260,6 +195,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   // sidebar re-seed on reconnect (mirrors useTerminalWebSocket's hasConnectedBefore).
   const hasConnectedBeforeRef = useRef(false);
   const maxReconnectAttempts = 5;
+
+  visibleRef.current = visible;
+  isActiveRef.current = isActive;
 
   /**
    * Atomically marks session exit as intentional and cancels any pending reconnect.
@@ -384,35 +322,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       xtermRef.current?.scrollToBottom();
     },
     refit: () => {
-      // Mirror handleVisibilityChange's intent for the native-shell resume /
-      // route-pop path, MINUS terminal.focus(): on mobile the terminal runs
-      // in mobileMode (xterm's internal textarea disabled) and the native
-      // shell owns the input bar + keyboard, so calling terminal.focus()
-      // here would steal the keyboard context (collapse / refocus the
-      // wrong field). We only need the grid re-measured and the viewport
-      // pinned to the latest output.
-      //
-      // 1. Re-assert focus so the server promotes this client to primary
-      //    before the resize message from settleAndFit arrives (another
-      //    tmux client may have resized the session while we were
-      //    backgrounded). 2. settle + fit + ws-resize via the init effect's
-      //    handleResize. 3. scrollToBottom so a grid that grew taller shows
-      //    the prompt, matching the visibilitychange handler.
-      //
-      // FORCE the focus signal past the client-side dedupe. `sendFocusSignal`
-      // early-returns when `lastSentFocusStateRef.current === "focus"`, but
-      // refit() exists precisely for lifecycle edges (app resume, route
-      // pop-back) where the page got NO blur/visibilitychange event — so the
-      // last-sent state is STILL "focus" and a plain call would be skipped.
-      // If another client became primary while this view was backgrounded,
-      // the server only resizes tmux for the primary connection, so the
-      // resize from handleResize below would be ignored. Clearing the
-      // baseline first guarantees a fresh `client_focus` frame re-elects this
-      // connection BEFORE the resize lands. The server's own 1s cooldown
-      // still bounds any thrash, so this is safe to force.
-      lastSentFocusStateRef.current = null;
-      sendFocusSignalRef.current?.("focus");
-      handleResizeRef.current?.();
+      syncFocusToServerRef.current?.(true);
+      reconcilerRef.current?.request("refit");
       xtermRef.current?.scrollToBottom();
     },
     setCursorBlink: (blink: boolean) => {
@@ -456,6 +367,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
     let terminal: XTermType;
     let fitAddon: FitAddonType;
+    let liveReconciler: ResizeReconciler | null = null;
     let mounted = true;
     isUnmountingRef.current = false;
     intentionalExitRef.current = false;
@@ -555,9 +467,71 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
       terminal.open(xtermContainerRef.current ?? terminalRef.current);
 
+      xtermRef.current = terminal;
+      fitAddonRef.current = fitAddon;
+      imageAddonRef.current = imageAddon;
+      searchAddonRef.current = searchAddon;
+
+      const reconciler = new ResizeReconciler({
+        getContainer: () => terminalRef.current,
+        fitVerified: () => {
+          const proposal = fitAddon.proposeDimensions();
+          if (
+            !proposal ||
+            proposal.cols < MIN_COLS ||
+            proposal.rows < MIN_ROWS
+          ) {
+            return null;
+          }
+          fitAddon.fit();
+          if (
+            terminal.cols !== proposal.cols ||
+            terminal.rows !== proposal.rows
+          ) {
+            return null;
+          }
+          return { cols: terminal.cols, rows: terminal.rows };
+        },
+        isPageVisible: () => !document.hidden,
+        isPanelVisible: () => visibleRef.current,
+        getWebSocket: () => wsRef.current,
+        onDimensions: (cols, rows) =>
+          onDimensionsChangeRef.current?.(cols, rows),
+        raf: (cb) => requestAnimationFrame(cb),
+        caf: (id) => cancelAnimationFrame(id),
+      });
+      liveReconciler = reconciler;
+      reconcilerRef.current = reconciler;
+
+      const getDesiredFocus = () =>
+        visibleRef.current &&
+        !document.hidden &&
+        (windowFocusedRef.current || textareaFocusedRef.current);
+      const syncFocusToServer = (
+        force = false,
+        socket = wsRef.current,
+      ) => {
+        const next = getDesiredFocus() ? "focus" : "blur";
+        if (!force && lastSentFocusStateRef.current === next) return;
+        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        try {
+          socket.send(
+            JSON.stringify({
+              type: next === "focus" ? "client_focus" : "client_blur",
+            }),
+          );
+          lastSentFocusStateRef.current = next;
+        } catch {
+          // The desired state remains available for the next socket-open flush.
+        }
+      };
+      syncFocusToServerRef.current = (force = false) =>
+        syncFocusToServer(force);
+
       // Load WebGL renderer for better performance (falls back to DOM renderer)
       try {
         const { WebglAddon } = await import("@xterm/addon-webgl");
+        if (!mounted || reconcilerRef.current !== reconciler) return;
         let contextLossRecoveryAttempted = false;
 
         // onRemoveTextureAtlasCanvas only fires inside TextureAtlas._mergePages
@@ -629,6 +603,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           dprMedia = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
           handleDprChange = () => {
             webglAddonRef.current?.clearTextureAtlas();
+            reconciler.request("dpr-change");
             dprMedia?.removeEventListener("change", handleDprChange);
             armDprListener();
           };
@@ -641,6 +616,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       } catch {
         // WebGL not supported — DOM renderer is used automatically
       }
+      if (!mounted || reconcilerRef.current !== reconciler) return;
 
       // Configure the xterm textarea to disable mobile predictive text/autocomplete
       // This helps prevent the duplication issue where mobile keyboards replace
@@ -776,11 +752,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       const preventContextMenu = (e: Event) => e.preventDefault();
       terminalRef.current.addEventListener("contextmenu", preventContextMenu);
 
-      xtermRef.current = terminal;
-      fitAddonRef.current = fitAddon;
-      imageAddonRef.current = imageAddon;
-      searchAddonRef.current = searchAddon;
-
       // Post-init reconciliation: if PreferencesContext resolved during the
       // async init window (xterm/addon imports + WebGL load), the font-update
       // effect would have run with the latest fontSize/fontFamily but bailed
@@ -815,6 +786,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           updateStatus("error");
           return;
         }
+        if (!mounted || reconcilerRef.current !== reconciler) return;
 
         const cols = terminal.cols;
         const rows = terminal.rows;
@@ -845,47 +817,17 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         ws.onopen = () => {
           // Guard against race condition: if component unmounted during connection,
           // close the WebSocket immediately and don't call any callbacks with stale references
-          if (isUnmountingRef.current) {
+          if (isUnmountingRef.current || wsRef.current !== ws) {
             ws.close();
             return;
           }
 
           updateStatus("connected");
           reconnectAttemptsRef.current = 0;
-          // Reset focus-send debounce baseline so the first signal on this fresh
-          // socket is always sent (the previous socket's state is irrelevant).
           lastSentFocusStateRef.current = null;
           onWebSocketReadyRef.current?.(ws);
-
-          // Re-assert focus state on (re)connect: if this window currently has
-          // focus, the focus listeners won't fire (the window already had it),
-          // so the server would never learn this connection is the active one.
-          // Send the current state proactively before the resize below, so any
-          // server-side primary promotion happens before the resize lands.
-          try {
-            const hasFocus =
-              typeof document !== "undefined" &&
-              document.hasFocus() &&
-              !document.hidden;
-            const focusType = hasFocus ? "client_focus" : "client_blur";
-            ws.send(JSON.stringify({ type: focusType }));
-            lastSentFocusStateRef.current = hasFocus ? "focus" : "blur";
-          } catch {
-            // Best-effort; if document is unavailable (SSR safety) just skip.
-          }
-
-          // Send resize immediately after connection to sync dimensions
-          // The URL params may be stale if container resized during connection
-          requestAnimationFrame(() => {
-            fitAddon.fit();
-            ws.send(
-              JSON.stringify({
-                type: "resize",
-                cols: terminal.cols,
-                rows: terminal.rows,
-              })
-            );
-          });
+          syncFocusToServer(true, ws);
+          reconciler.notifySocketOpen(ws);
 
           // [remote-dev-d5ci] On a RE-open (not the first connect), dispatch the
           // same sidebar-refresh event useTerminalWebSocket fires so SessionManager
@@ -1119,95 +1061,30 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
         // Wait for all fonts to be ready
         await document.fonts.ready;
+        if (!mounted || reconcilerRef.current !== reconciler) return;
 
-        // Wait for container dimensions to stabilize
-        // On hard refresh, the layout may take multiple frames to settle
-        const MIN_CONTAINER_WIDTH = 100;
-        const MIN_CONTAINER_HEIGHT = 80;
-        const MAX_WAIT_ATTEMPTS = 30; // ~500ms max wait
-        const STABLE_FRAMES_REQUIRED = 3; // Dimensions must be stable for 3 frames
-
-        let lastWidth = 0;
-        let lastHeight = 0;
-        let stableFrames = 0;
-
-        for (let attempt = 0; attempt < MAX_WAIT_ATTEMPTS; attempt++) {
-          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-
-          const container = terminalRef.current;
-          if (!container) continue;
-
-          const rect = container.getBoundingClientRect();
-
-          // Check if dimensions are valid and stable
-          if (rect.width >= MIN_CONTAINER_WIDTH && rect.height >= MIN_CONTAINER_HEIGHT) {
-            if (rect.width === lastWidth && rect.height === lastHeight) {
-              stableFrames++;
-              if (stableFrames >= STABLE_FRAMES_REQUIRED) {
-                break; // Container dimensions are stable
-              }
-            } else {
-              // Dimensions changed, reset stability counter
-              stableFrames = 0;
-              lastWidth = rect.width;
-              lastHeight = rect.height;
-            }
-          }
+        // A hidden initial panel connects with xterm's defaults. The explicit
+        // reveal signal replays reconciliation once the panel is measurable.
+        await reconciler.reconcileOnce("post-init");
+        if (!mounted || reconcilerRef.current !== reconciler) return;
+        if (
+          isActiveRef.current &&
+          visibleRef.current &&
+          !document.hidden &&
+          !mobileModeRef.current
+        ) {
+          terminal.focus();
         }
-
-        // Now fit with accurate measurements
-        fitAddon.fit();
-
-        // Connect with correct dimensions
-        connect();
+        void connect();
       };
 
-      initAndConnect();
+      void initAndConnect();
 
       terminal.onData((data) => {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
           wsRef.current.send(JSON.stringify({ type: "input", data }));
         }
       });
-
-      let settleSeq = 0;
-      const handleResize = () => {
-        const mySeq = ++settleSeq;
-        void settleAndFit({
-          container: terminalRef.current,
-          terminal,
-          fitAddon,
-          ws: wsRef.current,
-          isCurrent: () => mySeq === settleSeq,
-          onDimensions: (cols, rows) => onDimensionsChangeRef.current?.(cols, rows),
-        });
-      };
-
-      // Track last focus signal sent to the server to avoid redundant WS chatter
-      // (focus/blur fire frequently — alt-tab, devtools, etc.). The server-side
-      // 1s cooldown handles thrash, but skipping no-op sends is still cheap.
-      // Stored in a ref (declared at component scope) so the baseline survives
-      // initTerminal() but resets when a new socket opens — a closure-local
-      // `let` would persist across reconnects and cause the first focus/blur on
-      // the new socket to be silently dropped if it matched the prior socket's
-      // last-sent value.
-      const sendFocusSignal = (next: "focus" | "blur") => {
-        if (lastSentFocusStateRef.current === next) return;
-        const ws = wsRef.current;
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        try {
-          ws.send(JSON.stringify({ type: next === "focus" ? "client_focus" : "client_blur" }));
-          lastSentFocusStateRef.current = next;
-        } catch {
-          // Ignore send errors — connection might be tearing down
-        }
-      };
-
-      // Expose this terminal's resize + focus-signal closures to the
-      // imperative `refit()` (rdv-bridge, remote-dev-u5q5.2). Cleared in the
-      // cleanup below so a refit after teardown is a no-op.
-      handleResizeRef.current = handleResize;
-      sendFocusSignalRef.current = sendFocusSignal;
 
       // Per-terminal focus signal: window/visibilitychange only fire for
       // coarse browser-level transitions, so they miss clicks between panels
@@ -1216,8 +1093,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       // signal the server needs to elect a primary client.
       const xtermTextarea = terminal.textarea;
       if (xtermTextarea) {
-        const onXtermFocus = () => sendFocusSignal("focus");
-        const onXtermBlur = () => sendFocusSignal("blur");
+        const onXtermFocus = () => {
+          textareaFocusedRef.current = true;
+          syncFocusToServer();
+        };
+        const onXtermBlur = () => {
+          textareaFocusedRef.current = false;
+          syncFocusToServer();
+        };
         xtermTextarea.addEventListener("focus", onXtermFocus);
         xtermTextarea.addEventListener("blur", onXtermBlur);
         terminalDisposablesRef.current.push({
@@ -1228,41 +1111,36 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         });
       }
 
-      // Re-fit when page becomes visible again (returning from background)
-      let visibilityTimeout: ReturnType<typeof setTimeout> | null = null;
       const handleVisibilityChange = () => {
         if (!document.hidden) {
-          // Send focus signal immediately so the server can promote in time for
-          // the resize message that follows from settleAndFit.
-          sendFocusSignal("focus");
-          // Clear any pending timeout to avoid duplicate calls
-          if (visibilityTimeout) {
-            clearTimeout(visibilityTimeout);
-          }
-          // Small delay to let the browser settle after becoming visible
-          visibilityTimeout = setTimeout(() => {
-            visibilityTimeout = null;
-            handleResize();
-            // Focus terminal when page becomes visible
+          syncFocusToServer();
+          reconciler.request("page-visible");
+          if (
+            isActiveRef.current &&
+            visibleRef.current &&
+            !mobileModeRef.current
+          ) {
             terminal.focus();
-          }, 100);
+          }
         } else {
-          sendFocusSignal("blur");
+          syncFocusToServer();
         }
       };
 
       const handleWindowFocus = () => {
-        sendFocusSignal("focus");
-        // Container size may have shifted while unfocused (desktop window
-        // resize, etc.) — settleAndFit on the next frame.
-        requestAnimationFrame(handleResize);
+        windowFocusedRef.current = true;
+        syncFocusToServer();
+        reconciler.request("window-focus");
       };
 
       const handleWindowBlur = () => {
-        sendFocusSignal("blur");
+        windowFocusedRef.current = false;
+        syncFocusToServer();
       };
 
-      window.addEventListener("resize", handleResize);
+      const handleWindowResize = () => reconciler.request("window-resize");
+
+      window.addEventListener("resize", handleWindowResize);
       document.addEventListener("visibilitychange", handleVisibilityChange);
       window.addEventListener("focus", handleWindowFocus);
       window.addEventListener("blur", handleWindowBlur);
@@ -1272,7 +1150,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       // Listening here ensures the terminal re-fits whenever the visible area
       // changes, even if the wrapper's layout height is stable.
       const handleVisualViewportResize = () => {
-        requestAnimationFrame(handleResize);
+        reconciler.request("visual-viewport");
       };
       const visualViewport =
         typeof window.visualViewport !== "undefined" ? window.visualViewport : null;
@@ -1280,29 +1158,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         visualViewport.addEventListener("resize", handleVisualViewportResize);
       }
 
-      // Use ResizeObserver to detect when terminal container becomes visible
-      // This handles the case when switching tabs (hidden -> visible)
-      let lastWidth = 0;
-      let lastHeight = 0;
-      let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
-
       const resizeObserver = new ResizeObserver((entries) => {
         for (const entry of entries) {
           const { width, height } = entry.contentRect;
-          // Only trigger resize when dimensions are above minimum threshold
-          // and actually change to new values
-          if (
-            width >= SETTLE_MIN_WIDTH &&
-            height >= SETTLE_MIN_HEIGHT &&
-            (width !== lastWidth || height !== lastHeight)
-          ) {
-            lastWidth = width;
-            lastHeight = height;
-
-            // Debounce rapid resize events (e.g., during window drag)
-            if (resizeTimeout) clearTimeout(resizeTimeout);
-            resizeTimeout = setTimeout(handleResize, 16); // ~60fps
-          }
+          reconciler.observeRect(width, height);
         }
       });
 
@@ -1312,18 +1171,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
       // Store cleanup in closure
       return () => {
-        // Drop the refit closures so a post-unmount imperative refit() is a
-        // safe no-op (the xterm instance + ws are torn down below).
-        if (handleResizeRef.current === handleResize) {
-          handleResizeRef.current = null;
+        if (reconcilerRef.current === reconciler) {
+          reconcilerRef.current = null;
+          syncFocusToServerRef.current = null;
         }
-        if (sendFocusSignalRef.current === sendFocusSignal) {
-          sendFocusSignalRef.current = null;
-        }
-        if (visibilityTimeout) {
-          clearTimeout(visibilityTimeout);
-        }
-        window.removeEventListener("resize", handleResize);
+        reconciler.dispose();
+        window.removeEventListener("resize", handleWindowResize);
         document.removeEventListener("visibilitychange", handleVisibilityChange);
         window.removeEventListener("focus", handleWindowFocus);
         window.removeEventListener("blur", handleWindowBlur);
@@ -1332,13 +1185,17 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         }
         terminalRef.current?.removeEventListener("contextmenu", preventContextMenu);
         resizeObserver.disconnect();
-        if (resizeTimeout) clearTimeout(resizeTimeout);
       };
     }
 
     let cleanup: (() => void) | undefined;
 
-    initTerminal().then((cleanupFn) => {
+    void initTerminal().then((cleanupFn) => {
+      if (!cleanupFn) return;
+      if (!mounted) {
+        cleanupFn();
+        return;
+      }
       cleanup = cleanupFn;
     });
 
@@ -1346,6 +1203,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       mounted = false;
       isUnmountingRef.current = true;
       cleanup?.();
+      liveReconciler?.dispose();
+      if (reconcilerRef.current === liveReconciler) {
+        reconcilerRef.current = null;
+        syncFocusToServerRef.current = null;
+      }
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
@@ -1363,6 +1225,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       wsRef.current = null;
     };
   }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, terminalType, markIntentionalExit]);
+
+  useEffect(() => {
+    syncFocusToServerRef.current?.();
+    reconcilerRef.current?.notifyPanelVisibility(visible);
+  }, [visible]);
 
   // Update terminal options when font preferences change
   useEffect(() => {
@@ -1399,46 +1266,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
       // Bail out if this effect was superseded by a newer font change
       if (cancelled) return;
-
-      // Apply the same safety checks as handleResize() to prevent
-      // resizing to invalid dimensions when terminal is hidden/backgrounded
-      const container = terminalRef.current;
-      if (!container) return;
-
-      // Skip if page is hidden (browser tab backgrounded)
-      if (document.hidden) return;
-
-      // Skip if container is not visible (display: none)
-      if (container.offsetParent === null) return;
-
-      // Skip if container is too small
-      const MIN_WIDTH = 100;
-      const MIN_HEIGHT = 80;
-      const rect = container.getBoundingClientRect();
-      if (rect.width < MIN_WIDTH || rect.height < MIN_HEIGHT) return;
-
-      // Use requestAnimationFrame to ensure DOM is ready
-      requestAnimationFrame(() => {
-        if (cancelled) return;
-
-        fitAddonRef.current?.fit();
-
-        // Don't send resize for invalid dimensions
-        const MIN_COLS = 10;
-        const MIN_ROWS = 3;
-        if (terminal.cols < MIN_COLS || terminal.rows < MIN_ROWS) return;
-
-        // Send resize to server if connected
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(
-            JSON.stringify({
-              type: "resize",
-              cols: terminal.cols,
-              rows: terminal.rows,
-            })
-          );
-        }
-      });
+      reconcilerRef.current?.request("font-change");
     };
 
     loadFontAndFit();
@@ -1452,27 +1280,25 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   // Trigger resize when terminal becomes active (e.g., switching tabs or splits)
   useEffect(() => {
     if (!isActive) return;
-
+    const reconciler = reconcilerRef.current;
     const terminal = xtermRef.current;
-    const fitAddon = fitAddonRef.current;
-    if (!terminal || !fitAddon) return;
-
+    if (!reconciler || !terminal) return;
     let cancelled = false;
-    void settleAndFit({
-      container: terminalRef.current,
-      terminal,
-      fitAddon,
-      ws: wsRef.current,
-      isCurrent: () => !cancelled,
-      onDimensions: (cols, rows) => onDimensionsChangeRef.current?.(cols, rows),
-    }).then(() => {
-      if (!cancelled) terminal.focus();
+    void reconciler.reconcileOnce("active").then(() => {
+      if (
+        !cancelled &&
+        visibleRef.current &&
+        !document.hidden &&
+        !mobileModeRef.current
+      ) {
+        terminal.focus();
+      }
     });
 
     return () => {
       cancelled = true;
     };
-  }, [isActive]);
+  }, [isActive, visible]);
 
   // Update terminal theme when appearance changes
   useEffect(() => {
