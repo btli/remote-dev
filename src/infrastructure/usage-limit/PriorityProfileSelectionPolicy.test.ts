@@ -84,7 +84,11 @@ class FakeWindowRepo implements UsageLimitWindowRepository {
   }
 }
 
-/** A per-model weekly window, defaulting to the live exhausted-Fable case. */
+/**
+ * A per-model weekly window, defaulting to the live exhausted-Fable case: a
+ * `weekly_scoped` row at 100%/critical, active, freshly observed, with a
+ * future reset. Every one of those is now REQUIRED to block. [review G3/G5]
+ */
 function scopedWindow(over: Partial<UsageLimitWindow> = {}): UsageLimitWindow {
   return {
     kind: "weekly_scoped",
@@ -95,6 +99,7 @@ function scopedWindow(over: Partial<UsageLimitWindow> = {}): UsageLimitWindow {
     scopeModel: "Fable",
     scopeSurface: null,
     isActive: true,
+    observedAt: new Date("2026-06-13T11:55:00Z"), // 5 minutes before NOW
     ...over,
   };
 }
@@ -484,9 +489,11 @@ describe("PriorityProfileSelectionPolicy model awareness", () => {
     expect(selected?.accountId).toBe("primary");
   });
 
-  it("blocks on a scoped window regardless of what `kind` is called (open set)", async () => {
-    // `kind` is an OPEN string set upstream; the structural discriminator is a
-    // non-null scopeModel, not today's spelling of the kind.
+  it("does NOT block on a model-scoped window of an unknown kind", async () => {
+    // [review G5] `kind` is an open set, but consuming an UNKNOWN future kind
+    // as blocking would let a new diagnostic/daily/surface-scoped row silently
+    // change account selection with no authorization. Only `weekly_scoped`
+    // blocks; anything else is logged and ignored.
     const policy = twoAccountPolicy(
       new Map([["primary", [scopedWindow({ kind: "monthly_scoped" })]]])
     );
@@ -498,7 +505,135 @@ describe("PriorityProfileSelectionPolicy model awareness", () => {
       "claude-fable-5"
     );
 
-    expect(selected?.accountId).toBe("fallback");
+    expect(selected?.accountId).toBe("primary");
+  });
+
+  it("matches the blocking kind case-insensitively", async () => {
+    const policy = twoAccountPolicy(
+      new Map([["primary", [scopedWindow({ kind: " Weekly_Scoped " })]]])
+    );
+
+    expect(
+      (await policy.selectForProject("proj", "u1", NOW, "claude-fable-5"))
+        ?.accountId
+    ).toBe("fallback");
+  });
+
+  it("does NOT block on an exhausted window with a NULL reset", async () => {
+    // [review G3] A null reset would make LimitState treat the account as
+    // permanently unavailable for this model, and the row can only be cleared
+    // by a later SUCCESSFUL poll — a revoked token would pin it off forever.
+    const policy = twoAccountPolicy(
+      new Map([["primary", [scopedWindow({ resetsAt: null })]]])
+    );
+
+    expect(
+      (await policy.selectForProject("proj", "u1", NOW, "claude-fable-5"))
+        ?.accountId
+    ).toBe("primary");
+  });
+
+  it("does NOT block on a stale window nobody has refreshed", async () => {
+    // [review G3] Older than the age ceiling → the poller has not confirmed it
+    // recently, so it must expire on its own.
+    const policy = twoAccountPolicy(
+      new Map([
+        ["primary", [scopedWindow({ observedAt: new Date("2026-06-13T09:00:00Z") })]],
+      ])
+    );
+
+    expect(
+      (await policy.selectForProject("proj", "u1", NOW, "claude-fable-5"))
+        ?.accountId
+    ).toBe("primary");
+  });
+
+  it("does NOT block on a window with no observedAt at all", async () => {
+    const policy = twoAccountPolicy(
+      new Map([["primary", [scopedWindow({ observedAt: null })]]])
+    );
+
+    expect(
+      (await policy.selectForProject("proj", "u1", NOW, "claude-fable-5"))
+        ?.accountId
+    ).toBe("primary");
+  });
+
+  it("does NOT block on an exhausted window the endpoint did not mark active", async () => {
+    const policy = twoAccountPolicy(
+      new Map([["primary", [scopedWindow({ isActive: false })]]])
+    );
+
+    expect(
+      (await policy.selectForProject("proj", "u1", NOW, "claude-fable-5"))
+        ?.accountId
+    ).toBe("primary");
+  });
+
+  it("does NOT block for an unrecognized model id", async () => {
+    // [review G4] An unknown family is never compared against a scoped row.
+    const policy = twoAccountPolicy(
+      new Map([["primary", [scopedWindow({ scopeModel: "Cowork" })]]])
+    );
+
+    expect(
+      (await policy.selectForProject("proj", "u1", NOW, "claude-cowork-6"))
+        ?.accountId
+    ).toBe("primary");
+  });
+
+  it("does NOT block for an alias that names no single family", async () => {
+    // [review G11] `opusplan` plans on Opus but executes on Sonnet.
+    const policy = twoAccountPolicy(
+      new Map([["primary", [scopedWindow({ scopeModel: "Opus" })]]])
+    );
+
+    expect(
+      (await policy.selectForProject("proj", "u1", NOW, "opusplan"))?.accountId
+    ).toBe("primary");
+  });
+
+  it("falls back to account-level selection when the window read THROWS", async () => {
+    // [review G2] This used to propagate: the throw travelled out of
+    // selectForProject, session-service caught it and launched the session with
+    // NO account and no injected token — on ambient credentials, and only for
+    // sessions passing --model. Strictly worse than not having the feature.
+    const exploding: UsageLimitWindowRepository = {
+      async replaceForAccount() {
+        return true;
+      },
+      async findByAccountId() {
+        return [];
+      },
+      async findManyByAccountIds() {
+        throw new Error("db down");
+      },
+    };
+    const policy = new PriorityProfileSelectionPolicy(
+      new FakePoolRepo(
+        new Map([["pool", [{ accountId: "fallback", priority: 0 }]]])
+      ),
+      new FakeStateRepo(
+        new Map([
+          ["primary", available("primary")],
+          ["fallback", available("fallback")],
+        ])
+      ),
+      async () => ({ profileId: null, accountId: "primary", poolId: "pool" }),
+      async () => null,
+      async () => null,
+      async (ids) => new Map(ids.map((id) => [id, null])),
+      exploding
+    );
+
+    const selected = await policy.selectForProject(
+      "proj",
+      "u1",
+      NOW,
+      "claude-fable-5"
+    );
+
+    expect(selected?.accountId).toBe("primary");
   });
 
   it("still returns a best-effort account when EVERY candidate is model-blocked", async () => {

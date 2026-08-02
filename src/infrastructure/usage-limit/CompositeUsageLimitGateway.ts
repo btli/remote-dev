@@ -4,14 +4,30 @@
  * the ACCOUNT's AccountKind to the first adapter that `supports(kind)`.
  *
  * The kind comes from the `claude_account` row itself; a missing row defaults
- * to "subscription" (the common OAuth case). The raw kind is wrapped in the `AccountKind` value
- * object so an unrecognized stored brand falls through to "no gateway" rather
- * than throwing. Dispatch is purely "first adapter that `supports(kind)`":
- * subscription accounts (rolling 5h/7d windows) are served by the reactive
- * detector and the proactive poller. api_key accounts (rate/credits) currently
- * resolve to "no gateway" — the poller's usage endpoint is subscription-only
- * and the reactive detector keys off subscription reset headers
- * [remote-dev-n4x4.1]. Each adapter's `supports()` is authoritative.
+ * to "subscription" (the common OAuth case). The raw kind is wrapped in the
+ * `AccountKind` value object so an unrecognized stored brand falls through to
+ * "no gateway" rather than throwing.
+ *
+ * ## Dispatch is FALL-THROUGH, not first-match [review G1]
+ *
+ * It used to be `adapters.find(a => a.supports(kind))` — first match wins. That
+ * made the whole proactive path dead code: `ReactiveOutputDetector` is
+ * registered first, `supports("subscription")` returns true unconditionally,
+ * and its `fetchLimitState()` ALWAYS returns null because reactive detection is
+ * event-driven (observations arrive via `/internal/usage-limit`, not by
+ * polling). So for every subscription account — the only kind the poller serves
+ * — the composite picked the reactive stub, got null, and `UsageEndpointPoller`
+ * was never invoked. No usage was ever polled. The bug was masked while the
+ * poller flag defaulted off.
+ *
+ * Now every adapter that `supports(kind)` is tried IN ORDER until one returns a
+ * non-null observation. An adapter that cannot answer on demand simply yields
+ * to the next, so registration order stays a preference rather than a veto.
+ *
+ * api_key accounts currently resolve to "no gateway": the poller's usage
+ * endpoint is subscription-only (`supports("api_key")` is false), and the
+ * reactive detector keys off subscription reset headers [remote-dev-n4x4.1].
+ * Each adapter's `supports()` remains authoritative.
  */
 
 import { db } from "@/db";
@@ -46,20 +62,26 @@ export class CompositeUsageLimitGateway implements UsageLimitGateway {
     const accountKind = await this.resolveKind(target.accountId);
     if (!accountKind) return null; // unrecognized stored kind → no gateway
 
-    // Dispatch to the first adapter that supports this kind. Each adapter's
-    // supports() encodes both the kind AND any feature flag (the poller is a
-    // no-op when RDV_CLAUDE_USAGE_POLL_ENABLED=0), so api_key resolves to the
-    // poller only when enabled and to "no gateway" otherwise.
+    // Each adapter's supports() encodes both the kind AND any feature flag (the
+    // poller is a no-op unless enabled), so a disabled poller drops out here
+    // rather than swallowing the dispatch.
     const kind = accountKind.toString();
-    const adapter = this.adapters.find((a) => a.supports(kind));
-    if (!adapter) {
+    const supporting = this.adapters.filter((a) => a.supports(kind));
+    if (supporting.length === 0) {
       log.debug("No gateway supports account kind", {
         accountId: target.accountId,
         kind,
       });
       return null;
     }
-    return adapter.fetchLimitState(target);
+
+    // Fall through until one adapter actually produces an observation. See the
+    // module docblock: an always-null adapter must not veto the ones after it.
+    for (const adapter of supporting) {
+      const result = await adapter.fetchLimitState(target);
+      if (result) return result;
+    }
+    return null;
   }
 
   /**

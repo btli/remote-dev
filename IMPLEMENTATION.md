@@ -263,3 +263,231 @@ not add a pragma.
    model inside Claude Code's own settings rather than via `--model`, we never
    see it and selection stays account-level (fail-open). Fixing that would mean
    reading the account's Claude config, which is out of scope here.
+
+
+---
+
+# Review round 1 — fixes
+
+All eleven findings addressed. Gates re-run and green (see the updated block
+below). One override accepted, one recommendation declined with reasons.
+
+## G1 — the feature was a runtime no-op (fixed, and now regression-tested)
+
+Confirmed exactly as described, and it is the most important thing in this diff.
+`CompositeUsageLimitGateway.fetchLimitState` dispatched with
+`adapters.find(a => a.supports(kind))`. The container registers
+`[ReactiveOutputDetector, UsageEndpointPoller]`; the reactive detector's
+`supports("subscription")` returns `true` unconditionally while its
+`fetchLimitState()` always returns `null` (reactive observations arrive via
+`/internal/usage-limit`, not by polling). So every subscription account — the
+only kind the poller serves — selected the reactive stub, got null, and the
+poller was never invoked.
+
+**Fix:** dispatch now FALLS THROUGH every adapter that supports the kind until
+one returns a non-null observation. I chose this over reordering or removing the
+reactive adapter because it makes registration order a *preference* rather than
+a *veto* — reordering would leave the same landmine for the next adapter added.
+
+**Why no test caught it, and what now does.** Every poller test instantiates
+`UsageEndpointPoller` directly; nothing exercised dispatch. Two new suites close
+that gap:
+
+- `CompositeUsageLimitGateway.test.ts` — asserts a subscription-kind fetch
+  reaches a later adapter, using the REAL `ReactiveOutputDetector` so the test
+  stays honest if its `supports()` ever changes. It also pins the precondition
+  (reactive supports subscription AND always returns null), so the regression
+  test cannot quietly stop proving anything.
+- `usage-poll-integration.test.ts` — end-to-end through the container's actual
+  adapter ordering with the real poller, stubbing only HTTP, DB, and the
+  credential read.
+
+**End-to-end confirmation (requested explicitly).** Verified, not assumed: with
+`RDV_CLAUDE_USAGE_POLL_ENABLED=1` the composite reaches the poller, the adapter
+call happens, and the result carries the `weekly_scoped` / `"Fable"` window. With
+the flag `0` or unset, no request is made and the result is null. That is the
+third test in `usage-poll-integration.test.ts`, so it stays verified.
+
+Container docblock updated (G10 likewise — the stale api_key dispatch claim).
+
+## G2 — window-repo failure failed CLOSED (fixed)
+
+Correct and worse than it looked. `findManyByAccountIds` threw → `gatherCandidates`
+→ `selectForProject` rejected → session-service caught it and "proceeded without
+a profile", so the session launched with **no account and no injected token**, on
+ambient credentials — and only for sessions passing `--model`, i.e. exactly the
+premium sessions this feature protects. Now wrapped in try/catch returning the
+empty map, matching every other early return. Tested with a repository whose
+`findManyByAccountIds` throws.
+
+## G3 — stale/null-reset rows could block forever (fixed)
+
+Three changes:
+
+- A blocking row must carry a **valid, future** `resetsAt`. Exhausted-with-null-
+  reset is now non-blocking (it would otherwise make `isAvailableNow` treat the
+  account as permanently unavailable for that model).
+- Added `observed_at` to the table and surfaced it through the port.
+- Rows older than `MAX_WINDOW_AGE_MS` (1 hour = 6 sweep intervals) are ignored.
+  A row with no `observedAt` is treated as stale.
+
+Six intervals tolerates transient endpoint failures without letting a row that
+can only be cleared by a *successful* poll (revoked token, decrypt failure, kill
+switch) pin an account off a model.
+
+## G4 — identity could fail CLOSED (fixed with an explicit registry)
+
+`normalizeClaudeModelIdentity` is replaced by `resolveClaudeModelFamily`, which
+answers **only** from the exported `KNOWN_FAMILIES` registry and returns `null`
+for anything else. A null identity never matches, so an unrecognized model is
+never compared against a scoped row.
+
+The `vendor-sonnet-proxy` case needed one extra rule: the mid-string family scan
+now requires a `claude-` prefix. So `claude-3-5-sonnet-20241022` still resolves
+to `sonnet` while `vendor-sonnet-proxy` and `my-opus-clone` resolve to nothing.
+Bare display names and aliases (`"Fable"`, `opus`) match as whole strings.
+
+The accepted cost: a genuinely new family is invisible until added to the
+registry. That is the right trade — failing open is today's behaviour, failing
+closed is a wrong rotation or an account pinned off a model. The policy logs
+`unrecognized requested model` at debug so new families surface in practice.
+
+## G5 — restricted to `weekly_scoped` (override accepted)
+
+Accepted, and on reflection your reasoning is better than mine. My argument was
+about *rot*; yours is about *authorization*, and authorization wins. Treating an
+unknown future kind as blocking means upstream can silently change this server's
+account selection by shipping a new row type — a `daily_scoped` or
+`surface_scoped` quota is a different policy being applied to a weekly rotation
+decision, which nobody here agreed to. Rot is visible and fixable; an
+unauthorized semantic change is neither.
+
+Only `weekly_scoped` blocks (matched case-insensitively, trimmed). Other
+exhausted model-scoped kinds are logged at debug and ignored, so we learn about
+new kinds without acting on them. The `monthly_scoped` test now asserts it does
+**not** block.
+
+Also in this area:
+- **`isActive` is no longer ignored.** A blocking row must be flagged active by
+  the endpoint. In the live capture the exhausted Fable window carried
+  `is_active: true`, so this matches observed reality, and the failure direction
+  is under-blocking — the safe one. Exhausted-but-inactive rows are logged.
+- **The window slot is no longer hardcoded.** `durationForWindow` maps the row's
+  own `group` (`weekly` → `7d`, `session` → `5h`, unknown → `org`).
+
+## G6 — divergence and concurrency (fixed; one deliberate partial)
+
+**Concurrency — fully fixed.** Added a unique index on the logical key. Since
+`scope_model` is nullable and SQLite/PostgreSQL disagree on NULL collision in a
+unique index, the index keys on a new NOT NULL `scope_model_key` column holding
+`scope_model ?? ""` — one portable index for both backends. Plus an `observed_at`
+staleness guard read *inside* the replace transaction, so a slow response
+finishing last cannot overwrite newer data, and de-duplication on the logical key
+before insert so a malformed upstream body cannot fail the whole write.
+
+**Divergence — fixed by ordering, not by a transaction.** I did not make the two
+writes a single transaction, and want to be explicit rather than imply otherwise.
+They live in separate repositories over a module-level `db`; a genuine cross-repo
+unit of work means either leaking a `tx` handle into both ports (a layering smell
+this contract cares about) or introducing a unit-of-work port — both larger than
+this diff should be.
+
+What I did instead achieves the stated goal: **windows are written first, and a
+failure returns `wrote: false` without touching the rollup.** The dangerous state
+you named — a fresh rollup saying "available" beside stale windows still saying a
+model is critical — is now unreachable, because the rollup is never written when
+the window write fails. The residual is the inverse (fresh windows, stale
+rollup), which is strictly safer: windows only add blocking for one *named*
+model, the G3 reset and staleness checks bound how long that can matter, and the
+next poll self-heals it. Flagging it so you can override again if you want the
+full unit-of-work.
+
+## G7 — poller is opt-in (user decision, implemented)
+
+Inverted: enabled only on an explicit `1`/`true`/`on`/`yes`; unset, empty, or
+unrecognized means OFF. A typo now fails safe rather than silently enabling
+outbound traffic.
+
+`docs/SETUP.md`'s bare `RDV_CLAUDE_USAGE_POLL_ENABLED=` line is gone — replaced
+with a commented-out `# RDV_CLAUDE_USAGE_POLL_ENABLED=1` and a block explaining
+both what it does and why it is opt-in. `docs/AGENTS.md`, `docs/API.md`,
+`docs/ENHANCEMENTS.md` and `CHANGELOG.md` updated to match. `poll-config.test.ts`
+pins every case including the empty-string one that motivated the change.
+
+## G8 — sweep pacing (user decision, implemented)
+
+- **Bounded concurrency**: at most 4 accounts in flight, via N workers draining a
+  shared cursor.
+- **Per-account exponential backoff**: 10m → 20m → 40m … capped at 6h. Triggered
+  by both a thrown error and a null result (a null is what a revoked token or a
+  decrypt failure produces). Any success clears it. Entries for deleted accounts
+  are pruned each sweep so the map cannot leak.
+
+State is in-memory deliberately: it is a pacing hint, and a restart erring toward
+"try again" is the right failure mode. `resetUsagePollBackoff()` is exported for
+tests and for callers that want the next sweep to retry everything.
+
+## G9 — startup log (fixed)
+
+`src/server/index.ts` now calls `isUsagePollEnabled()` instead of re-deriving
+`=== "1"`, so the startup log cannot contradict actual behaviour. Two stale
+comments in that file updated too.
+
+## G11 — `opusplan` / `default` (considered, declined with reasons)
+
+Declined, and encoded as an explicit `NON_FAMILY_ALIASES` list rather than left
+as an accident. Neither names a single family: `opusplan` plans on Opus and
+executes on Sonnet, and `default` means "let the CLI decide". Mapping either to
+one family would block an account for Opus when the actual work runs on Sonnet —
+narrowing availability on a guess, which is the one thing this feature must never
+do. They resolve to `null` (fail open) and are tested.
+
+## Note on the false positive
+
+Acknowledged, no action taken — the generated schema files are committed
+(`src/db/schema.{sqlite,pg}.ts`, `src/db/schema.ts`) and the `codegen-in-sync`
+test passes.
+
+## Schema changes since round 1
+
+`claude_usage_limit_window` gained `scope_model_key` (NOT NULL, default `""`) and
+`observed_at`, plus the unique index. The PG migration was regenerated as a
+single `drizzle/pg/0016_narrow_nuke.sql` rather than stacking a second migration
+on an unmerged branch — still CREATE TABLE + 2 FKs + 4 indexes and nothing else.
+SQLite was updated with additive `ALTER TABLE ... ADD COLUMN` + `CREATE UNIQUE
+INDEX IF NOT EXISTS`; the table was empty (0 rows), so no backfill was needed and
+no existing table was touched.
+
+## Gate output after the fixes (verbatim)
+
+```
+$ bun run lint
+✖ 95 problems (0 errors, 95 warnings)
+```
+
+All 95 in `.agents/skills/impeccable/scripts/*` — the stated baseline.
+
+```
+$ bun run typecheck
+$ tsc --noEmit
+```
+
+(no output — clean)
+
+```
+$ bun run test:run
+ Test Files  303 passed | 1 skipped (304)
+      Tests  3096 passed | 8 skipped (3104)
+```
+
+3013 baseline → 3096 (+83). New since round 1: `CompositeUsageLimitGateway`
+(8, incl. the G1 regression test), `usage-poll-integration` (3, the end-to-end
+check), `usage-poll-sweep` (8, pacing), `poll-config` (5, flag semantics),
+`TrackUsageLimitUseCase` (+5, window persistence and write ordering), plus new
+cases across the policy, repository, and identity suites.
+
+**Pre-existing failure, now confirmed:** `DrizzleUsageLimitStateRepository.test.ts`
+fails in isolation with `No such built-in module: node:` — it lacks the
+`@vitest-environment node` pragma its siblings carry. It passes in the full
+suite. It is not mine and I have not touched it; the contract predicted this for
+two other files, and this is the file it actually affects.

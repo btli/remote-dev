@@ -9,37 +9,46 @@
  * every observed response, so the DISPLAY NAME is the only usable per-model
  * identity. Callers, meanwhile, hold a model *id* (`claude-fable-5`) or a CLI
  * alias (`opus`, `sonnet[1m]`). Neither string equals the other, so matching
- * requires a normalization both sides can be reduced to.
+ * requires a mapping both sides can be reduced to.
  *
- * This is the part of the epic most likely to rot as model names change, so it
- * lives in exactly one pure function with tests, and it is deliberately
- * conservative: when it cannot confidently identify a family it returns the
- * whole normalized string rather than guessing, and a non-match FAILS OPEN
- * (the caller treats "no scoped row" as available — never as unavailable).
+ * ## Recognized-only, by design
  *
- * ## How normalization works
+ * {@link resolveClaudeModelFamily} answers ONLY from the explicit registry
+ * below. Anything it does not recognize returns `null`, and a null identity can
+ * never match anything — so an unrecognized model is never compared against a
+ * scoped window and therefore never blocks an account.
  *
- * 1. Lowercase, trim, collapse separators (`_`, whitespace) to `-`, and strip
- *    context-window suffixes like `[1m]`.
- * 2. If any hyphen-delimited segment is a KNOWN family token, return that token.
- *    This is what maps `claude-fable-5` → `fable`, `"Fable"` → `fable`, and
- *    `claude-3-5-sonnet-20241022` → `sonnet` (family in the middle).
- * 3. Otherwise return the fully normalized string, so an unknown-but-identical
- *    display name (e.g. a future `"Cowork"` scope vs a `cowork` request) still
- *    matches exactly, while genuinely different strings do not.
+ * This deliberately replaced an earlier "fall back to the normalized string"
+ * design, which could fail CLOSED in three ways:
+ *
+ *   - a caller alias `cowork` would exact-match an upstream `"Cowork"` window
+ *     and block an account for a family we have never validated;
+ *   - `vendor-sonnet-proxy` (a third-party proxy, not Anthropic's Sonnet on
+ *     this subscription) would be treated as Sonnet and blocked by Sonnet's
+ *     window;
+ *   - conversely a future `claude-cowork-6` would normalize to itself and NOT
+ *     match `"Cowork"`, silently defeating rotation while looking like it
+ *     worked.
+ *
+ * The cost is that a genuinely new family is invisible until it is added to
+ * {@link KNOWN_FAMILIES}. That is the accepted trade: failing open (no
+ * rotation, i.e. today's behaviour) beats failing closed (wrong rotation, or an
+ * account pinned off a model). Unrecognized names are logged by the caller so
+ * new families surface in practice rather than in theory.
  *
  * Pure and immutable: no DB / fs / network.
  */
 
 /**
- * Known Claude model family tokens, matched as whole segments.
+ * The explicit registry of Claude model families this codebase can reason
+ * about. Families only — NOT versions: a per-model weekly window is scoped to a
+ * family ("Fable"), and pinning point releases here would rot on every launch.
  *
- * Intentionally families only — NOT versions. A per-model weekly window is
- * scoped to a family ("Fable"), not to a point release, and pinning versions
- * here would make the mapping rot on every model launch. An unrecognized
- * family is not an error: it falls through to whole-string comparison.
+ * Adding a family is a deliberate act. When Anthropic ships one, add it here —
+ * the selection policy's `unrecognized requested model` debug log is the signal
+ * that one has appeared in the wild.
  */
-const KNOWN_FAMILIES: readonly string[] = [
+export const KNOWN_FAMILIES: readonly string[] = [
   "fable",
   "mythos",
   "opus",
@@ -47,43 +56,84 @@ const KNOWN_FAMILIES: readonly string[] = [
   "haiku",
 ];
 
+/**
+ * CLI aliases that deliberately resolve to NOTHING.
+ *
+ * These are real Claude Code `--model` values, but neither names a single
+ * family: `opusplan` plans on Opus and executes on Sonnet, and `default` means
+ * "let the CLI decide". Mapping either to one family would narrow availability
+ * on a guess — blocking an account for Opus when the actual work runs on
+ * Sonnet, say. Listed explicitly so this reads as a decision, not an oversight.
+ * [review G11]
+ */
+const NON_FAMILY_ALIASES: readonly string[] = ["opusplan", "default"];
+
 /** Context-window / variant suffixes that carry no family information. */
 const VARIANT_SUFFIX = /\[[^\]]*\]/g;
 
 /**
- * Reduce a model id, CLI alias, or display name to a comparable identity.
+ * Reduce a raw string to its comparable form: lowercased, variant suffixes
+ * stripped, every separator run collapsed to a single `-`.
  *
- * @param raw A model id (`claude-fable-5`), an alias (`opus`), or a usage
- *   endpoint display name (`"Fable"`). Case- and whitespace-tolerant.
- * @returns The canonical identity, or null when `raw` carries no identity
- *   (not a string, or empty/whitespace/punctuation only).
+ * Exported for tests only — callers wanting an identity must use
+ * {@link resolveClaudeModelFamily}, which additionally requires recognition.
  */
-export function normalizeClaudeModelIdentity(raw: unknown): string | null {
+export function normalizeModelToken(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
 
   const normalized = raw
     .toLowerCase()
     .replace(VARIANT_SUFFIX, "")
     // Any run of separators (whitespace, underscore, dot, slash, hyphen)
-    // becomes a single hyphen so segmentation is uniform across the id styles
+    // becomes a single hyphen so segmentation is uniform across id styles
     // ("claude-fable-5", "Claude Fable 5", "claude_fable_5").
     .replace(/[\s._/-]+/g, "-")
     .replace(/^-+|-+$/g, "");
 
-  if (normalized.length === 0) return null;
+  return normalized.length > 0 ? normalized : null;
+}
 
-  for (const segment of normalized.split("-")) {
-    if (KNOWN_FAMILIES.includes(segment)) return segment;
+/**
+ * Resolve a model id, CLI alias, or usage-endpoint display name to a KNOWN
+ * family token, or null when it is not recognized.
+ *
+ * Two accepted shapes, and only two:
+ *   1. The whole normalized string IS a family — `"Fable"`, `opus`, `sonnet`.
+ *      This is the display-name and bare-alias case.
+ *   2. The string is a `claude-`-prefixed model id containing a family segment
+ *      — `claude-fable-5`, `claude-3-5-sonnet-20241022`, `claude-sonnet-5[1m]`.
+ *
+ * Requiring the `claude-` prefix for the segment scan is what keeps a
+ * third-party `vendor-sonnet-proxy` from being mistaken for Anthropic's Sonnet.
+ *
+ * @param raw A model id, alias, or display name. Case- and whitespace-tolerant.
+ * @returns A token from {@link KNOWN_FAMILIES}, or null when unrecognized.
+ */
+export function resolveClaudeModelFamily(raw: unknown): string | null {
+  const normalized = normalizeModelToken(raw);
+  if (normalized === null) return null;
+
+  // Explicitly-declined aliases resolve to nothing (see NON_FAMILY_ALIASES).
+  if (NON_FAMILY_ALIASES.includes(normalized)) return null;
+
+  // Shape 1: the display name / bare alias.
+  if (KNOWN_FAMILIES.includes(normalized)) return normalized;
+
+  // Shape 2: a Claude model id. The prefix requirement is load-bearing.
+  if (normalized.startsWith("claude-")) {
+    for (const segment of normalized.split("-")) {
+      if (KNOWN_FAMILIES.includes(segment)) return segment;
+    }
   }
 
-  return normalized;
+  return null;
 }
 
 /**
  * Whether a requested model and a usage-window scope name identify the same
- * model.
+ * model family.
  *
- * Returns false whenever either side has no identity — the caller must treat
+ * Returns false whenever either side is unrecognized — the caller must treat
  * that as "unknown", which by contract means AVAILABLE (fail open), never
  * "blocked".
  */
@@ -91,9 +141,9 @@ export function claudeModelIdentityMatches(
   requestedModel: unknown,
   scopeModelDisplayName: unknown
 ): boolean {
-  const requested = normalizeClaudeModelIdentity(requestedModel);
+  const requested = resolveClaudeModelFamily(requestedModel);
   if (requested === null) return false;
-  const scoped = normalizeClaudeModelIdentity(scopeModelDisplayName);
+  const scoped = resolveClaudeModelFamily(scopeModelDisplayName);
   if (scoped === null) return false;
   return requested === scoped;
 }

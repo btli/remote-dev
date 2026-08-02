@@ -120,25 +120,43 @@ export class TrackUsageLimitUseCase {
     const opts =
       input.source === "manual" ? undefined : { onlyIfNewer: observedAt };
 
-    const wrote = await this.stateRepository.upsert(state, opts);
-
-    // Persist per-window detail only when the rollup write actually landed —
-    // otherwise a stale observation would leave the windows describing one
-    // moment and the rollup another. Best-effort: a window-write failure must
-    // never fail the observation the rollup already accepted.
-    if (wrote && input.windows !== undefined && this.windowRepository) {
+    // ── Write order is load-bearing [review G6] ────────────────────────────
+    //
+    // Per-window detail is written FIRST, and a failure aborts before the
+    // rollup is touched. The two live in separate repositories over the same
+    // `db`, so there is no single transaction spanning them; ordering is what
+    // makes the divergence that matters impossible.
+    //
+    // The dangerous state is a FRESH rollup saying "available" sitting beside
+    // STALE windows still saying a model is critical — selection would then
+    // block a model the account has since got headroom for, with nothing to
+    // correct it but a later successful poll. Writing windows first means that
+    // state cannot arise: if windows fail, the rollup is never written and the
+    // account keeps its previous (consistent) pair.
+    //
+    // The residual is the inverse — fresh windows beside a stale rollup — which
+    // is strictly safer: windows only ever add blocking for one NAMED model,
+    // and the elapsed-reset + staleness checks in the selection policy bound
+    // how long that can matter. It self-heals on the next poll.
+    if (input.windows !== undefined && this.windowRepository) {
       try {
         await this.windowRepository.replaceForAccount(
           input.accountId,
-          input.windows
+          input.windows,
+          observedAt
         );
       } catch (error) {
-        log.warn("Failed to persist usage windows (rollup still recorded)", {
+        // Do NOT record the observation at all: a half-applied observation is
+        // worse than a missed one, and the sweep runs again in ~10 minutes.
+        log.warn("Aborting usage observation: window write failed", {
           accountId: input.accountId,
           error: String(error),
         });
+        return { state, wasNewlyLimited: false, wrote: false };
       }
     }
+
+    const wrote = await this.stateRepository.upsert(state, opts);
 
     log.debug("Tracked usage-limit observation", {
       accountId: input.accountId,

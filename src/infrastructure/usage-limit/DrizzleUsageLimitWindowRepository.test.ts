@@ -9,7 +9,15 @@ const calls: { deletes: number; inserted: Record<string, unknown>[][] } = {
   inserted: [],
 };
 
+/** Rows the staleness guard sees inside the transaction. */
+let existingObserved: { observedAt: Date | null }[] = [];
+
 const tx = {
+  query: {
+    claudeUsageLimitWindows: {
+      findMany: () => Promise.resolve(existingObserved),
+    },
+  },
   delete: () => {
     calls.deletes += 1;
     return { where: () => Promise.resolve(undefined) };
@@ -58,16 +66,21 @@ function makeRow(over: Record<string, unknown> = {}): Record<string, unknown> {
     scopeModel: "Fable",
     scopeSurface: null,
     isActive: true,
+    observedAt: new Date("2026-08-02T09:00:00Z"),
+    scopeModelKey: "Fable",
     createdAt: new Date(),
     updatedAt: new Date(),
     ...over,
   };
 }
 
+const OBSERVED = new Date("2026-08-02T09:00:00Z");
+
 beforeEach(() => {
   vi.clearAllMocks();
   calls.deletes = 0;
   calls.inserted = [];
+  existingObserved = [];
   accountFindFirst.mockResolvedValue({ userId: "u1" });
 });
 
@@ -84,7 +97,7 @@ describe("DrizzleUsageLimitWindowRepository.replaceForAccount", () => {
         scopeSurface: null,
         isActive: true,
       },
-    ]);
+    ], OBSERVED);
 
     expect(ok).toBe(true);
     expect(calls.deletes).toBe(1);
@@ -102,7 +115,7 @@ describe("DrizzleUsageLimitWindowRepository.replaceForAccount", () => {
   it("clears stale rows when the endpoint reports no windows at all", async () => {
     // A window that disappears upstream must not linger as stale state — the
     // whole reason the write is a replace and not a merge.
-    const ok = await repo.replaceForAccount("acct-1", []);
+    const ok = await repo.replaceForAccount("acct-1", [], OBSERVED);
 
     expect(ok).toBe(true);
     expect(calls.deletes).toBe(1);
@@ -121,7 +134,7 @@ describe("DrizzleUsageLimitWindowRepository.replaceForAccount", () => {
         scopeSurface: "code",
         isActive: false,
       },
-    ]);
+    ], OBSERVED);
 
     expect(calls.inserted[0][0]).toMatchObject({
       kind: "monthly_scoped",
@@ -164,7 +177,7 @@ describe("DrizzleUsageLimitWindowRepository.replaceForAccount", () => {
         scopeSurface: null,
         isActive: false,
       },
-    ]);
+    ], OBSERVED);
 
     expect(calls.inserted[0].map((r) => r.percent)).toEqual([100, 0, 61]);
   });
@@ -172,11 +185,94 @@ describe("DrizzleUsageLimitWindowRepository.replaceForAccount", () => {
   it("is a no-op (not a throw) when the account has no owner row", async () => {
     accountFindFirst.mockResolvedValue(undefined);
 
-    const ok = await repo.replaceForAccount("ghost", []);
+    const ok = await repo.replaceForAccount("ghost", [], OBSERVED);
 
     expect(ok).toBe(false);
     expect(calls.deletes).toBe(0);
     expect(calls.inserted).toHaveLength(0);
+  });
+});
+
+describe("DrizzleUsageLimitWindowRepository concurrency guards", () => {
+  it("folds a null scopeModel into scopeModelKey so the unique index is portable", async () => {
+    // The logical key is (accountId, kind, scopeModel), but scopeModel is
+    // nullable and SQLite/PG disagree on NULL collision in a unique index.
+    await repo.replaceForAccount("acct-1", [
+      {
+        kind: "weekly_all",
+        group: "weekly",
+        percent: 98,
+        severity: "critical",
+        resetsAt: null,
+        scopeModel: null,
+        scopeSurface: null,
+        isActive: false,
+      },
+    ], OBSERVED);
+
+    expect(calls.inserted[0][0]).toMatchObject({
+      scopeModel: null,
+      scopeModelKey: "",
+    });
+  });
+
+  it("de-dupes on the logical key so a repeated pair cannot fail the write", async () => {
+    const dup = {
+      kind: "weekly_scoped",
+      group: "weekly",
+      percent: 50,
+      severity: "normal",
+      resetsAt: null,
+      scopeModel: "Fable",
+      scopeSurface: null,
+      isActive: false,
+    };
+    await repo.replaceForAccount(
+      "acct-1",
+      [dup, { ...dup, percent: 100, severity: "critical" }],
+      OBSERVED
+    );
+
+    // Last occurrence wins — the response is the truth.
+    expect(calls.inserted[0]).toHaveLength(1);
+    expect(calls.inserted[0][0]).toMatchObject({ percent: 100 });
+  });
+
+  it("skips the write when a strictly-newer observation is already stored", async () => {
+    // A slow response finishing last must not overwrite newer data.
+    existingObserved = [{ observedAt: new Date("2026-08-02T09:05:00Z") }];
+
+    const ok = await repo.replaceForAccount("acct-1", [], OBSERVED);
+
+    expect(ok).toBe(false);
+    expect(calls.deletes).toBe(0);
+    expect(calls.inserted).toHaveLength(0);
+  });
+
+  it("writes when the stored observation is older or equal", async () => {
+    existingObserved = [{ observedAt: new Date("2026-08-02T08:55:00Z") }];
+
+    const ok = await repo.replaceForAccount("acct-1", [], OBSERVED);
+
+    expect(ok).toBe(true);
+    expect(calls.deletes).toBe(1);
+  });
+
+  it("stamps every row with the observation time", async () => {
+    await repo.replaceForAccount("acct-1", [
+      {
+        kind: "weekly_scoped",
+        group: "weekly",
+        percent: 100,
+        severity: "critical",
+        resetsAt: null,
+        scopeModel: "Fable",
+        scopeSurface: null,
+        isActive: true,
+      },
+    ], OBSERVED);
+
+    expect(calls.inserted[0][0]).toMatchObject({ observedAt: OBSERVED });
   });
 });
 
@@ -197,6 +293,7 @@ describe("DrizzleUsageLimitWindowRepository reads", () => {
         scopeModel: "Fable",
         scopeSurface: null,
         isActive: true,
+        observedAt: new Date("2026-08-02T09:00:00Z"),
       },
     ]);
   });

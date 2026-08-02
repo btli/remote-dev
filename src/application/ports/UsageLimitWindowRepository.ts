@@ -41,20 +41,39 @@ export interface UsageLimitWindow {
   scopeSurface: string | null;
   /** Whether this window is the one actually binding right now. */
   isActive: boolean;
+  /**
+   * When the poll that produced this window OBSERVED it. Populated on read;
+   * ignored on write (the write takes `observedAt` as its own argument, so one
+   * timestamp covers the whole replaced set).
+   *
+   * Consumers use it to DISCOUNT STALE ROWS: a window can only be cleared by a
+   * later successful poll, so a revoked token, a decrypt failure, the kill
+   * switch, or persistent endpoint errors would otherwise let an exhausted row
+   * block a model indefinitely.
+   */
+  observedAt?: Date | null;
 }
 
 export interface UsageLimitWindowRepository {
   /**
-   * Replace every stored window for `accountId` with `windows`.
+   * Replace every stored window for `accountId` with `windows`, as observed at
+   * `observedAt`.
    *
-   * Atomic replace, not merge: rows absent from `windows` are deleted. An
-   * empty array clears the account's windows. Returns false when the write was
-   * skipped (e.g. the account has no owner row); best-effort, never throws for
-   * a missing account.
+   * Atomic replace, not merge: rows absent from `windows` are deleted. An empty
+   * array clears the account's windows.
+   *
+   * Carries a staleness guard: the write is SKIPPED when a stored row was
+   * observed strictly later than `observedAt`, so a slow response finishing
+   * last cannot overwrite newer data.
+   *
+   * Returns false when the write was skipped (missing account, or the staleness
+   * guard). Throws only on a genuine persistence failure — the caller treats a
+   * throw as "do not record this observation at all".
    */
   replaceForAccount(
     accountId: string,
-    windows: UsageLimitWindow[]
+    windows: UsageLimitWindow[],
+    observedAt: Date
   ): Promise<boolean>;
 
   /** The stored windows for one account (empty when none recorded). */

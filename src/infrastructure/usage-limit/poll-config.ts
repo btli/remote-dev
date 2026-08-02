@@ -2,35 +2,38 @@
  * poll-config - Shared gate for the proactive Anthropic usage poller.
  *
  * The proactive poll path (the `UsageEndpointPoller` gateway + the periodic
- * `usage-poll-sweep`) is ON by default as of [remote-dev-n4x4.4].
+ * `usage-poll-sweep`) requires an EXPLICIT POSITIVE opt-in. Unset, empty, or
+ * anything unrecognized means OFF. [remote-dev-n4x4.4, review G7]
  *
- * ## Why the default flipped
+ * ## Why opt-in rather than default-on
  *
- * It used to be OFF because the old adapter POSTed a real `/v1/messages` probe
- * per poll — a per-account, per-sweep quota burn on the very accounts the
- * feature exists to conserve. [remote-dev-n4x4.1] replaced that with a plain
- * `GET /api/oauth/usage`: no message send, no tokens, no quota consumed. With
- * the cost gone, the objection to polling by default went with it — and the
- * feature only works if it actually runs, since per-model `weekly_scoped`
- * windows are visible ONLY through this endpoint.
+ * The original reason for default-off is gone: the old adapter POSTed a real
+ * `/v1/messages` probe per poll, burning quota on the very accounts the feature
+ * exists to conserve, and [remote-dev-n4x4.1] replaced it with a plain
+ * `GET /api/oauth/usage` — no message send, no tokens, no quota consumed.
  *
- * The flag stays as a kill switch: set `RDV_CLAUDE_USAGE_POLL_ENABLED=0` (or
- * `false`/`off`/`no`) to disable. Both consumers read it through this single
- * helper so the gate can't drift between them.
+ * But "free" is not the same as "unconditional". Enabling it makes the server
+ * contact Anthropic every ~10 minutes for every account, using stored OAuth
+ * tokens. `docs/SETUP.md` ships a bare `RDV_CLAUDE_USAGE_POLL_ENABLED=` line,
+ * so a permissive default would have started that outbound traffic on an
+ * unchanged config file, with no operator having chosen it. Network activity
+ * against a third party with a user's credentials should be opted into, not
+ * defaulted into.
+ *
+ * Both consumers read the flag through this single helper so the gate can't
+ * drift between them.
  */
 
-/** Values that explicitly disable the poller. Everything else leaves it on. */
-const DISABLED_VALUES = new Set(["0", "false", "off", "no"]);
+/** The values that turn the poller ON. Everything else — including unset,
+ * empty, and typos — leaves it off. */
+const ENABLED_VALUES = new Set(["1", "true", "on", "yes"]);
 
 /**
- * Whether the proactive usage poller is enabled.
- *
- * Default ON — an unset or unrecognized value means enabled. Only an explicit
- * opt-out disables it, so a typo'd value fails toward the working behavior
- * rather than silently switching the feature off.
+ * Whether the proactive usage poller is enabled. Default OFF; requires an
+ * explicit positive value.
  */
 export function isUsagePollEnabled(): boolean {
   const raw = process.env.RDV_CLAUDE_USAGE_POLL_ENABLED;
-  if (raw === undefined) return true;
-  return !DISABLED_VALUES.has(raw.trim().toLowerCase());
+  if (typeof raw !== "string") return false;
+  return ENABLED_VALUES.has(raw.trim().toLowerCase());
 }

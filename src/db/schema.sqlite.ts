@@ -1270,8 +1270,10 @@ export const claudeUsageLimitWindows = sqliteTable(
     severity: text("severity"),
     resetsAt: integer("resets_at", { mode: "timestamp_ms" }),
     scopeModel: text("scope_model"),
+    scopeModelKey: text("scope_model_key").notNull().default(""),
     scopeSurface: text("scope_surface"),
     isActive: integer("is_active", { mode: "boolean" }).notNull().default(false),
+    observedAt: integer("observed_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
   },
@@ -1279,6 +1281,7 @@ export const claudeUsageLimitWindows = sqliteTable(
     index("claude_usage_limit_window_account_idx").on(table.accountId),
     index("claude_usage_limit_window_account_scope_idx").on(table.accountId, table.scopeModel),
     index("claude_usage_limit_window_user_idx").on(table.userId),
+    uniqueIndex("claude_usage_limit_window_key_unique").on(table.accountId, table.kind, table.scopeModelKey),
   ]
 );
 

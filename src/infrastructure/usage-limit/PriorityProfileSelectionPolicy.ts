@@ -58,7 +58,33 @@ import type {
   UsageLimitWindowRepository,
 } from "@/application/ports/UsageLimitWindowRepository";
 import { UsageWindow } from "@/domain/value-objects/UsageWindow";
-import { claudeModelIdentityMatches } from "@/domain/value-objects/ClaudeModelIdentity";
+import {
+  claudeModelIdentityMatches,
+  resolveClaudeModelFamily,
+} from "@/domain/value-objects/ClaudeModelIdentity";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("ProfileSelectionPolicy");
+
+/**
+ * The ONLY window kind allowed to block a model. [review G5]
+ *
+ * Matching any model-scoped kind was considered and rejected. `kind` IS an open
+ * string set, but consuming an unknown future kind as blocking means a new
+ * diagnostic / daily / surface-scoped row that upstream marks critical would
+ * silently change account selection with no authorization — a different policy
+ * being applied to a weekly rotation decision. Failing open beats future-proof
+ * here. New kinds are logged (never acted on) so we learn about them.
+ */
+const BLOCKING_KIND = "weekly_scoped";
+
+/**
+ * How long a stored window stays trustworthy. The sweep polls every ~10
+ * minutes; six intervals tolerates transient endpoint failures without letting
+ * a row that can only be cleared by a *successful* poll (revoked token, decrypt
+ * failure, kill switch flipped) block a model indefinitely. [review G3]
+ */
+const MAX_WINDOW_AGE_MS = 60 * 60 * 1000;
 
 /** The primary + pool wiring for a project, as read from its link row. */
 export interface ProjectProfileLink {
@@ -245,15 +271,10 @@ export class PriorityProfileSelectionPolicy implements ProfileSelectionPolicy {
    * Which of `accountIds` are exhausted FOR `requestedModel`, and by which
    * window. [remote-dev-n4x4.3]
    *
-   * Every early return here is a fail-open: no window repository, no model, or
-   * no stored windows all yield an empty map, leaving availability exactly as
-   * the account-level state reports it.
-   *
-   * Matching is deliberately NOT restricted to `kind === "weekly_scoped"`:
-   * `kind` is an OPEN string set upstream, so pinning to today's spelling is
-   * precisely the thing most likely to rot. The discriminator that actually
-   * matters is structural — a non-null `scopeModel` means "this window is
-   * scoped to one model" regardless of what the kind is called.
+   * EVERY exit from this function yields "not blocked". That is the invariant:
+   * no window repository, no model, an unrecognized model, a repository error,
+   * a stale row, a missing/elapsed reset, an inactive row, or a non-weekly kind
+   * all leave availability exactly as the account-level state reports it.
    */
   private async blockingWindowsForModel(
     accountIds: string[],
@@ -266,8 +287,31 @@ export class PriorityProfileSelectionPolicy implements ProfileSelectionPolicy {
       return blocked;
     }
 
-    const byAccount =
-      await this.windowRepository.findManyByAccountIds(accountIds);
+    // An unrecognized model is never compared against a scoped row, so it can
+    // never block. Logged because this is the signal that a new family shipped
+    // and KNOWN_FAMILIES needs an entry. [review G4]
+    if (resolveClaudeModelFamily(requestedModel) === null) {
+      log.debug("Unrecognized requested model; skipping model-aware selection", {
+        requestedModel,
+      });
+      return blocked;
+    }
+
+    // A repository failure must NOT propagate. It used to: the throw travelled
+    // through gatherCandidates → selectForProject, session-service caught it
+    // and "proceeded without a profile", so the session launched with no
+    // account and no injected token — on ambient credentials. That fired only
+    // for sessions passing --model, i.e. exactly the premium sessions this
+    // feature exists to protect. [review G2]
+    let byAccount: Map<string, UsageLimitWindow[]>;
+    try {
+      byAccount = await this.windowRepository.findManyByAccountIds(accountIds);
+    } catch (error) {
+      log.warn("Usage-window read failed; falling back to account-level selection", {
+        error: String(error),
+      });
+      return blocked;
+    }
 
     for (const [accountId, windows] of byAccount) {
       for (const window of windows) {
@@ -277,11 +321,53 @@ export class PriorityProfileSelectionPolicy implements ProfileSelectionPolicy {
           continue;
         }
         if (!isExhausted(window)) continue;
-        // An elapsed reset means the window has already rolled over; the next
-        // poll will confirm, but until then it must not block.
-        if (window.resetsAt !== null && window.resetsAt.getTime() <= now.getTime()) {
+
+        // Only `weekly_scoped` may block; anything else is observed, logged,
+        // and ignored. [review G5]
+        if (window.kind.trim().toLowerCase() !== BLOCKING_KIND) {
+          log.debug("Ignoring exhausted model-scoped window of an unknown kind", {
+            accountId,
+            kind: window.kind,
+            scopeModel: window.scopeModel,
+          });
           continue;
         }
+
+        // `is_active` is the endpoint's own "this is the binding constraint"
+        // flag; in the live capture the exhausted Fable window carried it. An
+        // exhausted-but-inactive row is a weaker claim, so it is observed and
+        // ignored rather than acted on — under-blocking is the safe direction.
+        if (!window.isActive) {
+          log.debug("Ignoring exhausted model-scoped window that is not active", {
+            accountId,
+            scopeModel: window.scopeModel,
+          });
+          continue;
+        }
+
+        // A row can only be cleared by a later SUCCESSFUL poll, so an
+        // unrefreshed one must expire on its own or it pins the account off
+        // this model forever. [review G3]
+        if (isStale(window, now)) {
+          log.debug("Ignoring stale model-scoped window", {
+            accountId,
+            scopeModel: window.scopeModel,
+            observedAt: window.observedAt?.toISOString(),
+          });
+          continue;
+        }
+
+        // A blocking row must carry a valid FUTURE reset. A null reset would
+        // make `LimitState.isAvailableNow` treat the account as permanently
+        // unavailable for this model; an elapsed one has already rolled over.
+        if (
+          !(window.resetsAt instanceof Date) ||
+          Number.isNaN(window.resetsAt.getTime()) ||
+          window.resetsAt.getTime() <= now.getTime()
+        ) {
+          continue;
+        }
+
         blocked.set(accountId, window);
         break;
       }
@@ -289,6 +375,16 @@ export class PriorityProfileSelectionPolicy implements ProfileSelectionPolicy {
 
     return blocked;
   }
+}
+
+/**
+ * Whether a stored window is too old to trust. A row with no `observedAt`
+ * (pre-existing data written before the column landed) is treated as stale.
+ */
+function isStale(window: UsageLimitWindow, now: Date): boolean {
+  if (!(window.observedAt instanceof Date)) return true;
+  const age = now.getTime() - window.observedAt.getTime();
+  return age > MAX_WINDOW_AGE_MS;
 }
 
 /**
@@ -317,12 +413,28 @@ function limitedForModel(
   blocking: UsageLimitWindow
 ): LimitState {
   return LimitState.limited(accountId, {
-    // The "7d" slot is the weekly dimension the scoped window lives in; the
-    // reset is what makes this expire rather than pin the account forever.
-    windows: [UsageWindow.create("7d", 100, blocking.resetsAt)],
+    // Duration comes from the row's own group rather than being hardcoded, so
+    // the derived state describes the window that actually blocked. The reset
+    // is what makes this expire instead of pinning the account forever — the
+    // caller guarantees it is present and in the future.
+    windows: [
+      UsageWindow.create(durationForWindow(blocking), 100, blocking.resetsAt),
+    ],
     source: accountState.getSource(),
     lastCheckedAt: accountState.getLastCheckedAt(),
   });
+}
+
+/**
+ * Map a reported window onto the durations `UsageWindow` models. `group` is an
+ * open set, so anything unrecognized lands on "org" (the generic slot) rather
+ * than being forced into a rolling window it may not be.
+ */
+function durationForWindow(window: UsageLimitWindow): "5h" | "7d" | "org" {
+  const group = window.group?.trim().toLowerCase();
+  if (group === "weekly") return "7d";
+  if (group === "session") return "5h";
+  return "org";
 }
 
 /** The most-preferred candidate (already priority-sorted ascending). */

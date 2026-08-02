@@ -9,10 +9,15 @@
  *
  * `replaceForAccount` is a delete-then-insert inside ONE transaction: an
  * account's windows are always exactly what the last poll reported, so a window
- * that disappears upstream cannot linger. That also makes a unique index on
- * (account_id, kind, scope_model) unnecessary — which matters because
- * `scope_model` is nullable and SQLite/PostgreSQL disagree on whether NULLs
- * collide in a unique index.
+ * that disappears upstream cannot linger.
+ *
+ * Two concurrency protections ride on that write:
+ *   - A UNIQUE index on (account_id, kind, scope_model_key) — the logical key,
+ *     with NULL `scope_model` folded to "" so ONE index is portable across
+ *     SQLite and PostgreSQL. Without it, two polls that each see an empty table
+ *     both delete nothing and both insert, silently producing the union.
+ *   - An `observed_at` staleness guard read inside the transaction, so a slow
+ *     response finishing last cannot overwrite a newer one.
  *
  * Note on userId: the port speaks accounts, but the row requires a userId
  * (notNull). It is resolved from the owning `claude_account` on each replace;
@@ -37,7 +42,8 @@ export class DrizzleUsageLimitWindowRepository
 {
   async replaceForAccount(
     accountId: string,
-    windows: UsageLimitWindow[]
+    windows: UsageLimitWindow[],
+    observedAt: Date
   ): Promise<boolean> {
     const userId = await this.resolveUserId(accountId);
     if (!userId) {
@@ -48,7 +54,15 @@ export class DrizzleUsageLimitWindowRepository
     }
 
     const now = new Date();
-    const values = windows.map((w) => ({
+    // De-dupe on the logical key before hitting the unique index: a malformed
+    // upstream body repeating a (kind, scopeModel) pair must not fail the whole
+    // write. Last occurrence wins, matching "the response is the truth".
+    const byKey = new Map<string, UsageLimitWindow>();
+    for (const w of windows) {
+      byKey.set(`${w.kind}\u0000${w.scopeModel ?? ""}`, w);
+    }
+
+    const values = [...byKey.values()].map((w) => ({
       accountId,
       userId,
       kind: w.kind,
@@ -57,15 +71,38 @@ export class DrizzleUsageLimitWindowRepository
       severity: w.severity,
       resetsAt: w.resetsAt,
       scopeModel: w.scopeModel,
+      // NULL folded to "" so the unique index has a NOT NULL column to key on.
+      scopeModelKey: w.scopeModel ?? "",
       scopeSurface: w.scopeSurface,
       isActive: w.isActive,
+      observedAt,
       createdAt: now,
       updatedAt: now,
     }));
 
     // Delete + insert in one transaction so a reader never observes a
-    // partially-replaced window set.
+    // partially-replaced window set, and so the staleness check below cannot
+    // race the write it guards.
+    let wrote = true;
     await db.transaction(async (tx) => {
+      const existing = await tx.query.claudeUsageLimitWindows.findMany({
+        where: eq(claudeUsageLimitWindows.accountId, accountId),
+        columns: { observedAt: true },
+      });
+
+      // Staleness guard: a strictly-newer stored observation already won.
+      const newest = existing.reduce<number>(
+        (max, row) =>
+          row.observedAt instanceof Date
+            ? Math.max(max, row.observedAt.getTime())
+            : max,
+        0
+      );
+      if (newest > observedAt.getTime()) {
+        wrote = false;
+        return;
+      }
+
       await tx
         .delete(claudeUsageLimitWindows)
         .where(eq(claudeUsageLimitWindows.accountId, accountId));
@@ -73,6 +110,13 @@ export class DrizzleUsageLimitWindowRepository
         await tx.insert(claudeUsageLimitWindows).values(values);
       }
     });
+
+    if (!wrote) {
+      log.debug("Skipped usage-window replace: a newer observation exists", {
+        accountId,
+      });
+      return false;
+    }
 
     log.debug("Replaced usage windows for account", {
       accountId,
@@ -125,6 +169,7 @@ function rowToWindow(row: Row): UsageLimitWindow {
     scopeModel: row.scopeModel ?? null,
     scopeSurface: row.scopeSurface ?? null,
     isActive: row.isActive === true,
+    observedAt: row.observedAt ?? null,
   };
 }
 

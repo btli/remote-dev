@@ -613,9 +613,18 @@ export const profilePoolRepository: ProfilePoolRepository =
   new DrizzleProfilePoolRepository();
 
 /**
- * The single usage-limit gateway: a reactive output detector + a (flag-gated,
- * default-off) proactive poller, dispatched by AccountKind. Reactive supports
- * subscription; the poller is a no-op unless RDV_CLAUDE_USAGE_POLL_ENABLED=1.
+ * The single usage-limit gateway: a reactive output detector + a proactive
+ * poller, dispatched by AccountKind.
+ *
+ * Dispatch FALLS THROUGH every adapter that supports the kind until one returns
+ * an observation — it is not first-match. `ReactiveOutputDetector` supports
+ * subscription but its `fetchLimitState()` is always null (it is event-driven),
+ * so first-match dispatch made the poller unreachable for every subscription
+ * account. See CompositeUsageLimitGateway's docblock. [review G1]
+ *
+ * The poller additionally requires `RDV_CLAUDE_USAGE_POLL_ENABLED` to be set to
+ * an explicit positive value; when it is not, its `supports()` returns false
+ * and it drops out of dispatch entirely.
  */
 export const usageLimitGateway: UsageLimitGateway = new CompositeUsageLimitGateway([
   new ReactiveOutputDetector(),

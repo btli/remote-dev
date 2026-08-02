@@ -127,7 +127,7 @@ Present in the codebase but **off by default, inert, or unwired**. Not product f
 
 | Capability | Why it's not usable yet |
 |------------|-------------------------|
-| Claude usage poller | Proactive Anthropic poller now ON by default (free GET; `RDV_CLAUDE_USAGE_POLL_ENABLED=0` is the kill switch) and the source of per-model `weekly_scoped` windows for model-aware rotation. The api-key path is still unwired — that endpoint is subscription-only. |
+| Claude usage poller | Proactive Anthropic poller, opt-in via `RDV_CLAUDE_USAGE_POLL_ENABLED=1` (free GET, bounded concurrency, per-account backoff); the source of per-model `weekly_scoped` windows for model-aware rotation. The api-key path is still unwired — that endpoint is subscription-only. |
 | Warm pool | Gated by `SUPERVISOR_WARM_POOL_SIZE=0`; the `claimReady` path has zero callers — scaffolding, not yet wired to launch instances. |
 | Scale-to-zero | The reaper only evaluates claimed warm-pool rows, so there are never any candidates — planned/scaffolded. |
 | Generic agent-activity dashboard | Service, tables, and `/api/dashboard` exist, but the `trackSession*` ingest path is never called and there is no UI. |

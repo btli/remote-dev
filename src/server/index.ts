@@ -31,6 +31,7 @@ import { acquireInstanceLock, releaseInstanceLock } from "../lib/instance-lock.j
 import { withTimeout } from "../lib/with-timeout.js";
 // WAL auto-truncate (SQLite only) — keeps the WAL from growing unbounded.
 import { startWalCheckpointTimer } from "./wal-checkpoint.js";
+import { isUsagePollEnabled } from "../infrastructure/usage-limit/poll-config.js";
 // Startup janitor — heal ghost sessions (DB alive, tmux gone).
 import { reconcileSessionsWithTmux } from "./session-reconcile.js";
 
@@ -61,7 +62,7 @@ let shuttingDown = false;
 /**
  * [remote-dev-3b3l] Handle for the proactive Claude usage-limit poll sweep.
  * Registered unconditionally (the sweep itself no-ops unless
- * RDV_CLAUDE_USAGE_POLL_ENABLED=1) and cleared on shutdown.
+ * the poller is explicitly enabled) and cleared on shutdown.
  */
 let usagePollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -196,7 +197,7 @@ async function startServer(): Promise<void> {
     .catch((error) => log.error("Failed to auto-start LiteLLM", { error: String(error) }));
 
   // [remote-dev-3b3l] Proactive Claude usage-limit poll sweep (~10m). The sweep
-  // is a NO-OP unless RDV_CLAUDE_USAGE_POLL_ENABLED=1 (it self-guards), so the
+  // is a NO-OP unless the poller is explicitly enabled (it self-guards), so the
   // interval is always registered but does nothing by default. Lives here next
   // to the other orchestrators with a matching clearInterval on shutdown.
   usagePollTimer = setInterval(() => {
@@ -208,7 +209,9 @@ async function startServer(): Promise<void> {
   }, USAGE_POLL_INTERVAL_MS);
   log.info("Usage-limit poll sweep registered", {
     intervalMs: USAGE_POLL_INTERVAL_MS,
-    enabled: process.env.RDV_CLAUDE_USAGE_POLL_ENABLED === "1",
+    // [review G9] Must read the shared helper, never re-derive the flag —
+    // a startup log that contradicts actual behaviour is worse than none.
+    enabled: isUsagePollEnabled(),
   });
 
   async function shutdown(signal: string): Promise<void> {

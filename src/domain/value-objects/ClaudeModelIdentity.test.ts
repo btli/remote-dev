@@ -1,58 +1,75 @@
 import { describe, it, expect } from "vitest";
 import {
-  normalizeClaudeModelIdentity,
+  resolveClaudeModelFamily,
   claudeModelIdentityMatches,
   requestedModelFromAgentFlags,
 } from "./ClaudeModelIdentity";
 
-describe("normalizeClaudeModelIdentity", () => {
+describe("resolveClaudeModelFamily", () => {
   it("reduces a model id to its family token", () => {
-    expect(normalizeClaudeModelIdentity("claude-fable-5")).toBe("fable");
-    expect(normalizeClaudeModelIdentity("claude-opus-5")).toBe("opus");
-    expect(normalizeClaudeModelIdentity("claude-sonnet-5")).toBe("sonnet");
-    expect(normalizeClaudeModelIdentity("claude-haiku-4-5")).toBe("haiku");
-    expect(normalizeClaudeModelIdentity("claude-mythos-5")).toBe("mythos");
+    expect(resolveClaudeModelFamily("claude-fable-5")).toBe("fable");
+    expect(resolveClaudeModelFamily("claude-opus-5")).toBe("opus");
+    expect(resolveClaudeModelFamily("claude-sonnet-5")).toBe("sonnet");
+    expect(resolveClaudeModelFamily("claude-haiku-4-5")).toBe("haiku");
+    expect(resolveClaudeModelFamily("claude-mythos-5")).toBe("mythos");
   });
 
   it("reduces the endpoint's display name to the same token", () => {
-    expect(normalizeClaudeModelIdentity("Fable")).toBe("fable");
-    expect(normalizeClaudeModelIdentity("Opus")).toBe("opus");
+    expect(resolveClaudeModelFamily("Fable")).toBe("fable");
+    expect(resolveClaudeModelFamily("Opus")).toBe("opus");
   });
 
   it("is case- and whitespace-tolerant", () => {
-    expect(normalizeClaudeModelIdentity("  FABLE  ")).toBe("fable");
-    expect(normalizeClaudeModelIdentity("Claude Fable 5")).toBe("fable");
-    expect(normalizeClaudeModelIdentity("claude_fable_5")).toBe("fable");
+    expect(resolveClaudeModelFamily("  FABLE  ")).toBe("fable");
+    expect(resolveClaudeModelFamily("Claude Fable 5")).toBe("fable");
+    expect(resolveClaudeModelFamily("claude_fable_5")).toBe("fable");
   });
 
   it("finds the family even when it is not the last segment", () => {
     // The dated-snapshot style puts the family in the middle.
-    expect(normalizeClaudeModelIdentity("claude-3-5-sonnet-20241022")).toBe(
+    expect(resolveClaudeModelFamily("claude-3-5-sonnet-20241022")).toBe(
       "sonnet"
     );
   });
 
   it("strips context-window / variant suffixes", () => {
-    expect(normalizeClaudeModelIdentity("sonnet[1m]")).toBe("sonnet");
-    expect(normalizeClaudeModelIdentity("claude-sonnet-5[1m]")).toBe("sonnet");
+    expect(resolveClaudeModelFamily("sonnet[1m]")).toBe("sonnet");
+    expect(resolveClaudeModelFamily("claude-sonnet-5[1m]")).toBe("sonnet");
   });
 
-  it("falls back to the whole normalized string for an unknown family", () => {
-    // Not a guess — an exact normalized comparison, so an unknown display name
-    // still matches an identically-named request and nothing else.
-    expect(normalizeClaudeModelIdentity("Cowork")).toBe("cowork");
-    expect(normalizeClaudeModelIdentity("some-future-model-9")).toBe(
-      "some-future-model-9"
-    );
+  it("returns null for an unrecognized family — never a guessed identity", () => {
+    // [review G4] A fall-back to the normalized string could fail CLOSED: a
+    // `cowork` alias would exact-match an upstream "Cowork" window and block an
+    // account for a family we have never validated.
+    expect(resolveClaudeModelFamily("Cowork")).toBeNull();
+    expect(resolveClaudeModelFamily("claude-cowork-6")).toBeNull();
+    expect(resolveClaudeModelFamily("some-future-model-9")).toBeNull();
+  });
+
+  it("does not mistake a third-party model for a Claude family", () => {
+    // The `claude-` prefix requirement on the segment scan is what stops a
+    // proxy model from being blocked by Anthropic's Sonnet window. [review G4]
+    expect(resolveClaudeModelFamily("vendor-sonnet-proxy")).toBeNull();
+    expect(resolveClaudeModelFamily("my-opus-clone")).toBeNull();
+    // …while the genuine id styles still resolve.
+    expect(resolveClaudeModelFamily("claude-sonnet-5")).toBe("sonnet");
+  });
+
+  it("declines aliases that do not name a single family", () => {
+    // [review G11] `opusplan` plans on Opus and executes on Sonnet; `default`
+    // means "let the CLI decide". Mapping either to one family would narrow
+    // availability on a guess.
+    expect(resolveClaudeModelFamily("opusplan")).toBeNull();
+    expect(resolveClaudeModelFamily("default")).toBeNull();
   });
 
   it("returns null for anything carrying no identity", () => {
-    expect(normalizeClaudeModelIdentity("")).toBeNull();
-    expect(normalizeClaudeModelIdentity("   ")).toBeNull();
-    expect(normalizeClaudeModelIdentity("---")).toBeNull();
-    expect(normalizeClaudeModelIdentity(null)).toBeNull();
-    expect(normalizeClaudeModelIdentity(undefined)).toBeNull();
-    expect(normalizeClaudeModelIdentity(42)).toBeNull();
+    expect(resolveClaudeModelFamily("")).toBeNull();
+    expect(resolveClaudeModelFamily("   ")).toBeNull();
+    expect(resolveClaudeModelFamily("---")).toBeNull();
+    expect(resolveClaudeModelFamily(null)).toBeNull();
+    expect(resolveClaudeModelFamily(undefined)).toBeNull();
+    expect(resolveClaudeModelFamily(42)).toBeNull();
   });
 });
 

@@ -1269,8 +1269,10 @@ export const claudeUsageLimitWindows = pgTable(
     severity: text("severity"),
     resetsAt: timestamp("resets_at", { withTimezone: true, mode: "date" }),
     scopeModel: text("scope_model"),
+    scopeModelKey: text("scope_model_key").notNull().default(""),
     scopeSurface: text("scope_surface"),
     isActive: boolean("is_active").notNull().default(false),
+    observedAt: timestamp("observed_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
     updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
   },
@@ -1278,6 +1280,7 @@ export const claudeUsageLimitWindows = pgTable(
     index("claude_usage_limit_window_account_idx").on(table.accountId),
     index("claude_usage_limit_window_account_scope_idx").on(table.accountId, table.scopeModel),
     index("claude_usage_limit_window_user_idx").on(table.userId),
+    uniqueIndex("claude_usage_limit_window_key_unique").on(table.accountId, table.kind, table.scopeModelKey),
   ]
 );
 

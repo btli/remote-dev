@@ -1382,10 +1382,16 @@ export const schema: SchemaDefinition = [
     //
     // Write semantics: the repository REPLACES an account's rows on every poll
     // (delete-then-insert in one transaction) so a window that disappears
-    // upstream cannot linger as stale state. There is deliberately NO unique
-    // index on (account_id, kind, scope_model): `scope_model` is nullable and
-    // SQLite/PostgreSQL disagree on whether NULLs collide in a unique index,
-    // and wholesale replacement already makes duplicates unreachable.
+    // upstream cannot linger as stale state.
+    //
+    // The logical key is (account_id, kind, scope_model), but `scope_model` is
+    // NULLABLE for account-level windows and SQLite/PostgreSQL disagree on
+    // whether NULLs collide in a unique index — so a NULL-bearing unique index
+    // would mean different things on the two backends. `scope_model_key`
+    // carries the same value with NULL folded to "" and is NOT NULL, letting
+    // ONE portable unique index enforce the key on both. Without it two
+    // concurrent polls that each see an empty table both delete nothing and
+    // both insert, silently producing the union. [remote-dev-n4x4.6 review]
     exportName: "claudeUsageLimitWindows",
     sqlName: "claude_usage_limit_window",
     columns: [
@@ -1405,9 +1411,17 @@ export const schema: SchemaDefinition = [
       // The scoped model's DISPLAY NAME (e.g. "Fable"); `scope.model.id` is
       // null upstream, so the display name is the only per-model identity.
       { field: "scopeModel", dbName: "scope_model", kind: "text" },
+      // `scope_model` with NULL folded to "". Exists ONLY to give the unique
+      // index below a NOT NULL column; never read as data. See the note above.
+      { field: "scopeModelKey", dbName: "scope_model_key", kind: "text", notNull: true, default: { kind: "value", value: "\"\"" } },
       { field: "scopeSurface", dbName: "scope_surface", kind: "text" },
       // Whether this window is the one actually binding right now.
       { field: "isActive", dbName: "is_active", kind: "boolean", notNull: true, default: { kind: "value", value: "false" } },
+      // When the poll that produced this row OBSERVED it — not when the row was
+      // written. Drives two things: the staleness guard that stops an older
+      // response finishing last from overwriting newer data, and the age check
+      // that stops a long-unrefreshed row from blocking a model forever.
+      { field: "observedAt", dbName: "observed_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
       { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
       { field: "updatedAt", dbName: "updated_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
     ],
@@ -1415,6 +1429,8 @@ export const schema: SchemaDefinition = [
       { name: "claude_usage_limit_window_account_idx", columns: ["accountId"] },
       { name: "claude_usage_limit_window_account_scope_idx", columns: ["accountId","scopeModel"] },
       { name: "claude_usage_limit_window_user_idx", columns: ["userId"] },
+      // The logical key. Portable because scopeModelKey is NOT NULL.
+      { name: "claude_usage_limit_window_key_unique", columns: ["accountId","kind","scopeModelKey"], unique: true },
     ],
   },
   {

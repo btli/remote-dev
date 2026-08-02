@@ -1,5 +1,5 @@
 {
-  "id": "0f295911-c590-4183-a705-70d02b67f724",
+  "id": "aed69a0a-36bb-467a-9697-0aa99e5c29b7",
   "prevId": "7321b9b4-4bf4-4db3-9679-09882103cc0d",
   "version": "7",
   "dialect": "postgresql",
@@ -2999,6 +2999,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "scope_model_key": {
+          "name": "scope_model_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
         "scope_surface": {
           "name": "scope_surface",
           "type": "text",
@@ -3011,6 +3018,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
+        },
+        "observed_at": {
+          "name": "observed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
         },
         "created_at": {
           "name": "created_at",
@@ -3073,6 +3086,33 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "claude_usage_limit_window_key_unique": {
+          "name": "claude_usage_limit_window_key_unique",
+          "columns": [
+            {
+              "expression": "account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "scope_model_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
           "concurrently": false,
           "method": "btree",
           "with": {}

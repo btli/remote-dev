@@ -498,21 +498,23 @@ GITHUB_CLIENT_SECRET=<if-using-github>
 RDV_BASE_PATH=
 RDV_INSTANCE_SLUG=
 
-# Claude usage-limit poller — ON by default; this is the KILL SWITCH.
-# Set to "0" (or false/off/no) to disable. Anything else, including unset,
-# leaves it enabled.
+# Claude usage-limit poller — OFF unless you set it to "1" (or true/on/yes).
+# Unset, empty, or anything unrecognized leaves it off.
 #
-# The poller refreshes each Claude ACCOUNT's usage-limit state on a fixed
-# ~10-minute sweep by issuing a free GET to Anthropic's structured usage
-# endpoint using that account's stored OAuth token — no message is sent and no
-# quota is consumed. (It was OFF by default while it POSTed a real /v1/messages
-# probe per poll; that probe is gone.) It is the ONLY source of per-model
-# `weekly_scoped` windows, which is what lets account rotation skip an account
-# whose Fable/Opus/… weekly window is exhausted while the subscription itself
-# still reports "available". Reactive scrollback detection remains on
-# independently. Subscription accounts only. See API.md → "Claude accounts,
-# usage limits & pools".
-RDV_CLAUDE_USAGE_POLL_ENABLED=
+# What it does: every ~10 minutes, for each Claude ACCOUNT, the server issues a
+# free GET to Anthropic's structured usage endpoint using that account's stored
+# OAuth token. No message is sent and no quota is consumed. It is the ONLY
+# source of per-model `weekly_scoped` windows — the data that lets account
+# rotation skip an account whose Fable/Opus/... weekly window is exhausted while
+# the subscription itself still reports "available". Subscription accounts only.
+#
+# Why it is opt-in rather than on: enabling it makes your server contact a third
+# party on a timer using stored user credentials. That is a choice an operator
+# should make deliberately, not inherit from an unchanged config file. Reactive
+# scrollback detection works without this flag and is always on.
+#
+# Uncomment to enable:
+# RDV_CLAUDE_USAGE_POLL_ENABLED=1
 ```
 
 ## Troubleshooting
