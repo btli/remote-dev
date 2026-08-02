@@ -19,6 +19,7 @@ import { getSchedulerHealth } from "./scheduler-health.js";
 import { validateWsToken, getAuthSecret, CONTROL_SESSION_SENTINEL } from "../lib/ws-token.js";
 import { createLogger } from "../lib/logger.js";
 import { WS_PATH_PREFIX } from "../lib/base-path.js";
+import { TmuxSizeController, type TmuxExec } from "./tmux-size-controller.js";
 import {
   PROXY_WS_PATH_PATTERN,
   handleProxyWsUpgrade,
@@ -37,6 +38,11 @@ const internalLog = createLogger("InternalAPI");
 const ptyLog = createLogger("PtyControl");
 const peerLog = createLogger("PeerAPI");
 const usageLog = createLogger("UsageLimit");
+
+const execTmux: TmuxExec = (args, callback) => {
+  execFile("tmux", args, { cwd: STABLE_SPAWN_CWD }, (error) => callback(error));
+};
+const tmuxSize = new TmuxSizeController(execTmux, log);
 
 /** Retry an async operation up to maxRetries times with exponential backoff (for SQLITE_BUSY) */
 async function retryOnBusy<T>(fn: () => Promise<T>, maxRetries = 2): Promise<T> {
@@ -84,6 +90,32 @@ function getCleanEnvironment(): Record<string, string> {
  */
 function validateSessionName(name: string): boolean {
   return /^rdv-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(name);
+}
+
+const DEFAULT_TERMINAL_COLS = 80;
+const DEFAULT_TERMINAL_ROWS = 24;
+const MIN_TERMINAL_COLS = 10;
+const MIN_TERMINAL_ROWS = 3;
+
+/**
+ * Parse and clamp the initial terminal dimensions carried in the WS URL.
+ * Positive legacy-client grids below 10x3 are intentionally clamped to the
+ * protocol's resize minima; absent, invalid, and nonpositive values keep the
+ * established 80x24 defaults.
+ */
+export function parseInitialTerminalDimensions(
+  colsParam: unknown,
+  rowsParam: unknown,
+): { cols: number; rows: number } {
+  const parsedCols = Number.parseInt(String(colsParam), 10);
+  const parsedRows = Number.parseInt(String(rowsParam), 10);
+  const cols = Number.isFinite(parsedCols) && parsedCols > 0
+    ? Math.max(MIN_TERMINAL_COLS, parsedCols)
+    : DEFAULT_TERMINAL_COLS;
+  const rows = Number.isFinite(parsedRows) && parsedRows > 0
+    ? Math.max(MIN_TERMINAL_ROWS, parsedRows)
+    : DEFAULT_TERMINAL_ROWS;
+  return { cols, rows };
 }
 
 /**
@@ -165,6 +197,129 @@ interface TerminalConnection {
   isControl?: boolean;
 }
 
+export interface PromotionConnectionState {
+  connectionId: string;
+  isVisible: boolean;
+  isSocketOpen: boolean;
+}
+
+export interface PromotionCoordinatorHost {
+  getConnection(connectionId: string): PromotionConnectionState | undefined;
+  getPrimary(sessionId: string): string | undefined;
+  setPrimary(sessionId: string, connectionId: string): void;
+  getLastPromotionAt(sessionId: string): number | undefined;
+  setLastPromotionAt(sessionId: string, timestamp: number): void;
+  reassertSize(sessionId: string, connectionId: string): void;
+  broadcastPrimaryChanged(sessionId: string): void;
+  now(): number;
+}
+
+export type PromotionRequestResult =
+  | "ignored"
+  | "already-primary"
+  | "deferred"
+  | "promoted";
+
+/**
+ * Coordinates focus-driven primary selection and cooldown deferral.
+ * Pending candidates are session-scoped and identity-conditional: blur or
+ * disconnect only cancels the same connection that is currently pending.
+ */
+export class PrimaryPromotionCoordinator {
+  private readonly pendingCandidates = new Map<string, string>();
+  private readonly pendingTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  constructor(
+    private readonly host: PromotionCoordinatorHost,
+    private readonly cooldownMs: number,
+  ) {}
+
+  requestPromotion(
+    sessionId: string,
+    connectionId: string,
+    force: boolean,
+  ): PromotionRequestResult {
+    const candidate = this.host.getConnection(connectionId);
+    if (!candidate?.isSocketOpen || !candidate.isVisible) {
+      this.clearIfCandidate(sessionId, connectionId);
+      return "ignored";
+    }
+
+    if (this.host.getPrimary(sessionId) === connectionId) {
+      this.clearPendingPromotion(sessionId);
+      this.host.reassertSize(sessionId, connectionId);
+      return "already-primary";
+    }
+
+    const now = this.host.now();
+    const lastPromotionAt = this.host.getLastPromotionAt(sessionId) ?? 0;
+    const elapsed = now - lastPromotionAt;
+    if (!force && elapsed < this.cooldownMs) {
+      this.defer(sessionId, connectionId, this.cooldownMs - elapsed);
+      return "deferred";
+    }
+
+    this.clearPendingPromotion(sessionId);
+    this.host.setPrimary(sessionId, connectionId);
+    this.host.setLastPromotionAt(sessionId, now);
+    this.host.reassertSize(sessionId, connectionId);
+    this.host.broadcastPrimaryChanged(sessionId);
+    return "promoted";
+  }
+
+  notifyBlur(sessionId: string, connectionId: string): void {
+    this.clearIfCandidate(sessionId, connectionId);
+  }
+
+  notifyDisconnect(sessionId: string, connectionId: string): void {
+    this.clearIfCandidate(sessionId, connectionId);
+  }
+
+  getPendingCandidate(sessionId: string): string | null {
+    return this.pendingCandidates.get(sessionId) ?? null;
+  }
+
+  clearPendingPromotion(sessionId: string): void {
+    this.pendingCandidates.delete(sessionId);
+    const timer = this.pendingTimers.get(sessionId);
+    if (timer) clearTimeout(timer);
+    this.pendingTimers.delete(sessionId);
+  }
+
+  dispose(): void {
+    for (const timer of this.pendingTimers.values()) clearTimeout(timer);
+    this.pendingTimers.clear();
+    this.pendingCandidates.clear();
+  }
+
+  private defer(sessionId: string, connectionId: string, delayMs: number): void {
+    const existingTimer = this.pendingTimers.get(sessionId);
+    if (existingTimer) clearTimeout(existingTimer);
+
+    this.pendingCandidates.set(sessionId, connectionId);
+    const timer = setTimeout(() => {
+      if (this.pendingTimers.get(sessionId) !== timer) return;
+      this.pendingTimers.delete(sessionId);
+
+      if (this.pendingCandidates.get(sessionId) !== connectionId) return;
+      const candidate = this.host.getConnection(connectionId);
+      if (!candidate?.isSocketOpen || !candidate.isVisible) {
+        this.pendingCandidates.delete(sessionId);
+        return;
+      }
+      if (this.pendingCandidates.get(sessionId) !== connectionId) return;
+
+      this.requestPromotion(sessionId, connectionId, false);
+    }, Math.max(0, delayMs));
+    this.pendingTimers.set(sessionId, timer);
+  }
+
+  private clearIfCandidate(sessionId: string, connectionId: string): void {
+    if (this.pendingCandidates.get(sessionId) !== connectionId) return;
+    this.clearPendingPromotion(sessionId);
+  }
+}
+
 // CONTROL_SESSION_SENTINEL (the reserved control-mode sessionId) is imported
 // from ws-token so the token minter (API route) and this acceptor agree.
 
@@ -181,6 +336,50 @@ const sessionPrimaryConnection = new Map<string, string>();
 // ping-pong between two side-by-side windows.
 const sessionLastPromotionAt = new Map<string, number>();
 const PROMOTION_COOLDOWN_MS = 1000;
+
+const primaryPromotions = new PrimaryPromotionCoordinator(
+  {
+    getConnection(connectionId) {
+      const connection = connections.get(connectionId);
+      if (!connection) return undefined;
+      return {
+        connectionId,
+        isVisible: connection.isVisible,
+        isSocketOpen: connection.ws.readyState === WebSocket.OPEN,
+      };
+    },
+    getPrimary(sessionId) {
+      return sessionPrimaryConnection.get(sessionId);
+    },
+    setPrimary(sessionId, connectionId) {
+      sessionPrimaryConnection.set(sessionId, connectionId);
+    },
+    getLastPromotionAt(sessionId) {
+      return sessionLastPromotionAt.get(sessionId);
+    },
+    setLastPromotionAt(sessionId, timestamp) {
+      sessionLastPromotionAt.set(sessionId, timestamp);
+    },
+    reassertSize(sessionId, connectionId) {
+      const connection = connections.get(connectionId);
+      if (!connection?.lastCols || !connection.lastRows) return;
+      tmuxSize.requestResize(
+        sessionId,
+        connection.tmuxSessionName,
+        connection.lastCols,
+        connection.lastRows,
+        { force: true },
+      );
+    },
+    broadcastPrimaryChanged(sessionId) {
+      broadcastPrimaryChanged(sessionId);
+    },
+    now() {
+      return Date.now();
+    },
+  },
+  PROMOTION_COOLDOWN_MS,
+);
 
 /** Get all active connections for a session */
 function getConnectionsForSession(sessionId: string): TerminalConnection[] {
@@ -647,20 +846,6 @@ function broadcastToSession(sessionId: string, data: Record<string, unknown>): v
   }
 }
 
-/** Run `tmux resize-window` for the given session asynchronously. */
-function runTmuxResize(tmuxSessionName: string, cols: number, rows: number): void {
-  execFile(
-    "tmux",
-    ["resize-window", "-t", tmuxSessionName, "-x", String(cols), "-y", String(rows)],
-    { cwd: STABLE_SPAWN_CWD },
-    (err) => {
-      if (err) {
-        log.warn("tmux resize-window failed", { error: String(err), tmuxSessionName, cols, rows });
-      }
-    },
-  );
-}
-
 /** Notify each connection in the session whether it is the current primary. */
 function broadcastPrimaryChanged(sessionId: string): void {
   const primaryId = sessionPrimaryConnection.get(sessionId);
@@ -682,27 +867,12 @@ function broadcastPrimaryChanged(sessionId: string): void {
  * Honors a per-session cooldown unless `force` is true.
  */
 function tryPromoteToPrimary(sessionId: string, connectionId: string, force: boolean): void {
-  const currentPrimary = sessionPrimaryConnection.get(sessionId);
-  if (currentPrimary === connectionId) return;
-
-  const now = Date.now();
-  const lastPromo = sessionLastPromotionAt.get(sessionId) ?? 0;
-  const msSincePrev = now - lastPromo;
-  if (!force && msSincePrev < PROMOTION_COOLDOWN_MS) {
-    log.debug("promotion denied (cooldown)", { connectionId, sessionId, msSincePrev });
-    return;
+  const result = primaryPromotions.requestPromotion(sessionId, connectionId, force);
+  if (result === "deferred") {
+    log.debug("promotion deferred (cooldown)", { connectionId, sessionId });
+  } else if (result === "promoted") {
+    log.debug("promoted connection to primary", { connectionId, sessionId, force });
   }
-
-  sessionPrimaryConnection.set(sessionId, connectionId);
-  sessionLastPromotionAt.set(sessionId, now);
-
-  const conn = connections.get(connectionId);
-  if (conn?.lastCols && conn?.lastRows) {
-    runTmuxResize(conn.tmuxSessionName, conn.lastCols, conn.lastRows);
-  }
-
-  log.debug("promoted connection to primary", { connectionId, sessionId, force });
-  broadcastPrimaryChanged(sessionId);
 }
 
 /**
@@ -763,6 +933,8 @@ function cleanupConnection(connectionId: string): void {
     return;
   }
 
+  primaryPromotions.notifyDisconnect(conn.sessionId, connectionId);
+
   // Remove from session connections and update session-level state
   const connSet = sessionConnections.get(conn.sessionId);
   if (connSet) {
@@ -801,11 +973,18 @@ function cleanupConnection(connectionId: string): void {
     // remaining connection and apply its size to tmux.
     const nextPrimary = pickNextPrimary(conn.sessionId);
     if (nextPrimary) {
+      primaryPromotions.clearPendingPromotion(conn.sessionId);
       sessionPrimaryConnection.set(conn.sessionId, nextPrimary);
       sessionLastPromotionAt.set(conn.sessionId, Date.now());
       const nextConn = connections.get(nextPrimary);
       if (nextConn?.lastCols && nextConn?.lastRows) {
-        runTmuxResize(nextConn.tmuxSessionName, nextConn.lastCols, nextConn.lastRows);
+        tmuxSize.requestResize(
+          conn.sessionId,
+          nextConn.tmuxSessionName,
+          nextConn.lastCols,
+          nextConn.lastRows,
+          { force: true },
+        );
       }
       log.debug("primary handoff on disconnect", { from: connectionId, to: nextPrimary, sessionId: conn.sessionId });
       broadcastPrimaryChanged(conn.sessionId);
@@ -3041,8 +3220,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     const sessionId = authResult.sessionId;
     const userId = authResult.userId;
     const tmuxSessionName = (query.tmuxSession as string) || `rdv-${sessionId}`;
-    const cols = parseInt(query.cols as string) || 80;
-    const rows = parseInt(query.rows as string) || 24;
+    const { cols, rows } = parseInitialTerminalDimensions(query.cols, query.rows);
     const rawCwd = query.cwd as string | undefined;
     // tmux history-limit (scrollback buffer) - default 50000 lines
     const tmuxHistoryLimit = parseInt(query.tmuxHistoryLimit as string) || 50000;
@@ -3325,14 +3503,12 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
           case "resize": {
             // Ignore resize events with invalid dimensions
             // This prevents tmux from shrinking when tabs are hidden
-            const MIN_COLS = 10;
-            const MIN_ROWS = 3;
             const nextCols = Number(msg.cols);
             const nextRows = Number(msg.rows);
             if (!Number.isFinite(nextCols) || !Number.isFinite(nextRows)) {
               break;
             }
-            if (nextCols < MIN_COLS || nextRows < MIN_ROWS) {
+            if (nextCols < MIN_TERMINAL_COLS || nextRows < MIN_TERMINAL_ROWS) {
               break;
             }
 
@@ -3347,23 +3523,24 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
               connection.resizeTimeout = null;
 
               if (!pending) return;
-              if (pending.cols === connection.lastCols && pending.rows === connection.lastRows) {
-                return;
+              const dimensionsChanged =
+                pending.cols !== connection.lastCols || pending.rows !== connection.lastRows;
+              if (dimensionsChanged) {
+                connection.lastCols = pending.cols;
+                connection.lastRows = pending.rows;
+
+                // Resize this connection's PTY only when its grid changed.
+                try {
+                  connection.pty?.resize(pending.cols, pending.rows);
+                } catch {
+                  // Ignore resize errors from pty
+                }
               }
 
-              connection.lastCols = pending.cols;
-              connection.lastRows = pending.rows;
-
-              // Always resize this connection's PTY
-              try {
-                connection.pty?.resize(pending.cols, pending.rows);
-              } catch {
-                // Ignore resize errors from pty
-              }
-
-              // Only resize the tmux window if this is the primary connection
+              // Always pass primary resize intent to the controller. Its
+              // applied-size cache makes already-converged requests free.
               if (sessionPrimaryConnection.get(sessionId) === connectionId) {
-                runTmuxResize(tmuxSessionName, pending.cols, pending.rows);
+                tmuxSize.requestResize(sessionId, tmuxSessionName, pending.cols, pending.rows);
               }
             }, 50);
             break;
@@ -3378,6 +3555,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
           }
           case "client_blur": {
             connection.isVisible = false;
+            primaryPromotions.notifyBlur(sessionId, connectionId);
             // Bookkeeping only — do not change primary on blur.
             break;
           }
@@ -3414,9 +3592,16 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
               // Use synchronous kill so the session is fully gone before we
               // recreate it — avoids a race between async kill and sync create.
+              let tmuxSessionConfirmedGone = false;
               try {
                 execFileSync("tmux", ["kill-session", "-t", tmuxSessionName], { stdio: "pipe", cwd: STABLE_SPAWN_CWD });
-              } catch { /* session may already be dead */ }
+                tmuxSessionConfirmedGone = true;
+              } catch {
+                // A failed kill is safe to treat as gone only when tmux confirms
+                // the session no longer exists (it may already have died).
+                tmuxSessionConfirmedGone = !tmuxSessionExists(tmuxSessionName);
+              }
+              if (tmuxSessionConfirmedGone) tmuxSize.clearSession(sessionId);
               // Re-validate the connect-time cwd — the directory may have been
               // deleted (e.g. a worktree removed) since this WS attached.
               createTmuxSession(
@@ -3608,6 +3793,7 @@ export function shutdownTerminalConnections(): void {
     conn.ws.close();
     log.debug("Closed PTY wrapper", { connectionId: id, sessionId: conn.sessionId });
   }
+  primaryPromotions.dispose();
   connections.clear();
   sessionConnections.clear();
   sessionPrimaryConnection.clear();
