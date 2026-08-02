@@ -170,6 +170,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const isActiveRef = useRef(isActive);
   const textareaFocusedRef = useRef(false);
   const lastSentFocusStateRef = useRef<"focus" | "blur" | null>(null);
+  const lastDesiredFocusStateRef = useRef<"focus" | "blur" | null>(null);
+  const pendingGenuineFocusRef = useRef(false);
   const syncFocusToServerRef = useRef<
     ((force?: boolean, reassert?: boolean) => void) | null
   >(null);
@@ -387,6 +389,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     // open is a FIRST connect, not a reconnect. (Stays true across reconnect
     // attempts within this same effect run.)
     hasConnectedBeforeRef.current = false;
+    lastDesiredFocusStateRef.current = null;
+    pendingGenuineFocusRef.current = false;
 
     const releaseReconciler = (instance: ResizeReconciler | null) => {
       if (!instance) return;
@@ -532,8 +536,17 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       const syncFocusToServer = (force = false, reassert = false) => {
         const socket = wsRef.current;
         const next = getDesiredFocus() ? "focus" : "blur";
-        if (!force && lastSentFocusStateRef.current === next) return;
-        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        const previousDesired = lastDesiredFocusStateRef.current;
+        lastDesiredFocusStateRef.current = next;
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+          if (next === "blur") {
+            pendingGenuineFocusRef.current = false;
+          } else if (previousDesired === "blur") {
+            pendingGenuineFocusRef.current = true;
+          }
+          return false;
+        }
+        if (!force && lastSentFocusStateRef.current === next) return false;
         try {
           const message = next === "focus"
             ? reassert
@@ -542,8 +555,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
             : { type: "client_blur" };
           socket.send(JSON.stringify(message));
           lastSentFocusStateRef.current = next;
+          if (next === "blur") pendingGenuineFocusRef.current = false;
+          return true;
         } catch {
           // The desired state remains available for the next socket-open flush.
+          return false;
         }
       };
       syncFocusToServerRef.current = syncFocusToServer;
@@ -798,7 +814,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       }
 
       async function connect() {
-        if (wsRef.current?.readyState === WebSocket.OPEN) return;
+        if (
+          wsRef.current?.readyState === WebSocket.OPEN ||
+          wsRef.current?.readyState === WebSocket.CONNECTING
+        ) {
+          return;
+        }
 
         updateStatus("connecting");
 
@@ -819,6 +840,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           return;
         }
         if (!mounted || reconcilerRef.current !== reconciler) return;
+        if (
+          wsRef.current?.readyState === WebSocket.OPEN ||
+          wsRef.current?.readyState === WebSocket.CONNECTING
+        ) {
+          return;
+        }
 
         const cols = terminal.cols;
         const rows = terminal.rows;
@@ -844,13 +871,28 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           params.set("environmentVars", encodeURIComponent(JSON.stringify(envVars)));
         }
 
+        const oldWs = wsRef.current;
         const ws = new WebSocket(`${wsUrl}?${params.toString()}`);
         wsRef.current = ws;
+        if (oldWs && oldWs !== ws) {
+          try {
+            oldWs.close();
+          } catch {
+            // The replacement remains authoritative even if stale close fails.
+          }
+        }
 
         ws.onopen = () => {
           // Guard against race condition: if component unmounted during connection,
           // close the WebSocket immediately and don't call any callbacks with stale references
-          if (wsRef.current !== ws) return;
+          if (wsRef.current !== ws) {
+            try {
+              ws.close();
+            } catch {
+              // The current socket remains authoritative.
+            }
+            return;
+          }
           if (isUnmountingRef.current) {
             ws.close();
             return;
@@ -860,7 +902,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           reconnectAttemptsRef.current = 0;
           lastSentFocusStateRef.current = null;
           onWebSocketReadyRef.current?.(ws);
-          syncFocusToServer(true, hasConnectedBeforeRef.current);
+          const pendingGenuineFocus = pendingGenuineFocusRef.current;
+          const focusFlushed = syncFocusToServer(
+            true,
+            hasConnectedBeforeRef.current && !pendingGenuineFocus,
+          );
+          if (pendingGenuineFocus && focusFlushed) {
+            pendingGenuineFocusRef.current = false;
+          }
           reconciler.notifySocketOpen(ws);
 
           // [remote-dev-d5ci] On a RE-open (not the first connect), dispatch the

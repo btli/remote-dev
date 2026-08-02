@@ -211,10 +211,16 @@ export function abortTerminalSetupIfClosed<TMessage, TPty>(
   bufferedMessages: BufferedTerminalMessages<TMessage>,
   ptyProcess: TPty | null,
   destroyPty: (ptyProcess: TPty) => void,
+  sessionId: string,
+  setupLog: Pick<typeof log, "debug"> = log,
 ): boolean {
   if (!bufferedMessages.wasClosed()) return false;
   bufferedMessages.discard();
   if (ptyProcess !== null) destroyPty(ptyProcess);
+  setupLog.debug("Terminal setup aborted after socket closed", {
+    sessionId,
+    closeCode: bufferedMessages.getCloseInfo()?.code ?? null,
+  });
   return true;
 }
 
@@ -288,8 +294,12 @@ interface TerminalConnection {
   terminalType: "shell" | "agent" | "file" | string;
   // User ID for session service calls
   userId: string;
-  // Last-focus bookkeeping for primary-connection election (focus-based promotion).
+  // Focus half of engagement bookkeeping for primary-connection election.
   lastFocusAt: number;
+  // Server-observed terminal input is the second half of engagement recency.
+  lastInputAt: number;
+  // Last input timestamp copied to the stable-instance map (writes are throttled).
+  lastInputRecencyWriteAt: number;
   isVisible: boolean;
   // [remote-dev-d5ci] Lightweight control connection: registered in the
   // `connections` map only so broadcasts reach it (sidebar live updates without
@@ -300,9 +310,11 @@ interface TerminalConnection {
 
 export interface PromotionConnectionState {
   connectionId: string;
+  clientInstanceId: string | null;
   isVisible: boolean;
   isSocketOpen: boolean;
   lastFocusAt: number;
+  lastInputAt: number;
 }
 
 export interface PromotionCoordinatorHost {
@@ -331,16 +343,45 @@ export interface ClientFocusConnectionState {
   isVisible: boolean;
   lastFocusAt: number;
   sessionId?: string;
-  clientInstanceId?: string;
+  clientInstanceId?: string | null;
 }
 
-/** Server-owned genuine-focus timestamps keyed by stable mounted client
+export interface ClientInputConnectionState {
+  lastInputAt: number;
+  lastInputRecencyWriteAt: number;
+  sessionId?: string;
+  clientInstanceId?: string | null;
+}
+
+export interface ClientInstanceRecency {
+  genuineFocusAt: number;
+  inputAt: number;
+}
+
+const CLIENT_INSTANCE_RECENCY_CAP = 16;
+const INPUT_RECENCY_WRITE_INTERVAL_MS = 1000;
+
+/** Server-owned focus and input recency keyed by stable mounted client
  * identity. A missing URL identity resolves to the one-off connection id. */
 export class ClientInstanceFocusRecency {
-  private readonly sessions = new Map<string, Map<string, number>>();
+  private readonly sessions = new Map<
+    string,
+    Map<string, ClientInstanceRecency>
+  >();
+
+  getRecency(sessionId: string, clientInstanceId: string): ClientInstanceRecency {
+    const recency = this.sessions.get(sessionId)?.get(clientInstanceId);
+    return recency
+      ? { ...recency }
+      : { genuineFocusAt: 0, inputAt: 0 };
+  }
 
   getLastGenuineFocusAt(sessionId: string, clientInstanceId: string): number {
-    return this.sessions.get(sessionId)?.get(clientInstanceId) ?? 0;
+    return this.getRecency(sessionId, clientInstanceId).genuineFocusAt;
+  }
+
+  getLastInputAt(sessionId: string, clientInstanceId: string): number {
+    return this.getRecency(sessionId, clientInstanceId).inputAt;
   }
 
   recordGenuineFocus(
@@ -348,12 +389,23 @@ export class ClientInstanceFocusRecency {
     clientInstanceId: string,
     timestamp: number,
   ): void {
-    let instances = this.sessions.get(sessionId);
-    if (!instances) {
-      instances = new Map();
-      this.sessions.set(sessionId, instances);
-    }
-    instances.set(clientInstanceId, timestamp);
+    const current = this.getRecency(sessionId, clientInstanceId);
+    this.setRecency(sessionId, clientInstanceId, {
+      ...current,
+      genuineFocusAt: timestamp,
+    });
+  }
+
+  recordInput(
+    sessionId: string,
+    clientInstanceId: string,
+    timestamp: number,
+  ): void {
+    const current = this.getRecency(sessionId, clientInstanceId);
+    this.setRecency(sessionId, clientInstanceId, {
+      ...current,
+      inputAt: timestamp,
+    });
   }
 
   clearSession(sessionId: string): void {
@@ -363,6 +415,62 @@ export class ClientInstanceFocusRecency {
   clear(): void {
     this.sessions.clear();
   }
+
+  private setRecency(
+    sessionId: string,
+    clientInstanceId: string,
+    recency: ClientInstanceRecency,
+  ): void {
+    let instances = this.sessions.get(sessionId);
+    if (!instances) {
+      instances = new Map();
+      this.sessions.set(sessionId, instances);
+    }
+    instances.set(clientInstanceId, recency);
+    if (instances.size <= CLIENT_INSTANCE_RECENCY_CAP) return;
+
+    let stalestInstanceId: string | null = null;
+    let stalestEngagement = Number.POSITIVE_INFINITY;
+    for (const [instanceId, instanceRecency] of instances) {
+      const engagement = Math.max(
+        instanceRecency.genuineFocusAt,
+        instanceRecency.inputAt,
+      );
+      if (engagement < stalestEngagement) {
+        stalestEngagement = engagement;
+        stalestInstanceId = instanceId;
+      }
+    }
+    if (stalestInstanceId) instances.delete(stalestInstanceId);
+  }
+}
+
+/** Record exact per-socket input engagement while limiting stable-map churn. */
+export function recordClientInput(
+  connection: ClientInputConnectionState,
+  now: () => number = Date.now,
+  instanceRecency?: ClientInstanceFocusRecency,
+): void {
+  const timestamp = now();
+  connection.lastInputAt = timestamp;
+  if (!connection.sessionId || !connection.clientInstanceId) return;
+  if (
+    connection.lastInputRecencyWriteAt !== 0 &&
+    timestamp - connection.lastInputRecencyWriteAt <
+      INPUT_RECENCY_WRITE_INTERVAL_MS
+  ) {
+    return;
+  }
+  instanceRecency?.recordInput(
+    connection.sessionId,
+    connection.clientInstanceId,
+    timestamp,
+  );
+  connection.lastInputRecencyWriteAt = timestamp;
+}
+
+function connectionEngagement(connection: PromotionConnectionState): number {
+  return Math.max(connection.lastFocusAt, connection.lastInputAt);
 }
 
 export function resolveClientInstanceId(
@@ -432,17 +540,24 @@ export class PrimaryPromotionCoordinator {
       return "already-primary";
     }
 
+    const primary = primaryId
+      ? this.host.getConnection(primaryId)
+      : undefined;
+    if (
+      primary?.clientInstanceId !== null &&
+      primary?.clientInstanceId === candidate.clientInstanceId
+    ) {
+      return this.promote(sessionId, connectionId, this.host.now());
+    }
+
     if (reassert) {
       const pendingCandidate = this.pendingCandidates.get(sessionId);
       if (pendingCandidate && pendingCandidate !== connectionId) return "ignored";
 
-      const primary = primaryId
-        ? this.host.getConnection(primaryId)
-        : undefined;
       if (
         primary?.isSocketOpen &&
         primary.isVisible &&
-        primary.lastFocusAt >= candidate.lastFocusAt
+        connectionEngagement(primary) >= connectionEngagement(candidate)
       ) {
         return "ignored";
       }
@@ -456,12 +571,7 @@ export class PrimaryPromotionCoordinator {
       return "deferred";
     }
 
-    this.clearPendingPromotion(sessionId);
-    this.host.setPrimary(sessionId, connectionId);
-    this.host.setLastPromotionAt(sessionId, now);
-    this.host.reassertSize(sessionId, connectionId);
-    this.host.broadcastPrimaryChanged(sessionId);
-    return "promoted";
+    return this.promote(sessionId, connectionId, now);
   }
 
   notifyBlur(sessionId: string, connectionId: string): void {
@@ -519,12 +629,16 @@ export class PrimaryPromotionCoordinator {
       const primary = primaryId
         ? this.host.getConnection(primaryId)
         : undefined;
+      const sameClientInstance =
+        primary?.clientInstanceId !== null &&
+        primary?.clientInstanceId === candidate.clientInstanceId;
       if (
+        !sameClientInstance &&
         primary?.isSocketOpen &&
         primary.isVisible &&
-        // Date.now() can collapse a challenger focus and primary refocus into
-        // one millisecond. Keep the current primary when recency ties.
-        primary.lastFocusAt >= candidate.lastFocusAt
+        // Date.now() can collapse challenger and primary engagement into one
+        // millisecond. Keep the current primary when engagement ties.
+        connectionEngagement(primary) >= connectionEngagement(candidate)
       ) {
         this.clearIfCandidate(sessionId, connectionId);
         return;
@@ -538,17 +652,28 @@ export class PrimaryPromotionCoordinator {
     if (this.pendingCandidates.get(sessionId) !== connectionId) return;
     this.clearPendingPromotion(sessionId);
   }
+
+  private promote(
+    sessionId: string,
+    connectionId: string,
+    timestamp: number,
+  ): PromotionRequestResult {
+    this.clearPendingPromotion(sessionId);
+    this.host.setPrimary(sessionId, connectionId);
+    this.host.setLastPromotionAt(sessionId, timestamp);
+    this.host.reassertSize(sessionId, connectionId);
+    this.host.broadcastPrimaryChanged(sessionId);
+    return "promoted";
+  }
 }
 
 export function clearSessionControllerState(
   sessionId: string,
   sizeController: Pick<TmuxSizeController, "clearSession">,
   promotionCoordinator: Pick<PrimaryPromotionCoordinator, "clearSession">,
-  focusRecency: Pick<ClientInstanceFocusRecency, "clearSession">,
 ): void {
   sizeController.clearSession(sessionId);
   promotionCoordinator.clearSession(sessionId);
-  focusRecency.clearSession(sessionId);
 }
 
 // CONTROL_SESSION_SENTINEL (the reserved control-mode sessionId) is imported
@@ -579,6 +704,8 @@ const primaryPromotions = new PrimaryPromotionCoordinator(
         isVisible: connection.isVisible,
         isSocketOpen: connection.ws.readyState === WebSocket.OPEN,
         lastFocusAt: connection.lastFocusAt,
+        lastInputAt: connection.lastInputAt,
+        clientInstanceId: connection.clientInstanceId,
       };
     },
     getPrimary(sessionId) {
@@ -1190,7 +1317,8 @@ function cleanupConnection(connectionId: string): void {
 
   const isLastConnection = !connSet || connSet.size === 0;
   if (isLastConnection) {
-    // Last connection closed — clean up all session-level state
+    // Last connection closed — clear ephemeral controller state. Stable client
+    // engagement remains until tmux itself is confirmed gone.
     sessionConnections.delete(conn.sessionId);
     sessionPrimaryConnection.delete(conn.sessionId);
     sessionLastPromotionAt.delete(conn.sessionId);
@@ -1198,13 +1326,13 @@ function cleanupConnection(connectionId: string): void {
       conn.sessionId,
       tmuxSize,
       primaryPromotions,
-      clientInstanceFocusRecency,
     );
     // [remote-dev-f9y9] Keep status indicators + progress in memory across a
     // transient WS disconnect (tmux/agent still alive) so a reconnecting client
     // recovers them via the attach-time replay below — they have no DB fallback.
     // Only drop them when the session itself has ended (tmux gone).
     if (!tmuxSessionExists(conn.tmuxSessionName)) {
+      clientInstanceFocusRecency.clearSession(conn.sessionId);
       sessionStatusIndicators.delete(conn.sessionId);
       sessionProgressBars.delete(conn.sessionId);
     }
@@ -3447,6 +3575,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
           bufferedMessages,
           null,
           () => {},
+          authResult.sessionId,
         )
       ) {
         return;
@@ -3466,6 +3595,8 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         terminalType: "control",
         userId: authResult.userId,
         lastFocusAt: 0,
+        lastInputAt: 0,
+        lastInputRecencyWriteAt: 0,
         isVisible: false,
         isControl: true,
       };
@@ -3589,6 +3720,11 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
     // Check if tmux session exists (for attach vs create decision)
     const tmuxExists = tmuxSessionExists(tmuxSessionName);
+    if (!tmuxExists) {
+      // The tmux lifecycle, not a transient socket gap, owns stable-instance
+      // engagement history. A confirmed-missing session starts fresh.
+      clientInstanceFocusRecency.clearSession(sessionId);
+    }
 
     if (resolved.tier !== "query") {
       // Warn on BOTH branches: on CREATE the fallback decides where the new
@@ -3616,6 +3752,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         bufferedMessages,
         null,
         () => {},
+        sessionId,
       )
     ) {
       return;
@@ -3720,11 +3857,16 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         bufferedMessages,
         ptyProcess,
         safeDestroyPty,
+        sessionId,
       )
     ) {
       return;
     }
 
+    const inheritedRecency = clientInstanceFocusRecency.getRecency(
+      sessionId,
+      clientInstanceId,
+    );
     const connection: TerminalConnection = {
       connectionId,
       clientInstanceId,
@@ -3739,10 +3881,11 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       resizeTimeout: null,
       terminalType,
       userId,
-      lastFocusAt: clientInstanceFocusRecency.getLastGenuineFocusAt(
-        sessionId,
-        clientInstanceId,
-      ),
+      lastFocusAt: inheritedRecency.genuineFocusAt,
+      lastInputAt: inheritedRecency.inputAt,
+      // Throttling is connection-local: the first keystroke on a replacement
+      // socket refreshes stable inheritance immediately.
+      lastInputRecencyWriteAt: 0,
       isVisible: true,
     };
 
@@ -3803,6 +3946,11 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
         switch (msg.type) {
           case "input":
+            recordClientInput(
+              connection,
+              Date.now,
+              clientInstanceFocusRecency,
+            );
             connection.pty?.write(msg.data);
             break;
           case "resize": {
@@ -3926,8 +4074,8 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
                   sessionId,
                   tmuxSize,
                   primaryPromotions,
-                  clientInstanceFocusRecency,
                 );
+                clientInstanceFocusRecency.clearSession(sessionId);
               }
               // Re-validate the connect-time cwd — the directory may have been
               // deleted (e.g. a worktree removed) since this WS attached.

@@ -52,13 +52,20 @@ describe("terminal connection setup message buffering", () => {
     const bufferedMessages = bufferTerminalMessages(ws);
     const processed: string[] = [];
     const destroyPty = vi.fn();
+    const setupLog = { debug: vi.fn() };
     const pty = { id: "pty-1" };
     let registered = false;
 
     ws.emitMessage("client_focus");
     ws.emit("close", 1006, Buffer.from("setup closed"));
 
-    if (!abortTerminalSetupIfClosed(bufferedMessages, pty, destroyPty)) {
+    if (!abortTerminalSetupIfClosed(
+      bufferedMessages,
+      pty,
+      destroyPty,
+      "session-1",
+      setupLog,
+    )) {
       registered = true;
       bufferedMessages.activate({
         message(message) {
@@ -80,6 +87,10 @@ describe("terminal connection setup message buffering", () => {
     expect(ws.listenerCount("message")).toBe(0);
     expect(ws.listenerCount("close")).toBe(0);
     expect(ws.listenerCount("error")).toBe(0);
+    expect(setupLog.debug).toHaveBeenCalledWith(
+      "Terminal setup aborted after socket closed",
+      { sessionId: "session-1", closeCode: 1006 },
+    );
   });
 
   it("catches and logs an error emitted before activation", () => {

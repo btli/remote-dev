@@ -83,6 +83,7 @@ const fitAddonInstances: Array<{
 const wsInstances: MockWebSocket[] = [];
 let blurBeforeSocketOpen = false;
 let documentHasFocus = true;
+let autoOpenSockets = true;
 class MockWebSocket {
   static readonly CONNECTING = 0;
   static readonly OPEN = 1;
@@ -92,7 +93,8 @@ class MockWebSocket {
   readonly OPEN = 1;
   readonly CLOSING = 2;
   readonly CLOSED = 3;
-  readyState = 1; // OPEN immediately so post-open sends land
+  readyState = MockWebSocket.CONNECTING;
+  closeCalls = 0;
   sent: string[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((e: MessageEvent) => void) | null = null;
@@ -102,7 +104,9 @@ class MockWebSocket {
     wsInstances.push(this);
     // Fire onopen on a microtask so the component's onopen handler runs.
     queueMicrotask(() => {
+      if (!autoOpenSockets || this.readyState !== MockWebSocket.CONNECTING) return;
       if (blurBeforeSocketOpen) documentHasFocus = false;
+      this.readyState = MockWebSocket.OPEN;
       this.onopen?.();
     });
   }
@@ -110,8 +114,13 @@ class MockWebSocket {
     this.sent.push(data);
   }
   close() {
+    this.closeCalls++;
     this.readyState = 3;
     setTimeout(() => this.onclose?.(), 0);
+  }
+  open() {
+    this.readyState = MockWebSocket.OPEN;
+    this.onopen?.();
   }
   serverClose() {
     this.readyState = MockWebSocket.CLOSED;
@@ -286,6 +295,7 @@ beforeEach(() => {
   globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
   blurBeforeSocketOpen = false;
   documentHasFocus = true;
+  autoOpenSockets = true;
   hasFocusSpy = vi
     .spyOn(document, "hasFocus")
     .mockImplementation(() => documentHasFocus);
@@ -524,6 +534,151 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
         .map((frame) => JSON.parse(frame) as { type: string; reassert?: boolean })
         .find((frame) => frame.type === "client_focus");
       expect(focusFrame).toEqual({ type: "client_focus", reassert: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("flushes genuine focus when focus transitions while the replacement socket connects", async () => {
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+    documentHasFocus = false;
+    act(() => window.dispatchEvent(new Event("blur")));
+    vi.useFakeTimers();
+    try {
+      autoOpenSockets = false;
+      firstSocket.serverClose();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      const reconnect = wsInstances.at(-1)!;
+      expect(reconnect).not.toBe(firstSocket);
+      expect(reconnect.readyState).toBe(MockWebSocket.CONNECTING);
+
+      documentHasFocus = true;
+      act(() => window.dispatchEvent(new Event("focus")));
+      act(() => reconnect.open());
+
+      const focusFrame = reconnect.sent
+        .map((frame) => JSON.parse(frame) as { type: string; reassert?: boolean })
+        .find((frame) => frame.type === "client_focus");
+      expect(focusFrame).toEqual({ type: "client_focus" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears pending gap focus when the client blurs again before reopen", async () => {
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+    documentHasFocus = false;
+    act(() => window.dispatchEvent(new Event("blur")));
+    vi.useFakeTimers();
+    try {
+      autoOpenSockets = false;
+      firstSocket.serverClose();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      const reconnect = wsInstances.at(-1)!;
+      documentHasFocus = true;
+      act(() => window.dispatchEvent(new Event("focus")));
+      documentHasFocus = false;
+      act(() => window.dispatchEvent(new Event("blur")));
+      act(() => reconnect.open());
+
+      expect(reconnect.sentTypes()).toContain("client_blur");
+      expect(reconnect.sentTypes()).not.toContain("client_focus");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closes a stale socket if it opens after a replacement supersedes it", async () => {
+    autoOpenSockets = false;
+    const Terminal = await getTerminal();
+    const view = render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => expect(wsInstances.length).toBeGreaterThan(0));
+    const stale = wsInstances.at(-1)!;
+
+    view.rerender(
+      <Terminal
+        sessionId="s2"
+        tmuxSessionName="rdv-s2"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => expect(wsInstances.length).toBeGreaterThan(1));
+    const closesBeforeStaleOpen = stale.closeCalls;
+
+    act(() => stale.open());
+
+    expect(stale.closeCalls).toBe(closesBeforeStaleOpen + 1);
+  });
+
+  it("does not create a second replacement while a socket is connecting", async () => {
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+
+    vi.useFakeTimers();
+    try {
+      autoOpenSockets = false;
+      firstSocket.serverClose();
+      firstSocket.onclose?.();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+
+      expect(wsInstances).toHaveLength(2);
+      expect(wsInstances.at(-1)?.readyState).toBe(MockWebSocket.CONNECTING);
     } finally {
       vi.useRealTimers();
     }

@@ -250,7 +250,7 @@ describe("ResizeReconciler", () => {
     expect(reconciler.getDesiredDims()).toBeNull();
   });
 
-  it("request while page hidden is deferred, not dropped", async () => {
+  it("request while page hidden is dropped by design; every reveal path re-requests", async () => {
     host.pageVisible = false;
     reconciler.request("window-resize");
     await host.pumpUntilIdle();
