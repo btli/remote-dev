@@ -46,6 +46,18 @@ interface RectSize {
   height: number;
 }
 
+type ReconcileRunOutcome =
+  | { generation: number; status: "verified"; dims: FitResult }
+  | { generation: number; status: "hidden" | "invalid" | "disposed" }
+  | { generation: number; status: "superseded" };
+
+interface ReconcileRun {
+  generation: number;
+  outcome: Promise<ReconcileRunOutcome>;
+}
+
+const MAX_RECONCILE_ONCE_SUPERSESSIONS = 5;
+
 const DEFAULT_LIMITS: ReconcilerLimits = {
   minWidth: 100,
   minHeight: 80,
@@ -65,6 +77,7 @@ export class ResizeReconciler {
   private desiredDims: FitResult | null = null;
   private observerTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly pendingFrames = new Map<number, () => void>();
+  private latestRun: ReconcileRun | null = null;
 
   constructor(
     private readonly host: ReconcilerHost,
@@ -74,11 +87,24 @@ export class ResizeReconciler {
   }
 
   request(_reason: ReconcileReason): void {
-    void this.startReconcile();
+    void this.startReconcile().outcome;
   }
 
-  reconcileOnce(_reason: ReconcileReason): Promise<FitResult | null> {
-    return this.startReconcile();
+  async reconcileOnce(_reason: ReconcileReason): Promise<FitResult | null> {
+    let run = this.startReconcile();
+    let supersessions = 0;
+
+    while (true) {
+      const outcome = await run.outcome;
+      if (outcome.status === "verified") return { ...outcome.dims };
+      if (outcome.status !== "superseded") return null;
+      if (supersessions >= MAX_RECONCILE_ONCE_SUPERSESSIONS) return null;
+      supersessions++;
+
+      const latest = this.latestRun;
+      if (!latest || latest.generation <= outcome.generation) return null;
+      run = latest;
+    }
   }
 
   notifyPanelVisibility(visible: boolean): void {
@@ -97,6 +123,8 @@ export class ResizeReconciler {
       return;
     }
 
+    // Reveal replay: hidden requests are intentionally dropped because every
+    // panel reveal unconditionally starts a fresh reconciliation here.
     this.request("panel-visible");
   }
 
@@ -141,13 +169,33 @@ export class ResizeReconciler {
     this.cancelPendingFrames();
   }
 
-  private async startReconcile(): Promise<FitResult | null> {
-    if (this.disposed) return null;
-
+  private startReconcile(): ReconcileRun {
+    if (this.disposed) {
+      return {
+        generation: this.generation,
+        outcome: Promise.resolve({
+          generation: this.generation,
+          status: "disposed",
+        }),
+      };
+    }
     const epoch = this.epoch;
     const generation = ++this.generation;
     this.cancelPendingFrames();
-    if (!this.isLive(epoch, generation)) return null;
+    const run = {
+      generation,
+      outcome: this.runReconcile(epoch, generation),
+    };
+    this.latestRun = run;
+    return run;
+  }
+
+  private async runReconcile(
+    epoch: number,
+    generation: number,
+  ): Promise<ReconcileRunOutcome> {
+    const initialAbort = this.abortOutcome(epoch, generation);
+    if (initialAbort) return initialAbort;
 
     let lastWidth = 0;
     let lastHeight = 0;
@@ -155,7 +203,8 @@ export class ResizeReconciler {
 
     for (let attempt = 0; attempt < this.limits.maxFrames; attempt++) {
       await this.nextFrame();
-      if (!this.isLive(epoch, generation)) return null;
+      const frameAbort = this.abortOutcome(epoch, generation);
+      if (frameAbort) return frameAbort;
 
       const rect = this.getRect();
       if (!rect || !this.isMeasurable(rect)) continue;
@@ -170,15 +219,20 @@ export class ResizeReconciler {
       }
     }
 
-    if (!this.isLive(epoch, generation)) return null;
+    const settleAbort = this.abortOutcome(epoch, generation);
+    if (settleAbort) return settleAbort;
 
     const rect = this.getRect();
-    if (!rect || !this.isMeasurable(rect)) return null;
+    if (!rect || !this.isMeasurable(rect)) {
+      return { generation, status: "invalid" };
+    }
 
     const dims = this.host.fitVerified();
-    if (!this.isCurrent(epoch, generation) || !dims) return null;
+    const fitAbort = this.abortOutcome(epoch, generation);
+    if (fitAbort) return fitAbort;
+    if (!dims) return { generation, status: "invalid" };
     if (dims.cols < this.limits.minCols || dims.rows < this.limits.minRows) {
-      return null;
+      return { generation, status: "invalid" };
     }
 
     this.committedRect = rect;
@@ -186,7 +240,7 @@ export class ResizeReconciler {
     const socket = this.host.getWebSocket();
     if (socket?.readyState === WebSocket.OPEN) this.sendResize(socket, dims);
     this.host.onDimensions?.(dims.cols, dims.rows);
-    return { ...dims };
+    return { generation, status: "verified", dims: { ...dims } };
   }
 
   private nextFrame(): Promise<void> {
@@ -217,8 +271,18 @@ export class ResizeReconciler {
 
   /** Re-checked after every async boundary: a superseded or hidden generation
    *  must abort before it can measure or fit (RC-B). */
-  private isLive(epoch: number, generation: number) {
-    return this.isCurrent(epoch, generation) && this.isVisible();
+  private abortOutcome(
+    epoch: number,
+    generation: number,
+  ): ReconcileRunOutcome | null {
+    if (this.disposed || epoch !== this.epoch) {
+      return { generation, status: "disposed" };
+    }
+    if (!this.isVisible()) return { generation, status: "hidden" };
+    if (!this.isCurrent(epoch, generation)) {
+      return { generation, status: "superseded" };
+    }
+    return null;
   }
 
   private isVisible() {

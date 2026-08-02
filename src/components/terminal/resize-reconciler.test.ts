@@ -219,15 +219,14 @@ describe("ResizeReconciler", () => {
     expect(await result).toEqual({ cols: 100, rows: 30 });
   });
 
-  it("supersede: a newer request cancels an older in-flight generation", async () => {
-    const older = reconciler.reconcileOnce("window-resize");
+  it("reconcileOnce follows a superseding request to the latest verified dimensions", async () => {
+    const result = reconciler.reconcileOnce("post-init");
     await host.pump(1);
     host.rect = { width: 960, height: 640 };
-    const newer = reconciler.reconcileOnce("visual-viewport");
+    reconciler.request("resize-observer");
     await host.pumpUntilIdle();
 
-    expect(await older).toBeNull();
-    expect(await newer).toEqual({ cols: 120, rows: 40 });
+    expect(await result).toEqual({ cols: 120, rows: 40 });
     expect(host.sentResizes).toEqual([
       { type: "resize", cols: 120, rows: 40 },
     ]);

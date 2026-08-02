@@ -2,14 +2,19 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  clearTerminatedSessionControllerState,
   PrimaryPromotionCoordinator,
   parseInitialTerminalDimensions,
   type PromotionConnectionState,
   type PromotionCoordinatorHost,
 } from "@/server/terminal";
 
+type FocusedPromotionConnectionState = PromotionConnectionState & {
+  lastFocusAt: number;
+};
+
 class FakePromotionHost implements PromotionCoordinatorHost {
-  readonly connections = new Map<string, PromotionConnectionState>();
+  readonly connections = new Map<string, FocusedPromotionConnectionState>();
   readonly primaries = new Map<string, string>();
   readonly lastPromotionAt = new Map<string, number>();
   readonly reassertions: Array<{ sessionId: string; connectionId: string }> = [];
@@ -48,8 +53,11 @@ class FakePromotionHost implements PromotionCoordinatorHost {
   }
 }
 
-function visibleOpenConnection(connectionId: string): PromotionConnectionState {
-  return { connectionId, isVisible: true, isSocketOpen: true };
+function visibleOpenConnection(
+  connectionId: string,
+  lastFocusAt = Date.now(),
+): FocusedPromotionConnectionState {
+  return { connectionId, isVisible: true, isSocketOpen: true, lastFocusAt };
 }
 
 describe("PrimaryPromotionCoordinator", () => {
@@ -151,6 +159,44 @@ describe("PrimaryPromotionCoordinator", () => {
     expect(host.reassertions).toEqual([{ sessionId: "s1", connectionId: "A" }]);
     expect(host.broadcasts).toHaveLength(0);
   });
+
+  it("keeps a newer deferred challenger when the primary flushes focus", () => {
+    const now = Date.now();
+    host.connections.get("A")!.lastFocusAt = now - 20;
+    host.connections.get("B")!.lastFocusAt = now - 10;
+    coordinator.requestPromotion("s1", "B", false);
+
+    coordinator.requestPromotion("s1", "A", false);
+
+    expect(coordinator.getPendingCandidate("s1")).toBe("B");
+    vi.advanceTimersByTime(1000);
+    expect(host.primaries.get("s1")).toBe("B");
+  });
+
+  it("does not promote a deferred challenger after the primary genuinely refocuses", () => {
+    const now = Date.now();
+    host.connections.get("B")!.lastFocusAt = now - 10;
+    coordinator.requestPromotion("s1", "B", false);
+
+    host.connections.get("A")!.lastFocusAt = now;
+    coordinator.requestPromotion("s1", "A", false);
+
+    expect(coordinator.getPendingCandidate("s1")).toBe("B");
+    vi.advanceTimersByTime(1000);
+    expect(host.primaries.get("s1")).toBe("A");
+    expect(coordinator.getPendingCandidate("s1")).toBeNull();
+    expect(host.broadcasts).toHaveLength(0);
+  });
+
+  it("clearSession removes a pending candidate and cancels its timer", () => {
+    coordinator.requestPromotion("s1", "B", false);
+
+    coordinator.clearSession("s1");
+    vi.advanceTimersByTime(1000);
+
+    expect(coordinator.getPendingCandidate("s1")).toBeNull();
+    expect(host.primaries.get("s1")).toBe("A");
+  });
 });
 
 describe("parseInitialTerminalDimensions", () => {
@@ -170,5 +216,21 @@ describe("parseInitialTerminalDimensions", () => {
     expect(parseInitialTerminalDimensions(undefined, undefined)).toEqual({ cols: 80, rows: 24 });
     expect(parseInitialTerminalDimensions("nope", "NaN")).toEqual({ cols: 80, rows: 24 });
     expect(parseInitialTerminalDimensions("0", "-1")).toEqual({ cols: 80, rows: 24 });
+  });
+});
+
+describe("terminated session cleanup", () => {
+  it("clears both tmux sizing and deferred promotion state", () => {
+    const sizeController = { clearSession: vi.fn() };
+    const promotionCoordinator = { clearSession: vi.fn() };
+
+    clearTerminatedSessionControllerState(
+      "s1",
+      sizeController,
+      promotionCoordinator,
+    );
+
+    expect(sizeController.clearSession).toHaveBeenCalledWith("s1");
+    expect(promotionCoordinator.clearSession).toHaveBeenCalledWith("s1");
   });
 });

@@ -15,11 +15,10 @@
  * disabled and the native shell owns the keyboard, so focusing here would
  * steal the keyboard context.
  *
- * This test asserts that calling `ref.refit()` drives the terminal's
- * scrollToBottom (an observable proxy for the refit pipeline running), that
- * it forces a fresh `client_focus` frame past the client-side dedupe before
- * the resize (Codex Fix 1 — the dedupe-trap on lifecycle edges), and that it
- * is a safe no-op before the terminal has finished initializing.
+ * These tests assert that calling `ref.refit()` issues a real reconciler
+ * request and resize frame, scrolls to the bottom, forces a fresh
+ * `client_focus` frame even while the derived state is blurred, and remains a
+ * safe no-op before the terminal has finished initializing.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, render, cleanup, waitFor } from "@testing-library/react";
@@ -28,7 +27,11 @@ import { createRef, StrictMode } from "react";
 import type { TerminalRef } from "./Terminal";
 
 const reconcilerState = vi.hoisted(() => ({
-  instances: [] as Array<{ wasDisposed: boolean; callsAfterDispose: number }>,
+  instances: [] as Array<{
+    wasDisposed: boolean;
+    callsAfterDispose: number;
+    requests: string[];
+  }>,
 }));
 
 vi.mock("./resize-reconciler", async (importOriginal) => {
@@ -36,6 +39,7 @@ vi.mock("./resize-reconciler", async (importOriginal) => {
   class TrackingResizeReconciler extends actual.ResizeReconciler {
     wasDisposed = false;
     callsAfterDispose = 0;
+    requests: string[] = [];
 
     constructor(
       ...args: ConstructorParameters<typeof actual.ResizeReconciler>
@@ -46,6 +50,7 @@ vi.mock("./resize-reconciler", async (importOriginal) => {
 
     request(reason: Parameters<typeof actual.ResizeReconciler.prototype.request>[0]) {
       if (this.wasDisposed) this.callsAfterDispose++;
+      this.requests.push(reason);
       return super.request(reason);
     }
 
@@ -75,6 +80,8 @@ const fitAddonInstances: Array<{
 // opens synchronously-ish (onopen fired on a microtask) and captures every
 // JSON frame the component sends.
 const wsInstances: MockWebSocket[] = [];
+let blurBeforeSocketOpen = false;
+let documentHasFocus = true;
 class MockWebSocket {
   static readonly CONNECTING = 0;
   static readonly OPEN = 1;
@@ -93,7 +100,10 @@ class MockWebSocket {
   constructor(public url: string) {
     wsInstances.push(this);
     // Fire onopen on a microtask so the component's onopen handler runs.
-    queueMicrotask(() => this.onopen?.());
+    queueMicrotask(() => {
+      if (blurBeforeSocketOpen) documentHasFocus = false;
+      this.onopen?.();
+    });
   }
   send(data: string) {
     this.sent.push(data);
@@ -248,6 +258,7 @@ vi.mock("@/hooks/useNotifications", () => ({
 const originalFetch = globalThis.fetch;
 const originalWebSocket = globalThis.WebSocket;
 let rectSpy: ReturnType<typeof vi.spyOn>;
+let hasFocusSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   // Token endpoint succeeds so connect() proceeds to open a WebSocket; any
   // other URL resolves benignly. The focus-frame test needs a live socket.
@@ -267,6 +278,11 @@ beforeEach(() => {
     } as Response);
   }) as unknown as typeof fetch;
   globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+  blurBeforeSocketOpen = false;
+  documentHasFocus = true;
+  hasFocusSpy = vi
+    .spyOn(document, "hasFocus")
+    .mockImplementation(() => documentHasFocus);
   rectSpy = vi
     .spyOn(HTMLElement.prototype, "getBoundingClientRect")
     .mockReturnValue({
@@ -291,6 +307,7 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = originalFetch;
   globalThis.WebSocket = originalWebSocket;
+  hasFocusSpy.mockRestore();
   rectSpy.mockRestore();
   xtermInstances.length = 0;
   fitAddonInstances.length = 0;
@@ -427,6 +444,65 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
     });
 
     expect(ws.sentTypes()).toContain("client_focus");
+  });
+
+  it("flushes live document focus state when the socket opens", async () => {
+    const Terminal = await getTerminal();
+    blurBeforeSocketOpen = true;
+
+    render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_blur");
+    });
+    expect(wsInstances.at(-1)?.sentTypes()).not.toContain("client_focus");
+  });
+
+  it("forces client_focus and a resize reconciliation while derived focus is blurred", async () => {
+    const Terminal = await getTerminal();
+    const ref = createRef<TerminalRef>();
+
+    render(
+      <Terminal
+        ref={ref}
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("resize");
+    });
+    const ws = wsInstances.at(-1)!;
+    documentHasFocus = false;
+    act(() => window.dispatchEvent(new Event("blur")));
+    expect(ws.sentTypes()).toContain("client_blur");
+
+    ws.sent.length = 0;
+    const reconciler = reconcilerState.instances.find(
+      (instance) => !instance.wasDisposed,
+    )!;
+    reconciler.requests.length = 0;
+    act(() => ref.current?.refit());
+
+    expect(ws.sentTypes()).toContain("client_focus");
+    expect(reconciler.requests).toContain("refit");
+    await waitFor(() => expect(ws.sentTypes()).toContain("resize"));
+
+    ws.sent.length = 0;
+    act(() => window.dispatchEvent(new Event("blur")));
+    expect(ws.sentTypes()).toContain("client_blur");
   });
 
   it("reconciles and sends dimensions when a hidden panel becomes visible", async () => {

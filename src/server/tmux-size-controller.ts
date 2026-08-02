@@ -49,30 +49,31 @@ export class TmuxSizeController {
     opts: { force?: boolean } = {},
   ): void {
     const state = this.getOrCreateState(sessionId);
+    const force = state.desired?.force === true || opts.force === true;
     state.desired = {
       tmuxSessionName,
       cols,
       rows,
-      force: opts.force === true,
+      force,
     };
     this.pump(sessionId, state);
   }
 
   /**
    * Forget all sizing state for a tmux session that has been destroyed.
-   * The epoch remains incremented so callbacks from the destroyed session can
-   * never mutate a replacement session with the same remote-dev identity.
+   * Stale callbacks retain the old state identity and safely no-op after the
+   * maps are deleted, while a recreated session can start work immediately.
    */
   clearSession(sessionId: string): void {
-    const currentEpoch = this.sessionEpochs.get(sessionId) ?? 0;
-    const nextEpoch = currentEpoch + 1;
-    this.sessionEpochs.set(sessionId, nextEpoch);
-
     const state = this.sessions.get(sessionId);
-    if (!state) return;
-    state.epoch = nextEpoch;
-    state.applied = null;
-    state.desired = null;
+    if (state) {
+      state.epoch++;
+      state.applied = null;
+      state.desired = null;
+      state.busy = false;
+    }
+    this.sessions.delete(sessionId);
+    this.sessionEpochs.delete(sessionId);
   }
 
   getAppliedSize(sessionId: string): TmuxSize | null {

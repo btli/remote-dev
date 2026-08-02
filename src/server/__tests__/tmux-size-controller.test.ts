@@ -79,13 +79,34 @@ describe("TmuxSizeController", () => {
     expect(exec.calls).toHaveLength(2);
   });
 
+  it("keeps a queued force sticky across a same-size non-forced overwrite", () => {
+    controller.requestResize("s1", "rdv-s1", 100, 30);
+    exec.completeNext();
+
+    controller.requestResize("s1", "rdv-s1", 120, 40);
+    controller.requestResize("s1", "rdv-s1", 100, 30, { force: true });
+    controller.requestResize("s1", "rdv-s1", 100, 30);
+    exec.completeNext(new Error("first resize failed"));
+
+    expect(exec.calls).toHaveLength(3);
+    expect(exec.calls.at(-1)?.args).toEqual([
+      "resize-window",
+      "-t",
+      "rdv-s1",
+      "-x",
+      "100",
+      "-y",
+      "30",
+    ]);
+  });
+
   it("clearSession prevents an old in-flight callback from mutating a recreated session", () => {
     controller.requestResize("s1", "rdv-s1", 100, 30);
     controller.requestResize("s1", "rdv-s1", 110, 35);
     controller.clearSession("s1");
     controller.requestResize("s1", "rdv-s1", 120, 40);
 
-    expect(exec.calls).toHaveLength(1);
+    expect(exec.calls).toHaveLength(2);
     exec.completeNext();
     expect(controller.getAppliedSize("s1")).not.toEqual({ cols: 100, rows: 30 });
     expect(exec.calls).toHaveLength(2);
@@ -93,6 +114,21 @@ describe("TmuxSizeController", () => {
 
     exec.completeNext();
     expect(controller.getAppliedSize("s1")).toEqual({ cols: 120, rows: 40 });
+  });
+
+  it("clearSession deletes both maps and a callback finding no state is safe", () => {
+    controller.requestResize("s1", "rdv-s1", 100, 30);
+
+    controller.clearSession("s1");
+
+    const internals = controller as unknown as {
+      sessions: Map<string, unknown>;
+      sessionEpochs: Map<string, unknown>;
+    };
+    expect(internals.sessions.has("s1")).toBe(false);
+    expect(internals.sessionEpochs.has("s1")).toBe(false);
+    expect(() => exec.completeNext()).not.toThrow();
+    expect(controller.getAppliedSize("s1")).toBeNull();
   });
 
   it("does not mark a failed resize as applied and retries it on the next request", () => {

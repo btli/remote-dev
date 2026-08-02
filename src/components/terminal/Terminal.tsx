@@ -167,12 +167,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const reconcilerRef = useRef<ResizeReconciler | null>(null);
   const visibleRef = useRef(visible);
   const isActiveRef = useRef(isActive);
-  const windowFocusedRef = useRef(
-    typeof document !== "undefined" && document.hasFocus(),
-  );
   const textareaFocusedRef = useRef(false);
   const lastSentFocusStateRef = useRef<"focus" | "blur" | null>(null);
   const syncFocusToServerRef = useRef<((force?: boolean) => void) | null>(null);
+  const forceFocusAssertRef = useRef<(() => void) | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -322,7 +320,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       xtermRef.current?.scrollToBottom();
     },
     refit: () => {
-      syncFocusToServerRef.current?.(true);
+      forceFocusAssertRef.current?.();
       reconcilerRef.current?.request("refit");
       xtermRef.current?.scrollToBottom();
     },
@@ -391,6 +389,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       if (reconcilerRef.current === instance) {
         reconcilerRef.current = null;
         syncFocusToServerRef.current = null;
+        forceFocusAssertRef.current = null;
       }
     };
 
@@ -524,7 +523,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       const getDesiredFocus = () =>
         visibleRef.current &&
         !document.hidden &&
-        (windowFocusedRef.current || textareaFocusedRef.current);
+        (document.hasFocus() || textareaFocusedRef.current);
       const syncFocusToServer = (force = false) => {
         const socket = wsRef.current;
         const next = getDesiredFocus() ? "focus" : "blur";
@@ -542,6 +541,17 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         }
       };
       syncFocusToServerRef.current = syncFocusToServer;
+      const forceFocusAssert = () => {
+        const socket = wsRef.current;
+        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        try {
+          socket.send(JSON.stringify({ type: "client_focus" }));
+          lastSentFocusStateRef.current = "focus";
+        } catch {
+          // A later derived-state trigger or socket-open flush retries focus.
+        }
+      };
+      forceFocusAssertRef.current = forceFocusAssert;
 
       // Load WebGL renderer for better performance (falls back to DOM renderer)
       try {
@@ -1128,13 +1138,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       };
 
       const handleWindowFocus = () => {
-        windowFocusedRef.current = true;
         syncFocusToServer();
         reconciler.request("window-focus");
       };
 
       const handleWindowBlur = () => {
-        windowFocusedRef.current = false;
         syncFocusToServer();
       };
 

@@ -201,6 +201,7 @@ export interface PromotionConnectionState {
   connectionId: string;
   isVisible: boolean;
   isSocketOpen: boolean;
+  lastFocusAt: number;
 }
 
 export interface PromotionCoordinatorHost {
@@ -246,7 +247,6 @@ export class PrimaryPromotionCoordinator {
     }
 
     if (this.host.getPrimary(sessionId) === connectionId) {
-      this.clearPendingPromotion(sessionId);
       this.host.reassertSize(sessionId, connectionId);
       return "already-primary";
     }
@@ -286,6 +286,10 @@ export class PrimaryPromotionCoordinator {
     this.pendingTimers.delete(sessionId);
   }
 
+  clearSession(sessionId: string): void {
+    this.clearPendingPromotion(sessionId);
+  }
+
   dispose(): void {
     for (const timer of this.pendingTimers.values()) clearTimeout(timer);
     this.pendingTimers.clear();
@@ -305,6 +309,23 @@ export class PrimaryPromotionCoordinator {
       // re-validates it and drops the pending entry when it no longer
       // qualifies (closed socket, hidden panel).
       if (this.pendingCandidates.get(sessionId) !== connectionId) return;
+      const candidate = this.host.getConnection(connectionId);
+      if (!candidate?.isSocketOpen || !candidate.isVisible) {
+        this.clearIfCandidate(sessionId, connectionId);
+        return;
+      }
+      const primaryId = this.host.getPrimary(sessionId);
+      if (primaryId === connectionId) {
+        this.clearIfCandidate(sessionId, connectionId);
+        return;
+      }
+      const primary = primaryId
+        ? this.host.getConnection(primaryId)
+        : undefined;
+      if (primary && primary.lastFocusAt > candidate.lastFocusAt) {
+        this.clearIfCandidate(sessionId, connectionId);
+        return;
+      }
       this.requestPromotion(sessionId, connectionId, false);
     }, Math.max(0, delayMs));
     this.pendingTimers.set(sessionId, timer);
@@ -314,6 +335,15 @@ export class PrimaryPromotionCoordinator {
     if (this.pendingCandidates.get(sessionId) !== connectionId) return;
     this.clearPendingPromotion(sessionId);
   }
+}
+
+export function clearTerminatedSessionControllerState(
+  sessionId: string,
+  sizeController: Pick<TmuxSizeController, "clearSession">,
+  promotionCoordinator: Pick<PrimaryPromotionCoordinator, "clearSession">,
+): void {
+  sizeController.clearSession(sessionId);
+  promotionCoordinator.clearSession(sessionId);
 }
 
 // CONTROL_SESSION_SENTINEL (the reserved control-mode sessionId) is imported
@@ -342,6 +372,7 @@ const primaryPromotions = new PrimaryPromotionCoordinator(
         connectionId,
         isVisible: connection.isVisible,
         isSocketOpen: connection.ws.readyState === WebSocket.OPEN,
+        lastFocusAt: connection.lastFocusAt,
       };
     },
     getPrimary(sessionId) {
@@ -945,6 +976,11 @@ function cleanupConnection(connectionId: string): void {
     // recovers them via the attach-time replay below — they have no DB fallback.
     // Only drop them when the session itself has ended (tmux gone).
     if (!tmuxSessionExists(conn.tmuxSessionName)) {
+      clearTerminatedSessionControllerState(
+        conn.sessionId,
+        tmuxSize,
+        primaryPromotions,
+      );
       sessionStatusIndicators.delete(conn.sessionId);
       sessionProgressBars.delete(conn.sessionId);
     }
