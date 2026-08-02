@@ -169,7 +169,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const isActiveRef = useRef(isActive);
   const textareaFocusedRef = useRef(false);
   const lastSentFocusStateRef = useRef<"focus" | "blur" | null>(null);
-  const syncFocusToServerRef = useRef<((force?: boolean) => void) | null>(null);
+  const syncFocusToServerRef = useRef<
+    ((force?: boolean, reassert?: boolean) => void) | null
+  >(null);
   const forceFocusAssertRef = useRef<(() => void) | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -524,17 +526,18 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         visibleRef.current &&
         !document.hidden &&
         (document.hasFocus() || textareaFocusedRef.current);
-      const syncFocusToServer = (force = false) => {
+      const syncFocusToServer = (force = false, reassert = false) => {
         const socket = wsRef.current;
         const next = getDesiredFocus() ? "focus" : "blur";
         if (!force && lastSentFocusStateRef.current === next) return;
         if (!socket || socket.readyState !== WebSocket.OPEN) return;
         try {
-          socket.send(
-            JSON.stringify({
-              type: next === "focus" ? "client_focus" : "client_blur",
-            }),
-          );
+          const message = next === "focus"
+            ? reassert
+              ? { type: "client_focus", reassert: true }
+              : { type: "client_focus" }
+            : { type: "client_blur" };
+          socket.send(JSON.stringify(message));
           lastSentFocusStateRef.current = next;
         } catch {
           // The desired state remains available for the next socket-open flush.
@@ -542,6 +545,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       };
       syncFocusToServerRef.current = syncFocusToServer;
       const forceFocusAssert = () => {
+        if (!visibleRef.current || document.hidden) return;
         const socket = wsRef.current;
         if (!socket || socket.readyState !== WebSocket.OPEN) return;
         try {
@@ -851,7 +855,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           reconnectAttemptsRef.current = 0;
           lastSentFocusStateRef.current = null;
           onWebSocketReadyRef.current?.(ws);
-          syncFocusToServer(true);
+          syncFocusToServer(true, true);
           reconciler.notifySocketOpen(ws);
 
           // [remote-dev-d5ci] On a RE-open (not the first connect), dispatch the

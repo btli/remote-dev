@@ -100,15 +100,14 @@ describe("TmuxSizeController", () => {
     ]);
   });
 
-  it("clearSession prevents an old in-flight callback from mutating a recreated session", () => {
+  it("serializes the same tmux name across clearSession and recreation", () => {
     controller.requestResize("s1", "rdv-s1", 100, 30);
-    controller.requestResize("s1", "rdv-s1", 110, 35);
     controller.clearSession("s1");
     controller.requestResize("s1", "rdv-s1", 120, 40);
 
-    expect(exec.calls).toHaveLength(2);
+    expect(exec.calls).toHaveLength(1);
     exec.completeNext();
-    expect(controller.getAppliedSize("s1")).not.toEqual({ cols: 100, rows: 30 });
+
     expect(exec.calls).toHaveLength(2);
     expect(exec.calls.at(-1)?.args).toContain("120");
 
@@ -116,18 +115,30 @@ describe("TmuxSizeController", () => {
     expect(controller.getAppliedSize("s1")).toEqual({ cols: 120, rows: 40 });
   });
 
-  it("clearSession deletes both maps and a callback finding no state is safe", () => {
+  it("a stale callback for an evicted state pumps the current live state", () => {
     controller.requestResize("s1", "rdv-s1", 100, 30);
+    controller.clearSession("s1");
+    controller.requestResize("s1", "rdv-s1", 120, 40);
+
+    exec.completeNext();
+
+    expect(controller.getAppliedSize("s1")).toBeNull();
+    expect(exec.calls).toHaveLength(2);
+    expect(exec.calls.at(-1)?.args).toContain("120");
+  });
+
+  it("clearSession evicts state and its stale callback is an identity no-op", () => {
+    controller.requestResize("s1", "rdv-s1", 100, 30);
+    const staleState = (
+      controller as unknown as { sessions: Map<string, unknown> }
+    ).sessions.get("s1");
 
     controller.clearSession("s1");
 
-    const internals = controller as unknown as {
-      sessions: Map<string, unknown>;
-      sessionEpochs: Map<string, unknown>;
-    };
+    const internals = controller as unknown as { sessions: Map<string, unknown> };
     expect(internals.sessions.has("s1")).toBe(false);
-    expect(internals.sessionEpochs.has("s1")).toBe(false);
     expect(() => exec.completeNext()).not.toThrow();
+    expect(internals.sessions.get("s1")).not.toBe(staleState);
     expect(controller.getAppliedSize("s1")).toBeNull();
   });
 

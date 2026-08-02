@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Terminal view not resizing on focus** — terminal sizing now flows through a single reconciliation coordinator with panel-aware focus signals, convergent tmux sizing, and deferred primary promotion across desktop and mobile clients. (remote-dev-ah7q)
 - **"Sync" after a Claude login did nothing** (remote-dev-n4x4.8) — `syncAccountFromCredentials()` read `<profileConfigDir>/.claude/.credentials.json`, but Claude Code writes credentials to the macOS Keychain under a service name derived from `CLAUDE_CONFIG_DIR`, so that file never exists (`find ~/.remote-dev/profiles -name .credentials.json` returns nothing) even when the profile *is* logged in. The read returned null, sync reported `loggedIn: false`, the completion callback never fired, and the button was silently dead — it had never worked on macOS with a current CLI. Identity is now read from `claude auth status --json` executed under the account's own env; credential files are never parsed. The stale `prepareFileBasedLogin()` hack (seeding an empty `.credentials.json` to force file-based creds, which also put refresh tokens in plaintext on disk) is deleted, along with `claude-login-service`, `POST|GET /api/profiles/:id/claude-login`, and the hardcoded `credentialMode: "file"` column.
 
 ### Removed

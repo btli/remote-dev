@@ -56,6 +56,8 @@ interface ReconcileRun {
   outcome: Promise<ReconcileRunOutcome>;
 }
 
+// The pre-connect await is accepted-reflow best-effort after five consecutive
+// supersessions; the socket-open reconciliation heals any remaining mismatch.
 const MAX_RECONCILE_ONCE_SUPERSESSIONS = 5;
 
 const DEFAULT_LIMITS: ReconcilerLimits = {

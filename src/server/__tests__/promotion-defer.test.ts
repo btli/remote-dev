@@ -2,7 +2,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  clearTerminatedSessionControllerState,
+  clearSessionControllerState,
+  handleClientFocus,
+  pickNextPrimaryConnection,
   PrimaryPromotionCoordinator,
   parseInitialTerminalDimensions,
   type PromotionConnectionState,
@@ -55,7 +57,7 @@ class FakePromotionHost implements PromotionCoordinatorHost {
 
 function visibleOpenConnection(
   connectionId: string,
-  lastFocusAt = Date.now(),
+  lastFocusAt = 0,
 ): FocusedPromotionConnectionState {
   return { connectionId, isVisible: true, isSocketOpen: true, lastFocusAt };
 }
@@ -80,6 +82,18 @@ describe("PrimaryPromotionCoordinator", () => {
     coordinator.dispose();
     vi.useRealTimers();
   });
+
+  const focus = (
+    connectionId: string,
+    message: { force?: boolean; reassert?: boolean } = {},
+  ) => {
+    handleClientFocus(
+      host.connections.get(connectionId)!,
+      message,
+      (force, reassert) =>
+        coordinator.requestPromotion("s1", connectionId, force, reassert),
+    );
+  };
 
   it("promotes the still-mapped open visible candidate when the cooldown expires", () => {
     coordinator.requestPromotion("s1", "B", false);
@@ -160,32 +174,48 @@ describe("PrimaryPromotionCoordinator", () => {
     expect(host.broadcasts).toHaveLength(0);
   });
 
-  it("keeps a newer deferred challenger when the primary flushes focus", () => {
-    const now = Date.now();
-    host.connections.get("A")!.lastFocusAt = now - 20;
-    host.connections.get("B")!.lastFocusAt = now - 10;
-    coordinator.requestPromotion("s1", "B", false);
-
-    coordinator.requestPromotion("s1", "A", false);
+  it("promotes a genuine challenger after the primary reconnect-flushes a reassert", () => {
+    focus("B");
+    vi.advanceTimersByTime(100);
+    focus("A", { reassert: true });
 
     expect(coordinator.getPendingCandidate("s1")).toBe("B");
-    vi.advanceTimersByTime(1000);
+    expect(host.connections.get("A")!.lastFocusAt).toBe(0);
+    vi.advanceTimersByTime(900);
     expect(host.primaries.get("s1")).toBe("B");
   });
 
   it("does not promote a deferred challenger after the primary genuinely refocuses", () => {
-    const now = Date.now();
-    host.connections.get("B")!.lastFocusAt = now - 10;
-    coordinator.requestPromotion("s1", "B", false);
-
-    host.connections.get("A")!.lastFocusAt = now;
-    coordinator.requestPromotion("s1", "A", false);
+    focus("B");
+    vi.advanceTimersByTime(100);
+    focus("A");
 
     expect(coordinator.getPendingCandidate("s1")).toBe("B");
-    vi.advanceTimersByTime(1000);
+    vi.advanceTimersByTime(900);
     expect(host.primaries.get("s1")).toBe("A");
     expect(coordinator.getPendingCandidate("s1")).toBeNull();
     expect(host.broadcasts).toHaveLength(0);
+  });
+
+  it("does not let a non-primary reassert replace or register a pending candidate", () => {
+    focus("B");
+    focus("C", { reassert: true });
+
+    expect(coordinator.getPendingCandidate("s1")).toBe("B");
+    expect(host.connections.get("C")!.lastFocusAt).toBe(0);
+  });
+
+  it("promotes the deferred challenger when the newer primary has blurred", () => {
+    focus("B");
+    vi.advanceTimersByTime(100);
+    focus("A");
+    host.connections.get("A")!.isVisible = false;
+    coordinator.notifyBlur("s1", "A");
+
+    vi.advanceTimersByTime(900);
+
+    expect(host.primaries.get("s1")).toBe("B");
+    expect(coordinator.getPendingCandidate("s1")).toBeNull();
   });
 
   it("clearSession removes a pending candidate and cancels its timer", () => {
@@ -219,12 +249,31 @@ describe("parseInitialTerminalDimensions", () => {
   });
 });
 
-describe("terminated session cleanup", () => {
-  it("clears both tmux sizing and deferred promotion state", () => {
+describe("replacement primary selection", () => {
+  it("prefers visible connections and keeps pool order for zero-timestamp ties", () => {
+    expect(
+      pickNextPrimaryConnection([
+        { connectionId: "A", isVisible: false, lastFocusAt: 0 },
+        { connectionId: "B", isVisible: true, lastFocusAt: 0 },
+        { connectionId: "C", isVisible: true, lastFocusAt: 0 },
+      ]),
+    ).toBe("B");
+
+    expect(
+      pickNextPrimaryConnection([
+        { connectionId: "A", isVisible: false, lastFocusAt: 0 },
+        { connectionId: "B", isVisible: false, lastFocusAt: 0 },
+      ]),
+    ).toBe("A");
+  });
+});
+
+describe("last-connection controller cleanup", () => {
+  it("clears both tmux sizing and deferred promotion state unconditionally", () => {
     const sizeController = { clearSession: vi.fn() };
     const promotionCoordinator = { clearSession: vi.fn() };
 
-    clearTerminatedSessionControllerState(
+    clearSessionControllerState(
       "s1",
       sizeController,
       promotionCoordinator,

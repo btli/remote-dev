@@ -221,6 +221,31 @@ export type PromotionRequestResult =
   | "deferred"
   | "promoted";
 
+export interface ClientFocusMessage {
+  force?: boolean;
+  reassert?: boolean;
+}
+
+export interface ClientFocusConnectionState {
+  isVisible: boolean;
+  lastFocusAt: number;
+}
+
+/** Apply client_focus bookkeeping before invoking promotion, matching the
+ * production WebSocket ordering. Reconnect flushes are visibility/size
+ * reassertions only and therefore do not alter focus recency. */
+export function handleClientFocus(
+  connection: ClientFocusConnectionState,
+  message: ClientFocusMessage,
+  promote: (force: boolean, reassert: boolean) => void,
+  now: () => number = Date.now,
+): void {
+  const reassert = message.reassert === true;
+  connection.isVisible = true;
+  if (!reassert) connection.lastFocusAt = now();
+  promote(message.force === true, reassert);
+}
+
 /**
  * Coordinates focus-driven primary selection and cooldown deferral.
  * Pending candidates are session-scoped and identity-conditional: blur or
@@ -239,8 +264,21 @@ export class PrimaryPromotionCoordinator {
     sessionId: string,
     connectionId: string,
     force: boolean,
+    reassert = false,
   ): PromotionRequestResult {
     const candidate = this.host.getConnection(connectionId);
+    if (reassert) {
+      if (
+        candidate?.isSocketOpen &&
+        candidate.isVisible &&
+        this.host.getPrimary(sessionId) === connectionId
+      ) {
+        this.host.reassertSize(sessionId, connectionId);
+        return "already-primary";
+      }
+      return "ignored";
+    }
+
     if (!candidate?.isSocketOpen || !candidate.isVisible) {
       this.clearIfCandidate(sessionId, connectionId);
       return "ignored";
@@ -322,7 +360,11 @@ export class PrimaryPromotionCoordinator {
       const primary = primaryId
         ? this.host.getConnection(primaryId)
         : undefined;
-      if (primary && primary.lastFocusAt > candidate.lastFocusAt) {
+      if (
+        primary?.isSocketOpen &&
+        primary.isVisible &&
+        primary.lastFocusAt > candidate.lastFocusAt
+      ) {
         this.clearIfCandidate(sessionId, connectionId);
         return;
       }
@@ -337,7 +379,7 @@ export class PrimaryPromotionCoordinator {
   }
 }
 
-export function clearTerminatedSessionControllerState(
+export function clearSessionControllerState(
   sessionId: string,
   sizeController: Pick<TmuxSizeController, "clearSession">,
   promotionCoordinator: Pick<PrimaryPromotionCoordinator, "clearSession">,
@@ -890,8 +932,18 @@ function broadcastPrimaryChanged(sessionId: string): void {
  * A request blocked by the per-session cooldown is deferred until the cooldown
  * expires, not dropped, unless `force` is true.
  */
-function tryPromoteToPrimary(sessionId: string, connectionId: string, force: boolean): void {
-  const result = primaryPromotions.requestPromotion(sessionId, connectionId, force);
+function tryPromoteToPrimary(
+  sessionId: string,
+  connectionId: string,
+  force: boolean,
+  reassert = false,
+): void {
+  const result = primaryPromotions.requestPromotion(
+    sessionId,
+    connectionId,
+    force,
+    reassert,
+  );
   if (result === "deferred") {
     log.debug("promotion deferred (cooldown)", { connectionId, sessionId });
   } else if (result === "promoted") {
@@ -903,8 +955,11 @@ function tryPromoteToPrimary(sessionId: string, connectionId: string, force: boo
  * Select the best replacement primary from a session's remaining connections:
  * prefer visible connections, break ties by most recent `lastFocusAt`.
  */
-function pickNextPrimary(sessionId: string): string | null {
-  const conns = getConnectionsForSession(sessionId);
+export function pickNextPrimaryConnection(
+  conns: ReadonlyArray<
+    Pick<PromotionConnectionState, "connectionId" | "isVisible" | "lastFocusAt">
+  >,
+): string | null {
   if (conns.length === 0) return null;
   const visible = conns.filter((c) => c.isVisible);
   const pool = visible.length > 0 ? visible : conns;
@@ -913,6 +968,10 @@ function pickNextPrimary(sessionId: string): string | null {
     if (c.lastFocusAt > best.lastFocusAt) best = c;
   }
   return best.connectionId;
+}
+
+function pickNextPrimary(sessionId: string): string | null {
+  return pickNextPrimaryConnection(getConnectionsForSession(sessionId));
 }
 
 /**
@@ -971,16 +1030,16 @@ function cleanupConnection(connectionId: string): void {
     sessionConnections.delete(conn.sessionId);
     sessionPrimaryConnection.delete(conn.sessionId);
     sessionLastPromotionAt.delete(conn.sessionId);
+    clearSessionControllerState(
+      conn.sessionId,
+      tmuxSize,
+      primaryPromotions,
+    );
     // [remote-dev-f9y9] Keep status indicators + progress in memory across a
     // transient WS disconnect (tmux/agent still alive) so a reconnecting client
     // recovers them via the attach-time replay below — they have no DB fallback.
     // Only drop them when the session itself has ended (tmux gone).
     if (!tmuxSessionExists(conn.tmuxSessionName)) {
-      clearTerminatedSessionControllerState(
-        conn.sessionId,
-        tmuxSize,
-        primaryPromotions,
-      );
       sessionStatusIndicators.delete(conn.sessionId);
       sessionProgressBars.delete(conn.sessionId);
     }
@@ -3224,7 +3283,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         resizeTimeout: null,
         terminalType: "control",
         userId: authResult.userId,
-        lastFocusAt: Date.now(),
+        lastFocusAt: 0,
         isVisible: false,
         isControl: true,
       };
@@ -3466,7 +3525,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       resizeTimeout: null,
       terminalType,
       userId,
-      lastFocusAt: Date.now(),
+      lastFocusAt: 0,
       isVisible: true,
     };
 
@@ -3575,11 +3634,20 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             break;
           }
           case "client_focus": {
-            connection.lastFocusAt = Date.now();
-            connection.isVisible = true;
-            const force = msg.force === true;
-            log.debug("client_focus received", { connectionId, sessionId, force });
-            tryPromoteToPrimary(sessionId, connectionId, force);
+            handleClientFocus(connection, msg, (force, reassert) => {
+              log.debug("client_focus received", {
+                connectionId,
+                sessionId,
+                force,
+                reassert,
+              });
+              tryPromoteToPrimary(
+                sessionId,
+                connectionId,
+                force,
+                reassert,
+              );
+            });
             break;
           }
           case "client_blur": {

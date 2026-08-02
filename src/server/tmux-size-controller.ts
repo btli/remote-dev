@@ -15,10 +15,8 @@ interface ResizeRequest extends TmuxSize {
 }
 
 interface SessionSizeState {
-  epoch: number;
   applied: TmuxSize | null;
   desired: ResizeRequest | null;
-  busy: boolean;
 }
 
 function sizesEqual(left: TmuxSize | null, right: TmuxSize): boolean {
@@ -34,7 +32,7 @@ function sizesEqual(left: TmuxSize | null, right: TmuxSize): boolean {
  */
 export class TmuxSizeController {
   private readonly sessions = new Map<string, SessionSizeState>();
-  private readonly sessionEpochs = new Map<string, number>();
+  private readonly inFlightNames = new Map<string, object>();
 
   constructor(
     private readonly exec: TmuxExec,
@@ -60,20 +58,13 @@ export class TmuxSizeController {
   }
 
   /**
-   * Forget all sizing state for a tmux session that has been destroyed.
-   * Stale callbacks retain the old state identity and safely no-op after the
-   * maps are deleted, while a recreated session can start work immediately.
+   * Forget sizing state for a disconnected or destroyed session. An in-flight
+   * name lock deliberately survives eviction so a recreated state cannot run a
+   * concurrent command against the same tmux session. Its callback releases
+   * the lock, ignores the evicted state by object identity, and pumps live work.
    */
   clearSession(sessionId: string): void {
-    const state = this.sessions.get(sessionId);
-    if (state) {
-      state.epoch++;
-      state.applied = null;
-      state.desired = null;
-      state.busy = false;
-    }
     this.sessions.delete(sessionId);
-    this.sessionEpochs.delete(sessionId);
   }
 
   getAppliedSize(sessionId: string): TmuxSize | null {
@@ -86,36 +77,37 @@ export class TmuxSizeController {
     if (existing) return existing;
 
     const state: SessionSizeState = {
-      epoch: this.sessionEpochs.get(sessionId) ?? 0,
       applied: null,
       desired: null,
-      busy: false,
     };
     this.sessions.set(sessionId, state);
     return state;
   }
 
   private pump(sessionId: string, state: SessionSizeState): void {
-    if (state.busy) return;
-
     const request = state.desired;
     if (!request) return;
 
-    state.desired = null;
-    if (!request.force && sizesEqual(state.applied, request)) return;
+    if (!request.force && sizesEqual(state.applied, request)) {
+      state.desired = null;
+      return;
+    }
+    if (this.inFlightNames.has(request.tmuxSessionName)) return;
 
-    state.busy = true;
-    const requestEpoch = state.epoch;
+    state.desired = null;
+    const lock = {};
+    this.inFlightNames.set(request.tmuxSessionName, lock);
     let completed = false;
     const complete = (error: Error | null): void => {
       if (completed) return;
       completed = true;
 
-      const current = this.sessions.get(sessionId);
-      if (current !== state) return;
+      if (this.inFlightNames.get(request.tmuxSessionName) === lock) {
+        this.inFlightNames.delete(request.tmuxSessionName);
+      }
 
-      state.busy = false;
-      if (current.epoch === requestEpoch) {
+      const current = this.sessions.get(sessionId);
+      if (current === state) {
         if (error) {
           this.log.warn("tmux resize-window failed", {
             error: String(error),
@@ -129,7 +121,7 @@ export class TmuxSizeController {
         }
       }
 
-      this.pump(sessionId, state);
+      this.pumpCurrentStateForName(request.tmuxSessionName);
     };
 
     try {
@@ -147,6 +139,14 @@ export class TmuxSizeController {
       );
     } catch (error) {
       complete(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  private pumpCurrentStateForName(tmuxSessionName: string): void {
+    for (const [sessionId, state] of this.sessions) {
+      if (state.desired?.tmuxSessionName !== tmuxSessionName) continue;
+      this.pump(sessionId, state);
+      return;
     }
   }
 }

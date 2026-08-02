@@ -17,8 +17,9 @@
  *
  * These tests assert that calling `ref.refit()` issues a real reconciler
  * request and resize frame, scrolls to the bottom, forces a fresh
- * `client_focus` frame even while the derived state is blurred, and remains a
- * safe no-op before the terminal has finished initializing.
+ * `client_focus` frame even while the derived state is blurred, suppresses that
+ * assertion while the panel/page is hidden, and remains a safe no-op before
+ * the terminal has finished initializing.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, render, cleanup, waitFor } from "@testing-library/react";
@@ -466,6 +467,28 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
     expect(wsInstances.at(-1)?.sentTypes()).not.toContain("client_focus");
   });
 
+  it("marks the socket-open focus flush as a recency-neutral reassert", async () => {
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const focusFrame = wsInstances
+      .at(-1)!
+      .sent.map((frame) => JSON.parse(frame) as { type: string; reassert?: boolean })
+      .find((frame) => frame.type === "client_focus");
+    expect(focusFrame).toEqual({ type: "client_focus", reassert: true });
+  });
+
   it("forces client_focus and a resize reconciliation while derived focus is blurred", async () => {
     const Terminal = await getTerminal();
     const ref = createRef<TerminalRef>();
@@ -596,6 +619,34 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
     act(() => window.dispatchEvent(new Event("focus")));
 
     expect(ws.sentTypes()).not.toContain("client_focus");
+  });
+
+  it("refit while the panel is hidden emits no client_focus frame", async () => {
+    const Terminal = await getTerminal();
+    const ref = createRef<TerminalRef>();
+    render(
+      <Terminal
+        ref={ref}
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sent.length).toBeGreaterThan(0);
+    });
+    const ws = wsInstances.at(-1)!;
+    ws.sent.length = 0;
+
+    act(() => ref.current?.refit());
+
+    expect(ws.sentTypes()).not.toContain("client_focus");
+    expect(
+      reconcilerState.instances.find((instance) => !instance.wasDisposed)?.requests,
+    ).toContain("refit");
   });
 
   it("replays activation after async initialization with resize and keyboard focus", async () => {
