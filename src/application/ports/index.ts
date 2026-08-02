@@ -52,9 +52,15 @@ export type {
 export type {
   UsageLimitGateway,
   LimitDetectionResult,
+  UsageLimitTarget,
 } from "./UsageLimitGateway";
 
 export type { UsageLimitStateRepository } from "./UsageLimitStateRepository";
+
+export type {
+  UsageLimitWindowRepository,
+  UsageLimitWindow,
+} from "./UsageLimitWindowRepository";
 
 export type {
   ProfilePoolRepository,

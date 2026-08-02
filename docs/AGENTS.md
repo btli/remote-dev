@@ -163,12 +163,40 @@ paste-a-token fallback covers remote/PWA use where no local browser exists. Ther
 is no "Sync" step — the old file-reading sync parsed a `.credentials.json` that
 never exists on macOS (the CLI writes to the Keychain) and was silently dead.
 
-**Detecting a limit is reactive by default.** When a Claude session goes idle or
-ends, its recent scrollback is scanned for the usage-limit phrase
-(`ReactiveOutputDetector`); a hit marks the session's ACCOUNT limited. A proactive
-Anthropic usage poller also exists but is **experimental and OFF by default**
-behind `RDV_CLAUDE_USAGE_POLL_ENABLED` — it is not the shipped default, and the
-once-planned `rdv` Stop-hook limit detector was never built. **On a limit**, the
+**Limits are detected two ways.** Reactive detection is always on: when a Claude
+session goes idle or ends, its recent scrollback is scanned for the usage-limit
+phrase (`ReactiveOutputDetector`), and a hit marks the session's ACCOUNT limited.
+
+A proactive **usage poller** is available but **opt-in** — set
+`RDV_CLAUDE_USAGE_POLL_ENABLED=1` (see [`SETUP.md`](./SETUP.md)). When enabled it
+sweeps every Claude account about every 10 minutes, reading Anthropic's
+structured usage endpoint with that account's stored OAuth token: a free GET
+that sends no message and burns no quota. It is opt-in because enabling it makes
+the server contact a third party on a timer with stored user credentials, not
+because it costs anything. The sweep bounds its concurrency and backs off
+exponentially per account after a failure, so a revoked token is not retried
+every 10 minutes forever. The once-planned `rdv` Stop-hook limit detector was
+never built.
+
+**Rotation is model-aware — but only when the poller is enabled**, since it is
+the only source of per-model `weekly_scoped` windows (stored per account in
+`claude_usage_limit_window`). A Claude subscription can exhaust one model's
+weekly window — premium models hard-reject with 429 — while the account-level
+status still reads "allowed". When a session requests a model (`--model` in its
+resolved agent flags), account selection treats an account with a matching
+scoped window as unavailable *for that model* and rotates to a sibling account
+with headroom.
+
+Blocking is deliberately narrow, because a wrong block is worse than no block. A
+window must be **all** of: `kind = weekly_scoped`, scoped to a model whose family
+is in the explicit registry, `critical` or ≥100%, flagged active by the endpoint,
+observed within the last hour, and carrying a reset that is still in the future.
+Matching is on the endpoint's model display name (`"Fable"`) — the only
+per-model identity it reports — case- and whitespace-tolerantly, against known
+families only; an unrecognized model never matches anything. Anything else, and
+any failure reading the data, leaves the decision exactly account-level. Model
+awareness can only ever widen the rejected set for a named, recognized model; it
+can never narrow availability by accident. **On a limit**, the
 default `notify` mode records the limit and posts a notification; the
 notification payload carries a relaunch CTA, **but no client renders an inline
 "relaunch" button yet** — so today `notify` mode surfaces a notification only. An

@@ -1257,6 +1257,33 @@ export const claudeUsageLimitStates = pgTable(
   ]
 );
 
+export const claudeUsageLimitWindows = pgTable(
+  "claude_usage_limit_window",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    accountId: text("account_id").notNull().references(() => claudeAccounts.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    limitGroup: text("limit_group"),
+    percent: integer("percent").notNull().default(0),
+    severity: text("severity"),
+    resetsAt: timestamp("resets_at", { withTimezone: true, mode: "date" }),
+    scopeModel: text("scope_model"),
+    scopeModelKey: text("scope_model_key").notNull().default(""),
+    scopeSurface: text("scope_surface"),
+    isActive: boolean("is_active").notNull().default(false),
+    observedAt: timestamp("observed_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("claude_usage_limit_window_account_idx").on(table.accountId),
+    index("claude_usage_limit_window_account_scope_idx").on(table.accountId, table.scopeModel),
+    index("claude_usage_limit_window_user_idx").on(table.userId),
+    uniqueIndex("claude_usage_limit_window_key_unique").on(table.accountId, table.kind, table.scopeModelKey),
+  ]
+);
+
 export const claudeProfilePools = pgTable(
   "claude_profile_pool",
   {

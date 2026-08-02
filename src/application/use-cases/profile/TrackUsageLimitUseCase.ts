@@ -15,6 +15,10 @@
 import { LimitState } from "@/domain/value-objects/LimitState";
 import { UsageWindow } from "@/domain/value-objects/UsageWindow";
 import type { UsageLimitStateRepository } from "@/application/ports/UsageLimitStateRepository";
+import type {
+  UsageLimitWindow,
+  UsageLimitWindowRepository,
+} from "@/application/ports/UsageLimitWindowRepository";
 import type { UsageDetectionSource } from "@/types/claude-limits";
 import { createLogger } from "@/lib/logger";
 
@@ -30,6 +34,17 @@ export interface TrackUsageLimitInput {
   resetAt7d?: Date | null;
   window5hPct?: number | null;
   window7dPct?: number | null;
+  /**
+   * Every window the source reported, including per-model (`weekly_scoped`)
+   * ones the 5h/7d rollup above cannot represent. When provided, it REPLACES
+   * the account's stored windows. [remote-dev-n4x4.2]
+   *
+   * Omit it (undefined) when the source has no per-window detail — a reactive
+   * output parse, say — so its narrower observation never wipes richer windows
+   * a poll recorded. An explicit empty array DOES clear them (the endpoint
+   * genuinely reported none).
+   */
+  windows?: UsageLimitWindow[];
   /** Observation time; defaults to now. Drives the staleness guard. */
   observedAt?: Date;
 }
@@ -56,7 +71,13 @@ export interface TrackUsageLimitResult {
 
 export class TrackUsageLimitUseCase {
   constructor(
-    private readonly stateRepository: UsageLimitStateRepository
+    private readonly stateRepository: UsageLimitStateRepository,
+    /**
+     * Optional: when absent, per-window detail is simply not persisted and the
+     * account-level rollup behaves exactly as before. Keeps the existing
+     * single-argument construction (and its tests) valid. [remote-dev-n4x4.2]
+     */
+    private readonly windowRepository?: UsageLimitWindowRepository
   ) {}
 
   async execute(input: TrackUsageLimitInput): Promise<TrackUsageLimitResult> {
@@ -98,6 +119,42 @@ export class TrackUsageLimitUseCase {
     // always wins; automated sources defer to a strictly-newer stored reading.
     const opts =
       input.source === "manual" ? undefined : { onlyIfNewer: observedAt };
+
+    // ── Write order is load-bearing [review G6] ────────────────────────────
+    //
+    // Per-window detail is written FIRST, and a failure aborts before the
+    // rollup is touched. The two live in separate repositories over the same
+    // `db`, so there is no single transaction spanning them; ordering is what
+    // makes the divergence that matters impossible.
+    //
+    // The dangerous state is a FRESH rollup saying "available" sitting beside
+    // STALE windows still saying a model is critical — selection would then
+    // block a model the account has since got headroom for, with nothing to
+    // correct it but a later successful poll. Writing windows first means that
+    // state cannot arise: if windows fail, the rollup is never written and the
+    // account keeps its previous (consistent) pair.
+    //
+    // The residual is the inverse — fresh windows beside a stale rollup — which
+    // is strictly safer: windows only ever add blocking for one NAMED model,
+    // and the elapsed-reset + staleness checks in the selection policy bound
+    // how long that can matter. It self-heals on the next poll.
+    if (input.windows !== undefined && this.windowRepository) {
+      try {
+        await this.windowRepository.replaceForAccount(
+          input.accountId,
+          input.windows,
+          observedAt
+        );
+      } catch (error) {
+        // Do NOT record the observation at all: a half-applied observation is
+        // worse than a missed one, and the sweep runs again in ~10 minutes.
+        log.warn("Aborting usage observation: window write failed", {
+          accountId: input.accountId,
+          error: String(error),
+        });
+        return { state, wasNewlyLimited: false, wrote: false };
+      }
+    }
 
     const wrote = await this.stateRepository.upsert(state, opts);
 

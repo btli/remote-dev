@@ -26,6 +26,13 @@ export interface SelectProfileInput {
   explicitProfileId?: string | null;
   /** Selection time; defaults to now (drives availability checks). */
   now?: Date;
+  /**
+   * The model this session will run (e.g. `claude-fable-5`, or a CLI alias
+   * like `opus`). [remote-dev-n4x4.3] Lets the policy skip an account whose
+   * per-model weekly window is exhausted even though the account itself still
+   * reads available. Omitted / unknown must NEVER narrow availability.
+   */
+  requestedModel?: string | null;
 }
 
 export interface SelectProfileResult {
@@ -58,7 +65,8 @@ export class SelectProfileUseCase {
     const selected = await this.selectionPolicy.selectForProject(
       input.projectId,
       input.userId,
-      now
+      now,
+      input.requestedModel ?? null
     );
 
     if (!selected) {

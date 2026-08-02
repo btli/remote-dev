@@ -2,6 +2,10 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { TrackUsageLimitUseCase } from "./TrackUsageLimitUseCase";
 import type { UsageLimitStateRepository } from "@/application/ports/UsageLimitStateRepository";
+import type {
+  UsageLimitWindow,
+  UsageLimitWindowRepository,
+} from "@/application/ports/UsageLimitWindowRepository";
 import { LimitState } from "@/domain/value-objects/LimitState";
 
 /**
@@ -316,5 +320,144 @@ describe("TrackUsageLimitUseCase", () => {
     expect(result.isLimited()).toBe(false);
     expect(repo.store.get("p1")?.isLimited()).toBe(false);
     expect(repo.store.get("p1")?.getSource()).toBe("manual");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-window persistence + write ordering [remote-dev-n4x4.2 / review G6]
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** In-memory fake of the window repository, with a failure switch. */
+class FakeWindowRepo implements UsageLimitWindowRepository {
+  readonly store = new Map<string, UsageLimitWindow[]>();
+  readonly calls: { accountId: string; observedAt: Date }[] = [];
+  shouldThrow = false;
+
+  async replaceForAccount(
+    accountId: string,
+    windows: UsageLimitWindow[],
+    observedAt: Date
+  ): Promise<boolean> {
+    if (this.shouldThrow) throw new Error("window write failed");
+    this.calls.push({ accountId, observedAt });
+    this.store.set(accountId, windows);
+    return true;
+  }
+  async findByAccountId(accountId: string): Promise<UsageLimitWindow[]> {
+    return this.store.get(accountId) ?? [];
+  }
+  async findManyByAccountIds(
+    ids: string[]
+  ): Promise<Map<string, UsageLimitWindow[]>> {
+    const out = new Map<string, UsageLimitWindow[]>();
+    for (const id of ids) {
+      const w = this.store.get(id);
+      if (w) out.set(id, w);
+    }
+    return out;
+  }
+}
+
+function scoped(): UsageLimitWindow {
+  return {
+    kind: "weekly_scoped",
+    group: "weekly",
+    percent: 100,
+    severity: "critical",
+    resetsAt: new Date("2026-08-09T00:00:00Z"),
+    scopeModel: "Fable",
+    scopeSurface: null,
+    isActive: true,
+  };
+}
+
+describe("TrackUsageLimitUseCase window persistence", () => {
+  it("persists windows alongside the rollup, stamped with the observation time", async () => {
+    const states = new FakeStateRepo();
+    const windows = new FakeWindowRepo();
+    const useCase = new TrackUsageLimitUseCase(states, windows);
+    const observedAt = new Date("2026-08-02T09:00:00Z");
+
+    const result = await useCase.execute({
+      accountId: "acct-1",
+      userId: "u1",
+      source: "poller",
+      windows: [scoped()],
+      observedAt,
+    });
+
+    expect(result.wrote).toBe(true);
+    expect(windows.store.get("acct-1")).toHaveLength(1);
+    expect(windows.calls[0].observedAt).toBe(observedAt);
+    expect(states.store.get("acct-1")).toBeDefined();
+  });
+
+  it("leaves stored windows ALONE when the source reports none (undefined)", async () => {
+    // A reactive scrollback parse has no per-window detail; its narrower
+    // observation must not wipe richer data a poll recorded.
+    const states = new FakeStateRepo();
+    const windows = new FakeWindowRepo();
+    windows.store.set("acct-1", [scoped()]);
+    const useCase = new TrackUsageLimitUseCase(states, windows);
+
+    await useCase.execute({
+      accountId: "acct-1",
+      userId: "u1",
+      source: "reactive",
+      isLimited: true,
+    });
+
+    expect(windows.calls).toHaveLength(0);
+    expect(windows.store.get("acct-1")).toHaveLength(1);
+  });
+
+  it("CLEARS stored windows on an explicit empty array", async () => {
+    const states = new FakeStateRepo();
+    const windows = new FakeWindowRepo();
+    windows.store.set("acct-1", [scoped()]);
+    const useCase = new TrackUsageLimitUseCase(states, windows);
+
+    await useCase.execute({
+      accountId: "acct-1",
+      userId: "u1",
+      source: "poller",
+      windows: [],
+    });
+
+    expect(windows.store.get("acct-1")).toEqual([]);
+  });
+
+  it("does NOT write the rollup when the window write fails", async () => {
+    // [review G6] The dangerous divergence is a FRESH rollup saying "available"
+    // beside STALE windows still saying a model is critical. Writing windows
+    // first, and aborting on failure, makes that state unreachable.
+    const states = new FakeStateRepo();
+    const windows = new FakeWindowRepo();
+    windows.shouldThrow = true;
+    const useCase = new TrackUsageLimitUseCase(states, windows);
+
+    const result = await useCase.execute({
+      accountId: "acct-1",
+      userId: "u1",
+      source: "poller",
+      windows: [scoped()],
+    });
+
+    expect(result.wrote).toBe(false);
+    expect(states.store.has("acct-1")).toBe(false);
+  });
+
+  it("works with no window repository at all (rollup-only construction)", async () => {
+    const states = new FakeStateRepo();
+    const useCase = new TrackUsageLimitUseCase(states);
+
+    const result = await useCase.execute({
+      accountId: "acct-1",
+      userId: "u1",
+      source: "poller",
+      windows: [scoped()],
+    });
+
+    expect(result.wrote).toBe(true);
   });
 });

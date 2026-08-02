@@ -12,6 +12,13 @@
  * account's *origin* profile (`profileId`, nullable) so the caller can keep
  * applying that profile's env overlay when one exists.
  *
+ * As of [remote-dev-n4x4.3] both methods take the session's REQUESTED MODEL.
+ * An account can be exhausted for one model (a per-model weekly window) while
+ * the subscription itself still reads "available", so availability is a
+ * question about (account, model), not about the account alone. The parameter
+ * is optional and MUST fail open: omitted, empty, or unrecognized means the
+ * decision is exactly the account-level one — it may never narrow availability.
+ *
  * Semantics are deliberately non-throwing for the "launch now" path: a missing
  * configuration returns null (caller proceeds with no account = legacy
  * behavior); an all-limited pool returns a best-effort account rather than
@@ -39,7 +46,9 @@ export interface ProfileSelectionPolicy {
   selectForProject(
     projectId: string,
     userId: string,
-    now: Date
+    now: Date,
+    /** The model the session will run (e.g. `claude-fable-5`). Fails open. */
+    requestedModel?: string | null
   ): Promise<SelectedAccount | null>;
 
   /**
@@ -51,6 +60,8 @@ export interface ProfileSelectionPolicy {
     currentAccountId: string,
     projectId: string,
     userId: string,
-    now: Date
+    now: Date,
+    /** The model the session will run (e.g. `claude-fable-5`). Fails open. */
+    requestedModel?: string | null
   ): Promise<SelectedAccount | null>;
 }

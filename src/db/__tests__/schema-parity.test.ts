@@ -298,5 +298,6 @@ it("schema.sqlite and schema.pg expose the same 82 table exports", () => {
   // claudeUsageLimitStates, claudeProfilePools, claudeProfilePoolMembers)
   // = 81. (x386.16 dropped message_replay_cursor.)
   // + 1 scheduleTemplates
-  expect(sqliteTables).toHaveLength(82);
+  // + 1 (remote-dev-n4x4.2: claudeUsageLimitWindows) = 83
+  expect(sqliteTables).toHaveLength(83);
 });

@@ -28,6 +28,7 @@ import { TerminalTypeServerRegistry } from "@/lib/terminal-plugins/server";
 import { initializeServerPlugins } from "@/lib/terminal-plugins/init-server";
 import { githubAccountRepository, gitCredentialManager } from "@/infrastructure/container";
 import { GitHubAccountEnvironment } from "@/domain/value-objects/GitHubAccountEnvironment";
+import { requestedModelFromAgentFlags } from "@/domain/value-objects/ClaudeModelIdentity";
 import { createApiKey } from "@/services/api-key-service";
 import { createLogger } from "@/lib/logger";
 
@@ -395,10 +396,18 @@ export async function createSessionWithDedupFlag(
   ) {
     try {
       const { selectProfileUseCase } = await import("@/infrastructure/container");
+      // [remote-dev-n4x4.3] Give the policy the model this session will run so
+      // it can skip an account whose PER-MODEL weekly window is exhausted even
+      // though the account itself still reads available. There is no dedicated
+      // model field on session creation — Claude Code takes `--model`, so the
+      // resolved agent flags are the request. Null (no `--model`) leaves the
+      // decision exactly account-level.
+      const requestedModel = requestedModelFromAgentFlags(mergedAgentFlags);
       const result = await selectProfileUseCase.execute({
         projectId: input.projectId,
         userId,
         now: new Date(),
+        requestedModel,
       });
       if (result.profileId) {
         effectiveProfileId = result.profileId;
@@ -411,6 +420,7 @@ export async function createSessionWithDedupFlag(
           projectId: input.projectId,
           profileId: result.profileId,
           accountId: result.accountId,
+          requestedModel,
           wasAutoSelected: result.wasAutoSelected,
         });
       }
