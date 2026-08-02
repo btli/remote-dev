@@ -96,6 +96,7 @@ describe("PrimaryPromotionCoordinator", () => {
   };
 
   it("promotes the still-mapped open visible candidate when the cooldown expires", () => {
+    host.connections.get("B")!.lastFocusAt = Date.now();
     coordinator.requestPromotion("s1", "B", false);
 
     expect(coordinator.getPendingCandidate("s1")).toBe("B");
@@ -144,6 +145,8 @@ describe("PrimaryPromotionCoordinator", () => {
   });
 
   it("a replaced candidate survives disconnect cleanup for the previous candidate", () => {
+    host.connections.get("B")!.lastFocusAt = Date.now();
+    host.connections.get("C")!.lastFocusAt = Date.now();
     coordinator.requestPromotion("s1", "B", false);
     coordinator.requestPromotion("s1", "C", false);
 
@@ -203,6 +206,82 @@ describe("PrimaryPromotionCoordinator", () => {
 
     expect(coordinator.getPendingCandidate("s1")).toBe("B");
     expect(host.connections.get("C")!.lastFocusAt).toBe(0);
+  });
+
+  it("treats genuine and reassert open flushes as distinct promotion intents", () => {
+    const now = Date.now();
+    host.lastPromotionAt.set("s1", now - 1000);
+    host.connections.get("B")!.isVisible = false;
+
+    focus("B");
+    expect(host.connections.get("B")!.isVisible).toBe(true);
+    expect(host.primaries.get("s1")).toBe("B");
+    expect(coordinator.getPendingCandidate("s1")).toBeNull();
+
+    host.primaries.set("s1", "A");
+    host.lastPromotionAt.set("s1", now);
+    host.connections.get("B")!.isVisible = false;
+    focus("B");
+    expect(host.connections.get("B")!.isVisible).toBe(true);
+    expect(host.primaries.get("s1")).toBe("A");
+    expect(coordinator.getPendingCandidate("s1")).toBe("B");
+
+    host.connections.get("C")!.isVisible = false;
+    focus("C", { reassert: true });
+    expect(host.connections.get("C")!.isVisible).toBe(true);
+    expect(host.primaries.get("s1")).toBe("A");
+    expect(coordinator.getPendingCandidate("s1")).toBe("B");
+    expect(host.connections.get("C")!.lastFocusAt).toBe(0);
+  });
+
+  it("keeps the current primary when deferred focus recency timestamps tie", () => {
+    const timestamp = Date.now();
+    handleClientFocus(
+      host.connections.get("B")!,
+      {},
+      (force, reassert) =>
+        coordinator.requestPromotion("s1", "B", force, reassert),
+      () => timestamp,
+    );
+    handleClientFocus(
+      host.connections.get("A")!,
+      {},
+      (force, reassert) =>
+        coordinator.requestPromotion("s1", "A", force, reassert),
+      () => timestamp,
+    );
+
+    vi.advanceTimersByTime(1000);
+
+    expect(host.primaries.get("s1")).toBe("A");
+    expect(coordinator.getPendingCandidate("s1")).toBeNull();
+    expect(host.broadcasts).toHaveLength(0);
+  });
+
+  it("promotes a genuinely newer deferred candidate over a zero-recency primary", () => {
+    handleClientFocus(
+      host.connections.get("B")!,
+      {},
+      (force, reassert) =>
+        coordinator.requestPromotion("s1", "B", force, reassert),
+      () => 1,
+    );
+
+    vi.advanceTimersByTime(1000);
+
+    expect(host.connections.get("A")!.lastFocusAt).toBe(0);
+    expect(host.connections.get("B")!.lastFocusAt).toBe(1);
+    expect(host.primaries.get("s1")).toBe("B");
+  });
+
+  it("retains the current primary when both deferred recency timestamps are zero", () => {
+    coordinator.requestPromotion("s1", "B", false);
+
+    vi.advanceTimersByTime(1000);
+
+    expect(host.connections.get("A")!.lastFocusAt).toBe(0);
+    expect(host.connections.get("B")!.lastFocusAt).toBe(0);
+    expect(host.primaries.get("s1")).toBe("A");
   });
 
   it("promotes the deferred challenger when the newer primary has blurred", () => {

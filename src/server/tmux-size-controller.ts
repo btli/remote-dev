@@ -109,6 +109,11 @@ export class TmuxSizeController {
       const current = this.sessions.get(sessionId);
       if (current === state) {
         if (error) {
+          // A failed command means tmux's actual size is unknown. In
+          // particular, a forced repair may have followed an external tmux
+          // resize, so retaining the old cache would suppress the next
+          // ordinary same-size request forever.
+          state.applied = null;
           this.log.warn("tmux resize-window failed", {
             error: String(error),
             sessionId,

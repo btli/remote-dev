@@ -855,7 +855,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           reconnectAttemptsRef.current = 0;
           lastSentFocusStateRef.current = null;
           onWebSocketReadyRef.current?.(ws);
-          syncFocusToServer(true, true);
+          const reassert =
+            hasConnectedBeforeRef.current &&
+            !(textareaFocusedRef.current && document.hasFocus());
+          syncFocusToServer(true, reassert);
           reconciler.notifySocketOpen(ws);
 
           // [remote-dev-d5ci] On a RE-open (not the first connect), dispatch the

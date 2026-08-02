@@ -142,14 +142,19 @@ describe("TmuxSizeController", () => {
     expect(controller.getAppliedSize("s1")).toBeNull();
   });
 
-  it("does not mark a failed resize as applied and retries it on the next request", () => {
+  it("clears a stale applied size after failed forced repair and retries an ordinary request", () => {
     controller.requestResize("s1", "rdv-s1", 100, 30);
+    exec.completeNext();
+
+    expect(controller.getAppliedSize("s1")).toEqual({ cols: 100, rows: 30 });
+
+    controller.requestResize("s1", "rdv-s1", 100, 30, { force: true });
     exec.completeNext(new Error("tmux unavailable"));
 
     expect(controller.getAppliedSize("s1")).toBeNull();
 
     controller.requestResize("s1", "rdv-s1", 100, 30);
-    expect(exec.calls).toHaveLength(2);
+    expect(exec.calls).toHaveLength(3);
     exec.completeNext();
     expect(controller.getAppliedSize("s1")).toEqual({ cols: 100, rows: 30 });
   });

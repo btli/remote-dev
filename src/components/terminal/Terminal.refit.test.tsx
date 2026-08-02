@@ -112,6 +112,10 @@ class MockWebSocket {
   close() {
     this.readyState = 3;
   }
+  serverClose() {
+    this.readyState = MockWebSocket.CLOSED;
+    this.onclose?.();
+  }
   /** Parsed frame `type`s in send order. */
   sentTypes(): string[] {
     return this.sent.map((s) => {
@@ -467,7 +471,7 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
     expect(wsInstances.at(-1)?.sentTypes()).not.toContain("client_focus");
   });
 
-  it("marks the socket-open focus flush as a recency-neutral reassert", async () => {
+  it("sends a genuine focus assertion on the first socket open", async () => {
     const Terminal = await getTerminal();
     render(
       <Terminal
@@ -486,7 +490,80 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
       .at(-1)!
       .sent.map((frame) => JSON.parse(frame) as { type: string; reassert?: boolean })
       .find((frame) => frame.type === "client_focus");
-    expect(focusFrame).toEqual({ type: "client_focus", reassert: true });
+    expect(focusFrame).toEqual({ type: "client_focus" });
+  });
+
+  it("reasserts focus on an unattended reconnect without promoting recency", async () => {
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        firstSocket.serverClose();
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+
+      const reconnect = wsInstances.at(-1)!;
+      expect(reconnect).not.toBe(firstSocket);
+      const focusFrame = reconnect.sent
+        .map((frame) => JSON.parse(frame) as { type: string; reassert?: boolean })
+        .find((frame) => frame.type === "client_focus");
+      expect(focusFrame).toEqual({ type: "client_focus", reassert: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("sends genuine focus on reconnect while this terminal is actively engaged", async () => {
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+    act(() => {
+      xtermInstances.at(-1)!.textarea.dispatchEvent(new Event("focus"));
+    });
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        firstSocket.serverClose();
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+
+      const reconnect = wsInstances.at(-1)!;
+      expect(reconnect).not.toBe(firstSocket);
+      const focusFrame = reconnect.sent
+        .map((frame) => JSON.parse(frame) as { type: string; reassert?: boolean })
+        .find((frame) => frame.type === "client_focus");
+      expect(focusFrame).toEqual({ type: "client_focus" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("forces client_focus and a resize reconciliation while derived focus is blurred", async () => {

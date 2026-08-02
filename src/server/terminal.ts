@@ -1,4 +1,4 @@
-import { WebSocketServer, WebSocket } from "ws";
+import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import * as pty from "node-pty";
 import type { IPty } from "node-pty";
@@ -116,6 +116,47 @@ export function parseInitialTerminalDimensions(
     ? Math.max(MIN_TERMINAL_ROWS, parsedRows)
     : DEFAULT_TERMINAL_ROWS;
   return { cols, rows };
+}
+
+interface TerminalMessageSocket<TMessage> {
+  on(event: "message", listener: (message: TMessage) => void): unknown;
+  off(event: "message", listener: (message: TMessage) => void): unknown;
+}
+
+export interface BufferedTerminalMessages<TMessage> {
+  activate(handler: (message: TMessage) => void): void;
+  discard(): void;
+}
+
+/**
+ * Synchronously capture terminal frames while async connection setup runs.
+ * Activation swaps in the production handler before replaying the captured
+ * frames in arrival order; discard releases setup-failure buffers.
+ */
+export function bufferTerminalMessages<TMessage>(
+  ws: TerminalMessageSocket<TMessage>,
+): BufferedTerminalMessages<TMessage> {
+  let pending: TMessage[] | null = [];
+  const buffer = (message: TMessage): void => {
+    pending?.push(message);
+  };
+  ws.on("message", buffer);
+
+  return {
+    activate(handler) {
+      if (!pending) return;
+      const buffered = pending;
+      pending = null;
+      ws.off("message", buffer);
+      ws.on("message", handler);
+      for (const message of buffered) handler(message);
+    },
+    discard() {
+      if (!pending) return;
+      pending = null;
+      ws.off("message", buffer);
+    },
+  };
 }
 
 /**
@@ -363,7 +404,9 @@ export class PrimaryPromotionCoordinator {
       if (
         primary?.isSocketOpen &&
         primary.isVisible &&
-        primary.lastFocusAt > candidate.lastFocusAt
+        // Date.now() can collapse a challenger focus and primary refocus into
+        // one millisecond. Keep the current primary when recency ties.
+        primary.lastFocusAt >= candidate.lastFocusAt
       ) {
         this.clearIfCandidate(sessionId, connectionId);
         return;
@@ -3239,11 +3282,16 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
   }, 30_000);
 
   wss.on("connection", async (ws, req) => {
+    // The browser flushes focus and resize intent from its onopen callback.
+    // Capture those frames before any awaited ownership/DB/setup work so a
+    // slow connection setup cannot silently lose them.
+    const bufferedMessages = bufferTerminalMessages<RawData>(ws);
     const query = Object.fromEntries(new URL(req.url || "", "http://localhost").searchParams);
 
     // SECURITY: Validate authentication token
     const token = query.token as string | undefined;
     if (!token) {
+      bufferedMessages.discard();
       ws.send(JSON.stringify({ type: "error", message: "Authentication required" }));
       ws.close(4001, "Authentication required");
       return;
@@ -3251,6 +3299,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
     const authResult = validateWsToken(token);
     if (!authResult) {
+      bufferedMessages.discard();
       ws.send(JSON.stringify({ type: "error", message: "Invalid or expired token" }));
       ws.close(4002, "Invalid or expired token");
       return;
@@ -3265,6 +3314,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     // early-return). Reuses the exact same HMAC token auth as terminal sockets.
     if (query.control === "1") {
       if (authResult.sessionId !== CONTROL_SESSION_SENTINEL) {
+        bufferedMessages.discard();
         ws.send(JSON.stringify({ type: "error", message: "Invalid control token" }));
         ws.close(4002, "Invalid control token");
         return;
@@ -3301,6 +3351,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       });
 
       ws.send(JSON.stringify({ type: "control_ready" }));
+      bufferedMessages.discard();
       return;
     }
 
@@ -3317,6 +3368,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
     // SECURITY: Validate tmux session name to prevent command injection
     if (!validateSessionName(tmuxSessionName)) {
+      bufferedMessages.discard();
       ws.send(JSON.stringify({ type: "error", message: "Invalid session name" }));
       ws.close(4003, "Invalid session name");
       return;
@@ -3353,6 +3405,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
           })) ?? null;
       } catch (error) {
         // Fail CLOSED: if we cannot verify ownership, do not attach.
+        bufferedMessages.discard();
         log.error("tmuxSession ownership lookup failed", {
           tmuxSessionName,
           sessionId,
@@ -3367,6 +3420,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         // Reachable only when a row EXISTS and belongs to a DIFFERENT user
         // (the remote-dev-yk42 cross-user attach); creation (null) + same-user
         // attach are authorized above.
+        bufferedMessages.discard();
         log.warn("Rejected WS connect: tmuxSession owned by a different user", {
           tmuxSessionName,
           tokenSessionId: sessionId,
@@ -3503,6 +3557,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         }
       }
     } catch (error) {
+      bufferedMessages.discard();
       log.error("Failed to create/attach tmux session", { connectionId, sessionId, error: String(error) });
       ws.send(JSON.stringify({
         type: "error",
@@ -3580,7 +3635,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       cleanupConnection(connectionId);
     });
 
-    ws.on("message", (message) => {
+    const handleMessage = (message: RawData): void => {
       try {
         const msg = JSON.parse(message.toString());
 
@@ -3825,7 +3880,8 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
           connection.pty?.write(message.toString());
         }
       }
-    });
+    };
+    bufferedMessages.activate(handleMessage);
 
     ws.on("close", () => {
       log.debug("WebSocket closed", { connectionId, sessionId });
