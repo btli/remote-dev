@@ -120,12 +120,29 @@ export function parseInitialTerminalDimensions(
 
 interface TerminalMessageSocket<TMessage> {
   on(event: "message", listener: (message: TMessage) => void): unknown;
+  on(event: "close", listener: (code: number, reason: Buffer) => void): unknown;
+  on(event: "error", listener: (error: Error) => void): unknown;
   off(event: "message", listener: (message: TMessage) => void): unknown;
+  off(event: "close", listener: (code: number, reason: Buffer) => void): unknown;
+  off(event: "error", listener: (error: Error) => void): unknown;
+}
+
+export interface TerminalSocketHandlers<TMessage> {
+  message(message: TMessage): void;
+  close(code: number, reason: Buffer): void;
+  error(error: Error): void;
+}
+
+export interface TerminalSetupCloseInfo {
+  code: number;
+  reason: Buffer;
 }
 
 export interface BufferedTerminalMessages<TMessage> {
-  activate(handler: (message: TMessage) => void): void;
+  activate(handlers: TerminalSocketHandlers<TMessage>): void;
   discard(): void;
+  wasClosed(): boolean;
+  getCloseInfo(): TerminalSetupCloseInfo | null;
 }
 
 /**
@@ -135,28 +152,70 @@ export interface BufferedTerminalMessages<TMessage> {
  */
 export function bufferTerminalMessages<TMessage>(
   ws: TerminalMessageSocket<TMessage>,
+  setupLog: Pick<typeof log, "error"> = log,
 ): BufferedTerminalMessages<TMessage> {
   let pending: TMessage[] | null = [];
+  let closed = false;
+  let closeInfo: TerminalSetupCloseInfo | null = null;
   const buffer = (message: TMessage): void => {
     pending?.push(message);
   };
+  const setupClose = (code: number, reason: Buffer): void => {
+    closed = true;
+    closeInfo = { code, reason };
+  };
+  const setupError = (error: Error): void => {
+    closed = true;
+    setupLog.error("Terminal connection error during setup", {
+      error: String(error),
+    });
+  };
+  const removeSetupListeners = (): void => {
+    ws.off("message", buffer);
+    ws.off("close", setupClose);
+    ws.off("error", setupError);
+  };
   ws.on("message", buffer);
+  ws.on("close", setupClose);
+  ws.on("error", setupError);
 
   return {
-    activate(handler) {
+    activate(handlers) {
       if (!pending) return;
+      if (closed) {
+        pending = null;
+        removeSetupListeners();
+        return;
+      }
       const buffered = pending;
       pending = null;
-      ws.off("message", buffer);
-      ws.on("message", handler);
-      for (const message of buffered) handler(message);
+      removeSetupListeners();
+      ws.on("message", handlers.message);
+      ws.on("close", handlers.close);
+      ws.on("error", handlers.error);
+      for (const message of buffered) handlers.message(message);
     },
     discard() {
       if (!pending) return;
       pending = null;
-      ws.off("message", buffer);
+      removeSetupListeners();
     },
+    wasClosed: () => closed,
+    getCloseInfo: () => closeInfo,
   };
+}
+
+/** Release a PTY created by an async setup that lost its socket before the
+ * connection could be registered. Returns true when the caller must abort. */
+export function abortTerminalSetupIfClosed<TMessage, TPty>(
+  bufferedMessages: BufferedTerminalMessages<TMessage>,
+  ptyProcess: TPty | null,
+  destroyPty: (ptyProcess: TPty) => void,
+): boolean {
+  if (!bufferedMessages.wasClosed()) return false;
+  bufferedMessages.discard();
+  if (ptyProcess !== null) destroyPty(ptyProcess);
+  return true;
 }
 
 /**
@@ -214,6 +273,7 @@ export function isTmuxSessionAuthorized(
 
 interface TerminalConnection {
   connectionId: string;
+  clientInstanceId: string;
   // [remote-dev-d5ci] null for control-mode connections (no PTY/tmux attach).
   pty: IPty | null;
   ws: WebSocket;
@@ -270,6 +330,48 @@ export interface ClientFocusMessage {
 export interface ClientFocusConnectionState {
   isVisible: boolean;
   lastFocusAt: number;
+  sessionId?: string;
+  clientInstanceId?: string;
+}
+
+/** Server-owned genuine-focus timestamps keyed by stable mounted client
+ * identity. A missing URL identity resolves to the one-off connection id. */
+export class ClientInstanceFocusRecency {
+  private readonly sessions = new Map<string, Map<string, number>>();
+
+  getLastGenuineFocusAt(sessionId: string, clientInstanceId: string): number {
+    return this.sessions.get(sessionId)?.get(clientInstanceId) ?? 0;
+  }
+
+  recordGenuineFocus(
+    sessionId: string,
+    clientInstanceId: string,
+    timestamp: number,
+  ): void {
+    let instances = this.sessions.get(sessionId);
+    if (!instances) {
+      instances = new Map();
+      this.sessions.set(sessionId, instances);
+    }
+    instances.set(clientInstanceId, timestamp);
+  }
+
+  clearSession(sessionId: string): void {
+    this.sessions.delete(sessionId);
+  }
+
+  clear(): void {
+    this.sessions.clear();
+  }
+}
+
+export function resolveClientInstanceId(
+  clientInstanceId: unknown,
+  connectionId: string,
+): string {
+  return typeof clientInstanceId === "string" && clientInstanceId.length > 0
+    ? clientInstanceId
+    : connectionId;
 }
 
 /** Apply client_focus bookkeeping before invoking promotion, matching the
@@ -280,10 +382,21 @@ export function handleClientFocus(
   message: ClientFocusMessage,
   promote: (force: boolean, reassert: boolean) => void,
   now: () => number = Date.now,
+  instanceRecency?: ClientInstanceFocusRecency,
 ): void {
   const reassert = message.reassert === true;
   connection.isVisible = true;
-  if (!reassert) connection.lastFocusAt = now();
+  if (!reassert) {
+    const timestamp = now();
+    connection.lastFocusAt = timestamp;
+    if (connection.sessionId && connection.clientInstanceId) {
+      instanceRecency?.recordGenuineFocus(
+        connection.sessionId,
+        connection.clientInstanceId,
+        timestamp,
+      );
+    }
+  }
   promote(message.force === true, reassert);
 }
 
@@ -308,26 +421,31 @@ export class PrimaryPromotionCoordinator {
     reassert = false,
   ): PromotionRequestResult {
     const candidate = this.host.getConnection(connectionId);
-    if (reassert) {
-      if (
-        candidate?.isSocketOpen &&
-        candidate.isVisible &&
-        this.host.getPrimary(sessionId) === connectionId
-      ) {
-        this.host.reassertSize(sessionId, connectionId);
-        return "already-primary";
-      }
-      return "ignored";
-    }
-
     if (!candidate?.isSocketOpen || !candidate.isVisible) {
       this.clearIfCandidate(sessionId, connectionId);
       return "ignored";
     }
 
-    if (this.host.getPrimary(sessionId) === connectionId) {
+    const primaryId = this.host.getPrimary(sessionId);
+    if (primaryId === connectionId) {
       this.host.reassertSize(sessionId, connectionId);
       return "already-primary";
+    }
+
+    if (reassert) {
+      const pendingCandidate = this.pendingCandidates.get(sessionId);
+      if (pendingCandidate && pendingCandidate !== connectionId) return "ignored";
+
+      const primary = primaryId
+        ? this.host.getConnection(primaryId)
+        : undefined;
+      if (
+        primary?.isSocketOpen &&
+        primary.isVisible &&
+        primary.lastFocusAt >= candidate.lastFocusAt
+      ) {
+        return "ignored";
+      }
     }
 
     const now = this.host.now();
@@ -426,9 +544,11 @@ export function clearSessionControllerState(
   sessionId: string,
   sizeController: Pick<TmuxSizeController, "clearSession">,
   promotionCoordinator: Pick<PrimaryPromotionCoordinator, "clearSession">,
+  focusRecency: Pick<ClientInstanceFocusRecency, "clearSession">,
 ): void {
   sizeController.clearSession(sessionId);
   promotionCoordinator.clearSession(sessionId);
+  focusRecency.clearSession(sessionId);
 }
 
 // CONTROL_SESSION_SENTINEL (the reserved control-mode sessionId) is imported
@@ -447,6 +567,7 @@ const sessionPrimaryConnection = new Map<string, string>();
 // ping-pong between two side-by-side windows.
 const sessionLastPromotionAt = new Map<string, number>();
 const PROMOTION_COOLDOWN_MS = 1000;
+const clientInstanceFocusRecency = new ClientInstanceFocusRecency();
 
 const primaryPromotions = new PrimaryPromotionCoordinator(
   {
@@ -1077,6 +1198,7 @@ function cleanupConnection(connectionId: string): void {
       conn.sessionId,
       tmuxSize,
       primaryPromotions,
+      clientInstanceFocusRecency,
     );
     // [remote-dev-f9y9] Keep status indicators + progress in memory across a
     // transient WS disconnect (tmux/agent still alive) so a reconnecting client
@@ -3320,8 +3442,18 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         return;
       }
       const controlConnectionId = randomUUID();
+      if (
+        abortTerminalSetupIfClosed(
+          bufferedMessages,
+          null,
+          () => {},
+        )
+      ) {
+        return;
+      }
       const controlConnection: TerminalConnection = {
         connectionId: controlConnectionId,
+        clientInstanceId: controlConnectionId,
         pty: null,
         ws,
         sessionId: `${CONTROL_SESSION_SENTINEL}-${controlConnectionId}`,
@@ -3340,18 +3472,20 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       connections.set(controlConnectionId, controlConnection);
       log.debug("Control connection started", { connectionId: controlConnectionId, userId: authResult.userId });
 
-      ws.on("close", () => {
-        if (!connections.has(controlConnectionId)) return;
-        cleanupConnection(controlConnectionId);
-      });
-      ws.on("error", (error) => {
-        log.warn("Control connection error", { connectionId: controlConnectionId, error: String(error) });
-        if (!connections.has(controlConnectionId)) return;
-        cleanupConnection(controlConnectionId);
+      bufferedMessages.activate({
+        message: () => {},
+        close: () => {
+          if (!connections.has(controlConnectionId)) return;
+          cleanupConnection(controlConnectionId);
+        },
+        error: (error) => {
+          log.warn("Control connection error", { connectionId: controlConnectionId, error: String(error) });
+          if (!connections.has(controlConnectionId)) return;
+          cleanupConnection(controlConnectionId);
+        },
       });
 
       ws.send(JSON.stringify({ type: "control_ready" }));
-      bufferedMessages.discard();
       return;
     }
 
@@ -3448,6 +3582,10 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
     // Generate a unique connection ID for multi-client support
     const connectionId = randomUUID();
+    const clientInstanceId = resolveClientInstanceId(
+      query.clientInstanceId,
+      connectionId,
+    );
 
     // Check if tmux session exists (for attach vs create decision)
     const tmuxExists = tmuxSessionExists(tmuxSessionName);
@@ -3472,6 +3610,16 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     log.debug("Connection request", { connectionId, sessionId, tmuxSessionName, tmuxExists });
 
     let ptyProcess: IPty;
+
+    if (
+      abortTerminalSetupIfClosed(
+        bufferedMessages,
+        null,
+        () => {},
+      )
+    ) {
+      return;
+    }
 
     try {
       if (tmuxExists) {
@@ -3567,8 +3715,19 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       return;
     }
 
+    if (
+      abortTerminalSetupIfClosed(
+        bufferedMessages,
+        ptyProcess,
+        safeDestroyPty,
+      )
+    ) {
+      return;
+    }
+
     const connection: TerminalConnection = {
       connectionId,
+      clientInstanceId,
       pty: ptyProcess,
       ws,
       sessionId,
@@ -3580,7 +3739,10 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       resizeTimeout: null,
       terminalType,
       userId,
-      lastFocusAt: 0,
+      lastFocusAt: clientInstanceFocusRecency.getLastGenuineFocusAt(
+        sessionId,
+        clientInstanceId,
+      ),
       isVisible: true,
     };
 
@@ -3689,20 +3851,26 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             break;
           }
           case "client_focus": {
-            handleClientFocus(connection, msg, (force, reassert) => {
-              log.debug("client_focus received", {
-                connectionId,
-                sessionId,
-                force,
-                reassert,
-              });
-              tryPromoteToPrimary(
-                sessionId,
-                connectionId,
-                force,
-                reassert,
-              );
-            });
+            handleClientFocus(
+              connection,
+              msg,
+              (force, reassert) => {
+                log.debug("client_focus received", {
+                  connectionId,
+                  sessionId,
+                  force,
+                  reassert,
+                });
+                tryPromoteToPrimary(
+                  sessionId,
+                  connectionId,
+                  force,
+                  reassert,
+                );
+              },
+              Date.now,
+              clientInstanceFocusRecency,
+            );
             break;
           }
           case "client_blur": {
@@ -3753,7 +3921,14 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
                 // the session no longer exists (it may already have died).
                 tmuxSessionConfirmedGone = !tmuxSessionExists(tmuxSessionName);
               }
-              if (tmuxSessionConfirmedGone) tmuxSize.clearSession(sessionId);
+              if (tmuxSessionConfirmedGone) {
+                clearSessionControllerState(
+                  sessionId,
+                  tmuxSize,
+                  primaryPromotions,
+                  clientInstanceFocusRecency,
+                );
+              }
               // Re-validate the connect-time cwd — the directory may have been
               // deleted (e.g. a worktree removed) since this WS attached.
               createTmuxSession(
@@ -3881,18 +4056,18 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         }
       }
     };
-    bufferedMessages.activate(handleMessage);
-
-    ws.on("close", () => {
-      log.debug("WebSocket closed", { connectionId, sessionId });
-      if (!connections.has(connectionId)) return;
-      cleanupConnection(connectionId);
-    });
-
-    ws.on("error", (error) => {
-      log.error("Terminal connection error", { connectionId, sessionId, error: String(error) });
-      if (!connections.has(connectionId)) return;
-      cleanupConnection(connectionId);
+    bufferedMessages.activate({
+      message: handleMessage,
+      close: () => {
+        log.debug("WebSocket closed", { connectionId, sessionId });
+        if (!connections.has(connectionId)) return;
+        cleanupConnection(connectionId);
+      },
+      error: (error) => {
+        log.error("Terminal connection error", { connectionId, sessionId, error: String(error) });
+        if (!connections.has(connectionId)) return;
+        cleanupConnection(connectionId);
+      },
     });
 
     // Send ready signal
@@ -3951,6 +4126,7 @@ export function shutdownTerminalConnections(): void {
   sessionConnections.clear();
   sessionPrimaryConnection.clear();
   sessionLastPromotionAt.clear();
+  clientInstanceFocusRecency.clear();
   // [remote-dev-f9y9] cleanupConnection now only drops these when tmux is gone
   // (so they survive a transient WS disconnect for the attach-time replay), so
   // full teardown must clear them explicitly.

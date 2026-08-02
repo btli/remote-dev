@@ -111,6 +111,7 @@ class MockWebSocket {
   }
   close() {
     this.readyState = 3;
+    setTimeout(() => this.onclose?.(), 0);
   }
   serverClose() {
     this.readyState = MockWebSocket.CLOSED;
@@ -528,7 +529,7 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
     }
   });
 
-  it("sends genuine focus on reconnect while this terminal is actively engaged", async () => {
+  it("uses one clientInstanceId and reasserts on a mobile-mode reconnect", async () => {
     const Terminal = await getTerminal();
     render(
       <Terminal
@@ -536,6 +537,7 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
         tmuxSessionName="rdv-s1"
         wsUrl="ws://localhost:0"
         terminalType="shell"
+        mobileMode
         visible
       />,
     );
@@ -544,9 +546,8 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
       expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
     });
     const firstSocket = wsInstances.at(-1)!;
-    act(() => {
-      xtermInstances.at(-1)!.textarea.dispatchEvent(new Event("focus"));
-    });
+    const firstInstanceId = new URL(firstSocket.url).searchParams.get("clientInstanceId");
+    expect(firstInstanceId).toBeTruthy();
 
     vi.useFakeTimers();
     try {
@@ -557,10 +558,13 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
 
       const reconnect = wsInstances.at(-1)!;
       expect(reconnect).not.toBe(firstSocket);
+      expect(new URL(reconnect.url).searchParams.get("clientInstanceId")).toBe(
+        firstInstanceId,
+      );
       const focusFrame = reconnect.sent
         .map((frame) => JSON.parse(frame) as { type: string; reassert?: boolean })
         .find((frame) => frame.type === "client_focus");
-      expect(focusFrame).toEqual({ type: "client_focus" });
+      expect(focusFrame).toEqual({ type: "client_focus", reassert: true });
     } finally {
       vi.useRealTimers();
     }
@@ -673,6 +677,57 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
         0,
       ),
     ).toBe(0);
+  });
+
+  it("ignores an asynchronous close from a superseded StrictMode socket", async () => {
+    const Terminal = await getTerminal();
+    const onStatusChange = vi.fn();
+    const onWebSocketReady = vi.fn();
+    render(
+      <StrictMode>
+        <Terminal
+          sessionId="s1"
+          tmuxSessionName="rdv-s1"
+          wsUrl="ws://localhost:0"
+          terminalType="shell"
+          visible
+          onStatusChange={onStatusChange}
+          onWebSocketReady={onWebSocketReady}
+        />
+      </StrictMode>,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        firstSocket.serverClose();
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      const replacement = wsInstances.at(-1)!;
+      expect(replacement).not.toBe(firstSocket);
+      expect(onStatusChange).toHaveBeenLastCalledWith("connected");
+      expect(onWebSocketReady).toHaveBeenLastCalledWith(replacement);
+
+      const socketCount = wsInstances.length;
+      firstSocket.close();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(onStatusChange).toHaveBeenLastCalledWith("connected");
+      expect(onWebSocketReady).toHaveBeenLastCalledWith(replacement);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(wsInstances).toHaveLength(socketCount);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not send client_focus for a hidden panel on window focus", async () => {

@@ -187,14 +187,23 @@ describe("ResizeReconciler", () => {
     });
   });
 
-  it("finding #6: stale socket identity — notifySocketOpen(oldWs) is a no-op", () => {
+  it("finding #6: stale socket identity — notifySocketOpen(oldWs) is a no-op", async () => {
+    host.ws.readyState = WebSocket.CONNECTING;
+    reconciler.request("active");
+    await host.pumpUntilIdle();
+    expect(reconciler.getDesiredDims()).toEqual({ cols: 100, rows: 30 });
+
     const oldWs = host.ws;
+    oldWs.readyState = WebSocket.OPEN;
     host.ws = new FakeWebSocket();
+    host.fitCalls = 0;
 
     reconciler.notifySocketOpen(oldWs as unknown as WebSocket);
+    await host.pumpUntilIdle();
 
     expect(host.ws.sent).toHaveLength(0);
     expect(oldWs.sent).toHaveLength(0);
+    expect(host.fitCalls).toBe(0);
   });
 
   it("finding #6: dispose cancels in-flight work; all methods no-op after", async () => {

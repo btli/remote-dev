@@ -164,6 +164,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const searchAddonRef = useRef<SearchAddonType | null>(null);
   const webglAddonRef = useRef<WebglAddonType | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const clientInstanceIdRef = useRef<string | null>(null);
   const reconcilerRef = useRef<ResizeReconciler | null>(null);
   const visibleRef = useRef(visible);
   const isActiveRef = useRef(isActive);
@@ -380,6 +381,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     let mounted = true;
     isUnmountingRef.current = false;
     intentionalExitRef.current = false;
+    const clientInstanceId = crypto.randomUUID();
+    clientInstanceIdRef.current = clientInstanceId;
     // [remote-dev-d5ci] Fresh effect run == a new session/socket → the upcoming
     // open is a FIRST connect, not a reconnect. (Stays true across reconnect
     // attempts within this same effect run.)
@@ -829,6 +832,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           tmuxHistoryLimit: String(tmuxHistoryLimitRef.current),
           // Include terminal type for agent exit detection
           terminalType,
+          clientInstanceId,
         });
         // Include working directory if specified
         if (projectPath) {
@@ -846,7 +850,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         ws.onopen = () => {
           // Guard against race condition: if component unmounted during connection,
           // close the WebSocket immediately and don't call any callbacks with stale references
-          if (isUnmountingRef.current || wsRef.current !== ws) {
+          if (wsRef.current !== ws) return;
+          if (isUnmountingRef.current) {
             ws.close();
             return;
           }
@@ -855,10 +860,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           reconnectAttemptsRef.current = 0;
           lastSentFocusStateRef.current = null;
           onWebSocketReadyRef.current?.(ws);
-          const reassert =
-            hasConnectedBeforeRef.current &&
-            !(textareaFocusedRef.current && document.hasFocus());
-          syncFocusToServer(true, reassert);
+          syncFocusToServer(true, hasConnectedBeforeRef.current);
           reconciler.notifySocketOpen(ws);
 
           // [remote-dev-d5ci] On a RE-open (not the first connect), dispatch the
@@ -1032,6 +1034,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         };
 
         ws.onclose = () => {
+          if (wsRef.current !== ws) return;
           if (isUnmountingRef.current) {
             return;
           }
@@ -1230,6 +1233,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       searchAddonRef.current = null;
       webglAddonRef.current = null;
       wsRef.current = null;
+      if (clientInstanceIdRef.current === clientInstanceId) {
+        clientInstanceIdRef.current = null;
+      }
     };
   }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, terminalType, markIntentionalExit, focusIfPresented]);
 

@@ -2,17 +2,21 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ClientInstanceFocusRecency,
   clearSessionControllerState,
   handleClientFocus,
   pickNextPrimaryConnection,
   PrimaryPromotionCoordinator,
   parseInitialTerminalDimensions,
+  resolveClientInstanceId,
   type PromotionConnectionState,
   type PromotionCoordinatorHost,
 } from "@/server/terminal";
 
 type FocusedPromotionConnectionState = PromotionConnectionState & {
   lastFocusAt: number;
+  sessionId?: string;
+  clientInstanceId?: string;
 };
 
 class FakePromotionHost implements PromotionCoordinatorHost {
@@ -65,12 +69,14 @@ function visibleOpenConnection(
 describe("PrimaryPromotionCoordinator", () => {
   let host: FakePromotionHost;
   let coordinator: PrimaryPromotionCoordinator;
+  let instanceRecency: ClientInstanceFocusRecency;
 
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2030-01-01T00:00:00Z"));
     host = new FakePromotionHost();
     coordinator = new PrimaryPromotionCoordinator(host, 1000);
+    instanceRecency = new ClientInstanceFocusRecency();
     host.connections.set("A", visibleOpenConnection("A"));
     host.connections.set("B", visibleOpenConnection("B"));
     host.connections.set("C", visibleOpenConnection("C"));
@@ -86,13 +92,34 @@ describe("PrimaryPromotionCoordinator", () => {
   const focus = (
     connectionId: string,
     message: { force?: boolean; reassert?: boolean } = {},
+    now: () => number = Date.now,
+    recency: ClientInstanceFocusRecency | undefined = undefined,
   ) => {
     handleClientFocus(
       host.connections.get(connectionId)!,
       message,
       (force, reassert) =>
         coordinator.requestPromotion("s1", connectionId, force, reassert),
+      now,
+      recency,
     );
+  };
+
+  const connectInstance = (
+    connectionId: string,
+    clientInstanceId: string | undefined,
+  ): FocusedPromotionConnectionState => {
+    const resolvedInstanceId = resolveClientInstanceId(clientInstanceId, connectionId);
+    const connection = {
+      ...visibleOpenConnection(
+        connectionId,
+        instanceRecency.getLastGenuineFocusAt("s1", resolvedInstanceId),
+      ),
+      sessionId: "s1",
+      clientInstanceId: resolvedInstanceId,
+    };
+    host.connections.set(connectionId, connection);
+    return connection;
   };
 
   it("promotes the still-mapped open visible candidate when the cooldown expires", () => {
@@ -200,12 +227,68 @@ describe("PrimaryPromotionCoordinator", () => {
     expect(host.broadcasts).toHaveLength(0);
   });
 
-  it("does not let a non-primary reassert replace or register a pending candidate", () => {
+  it("does not let a recency-qualified reassert replace an existing pending candidate", () => {
     focus("B");
+    host.connections.get("C")!.lastFocusAt = Date.now() + 1;
     focus("C", { reassert: true });
 
     expect(coordinator.getPendingCandidate("s1")).toBe("B");
-    expect(host.connections.get("C")!.lastFocusAt).toBe(0);
+    expect(host.connections.get("C")!.lastFocusAt).toBe(Date.now() + 1);
+  });
+
+  it("lets a mobile-style reconnect with newer inherited recency contest and win after cooldown", () => {
+    host.connections.get("A")!.lastFocusAt = 100;
+    const firstPhone = connectInstance("phone-old", "phone-instance");
+    handleClientFocus(firstPhone, {}, vi.fn(), () => 200, instanceRecency);
+    host.connections.delete("phone-old");
+
+    connectInstance("phone-new", "phone-instance");
+    focus("phone-new", { reassert: true });
+
+    expect(coordinator.getPendingCandidate("s1")).toBe("phone-new");
+    expect(host.primaries.get("s1")).toBe("A");
+    vi.advanceTimersByTime(1000);
+    expect(host.primaries.get("s1")).toBe("phone-new");
+  });
+
+  it("ignores an unattended reconnect whose inherited recency is older than the active phone", () => {
+    host.connections.get("A")!.lastFocusAt = 300;
+    const firstDesktop = connectInstance("desktop-old", "desktop-instance");
+    handleClientFocus(firstDesktop, {}, vi.fn(), () => 100, instanceRecency);
+    host.connections.delete("desktop-old");
+
+    connectInstance("desktop-new", "desktop-instance");
+    focus("desktop-new", { reassert: true });
+
+    expect(host.primaries.get("s1")).toBe("A");
+    expect(coordinator.getPendingCandidate("s1")).toBeNull();
+  });
+
+  it("inherits genuine focus recency across two connections with the same clientInstanceId", () => {
+    host.connections.get("A")!.lastFocusAt = 100;
+    host.lastPromotionAt.set("s1", Date.now() - 1000);
+    const first = connectInstance("first", "stable-instance");
+    handleClientFocus(first, {}, vi.fn(), () => 250, instanceRecency);
+    host.connections.delete("first");
+
+    const reconnect = connectInstance("second", "stable-instance");
+    expect(reconnect.lastFocusAt).toBe(250);
+    focus("second", { reassert: true }, () => 999, instanceRecency);
+
+    expect(reconnect.lastFocusAt).toBe(250);
+    expect(host.primaries.get("s1")).toBe("second");
+  });
+
+  it("does not inherit focus recency when clientInstanceId is absent", () => {
+    const first = connectInstance("legacy-first", undefined);
+    handleClientFocus(first, {}, vi.fn(), () => 250, instanceRecency);
+    host.connections.delete("legacy-first");
+
+    const reconnect = connectInstance("legacy-second", undefined);
+
+    expect(first.clientInstanceId).toBe("legacy-first");
+    expect(reconnect.clientInstanceId).toBe("legacy-second");
+    expect(reconnect.lastFocusAt).toBe(0);
   });
 
   it("treats genuine and reassert open flushes as distinct promotion intents", () => {
@@ -351,14 +434,17 @@ describe("last-connection controller cleanup", () => {
   it("clears both tmux sizing and deferred promotion state unconditionally", () => {
     const sizeController = { clearSession: vi.fn() };
     const promotionCoordinator = { clearSession: vi.fn() };
+    const focusRecency = { clearSession: vi.fn() };
 
     clearSessionControllerState(
       "s1",
       sizeController,
       promotionCoordinator,
+      focusRecency,
     );
 
     expect(sizeController.clearSession).toHaveBeenCalledWith("s1");
     expect(promotionCoordinator.clearSession).toHaveBeenCalledWith("s1");
+    expect(focusRecency.clearSession).toHaveBeenCalledWith("s1");
   });
 });

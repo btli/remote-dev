@@ -1,8 +1,11 @@
 // @vitest-environment node
 
 import { EventEmitter } from "node:events";
-import { describe, expect, it } from "vitest";
-import { bufferTerminalMessages } from "@/server/terminal";
+import { describe, expect, it, vi } from "vitest";
+import {
+  abortTerminalSetupIfClosed,
+  bufferTerminalMessages,
+} from "@/server/terminal";
 
 class FakeWebSocket extends EventEmitter {
   emitMessage(type: string): void {
@@ -20,8 +23,12 @@ describe("terminal connection setup message buffering", () => {
     await Promise.resolve();
     ws.emitMessage("resize");
 
-    bufferedMessages.activate((message) => {
-      processed.push(JSON.parse(message.toString()).type as string);
+    bufferedMessages.activate({
+      message(message) {
+        processed.push(JSON.parse(message.toString()).type as string);
+      },
+      close: vi.fn(),
+      error: vi.fn(),
     });
     ws.emitMessage("input");
 
@@ -36,5 +43,75 @@ describe("terminal connection setup message buffering", () => {
     bufferedMessages.discard();
 
     expect(ws.listenerCount("message")).toBe(0);
+    expect(ws.listenerCount("close")).toBe(0);
+    expect(ws.listenerCount("error")).toBe(0);
+  });
+
+  it("aborts a setup closed before activation, destroys its PTY, and drains no frames", () => {
+    const ws = new FakeWebSocket();
+    const bufferedMessages = bufferTerminalMessages(ws);
+    const processed: string[] = [];
+    const destroyPty = vi.fn();
+    const pty = { id: "pty-1" };
+    let registered = false;
+
+    ws.emitMessage("client_focus");
+    ws.emit("close", 1006, Buffer.from("setup closed"));
+
+    if (!abortTerminalSetupIfClosed(bufferedMessages, pty, destroyPty)) {
+      registered = true;
+      bufferedMessages.activate({
+        message(message) {
+          processed.push(JSON.parse(message.toString()).type as string);
+        },
+        close: vi.fn(),
+        error: vi.fn(),
+      });
+    }
+
+    expect(bufferedMessages.wasClosed()).toBe(true);
+    expect(bufferedMessages.getCloseInfo()).toEqual({
+      code: 1006,
+      reason: Buffer.from("setup closed"),
+    });
+    expect(registered).toBe(false);
+    expect(destroyPty).toHaveBeenCalledWith(pty);
+    expect(processed).toEqual([]);
+    expect(ws.listenerCount("message")).toBe(0);
+    expect(ws.listenerCount("close")).toBe(0);
+    expect(ws.listenerCount("error")).toBe(0);
+  });
+
+  it("catches and logs an error emitted before activation", () => {
+    const ws = new FakeWebSocket();
+    const setupLog = { error: vi.fn() };
+    const bufferedMessages = bufferTerminalMessages(ws, setupLog);
+    const error = new Error("socket failed during setup");
+
+    expect(() => ws.emit("error", error)).not.toThrow();
+
+    expect(bufferedMessages.wasClosed()).toBe(true);
+    expect(setupLog.error).toHaveBeenCalledWith(
+      "Terminal connection error during setup",
+      { error: String(error) },
+    );
+    bufferedMessages.discard();
+  });
+
+  it("transfers close and error handling when activation succeeds", () => {
+    const ws = new FakeWebSocket();
+    const setupLog = { error: vi.fn() };
+    const bufferedMessages = bufferTerminalMessages(ws, setupLog);
+    const close = vi.fn();
+    const error = vi.fn();
+
+    bufferedMessages.activate({ message: vi.fn(), close, error });
+    ws.emit("close", 1000, Buffer.from("done"));
+    const liveError = new Error("live socket error");
+    ws.emit("error", liveError);
+
+    expect(close).toHaveBeenCalledWith(1000, Buffer.from("done"));
+    expect(error).toHaveBeenCalledWith(liveError);
+    expect(setupLog.error).not.toHaveBeenCalled();
   });
 });
