@@ -725,6 +725,132 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
     }
   });
 
+  it("keeps its mounted clientInstanceId and reasserts across a same-session effect restart", async () => {
+    const Terminal = await getTerminal();
+    const view = render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:1"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+    const clientInstanceId = new URL(firstSocket.url).searchParams.get(
+      "clientInstanceId",
+    );
+
+    view.rerender(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:2"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)).not.toBe(firstSocket);
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const replacement = wsInstances.at(-1)!;
+    expect(new URL(replacement.url).searchParams.get("clientInstanceId")).toBe(
+      clientInstanceId,
+    );
+    expect(
+      replacement.sent
+        .map((frame) => JSON.parse(frame) as { type: string; reassert?: boolean })
+        .find((frame) => frame.type === "client_focus"),
+    ).toEqual({ type: "client_focus", reassert: true });
+  });
+
+  it("keeps its mounted clientInstanceId but flushes genuine focus for a new session", async () => {
+    const Terminal = await getTerminal();
+    const view = render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:1"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+    const clientInstanceId = new URL(firstSocket.url).searchParams.get(
+      "clientInstanceId",
+    );
+
+    view.rerender(
+      <Terminal
+        sessionId="s2"
+        tmuxSessionName="rdv-s2"
+        wsUrl="ws://localhost:1"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)).not.toBe(firstSocket);
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const replacement = wsInstances.at(-1)!;
+    expect(new URL(replacement.url).searchParams.get("clientInstanceId")).toBe(
+      clientInstanceId,
+    );
+    expect(
+      replacement.sent
+        .map((frame) => JSON.parse(frame) as { type: string; reassert?: boolean })
+        .find((frame) => frame.type === "client_focus"),
+    ).toEqual({ type: "client_focus" });
+  });
+
+  it("clears stale textarea focus before a same-session effect restart", async () => {
+    const Terminal = await getTerminal();
+    const view = render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:1"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+    documentHasFocus = false;
+    act(() => {
+      xtermInstances.at(-1)?.textarea.dispatchEvent(new Event("focus"));
+    });
+
+    view.rerender(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:2"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)).not.toBe(firstSocket);
+      expect(wsInstances.at(-1)?.sent.length).toBeGreaterThan(0);
+    });
+    expect(wsInstances.at(-1)?.sentTypes()).toContain("client_blur");
+    expect(wsInstances.at(-1)?.sentTypes()).not.toContain("client_focus");
+  });
+
   it("forces client_focus and a resize reconciliation while derived focus is blurred", async () => {
     const Terminal = await getTerminal();
     const ref = createRef<TerminalRef>();

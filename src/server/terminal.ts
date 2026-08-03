@@ -531,22 +531,41 @@ export function recordClientInput(
 export function flushClientInstanceRecency(
   connection: ClientRecencyConnectionState,
   instanceRecency: ClientInstanceFocusRecency,
+  liveConnections: Iterable<ClientRecencyConnectionState> = [],
 ): void {
   if (!connection.sessionId || !connection.clientInstanceId) return;
   const current = instanceRecency.getRecency(
     connection.sessionId,
     connection.clientInstanceId,
   );
+  const genuineFocusAt = Math.max(
+    current.genuineFocusAt,
+    connection.lastFocusAt,
+  );
+  const inputAt = Math.max(current.inputAt, connection.lastInputAt);
   instanceRecency.recordGenuineFocus(
     connection.sessionId,
     connection.clientInstanceId,
-    Math.max(current.genuineFocusAt, connection.lastFocusAt),
+    genuineFocusAt,
   );
   instanceRecency.recordInput(
     connection.sessionId,
     connection.clientInstanceId,
-    Math.max(current.inputAt, connection.lastInputAt),
+    inputAt,
   );
+  for (const liveConnection of liveConnections) {
+    if (
+      liveConnection.sessionId !== connection.sessionId ||
+      liveConnection.clientInstanceId !== connection.clientInstanceId
+    ) {
+      continue;
+    }
+    liveConnection.lastFocusAt = Math.max(
+      liveConnection.lastFocusAt,
+      genuineFocusAt,
+    );
+    liveConnection.lastInputAt = Math.max(liveConnection.lastInputAt, inputAt);
+  }
 }
 
 function deriveTmuxSessionName(sessionId: string): string | null {
@@ -558,13 +577,21 @@ function deriveTmuxSessionName(sessionId: string): string | null {
 export function sweepClientInstanceRecency(
   instanceRecency: ClientInstanceFocusRecency,
   getLiveConnectionCount: (sessionId: string) => number,
-  sessionExists: (tmuxSessionName: string) => boolean,
+  sessionConfirmedAbsent: (tmuxSessionName: string) => boolean,
   sessionNameForId: (sessionId: string) => string | null = deriveTmuxSessionName,
 ): void {
   for (const sessionId of instanceRecency.getSessionIds()) {
     if (getLiveConnectionCount(sessionId) > 0) continue;
     const tmuxSessionName = sessionNameForId(sessionId);
-    if (!tmuxSessionName || !sessionExists(tmuxSessionName)) {
+    let confirmedAbsent = !tmuxSessionName;
+    if (tmuxSessionName) {
+      try {
+        confirmedAbsent = sessionConfirmedAbsent(tmuxSessionName);
+      } catch {
+        confirmedAbsent = false;
+      }
+    }
+    if (confirmedAbsent) {
       instanceRecency.clearSession(sessionId);
     }
   }
@@ -702,6 +729,14 @@ export class PrimaryPromotionCoordinator {
     this.pendingTimers.delete(sessionId);
   }
 
+  clearPendingPromotionIfCandidate(
+    sessionId: string,
+    connectionId: string,
+  ): void {
+    if (this.pendingCandidates.get(sessionId)?.connectionId !== connectionId) return;
+    this.clearPendingPromotion(sessionId);
+  }
+
   clearSession(sessionId: string): void {
     this.clearPendingPromotion(sessionId);
   }
@@ -779,8 +814,7 @@ export class PrimaryPromotionCoordinator {
   }
 
   private clearIfCandidate(sessionId: string, connectionId: string): void {
-    if (this.pendingCandidates.get(sessionId)?.connectionId !== connectionId) return;
-    this.clearPendingPromotion(sessionId);
+    this.clearPendingPromotionIfCandidate(sessionId, connectionId);
   }
 
   private promote(
@@ -1466,7 +1500,11 @@ function cleanupConnection(connectionId: string): void {
     return;
   }
 
-  flushClientInstanceRecency(conn, clientInstanceFocusRecency);
+  flushClientInstanceRecency(
+    conn,
+    clientInstanceFocusRecency,
+    connections.values(),
+  );
   primaryPromotions.notifyDisconnect(conn.sessionId, connectionId);
 
   // Remove from session connections and update session-level state
@@ -1491,7 +1529,7 @@ function cleanupConnection(connectionId: string): void {
     // transient WS disconnect (tmux/agent still alive) so a reconnecting client
     // recovers them via the attach-time replay below — they have no DB fallback.
     // Only drop them when the session itself has ended (tmux gone).
-    if (!tmuxSessionExists(conn.tmuxSessionName)) {
+    if (tmuxSessionConfirmedAbsent(conn.tmuxSessionName)) {
       clientInstanceFocusRecency.clearSession(conn.sessionId);
       sessionStatusIndicators.delete(conn.sessionId);
       sessionProgressBars.delete(conn.sessionId);
@@ -1514,7 +1552,10 @@ function cleanupConnection(connectionId: string): void {
     // remaining connection and apply its size to tmux.
     const nextPrimary = pickNextPrimary(conn.sessionId);
     if (nextPrimary) {
-      primaryPromotions.clearPendingPromotion(conn.sessionId);
+      primaryPromotions.clearPendingPromotionIfCandidate(
+        conn.sessionId,
+        nextPrimary,
+      );
       sessionPrimaryConnection.set(conn.sessionId, nextPrimary);
       sessionLastPromotionAt.set(conn.sessionId, Date.now());
       const nextConn = connections.get(nextPrimary);
@@ -1558,6 +1599,39 @@ function tmuxSessionExists(sessionName: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+/** Return true only when tmux cleanly confirms that a session is absent. */
+export function tmuxSessionConfirmedAbsent(
+  sessionName: string,
+  probe: (sessionName: string) => void = (name) => {
+    execFileSync("tmux", ["has-session", "-t", name], {
+      stdio: "pipe",
+      cwd: STABLE_SPAWN_CWD,
+    });
+  },
+): boolean {
+  try {
+    probe(sessionName);
+    return false;
+  } catch (error) {
+    if (!error || typeof error !== "object") return false;
+    const { status, stderr } = error as {
+      status?: unknown;
+      stderr?: unknown;
+    };
+    const stderrText = Buffer.isBuffer(stderr)
+      ? stderr.toString("utf8")
+      : typeof stderr === "string"
+        ? stderr
+        : "";
+    if (/can't find session|no server running/i.test(stderrText)) return true;
+    return (
+      typeof status === "number" &&
+      status !== 0 &&
+      stderrText.trim().length === 0
+    );
   }
 }
 
@@ -3697,7 +3771,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     sweepClientInstanceRecency(
       clientInstanceFocusRecency,
       (sessionId) => sessionConnections.get(sessionId)?.size ?? 0,
-      tmuxSessionExists,
+      tmuxSessionConfirmedAbsent,
     );
   }, 10 * 60 * 1000);
   clientRecencySweepTimer.unref();
@@ -3912,7 +3986,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
     // Check if tmux session exists (for attach vs create decision)
     const tmuxExists = tmuxSessionExists(tmuxSessionName);
-    if (!tmuxExists) {
+    if (!tmuxExists && tmuxSessionConfirmedAbsent(tmuxSessionName)) {
       // The tmux lifecycle, not a transient socket gap, owns stable-instance
       // engagement history. A confirmed-missing session starts fresh.
       clientInstanceFocusRecency.clearSession(sessionId);
@@ -4262,7 +4336,9 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
               } catch {
                 // A failed kill is safe to treat as gone only when tmux confirms
                 // the session no longer exists (it may already have died).
-                tmuxSessionConfirmedGone = !tmuxSessionExists(tmuxSessionName);
+                tmuxSessionConfirmedGone = tmuxSessionConfirmedAbsent(
+                  tmuxSessionName,
+                );
               }
               if (tmuxSessionConfirmedGone) {
                 clearSessionControllerState(

@@ -12,6 +12,7 @@ import {
   recordClientInput,
   resolveClientInstanceId,
   sweepClientInstanceRecency,
+  tmuxSessionConfirmedAbsent,
   type PromotionConnectionState,
   type PromotionCoordinatorHost,
 } from "@/server/terminal";
@@ -197,6 +198,31 @@ describe("PrimaryPromotionCoordinator", () => {
     expect(host.primaries.get("s1")).toBe("C");
   });
 
+  it("preserves a deferred challenger when disconnect handoff elects another connection", () => {
+    host.connections.get("A")!.lastFocusAt = 50;
+    host.connections.get("B")!.lastFocusAt = 200;
+    host.connections.get("C")!.lastFocusAt = 100;
+    host.connections.get("C")!.lastInputAt = 300;
+    coordinator.requestPromotion("s1", "B", false);
+
+    coordinator.notifyDisconnect("s1", "A");
+    host.connections.delete("A");
+    const nextPrimary = pickNextPrimaryConnection([
+      host.connections.get("B")!,
+      host.connections.get("C")!,
+    ]);
+    expect(nextPrimary).toBe("C");
+    coordinator.clearPendingPromotionIfCandidate("s1", nextPrimary!);
+    host.primaries.set("s1", nextPrimary!);
+    host.lastPromotionAt.set("s1", Date.now());
+
+    expect(coordinator.getPendingCandidate("s1")).toBe("B");
+    vi.advanceTimersByTime(1000);
+
+    expect(host.primaries.get("s1")).toBe("B");
+    expect(coordinator.getPendingCandidate("s1")).toBeNull();
+  });
+
   it("a successful forced promotion cancels an existing deferred promotion", () => {
     coordinator.requestPromotion("s1", "B", false);
     coordinator.requestPromotion("s1", "B", true);
@@ -226,6 +252,18 @@ describe("PrimaryPromotionCoordinator", () => {
     expect(host.connections.get("A")!.lastFocusAt).toBe(0);
     vi.advanceTimersByTime(900);
     expect(host.primaries.get("s1")).toBe("B");
+  });
+
+  it("keeps a genuine pending reason when the same candidate later reasserts", () => {
+    host.connections.get("A")!.lastFocusAt = 100;
+    focus("B", {}, () => 200);
+    focus("B", { reassert: true });
+
+    host.connections.get("A")!.lastInputAt = 300;
+    vi.advanceTimersByTime(1000);
+
+    expect(host.primaries.get("s1")).toBe("B");
+    expect(host.broadcasts).toEqual(["s1"]);
   });
 
   it("does not promote a deferred challenger after the primary genuinely refocuses", () => {
@@ -666,6 +704,48 @@ describe("client instance engagement recency", () => {
     });
   });
 
+  it("refreshes an already-live same-instance replacement during disconnect flush", () => {
+    const recency = new ClientInstanceFocusRecency();
+    recency.recordInput("s1", "phone-instance", 1000);
+    const oldConnection = {
+      ...visibleOpenConnection("phone-old"),
+      lastInputAt: 1500,
+      sessionId: "s1",
+      clientInstanceId: "phone-instance",
+    };
+    const replacement = {
+      ...visibleOpenConnection("phone-new"),
+      lastInputAt: recency.getLastInputAt("s1", "phone-instance"),
+      sessionId: "s1",
+      clientInstanceId: "phone-instance",
+    };
+    flushClientInstanceRecency(
+      oldConnection,
+      recency,
+      [replacement],
+    );
+
+    expect(replacement.lastInputAt).toBe(1500);
+    const promotionHost = new FakePromotionHost();
+    promotionHost.connections.set("A", {
+      ...visibleOpenConnection("A"),
+      lastInputAt: 1200,
+    });
+    promotionHost.connections.set("phone-new", replacement);
+    promotionHost.primaries.set("s1", "A");
+    promotionHost.lastPromotionAt.set("s1", Date.now() - 1000);
+    const promotionCoordinator = new PrimaryPromotionCoordinator(
+      promotionHost,
+      1000,
+    );
+    try {
+      promotionCoordinator.requestPromotion("s1", "phone-new", false, true);
+      expect(promotionHost.primaries.get("s1")).toBe("phone-new");
+    } finally {
+      promotionCoordinator.dispose();
+    }
+  });
+
   it("caps each session at 16 instances and evicts the oldest engagement", () => {
     const recency = new ClientInstanceFocusRecency();
     recency.recordGenuineFocus("s1", "instance-0", 1);
@@ -699,10 +779,69 @@ describe("client instance recency orphan sweep", () => {
     sweepClientInstanceRecency(
       recency,
       () => 0,
-      (tmuxSessionName) => tmuxSessionName === `rdv-${liveSessionId}`,
+      (tmuxSessionName) => tmuxSessionName === `rdv-${deadSessionId}`,
     );
 
     expect(recency.getSessionIds()).toEqual([liveSessionId]);
     expect(recency.getLastInputAt(liveSessionId, "live-instance")).toBe(200);
+  });
+
+  it("preserves recency when the tmux absence probe throws transiently", () => {
+    const recency = new ClientInstanceFocusRecency();
+    const sessionId = "00000000-0000-4000-8000-000000000003";
+    recency.recordInput(sessionId, "stable-instance", 300);
+
+    sweepClientInstanceRecency(
+      recency,
+      () => 0,
+      (tmuxSessionName) =>
+        tmuxSessionConfirmedAbsent(tmuxSessionName, () => {
+          throw Object.assign(new Error("resource temporarily unavailable"), {
+            code: "EAGAIN",
+          });
+        }),
+    );
+
+    expect(recency.getSessionIds()).toEqual([sessionId]);
+  });
+
+  it("preserves recency when tmux reports a transient socket failure", () => {
+    const recency = new ClientInstanceFocusRecency();
+    const sessionId = "00000000-0000-4000-8000-000000000005";
+    recency.recordInput(sessionId, "stable-instance", 500);
+
+    sweepClientInstanceRecency(
+      recency,
+      () => 0,
+      (tmuxSessionName) =>
+        tmuxSessionConfirmedAbsent(tmuxSessionName, () => {
+          throw Object.assign(new Error("tmux socket unavailable"), {
+            status: 1,
+            stderr: Buffer.from("error connecting to tmux socket (EAGAIN)"),
+          });
+        }),
+    );
+
+    expect(recency.getSessionIds()).toEqual([sessionId]);
+  });
+
+  it("clears recency when tmux cleanly reports no such session", () => {
+    const recency = new ClientInstanceFocusRecency();
+    const sessionId = "00000000-0000-4000-8000-000000000004";
+    recency.recordInput(sessionId, "stable-instance", 400);
+
+    sweepClientInstanceRecency(
+      recency,
+      () => 0,
+      (tmuxSessionName) =>
+        tmuxSessionConfirmedAbsent(tmuxSessionName, () => {
+          throw Object.assign(new Error("tmux has-session exited 1"), {
+            status: 1,
+            stderr: Buffer.from("can't find session"),
+          });
+        }),
+    );
+
+    expect(recency.getSessionIds()).toEqual([]);
   });
 });

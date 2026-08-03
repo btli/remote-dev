@@ -165,6 +165,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const webglAddonRef = useRef<WebglAddonType | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const clientInstanceIdRef = useRef<string | null>(null);
+  const previousSessionIdentityRef = useRef<{
+    sessionId: string;
+    tmuxSessionName: string;
+  } | null>(null);
   const reconcilerRef = useRef<ResizeReconciler | null>(null);
   const visibleRef = useRef(visible);
   const isActiveRef = useRef(isActive);
@@ -383,12 +387,19 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     let mounted = true;
     isUnmountingRef.current = false;
     intentionalExitRef.current = false;
-    const clientInstanceId = crypto.randomUUID();
-    clientInstanceIdRef.current = clientInstanceId;
-    // [remote-dev-d5ci] Fresh effect run == a new session/socket → the upcoming
-    // open is a FIRST connect, not a reconnect. (Stays true across reconnect
-    // attempts within this same effect run.)
-    hasConnectedBeforeRef.current = false;
+    if (clientInstanceIdRef.current === null) {
+      clientInstanceIdRef.current = crypto.randomUUID();
+    }
+    const clientInstanceId = clientInstanceIdRef.current;
+    const previousSessionIdentity = previousSessionIdentityRef.current;
+    const isDifferentSession =
+      !previousSessionIdentity ||
+      previousSessionIdentity.sessionId !== sessionId ||
+      previousSessionIdentity.tmuxSessionName !== tmuxSessionName;
+    previousSessionIdentityRef.current = { sessionId, tmuxSessionName };
+    // A same-session effect restart is another reopen of this mounted client,
+    // while a different session must begin with a genuine focus assertion.
+    if (isDifferentSession) hasConnectedBeforeRef.current = false;
     lastDesiredFocusStateRef.current = null;
     pendingGenuineFocusRef.current = false;
 
@@ -1282,9 +1293,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       searchAddonRef.current = null;
       webglAddonRef.current = null;
       wsRef.current = null;
-      if (clientInstanceIdRef.current === clientInstanceId) {
-        clientInstanceIdRef.current = null;
-      }
+      textareaFocusedRef.current = false;
     };
   }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, terminalType, markIntentionalExit, focusIfPresented]);
 
