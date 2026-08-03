@@ -10,10 +10,12 @@
  *
  * [remote-dev-n4x4.4] The port is ACCOUNT-keyed. It used to take a profileId,
  * a leftover from the pre-n4x4.6 layout where a Claude account was 1:1 with an
- * agent profile; the proactive poller now reads its credential from
- * `claude_account.oauth_token_encrypted`, so an account with no origin profile
- * is pollable and a profile is no longer an identity. `profileId` survives on
- * the target only as an optional breadcrumb for adapters that still want it.
+ * agent profile; the proactive poller now obtains a fresh access token from
+ * the account's independent usage OAuth credential through
+ * `getFreshUsageAccessToken`. It never falls back to the separate setup-token
+ * used for session injection. An account with no origin profile is therefore
+ * pollable, and a profile is no longer an identity. `profileId` survives on the
+ * target only as an optional breadcrumb for adapters that still want it.
  *
  * [remote-dev-u7df] `fetchLimitState` can also yield a typed
  * {@link UsageLimitRateLimited} signal: the upstream read was refused (HTTP
