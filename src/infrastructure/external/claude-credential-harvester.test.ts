@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { constants as fsConstants } from "node:fs";
 import {
   ClaudeCredentialHarvester,
+  CREDENTIAL_SECURITY_EXEC_OPTIONS,
   CredentialHarvesterError,
   deriveClaudeCredentialServiceName,
 } from "./claude-credential-harvester";
@@ -61,6 +62,32 @@ describe("deriveClaudeCredentialServiceName", () => {
 });
 
 describe("ClaudeCredentialHarvester.harvest", () => {
+  it("bounds macOS security reads so a prompt cannot hang a worker", async () => {
+    expect(CREDENTIAL_SECURITY_EXEC_OPTIONS).toEqual({
+      encoding: "utf8",
+      timeout: 15_000,
+      maxBuffer: 1024 * 1024,
+    });
+
+    const harvester = new ClaudeCredentialHarvester({
+      platform: "darwin",
+      username: "test-user",
+      execFile: vi.fn(async () => {
+        throw Object.assign(new Error("security timed out"), {
+          code: "ETIMEDOUT",
+          killed: true,
+        });
+      }),
+      openFile: vi.fn(),
+      deleteFile: vi.fn(),
+    });
+
+    await expect(harvester.harvest(SCRATCH_DIR)).rejects.toMatchObject({
+      name: "CredentialHarvesterError",
+      code: "READ_FAILED",
+    });
+  });
+
   it("opens the Linux credential with O_NOFOLLOW, requires a regular file, and closes it", async () => {
     const { handle, openFile } = openedCredential();
     const harvester = new ClaudeCredentialHarvester({

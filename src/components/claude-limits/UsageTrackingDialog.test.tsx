@@ -276,6 +276,39 @@ describe("UsageTrackingDialog", () => {
     ).toBeInTheDocument();
   });
 
+  it("accepts a server-recovered setup response with unknown command state", async () => {
+    apiFetch.mockImplementation((url: string) => {
+      if (url === "/api/projects") {
+        return Promise.resolve(
+          jsonResponse({ projects: [{ id: "project-1", name: "Remote Dev" }] })
+        );
+      }
+      if (url === "/api/claude-accounts/usage-setup-session") {
+        return Promise.resolve(
+          jsonResponse({
+            sessionId: "existing-usage-session",
+            command: null,
+            commandSent: null,
+            recovered: true,
+            instructions: [
+              "Complete the Claude sign-in in the terminal.",
+              "Return here after sign-in and choose Finish.",
+            ],
+          })
+        );
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    renderDialog();
+
+    fireEvent.click(await readyStartButton());
+
+    expect(
+      await screen.findByText(/existing usage sign-in session is ready/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByText("claude auth login")).not.toBeInTheDocument();
+  });
+
   it("activates the returned terminal session after refreshing sessions", async () => {
     apiFetch.mockImplementation((url: string) => {
       if (url === "/api/projects") {

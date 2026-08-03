@@ -59,7 +59,7 @@ const log = createLogger("ClaudeUsageCredentialService");
 /** Dedicated root whose descendants are the only credential paths we touch. */
 export const USAGE_OAUTH_SCRATCH_DIRECTORY = "claude-oauth";
 
-/** Abandoned login sessions older than this are removed on server startup. */
+/** Abandoned login sessions older than this are removed by the periodic sweep. */
 export const USAGE_OAUTH_ORPHAN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 export type UsageCredentialCaptureErrorCode =
@@ -93,7 +93,7 @@ export interface UsageCredentialFileSystem {
   writeFile(
     path: string,
     data: string,
-    options: { encoding: "utf8"; mode: number }
+    options: { encoding: "utf8"; mode: number; flag: "wx" }
   ): Promise<void>;
   rm(
     path: string,
@@ -104,6 +104,7 @@ export interface UsageCredentialFileSystem {
   lstat(path: string): Promise<{
     dev: number;
     ino: number;
+    mode: number;
     isDirectory(): boolean;
     isFile(): boolean;
     isSymbolicLink(): boolean;
@@ -333,7 +334,7 @@ export class ClaudeUsageCredentialService {
     await this.dependencies.fileSystem.writeFile(
       join(scratchDir, ".claude.json"),
       JSON.stringify({ hasCompletedOnboarding: true, theme: "dark" }),
-      { encoding: "utf8", mode: 0o600 }
+      { encoding: "utf8", mode: 0o600, flag: "wx" }
     );
 
     return { scratchDir, command: buildUsageLoginCommand(scratchDir) };
@@ -505,9 +506,8 @@ export class ClaudeUsageCredentialService {
    * deletion always receives the exact child path before recursive removal;
    * each failure is isolated so later children are still processed.
    *
-   * The default caller runs this sweep once at server boot. An abandoned or
-   * ACCOUNT_MISMATCH-rejected login therefore remains until a later restart
-   * after crossing the age threshold; the 24-hour constant is not a timer.
+   * The default caller runs this sweep at server boot and hourly thereafter.
+   * The 24-hour constant is the minimum orphan age, not the sweep interval.
    */
   async cleanupOrphans(
     maxAgeMs: number = USAGE_OAUTH_ORPHAN_MAX_AGE_MS
@@ -684,6 +684,11 @@ export class ClaudeUsageCredentialService {
     ) {
       throw new Error(
         "Usage credential scratch root changed during validation"
+      );
+    }
+    if ((after.mode & 0o777) !== 0o700) {
+      throw new Error(
+        "Usage credential scratch root must have mode 0700"
       );
     }
 
@@ -881,7 +886,7 @@ export function abortUsageCredentialCapture(
   return defaultService.abort(input);
 }
 
-/** One-shot startup cleanup; intentionally no interval in this module. */
+/** Cleanup boundary invoked at startup and by the server's hourly interval. */
 export function cleanupOrphanedUsageCredentials(): Promise<void> {
   return defaultService.cleanupOrphans();
 }

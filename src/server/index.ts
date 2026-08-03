@@ -69,6 +69,12 @@ let usagePollTimer: ReturnType<typeof setInterval> | null = null;
 /** How often the proactive usage-limit poll sweep runs (10 minutes). */
 const USAGE_POLL_INTERVAL_MS = 10 * 60 * 1000;
 
+/** Handle for cleanup of abandoned usage OAuth login credentials. */
+let usageOauthOrphanTimer: ReturnType<typeof setInterval> | null = null;
+
+/** How often abandoned usage OAuth scratch directories are reconsidered. */
+const USAGE_OAUTH_ORPHAN_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+
 /** Handle for the SQLite WAL auto-truncate timer (null on Postgres). */
 let walCheckpointTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -93,6 +99,16 @@ const SHUTDOWN_CLEANUP_TIMEOUT_MS = 7_000;
  */
 /** Project root resolved from this file's location (src/server/index.ts → ../..) */
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+function runUsageOauthOrphanCleanup(): void {
+  void import("../services/claude-usage-credential-service.js")
+    .then((mod) => mod.cleanupOrphanedUsageCredentials())
+    .catch((error) =>
+      log.error("Usage OAuth orphan cleanup failed", {
+        error: String(error),
+      })
+    );
+}
 
 async function ensureRdvCli(): Promise<void> {
   try {
@@ -197,18 +213,19 @@ async function startServer(): Promise<void> {
     .catch((error) => log.error("Failed to auto-start LiteLLM", { error: String(error) }));
 
   // A usage-login terminal can be abandoned after Claude Code writes a live
-  // credential into its isolated config directory. Run one startup cleanup
-  // before registering the usage sweep: the helper considers only direct
-  // children of `<data-dir>/claude-oauth`, deletes each exact derived
-  // Keychain/file credential first, and then guarded-recursive-removes its
-  // scratch directory. It is intentionally one-shot rather than an interval.
-  void import("../services/claude-usage-credential-service.js")
-    .then((mod) => mod.cleanupOrphanedUsageCredentials())
-    .catch((error) =>
-      log.error("Usage OAuth orphan cleanup failed", {
-        error: String(error),
-      })
-    );
+  // credential into its isolated config directory. Run at startup and hourly:
+  // the helper considers only direct children of `<data-dir>/claude-oauth`,
+  // deletes each exact derived Keychain/file credential first, and then
+  // guarded-recursive-removes its scratch directory once it is at least 24h old.
+  runUsageOauthOrphanCleanup();
+  usageOauthOrphanTimer = setInterval(
+    runUsageOauthOrphanCleanup,
+    USAGE_OAUTH_ORPHAN_SWEEP_INTERVAL_MS
+  );
+  usageOauthOrphanTimer.unref();
+  log.info("Usage OAuth orphan cleanup registered", {
+    intervalMs: USAGE_OAUTH_ORPHAN_SWEEP_INTERVAL_MS,
+  });
 
   // [remote-dev-3b3l] Proactive Claude usage-limit poll sweep (~10m). The sweep
   // is a NO-OP unless the poller is explicitly enabled (it self-guards), so the
@@ -249,6 +266,10 @@ async function startServer(): Promise<void> {
       if (usagePollTimer) {
         clearInterval(usagePollTimer);
         usagePollTimer = null;
+      }
+      if (usageOauthOrphanTimer) {
+        clearInterval(usageOauthOrphanTimer);
+        usageOauthOrphanTimer = null;
       }
       // Stop the WAL checkpoint + ghost-session reconcile timers.
       if (walCheckpointTimer) {

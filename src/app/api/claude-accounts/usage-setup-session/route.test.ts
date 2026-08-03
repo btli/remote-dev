@@ -12,6 +12,7 @@ vi.mock("@/services/api-key-service", () => ({
 }));
 vi.mock("@/services/session-service", () => ({
   createSession: vi.fn(),
+  listSessions: vi.fn(),
   updateSession: vi.fn(),
   closeSession: vi.fn().mockResolvedValue(undefined),
 }));
@@ -66,7 +67,10 @@ beforeEach(() => {
   vi.mocked(getAccount).mockResolvedValue({
     id: "account-1",
     emailAddress: "target@example.com",
+    accountKind: "subscription",
   } as never);
+  vi.mocked(SessionService.listSessions).mockReset();
+  vi.mocked(SessionService.listSessions).mockResolvedValue([]);
   vi.mocked(SessionService.createSession).mockReset();
   vi.mocked(SessionService.createSession).mockResolvedValue(session as never);
   vi.mocked(SessionService.updateSession).mockReset();
@@ -159,6 +163,7 @@ describe("POST /api/claude-accounts/usage-setup-session", () => {
       sessionId: "actual-session-id",
       command,
       commandSent: true,
+      recovered: false,
       instructions: expect.any(Array),
     });
     const prose = (body.instructions as string[]).join(" ");
@@ -167,6 +172,87 @@ describe("POST /api/claude-accounts/usage-setup-session", () => {
     expect(prose).toMatch(/paste.*code/i);
     expect(prose).toMatch(/Finish/i);
     expect(prose).not.toContain("—");
+  });
+
+  it("rejects api_key accounts before session or filesystem effects", async () => {
+    vi.mocked(getAccount).mockResolvedValue({
+      id: "account-1",
+      accountKind: "api_key",
+    } as never);
+
+    const response = await POST(
+      request({ projectId: "project-1", accountId: "account-1" })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      code: "USAGE_TRACKING_UNSUPPORTED_ACCOUNT_KIND",
+    });
+    expect(SessionService.listSessions).not.toHaveBeenCalled();
+    expect(SessionService.createSession).not.toHaveBeenCalled();
+    expect(prepareUsageCredentialScratch).not.toHaveBeenCalled();
+  });
+
+  it("returns an existing open account-matched setup session", async () => {
+    vi.mocked(SessionService.listSessions).mockResolvedValue([
+      {
+        id: "existing-session",
+        tmuxSessionName: "rdv-existing-session",
+        status: "active",
+        typeMetadata: {
+          [CLAUDE_USAGE_SETUP_SESSION_MARKER]: true,
+          accountId: "account-1",
+          scratchDir: "/tmp/rdv/claude-oauth/existing-session",
+        },
+      },
+    ] as never);
+
+    const response = await POST(
+      request({ projectId: "project-1", accountId: "account-1" })
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      sessionId: "existing-session",
+      command: null,
+      commandSent: null,
+      recovered: true,
+      instructions: expect.any(Array),
+    });
+    expect(SessionService.createSession).not.toHaveBeenCalled();
+    expect(prepareUsageCredentialScratch).not.toHaveBeenCalled();
+    expect(TmuxService.sendKeys).not.toHaveBeenCalled();
+  });
+
+  it("coalesces concurrent setup requests for the same owner and account", async () => {
+    let resolveCreate!: (value: typeof session) => void;
+    vi.mocked(SessionService.createSession).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve as (value: typeof session) => void;
+        }) as never
+    );
+
+    const first = POST(
+      request({ projectId: "project-1", accountId: "account-1" })
+    );
+    await vi.waitFor(() =>
+      expect(SessionService.createSession).toHaveBeenCalledTimes(1)
+    );
+    const second = POST(
+      request({ projectId: "project-1", accountId: "account-1" })
+    );
+    await Promise.resolve();
+    expect(SessionService.createSession).toHaveBeenCalledTimes(1);
+
+    resolveCreate(session);
+    const [firstResponse, secondResponse] = await Promise.all([first, second]);
+
+    expect(firstResponse.status).toBe(201);
+    expect(secondResponse.status).toBe(201);
+    expect(SessionService.createSession).toHaveBeenCalledTimes(1);
+    expect(prepareUsageCredentialScratch).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the prepared session available when automatic command sending fails", async () => {

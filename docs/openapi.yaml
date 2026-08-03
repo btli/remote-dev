@@ -1301,7 +1301,10 @@ paths:
         to the caller. Complete the browser URL and paste-code flow in the
         terminal, then call /api/claude-accounts/usage-capture. The returned
         command is a safely quoted manual fallback when commandSent is false.
-        This flow does not modify the setup-token used for session injection.
+        If an open usage setup session already exists for this caller/account,
+        it is recovered instead of creating another scratch directory. API-key
+        accounts are unsupported. This flow does not modify the setup-token
+        used for session injection.
       security:
         - apiKey: []
         - sessionCookie: []
@@ -1311,12 +1314,17 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/ClaudeUsageSetupSessionRequest' }
       responses:
+        '200':
+          description: Existing open usage sign-in session recovered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClaudeUsageSetupSessionResponse' }
         '201':
           description: Private usage sign-in session prepared
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ClaudeUsageSetupSessionResponse' }
-        '400': { description: Body is not a JSON object or either id is missing, blank, or not a string, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '400': { description: Body is invalid, either id is missing/blank/not a string, or the account is an unsupported api_key account (code USAGE_TRACKING_UNSUPPORTED_ACCOUNT_KIND), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { description: Account is missing or belongs to another user, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /api/claude-accounts/usage-capture:
@@ -2843,11 +2851,12 @@ components:
         accountId: { type: string, pattern: '\S', description: Existing caller-owned Claude account that will receive the usage credential }
     ClaudeUsageSetupSessionResponse:
       type: object
-      required: [sessionId, command, commandSent, instructions]
+      required: [sessionId, command, commandSent, recovered, instructions]
       properties:
         sessionId: { type: string }
-        command: { type: string, description: Safely quoted command to run manually if automatic terminal entry failed }
-        commandSent: { type: boolean, description: Whether the server successfully entered the command into the terminal }
+        command: { type: string, nullable: true, description: Safely quoted command to run manually if automatic terminal entry failed; null when an existing session was recovered }
+        commandSent: { type: boolean, nullable: true, description: Whether the server successfully entered the command into the terminal; null when an existing session was recovered }
+        recovered: { type: boolean, description: True when the server returned an already-open setup session instead of creating one }
         instructions: { type: array, items: { type: string } }
     ClaudeUsageCaptureRequest:
       type: object

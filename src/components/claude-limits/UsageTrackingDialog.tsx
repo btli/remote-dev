@@ -102,8 +102,11 @@ function parseSetupSession(data: unknown): UsageSetupSession | null {
   const candidate = data as Record<string, unknown>;
   if (
     typeof candidate.sessionId !== "string" ||
-    typeof candidate.command !== "string" ||
-    typeof candidate.commandSent !== "boolean" ||
+    (candidate.command !== null && typeof candidate.command !== "string") ||
+    (candidate.commandSent !== null &&
+      typeof candidate.commandSent !== "boolean") ||
+    (candidate.recovered !== undefined &&
+      typeof candidate.recovered !== "boolean") ||
     !Array.isArray(candidate.instructions) ||
     !candidate.instructions.every((step) => typeof step === "string")
   ) {
@@ -114,7 +117,7 @@ function parseSetupSession(data: unknown): UsageSetupSession | null {
     command: candidate.command,
     commandSent: candidate.commandSent,
     instructions: candidate.instructions,
-    recovered: false,
+    recovered: candidate.recovered === true,
   };
 }
 

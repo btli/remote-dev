@@ -968,9 +968,12 @@ the same `tokenValid`/`tokenError` pair.
 
 ### Enabling usage tracking
 
-Usage tracking is an optional second sign-in attached to an existing account.
-It does not replace or modify the setup-token used by Claude sessions. Both
-endpoints are **[session | key]**, and ownership is checked again at each step.
+Usage tracking is an optional second sign-in attached to an existing
+subscription account. API-key accounts are rejected with
+`400 USAGE_TRACKING_UNSUPPORTED_ACCOUNT_KIND` because the usage endpoint has
+no API-key equivalent. This flow does not replace or modify the setup-token
+used by Claude sessions. All endpoints are **[session | key]**, and ownership
+is checked again at each step.
 
 ```http
 POST /api/claude-accounts/usage-setup-session
@@ -979,14 +982,17 @@ Content-Type: application/json
 { "projectId": "project-id", "accountId": "account-id" }
 ```
 
-The account must belong to the caller or the route returns `404`. On success it
-creates an isolated shell session and returns `201`:
+The account must belong to the caller or the route returns `404`. The server
+deduplicates setup per caller/account: a new isolated shell session returns
+`201`, while an already-open usage setup session returns `200` with
+`recovered: true` instead of creating another scratch directory:
 
 ```json
 {
   "sessionId": "session-id",
   "command": "<safely quoted Claude usage sign-in command>",
   "commandSent": true,
+  "recovered": false,
   "instructions": ["..."]
 }
 ```
@@ -997,7 +1003,9 @@ URL printed in the terminal into a browser and paste the authorization code
 back into the terminal. `commandSent: false` means the prepared terminal is
 still available, but the returned `command` must be run manually. Invalid JSON
 or missing/non-string ids return `400`; a missing or foreign account returns
-`404`.
+`404`. A recovered response has `command: null` and `commandSent: null`
+because the original command-entry outcome is no longer known; the terminal
+session remains the authority for its current sign-in state.
 
 After sign-in, finish with only the returned session id:
 

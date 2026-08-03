@@ -49,6 +49,11 @@ export type CredentialHarvesterErrorCode =
 /**
  * A route-safe classification of environmental harvest failures. Absence and
  * not-yet-complete login are represented by `null`, not by this error.
+ *
+ * SECURITY: `cause` can retain the raw stdout from `/usr/bin/security`, which
+ * contains the live access and refresh tokens. Callers must log only
+ * `String(error)`, `error.name`, and/or `error.code`; NEVER log or inspect the
+ * error object itself because its cause chain contains credential material.
  */
 export class CredentialHarvesterError extends Error {
   readonly name = "CredentialHarvesterError";
@@ -90,8 +95,18 @@ export interface CredentialHarvesterDependencies {
 
 const runExecFile = promisify(nodeExecFile);
 
+export const CREDENTIAL_SECURITY_EXEC_OPTIONS = {
+  encoding: "utf8",
+  timeout: 15_000,
+  maxBuffer: 1024 * 1024,
+} as const;
+
 const defaultExecFile: CredentialExecFile = async (executable, args) => {
-  const result = await runExecFile(executable, args, { encoding: "utf8" });
+  const result = await runExecFile(
+    executable,
+    args,
+    CREDENTIAL_SECURITY_EXEC_OPTIONS
+  );
   return { stdout: result.stdout, stderr: result.stderr };
 };
 

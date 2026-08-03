@@ -74,10 +74,14 @@ type LstatEntry = Awaited<
   ReturnType<UsageCredentialServiceDependencies["fileSystem"]["lstat"]>
 >;
 
-function realDirectoryEntry(identity: number = 1): LstatEntry {
+function realDirectoryEntry(
+  identity: number = 1,
+  mode: number = 0o40700
+): LstatEntry {
   return {
     dev: 1,
     ino: identity,
+    mode,
     isDirectory: () => true,
     isFile: () => false,
     isSymbolicLink: () => false,
@@ -88,6 +92,7 @@ function regularFileEntry(identity: number = 2): LstatEntry {
   return {
     dev: 1,
     ino: identity,
+    mode: 0o100600,
     isDirectory: () => false,
     isFile: () => true,
     isSymbolicLink: () => false,
@@ -98,6 +103,7 @@ function symlinkEntry(): LstatEntry {
   return {
     dev: 1,
     ino: 99,
+    mode: 0o120777,
     isDirectory: () => false,
     isFile: () => false,
     isSymbolicLink: () => true,
@@ -188,7 +194,7 @@ describe("scratch preparation and command", () => {
     expect(deps.fileSystem.writeFile).toHaveBeenCalledWith(
       `${SCRATCH}/.claude.json`,
       expect.any(String),
-      { encoding: "utf8", mode: 0o600 }
+      { encoding: "utf8", mode: 0o600, flag: "wx" }
     );
     const seed = JSON.parse(
       vi.mocked(deps.fileSystem.writeFile).mock.calls[0][1]
@@ -231,6 +237,22 @@ describe("scratch preparation and command", () => {
     }
   );
 
+  it("rejects an existing scratch root with group or world permissions", async () => {
+    const deps = makeDependencies();
+    vi.mocked(deps.fileSystem.lstat).mockImplementation(async (path) =>
+      path === ROOT
+        ? realDirectoryEntry(1, 0o40777)
+        : realDirectoryEntry()
+    );
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.prepareScratch("session-1")).rejects.toThrow(
+      /scratch root.*0700/i
+    );
+    expect(deps.fileSystem.mkdir).toHaveBeenCalledTimes(1);
+    expect(deps.fileSystem.writeFile).not.toHaveBeenCalled();
+  });
+
   it("allows a stable real scratch root beneath a canonicalized ancestor", async () => {
     const deps = makeDependencies();
     vi.mocked(deps.fileSystem.mkdir).mockImplementation(async (path) => {
@@ -255,7 +277,7 @@ describe("scratch preparation and command", () => {
     expect(deps.fileSystem.writeFile).toHaveBeenCalledWith(
       `${SCRATCH}/.claude.json`,
       expect.any(String),
-      { encoding: "utf8", mode: 0o600 }
+      { encoding: "utf8", mode: 0o600, flag: "wx" }
     );
   });
 
