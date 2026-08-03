@@ -343,7 +343,7 @@ export function toAccountView(row: AccountRow): ClaudeAccountView {
     authHealthy: row.authHealthy,
     lastVerifiedAt: row.lastVerifiedAt ? row.lastVerifiedAt.getTime() : null,
     hasToken: !!row.oauthTokenEncrypted,
-    usageCredential: !!row.usageOauthRefreshEncrypted,
+    usageCredential: row.usageOauthRefreshEncrypted !== null,
     profileId: row.profileId ?? null,
     createdAt: row.createdAt.getTime(),
     updatedAt: row.updatedAt.getTime(),

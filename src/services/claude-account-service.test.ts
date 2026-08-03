@@ -217,6 +217,15 @@ describe("toAccountView", () => {
 
     expect(account.usageCredential).toBe(false);
   });
+
+  it("reports a usage credential when a non-null refresh value is empty", () => {
+    const account = toAccountView({
+      ...baseRow,
+      usageOauthRefreshEncrypted: "",
+    } as Parameters<typeof toAccountView>[0]);
+
+    expect(account.usageCredential).toBe(true);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
