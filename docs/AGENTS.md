@@ -175,8 +175,12 @@ that sends no message and burns no quota. It is opt-in because enabling it makes
 the server contact a third party on a timer with stored user credentials, not
 because it costs anything. The sweep bounds its concurrency and backs off
 exponentially per account after a failure, so a revoked token is not retried
-every 10 minutes forever. The once-planned `rdv` Stop-hook limit detector was
-never built.
+every 10 minutes forever. A 429 with a usable `retry-after` is NOT treated as a
+failure: Anthropic rate-limits long-lived setup-token credentials on the usage
+endpoint to roughly one read per hour, so the sweep schedules that account's
+next attempt just past the reported reset (plus jitter) instead of the
+exponential ladder — the dominant path for healthy setup-token accounts. The
+once-planned `rdv` Stop-hook limit detector was never built.
 
 **Rotation is model-aware — but only when the poller is enabled**, since it is
 the only source of per-model `weekly_scoped` windows (stored per account in

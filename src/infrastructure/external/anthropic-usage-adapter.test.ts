@@ -382,6 +382,20 @@ describe("fetchClaudeUsage", () => {
       ).toBeLessThanOrEqual(2_000);
     });
 
+    it("treats a literal retry-after of 0 as rate-limited with retryAt of now", async () => {
+      // RFC-valid "retry now": retryAt = now; the sweep's max(retryAt, now)
+      // + jitter scheduling handles it, so it must NOT fall to failure backoff.
+      const before = Date.now();
+      const { fetch } = fakeFetch(429, "{}", { "retry-after": "0" });
+
+      const result = await fetchClaudeUsage("tok", "subscription", fetch);
+
+      expect(result.outcome).toBe("rate-limited");
+      if (result.outcome !== "rate-limited") throw new Error("unreachable");
+      expect(result.retryAt.getTime()).toBeGreaterThanOrEqual(before);
+      expect(result.retryAt.getTime()).toBeLessThanOrEqual(Date.now());
+    });
+
     it("falls back to no-data when retry-after is missing", async () => {
       const { fetch } = fakeFetch(429, "{}");
       const result = await fetchClaudeUsage("tok", "subscription", fetch);

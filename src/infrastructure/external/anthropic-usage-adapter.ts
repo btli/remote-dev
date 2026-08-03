@@ -511,9 +511,12 @@ function parseResetHeader(raw: string | null): Date | null {
 
 /**
  * Parse a `retry-after` header into whole seconds. Accepts BOTH documented
- * forms: an integer delta ("3578") and an HTTP-date, converted to a delta from
- * now (rounded up so a retry never lands early). Null when absent,
- * unparseable, or not in the future — callers treat that as a plain failure.
+ * forms: an integer delta ("3578", where "0" is valid RFC — retry now) and an
+ * HTTP-date, converted to a delta from now (rounded up so a retry never lands
+ * early). The HTTP-date form is exposed to local clock skew; the
+ * integer-seconds form — the only one observed live — is relative and immune.
+ * Null when absent, unparseable, or (HTTP-date) not in the future — callers
+ * treat that as a plain failure.
  */
 function parseRetryAfter(raw: string | null): number | null {
   if (!raw) return null;
@@ -521,10 +524,11 @@ function parseRetryAfter(raw: string | null): number | null {
   if (trimmed.length === 0) return null;
 
   // Integer delta-seconds form. Checked before Date.parse, which would read
-  // pure digits as a year.
+  // pure digits as a year. Zero is meaningful: retryAt = now, and the sweep's
+  // max(retryAt, now) + jitter scheduling handles it.
   if (/^\d+$/.test(trimmed)) {
     const seconds = Number.parseInt(trimmed, 10);
-    return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+    return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
   }
 
   const ms = Date.parse(trimmed);
