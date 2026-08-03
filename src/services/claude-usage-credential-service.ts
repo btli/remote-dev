@@ -47,6 +47,7 @@ import { createLogger } from "@/lib/logger";
 import { getDataDir } from "@/lib/paths";
 import {
   CLAUDE_USAGE_OAUTH_LOGIN_COMMAND,
+  normalizeClaudeIdentityEmail,
   probeScratchIdentity,
   storeInitialUsageCredential,
   type ClaudeAccountView,
@@ -279,12 +280,6 @@ function hasCode(error: unknown, code: string): boolean {
   );
 }
 
-function normalizedEmail(value: string | null): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed.toLocaleLowerCase("en-US") : null;
-}
-
 function isCredentialDeleteComplete(
   outcome: unknown
 ): outcome is "deleted" | "absent" {
@@ -423,8 +418,8 @@ export class ClaudeUsageCredentialService {
       rootProof
     );
     const identity = await this.dependencies.probeIdentity(input.scratchDir);
-    const targetEmail = normalizedEmail(input.targetEmail);
-    const scratchEmail = normalizedEmail(identity.email);
+    const targetEmail = normalizeClaudeIdentityEmail(input.targetEmail);
+    const scratchEmail = normalizeClaudeIdentityEmail(identity.email);
     if (targetEmail && scratchEmail && targetEmail !== scratchEmail) {
       return this.rejectTerminalCapture(
         input,

@@ -736,17 +736,25 @@ function usageCredentialInvalidationColumns(
   identity: ClaudeIdentity,
   fallback: AccountRow | null | undefined
 ) {
-  const nextEmail = normalizedIdentityEmail(identity.email);
+  const nextEmail = normalizeClaudeIdentityEmail(identity.email);
   if (
     !nextEmail ||
-    nextEmail === normalizedIdentityEmail(fallback?.emailAddress ?? null)
+    nextEmail === normalizeClaudeIdentityEmail(fallback?.emailAddress ?? null)
   ) {
     return {};
   }
   return CLEARED_USAGE_CREDENTIAL_COLUMNS;
 }
 
-function normalizedIdentityEmail(value: string | null): string | null {
+/**
+ * The single comparison form for a Claude identity email: trimmed and
+ * case-folded, with blank treated as "unknown" rather than as a value. Shared
+ * so credential-binding checks here and in the usage capture flow cannot drift
+ * into disagreeing about whether two logins are the same account.
+ */
+export function normalizeClaudeIdentityEmail(
+  value: string | null
+): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed ? trimmed.toLocaleLowerCase("en-US") : null;
@@ -945,6 +953,9 @@ export async function readOwnedUsageCredential(
     await quarantineUsageCredential(accountId, userId, revision);
     return null;
   }
+  // Decryption can succeed and still hand back an empty string. That is not a
+  // usable credential, but it is also not the tamper signal a decrypt failure
+  // is, so it resolves to null without quarantining the row.
   if (!accessToken || !refreshToken) return null;
   return {
     accessToken,
