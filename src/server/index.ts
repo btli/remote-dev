@@ -196,6 +196,20 @@ async function startServer(): Promise<void> {
     })
     .catch((error) => log.error("Failed to auto-start LiteLLM", { error: String(error) }));
 
+  // A usage-login terminal can be abandoned after Claude Code writes a live
+  // credential into its isolated config directory. Run one startup cleanup
+  // before registering the usage sweep: the helper considers only direct
+  // children of `<data-dir>/claude-oauth`, deletes each exact derived
+  // Keychain/file credential first, and then guarded-recursive-removes its
+  // scratch directory. It is intentionally one-shot rather than an interval.
+  void import("../services/claude-usage-credential-service.js")
+    .then((mod) => mod.cleanupOrphanedUsageCredentials())
+    .catch((error) =>
+      log.error("Usage OAuth orphan cleanup failed", {
+        error: String(error),
+      })
+    );
+
   // [remote-dev-3b3l] Proactive Claude usage-limit poll sweep (~10m). The sweep
   // is a NO-OP unless the poller is explicitly enabled (it self-guards), so the
   // interval is always registered but does nothing by default. Lives here next

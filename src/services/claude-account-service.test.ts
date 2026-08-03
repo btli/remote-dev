@@ -118,6 +118,7 @@ import {
   isLikelyTruncatedToken,
   MIN_SETUP_TOKEN_LENGTH,
   probeIdentity,
+  probeScratchIdentity,
   saveAccountToken,
   verifyAccount,
   listAccounts,
@@ -132,8 +133,10 @@ import {
   readOwnedUsageCredential,
   storeRefreshedUsageCredential,
   quarantineUsageCredential,
+  storeInitialUsageCredential,
   UNKNOWN_IDENTITY,
   CLAUDE_OAUTH_TOKEN_ENV,
+  CLAUDE_USAGE_SETUP_SESSION_MARKER,
   toAccountView,
   type ClaudeCliRunner,
 } from "./claude-account-service";
@@ -323,6 +326,50 @@ describe("probeIdentity", () => {
       throw new Error("ENOENT: claude not found");
     };
     expect(await probeIdentity(TOKEN, runner)).toEqual(UNKNOWN_IDENTITY);
+  });
+});
+
+describe("probeScratchIdentity", () => {
+  it("runs the shared auth-status parser under only the scratch credential context", async () => {
+    const calls: Array<{ args: string[]; env: Record<string, string> }> = [];
+    const runner: ClaudeCliRunner = async (args, env) => {
+      calls.push({ args, env });
+      return { stdout: LOGGED_IN_JSON, stderr: "", exitCode: 0 };
+    };
+
+    await expect(
+      probeScratchIdentity("/tmp/rdv-oauth/session-1", runner)
+    ).resolves.toMatchObject({ email: "person@example.com", loggedIn: true });
+    expect(calls).toEqual([
+      {
+        args: ["auth", "status", "--json"],
+        env: {
+          CLAUDE_CONFIG_DIR: "/tmp/rdv-oauth/session-1",
+          CLAUDE_CODE_OAUTH_TOKEN: "",
+          ANTHROPIC_API_KEY: "",
+          ANTHROPIC_AUTH_TOKEN: "",
+        },
+      },
+    ]);
+  });
+
+  it("is best-effort and never invokes a default credential fallback", async () => {
+    const runner = vi.fn(async () => {
+      throw new Error("CLI unavailable");
+    });
+
+    await expect(
+      probeScratchIdentity("/tmp/rdv-oauth/session-2", runner)
+    ).resolves.toEqual(UNKNOWN_IDENTITY);
+    expect(runner).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("usage setup provenance marker", () => {
+  it("pins the metadata key used by both usage routes", () => {
+    expect(CLAUDE_USAGE_SETUP_SESSION_MARKER).toBe(
+      "rdvClaudeUsageSetupSession"
+    );
   });
 });
 
@@ -966,6 +1013,159 @@ describe("readOwnedUsageCredential", () => {
       usageOauthAccessEncrypted: "malformed-ciphertext",
     });
     expect(await readOwnedUsageCredential("acct-usage", USER)).toBeNull();
+  });
+});
+
+describe("storeInitialUsageCredential", () => {
+  it("stores both tokens encrypted plus exact scopes and Date expiry", async () => {
+    const row = seedUsageCredentialRow({
+      usageOauthAccessEncrypted: null,
+      usageOauthRefreshEncrypted: null,
+      usageOauthExpiresAt: null,
+      usageOauthScopes: null,
+    });
+    const scopes = ["future:scope", "user:profile", "user:inference"];
+
+    const account = await storeInitialUsageCredential(
+      "acct-usage",
+      USER,
+      {
+        accessToken: "captured-access",
+        refreshToken: "captured-refresh",
+        expiresAt: 1_785_793_317_600,
+        scopes,
+        subscriptionType: "max",
+        rateLimitTier: "default_claude_max",
+      },
+      {
+        ...UNKNOWN_IDENTITY,
+        loggedIn: true,
+        email: "captured@example.com",
+      },
+      new Date(50_000)
+    );
+
+    expect(row.usageOauthAccessEncrypted).not.toBe("captured-access");
+    expect(row.usageOauthRefreshEncrypted).not.toBe("captured-refresh");
+    expect(decrypt(row.usageOauthAccessEncrypted as string)).toBe(
+      "captured-access"
+    );
+    expect(decrypt(row.usageOauthRefreshEncrypted as string)).toBe(
+      "captured-refresh"
+    );
+    expect(row.usageOauthExpiresAt).toEqual(new Date(1_785_793_317_600));
+    expect(row.usageOauthScopes).toBe(JSON.stringify(scopes));
+    expect(account).toMatchObject({
+      id: "acct-usage",
+      emailAddress: "captured@example.com",
+      rateLimitTier: "default_claude_max",
+      usageCredential: true,
+    });
+    expect(account).not.toHaveProperty("usageOauthAccessEncrypted");
+  });
+
+  it("prefers nonblank credential tier fields and otherwise preserves identity/fallback display values", async () => {
+    const row = seedUsageCredentialRow({
+      emailAddress: "known@example.com",
+      organizationId: "known-org",
+      organizationName: "Known Org",
+      rateLimitTier: "known-tier",
+      authMethod: "known-auth",
+    });
+    const credential = {
+      accessToken: "captured-access",
+      refreshToken: "captured-refresh",
+      expiresAt: 1_785_793_317_600,
+      scopes: ["user:profile"],
+      subscriptionType: "credential-plan",
+      rateLimitTier: "   ",
+    };
+
+    await storeInitialUsageCredential(
+      "acct-usage",
+      USER,
+      credential,
+      {
+        ...UNKNOWN_IDENTITY,
+        loggedIn: true,
+        subscriptionType: "identity-plan",
+      }
+    );
+    expect(row).toMatchObject({
+      emailAddress: "known@example.com",
+      organizationId: "known-org",
+      organizationName: "Known Org",
+      authMethod: "known-auth",
+      rateLimitTier: "credential-plan",
+    });
+
+    await storeInitialUsageCredential(
+      "acct-usage",
+      USER,
+      { ...credential, subscriptionType: "", rateLimitTier: null },
+      { ...UNKNOWN_IDENTITY, subscriptionType: "identity-plan" }
+    );
+    expect(row.rateLimitTier).toBe("identity-plan");
+  });
+
+  it("returns null for absent or foreign accounts and never creates a row", async () => {
+    const row = seedUsageCredentialRow();
+    const before = { ...row };
+    const credential = {
+      accessToken: "must-not-store",
+      refreshToken: "must-not-store",
+      expiresAt: 1_785_793_317_600,
+      scopes: ["user:profile"],
+      subscriptionType: null,
+      rateLimitTier: null,
+    };
+
+    await expect(
+      storeInitialUsageCredential(
+        "acct-usage",
+        "someone-else",
+        credential,
+        UNKNOWN_IDENTITY
+      )
+    ).resolves.toBeNull();
+    await expect(
+      storeInitialUsageCredential(
+        "missing",
+        USER,
+        credential,
+        UNKNOWN_IDENTITY
+      )
+    ).resolves.toBeNull();
+    expect(row).toEqual(before);
+    expect(rows.size).toBe(1);
+  });
+
+  it("does not alter the setup token or session-health verification fields", async () => {
+    const lastVerifiedAt = new Date(1234);
+    const row = seedUsageCredentialRow({
+      authHealthy: false,
+      lastVerifiedAt,
+      oauthTokenEncrypted: encrypt(TOKEN),
+    });
+    const priorSessionToken = row.oauthTokenEncrypted;
+
+    await storeInitialUsageCredential(
+      "acct-usage",
+      USER,
+      {
+        accessToken: "captured-access",
+        refreshToken: "captured-refresh",
+        expiresAt: 1_785_793_317_600,
+        scopes: ["user:profile"],
+        subscriptionType: null,
+        rateLimitTier: null,
+      },
+      { ...UNKNOWN_IDENTITY, loggedIn: true }
+    );
+
+    expect(row.authHealthy).toBe(false);
+    expect(row.lastVerifiedAt).toBe(lastVerifiedAt);
+    expect(row.oauthTokenEncrypted).toBe(priorSessionToken);
   });
 });
 

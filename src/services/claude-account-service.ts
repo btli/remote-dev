@@ -71,6 +71,15 @@ export const CLAUDE_OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
  */
 export const CLAUDE_SETUP_SESSION_MARKER = "rdvClaudeSetupSession";
 
+/**
+ * Provenance marker for the isolated claude.ai login session used only to
+ * capture a `user:profile`-scoped usage credential. Keeping this distinct from
+ * {@link CLAUDE_SETUP_SESSION_MARKER} prevents either capture endpoint from
+ * reading credentials produced by the other flow.
+ */
+export const CLAUDE_USAGE_SETUP_SESSION_MARKER =
+  "rdvClaudeUsageSetupSession";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Identity (`claude auth status --json`)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -299,6 +308,45 @@ export async function probeIdentity(
     return identity;
   } catch (error) {
     log.warn("Claude identity probe failed", { error: String(error) });
+    return { ...UNKNOWN_IDENTITY };
+  }
+}
+
+/**
+ * Probe identity from an isolated Claude config directory.
+ *
+ * Unlike {@link probeIdentity}, this deliberately supplies no token in the
+ * environment: Claude Code must resolve only the credential associated with
+ * the literal scratch `CLAUDE_CONFIG_DIR`. All ambient auth variables are
+ * blanked so a server credential cannot shadow that scratch identity. The
+ * probe is best-effort and shares {@link parseAuthStatus}'s tolerant parser.
+ */
+export async function probeScratchIdentity(
+  scratchDir: string,
+  runner: ClaudeCliRunner = defaultCliRunner
+): Promise<ClaudeIdentity> {
+  try {
+    const { stdout, stderr, exitCode } = await runner(
+      ["auth", "status", "--json"],
+      {
+        CLAUDE_CONFIG_DIR: scratchDir,
+        [CLAUDE_OAUTH_TOKEN_ENV]: "",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_AUTH_TOKEN: "",
+      }
+    );
+    const identity = parseAuthStatus(stdout || stderr);
+    log.debug("Probed scratch Claude identity", {
+      exitCode,
+      loggedIn: identity.loggedIn,
+      authMethod: identity.authMethod ?? "unknown",
+      hasEmail: identity.email !== null,
+    });
+    return identity;
+  } catch (error) {
+    log.warn("Scratch Claude identity probe failed", {
+      error: String(error),
+    });
     return { ...UNKNOWN_IDENTITY };
   }
 }
@@ -741,6 +789,66 @@ export interface OwnedUsageCredential {
   accessToken: string;
   refreshToken: string;
   expiresAt: Date;
+}
+
+/**
+ * Complete credential captured from Claude Code's isolated login. The open
+ * scope set and provider display strings are stored without narrowing them to
+ * enums so future Claude Code additions remain usable.
+ */
+export interface InitialUsageCredential {
+  accessToken: string;
+  refreshToken: string;
+  /** Epoch milliseconds, matching Claude Code's credential payload. */
+  expiresAt: number;
+  scopes: string[];
+  subscriptionType: string | null;
+  rateLimitTier: string | null;
+}
+
+/**
+ * Attach the first usage credential to one existing, owner-scoped account.
+ *
+ * This operation never inserts a row and includes both account id and user id
+ * in the mutation predicate. The session credential and its health columns
+ * are intentionally absent from the SET clause: usage polling and session
+ * authentication are independent credential classes. A fresh token-free view
+ * is returned after the write; an absent/foreign account resolves to null.
+ */
+export async function storeInitialUsageCredential(
+  accountId: string,
+  userId: string,
+  credential: InitialUsageCredential,
+  identity: ClaudeIdentity,
+  now: Date = new Date()
+): Promise<ClaudeAccountView | null> {
+  const existing = await findOwnedRow(accountId, userId);
+  if (!existing) return null;
+
+  const identityColumns = identityDisplayColumns(identity, existing);
+  const credentialTier =
+    nonBlank(credential.rateLimitTier) ??
+    nonBlank(credential.subscriptionType);
+
+  await db
+    .update(claudeAccounts)
+    .set({
+      usageOauthAccessEncrypted: encrypt(credential.accessToken),
+      usageOauthRefreshEncrypted: encrypt(credential.refreshToken),
+      usageOauthExpiresAt: new Date(credential.expiresAt),
+      usageOauthScopes: JSON.stringify(credential.scopes),
+      ...identityColumns,
+      rateLimitTier: credentialTier ?? identityColumns.rateLimitTier,
+      updatedAt: now,
+    })
+    .where(ownedBy(accountId, userId));
+
+  const refreshed = await findOwnedRow(accountId, userId);
+  return refreshed ? toAccountView(refreshed) : null;
+}
+
+function nonBlank(value: string | null): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
 /**
