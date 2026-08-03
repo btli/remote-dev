@@ -2558,6 +2558,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         open={isResumeModalOpen}
         onClose={handleResumeModalClose}
         projectPath={resumeModalProjectPath}
+        projectId={resumeModalFolderId ?? undefined}
         provider={resumeModalProvider}
         profileId={resumeModalProfileId}
         onResume={handleResumeAgentSession}

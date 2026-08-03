@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import type { AgentProviderConfig } from "@/types/session";
+import { isDangerousAgentFlag } from "@/lib/terminal-plugins/agent-utils";
 import type { AgentProviderSettings } from "@/types/preferences";
 
 interface Props {
@@ -65,7 +66,7 @@ export function AgentProviderConfigCard({ provider, settings, onChange }: Props)
   const extraFlags = settings.extraFlags ?? [];
   const previewFlags = settings.allowDangerous
     ? extraFlags
-    : extraFlags.filter((f) => !dangerousFlags.includes(f));
+    : extraFlags.filter((flag) => !isDangerousAgentFlag(provider, flag));
   const previewParts = [
     provider.command,
     ...provider.defaultFlags,

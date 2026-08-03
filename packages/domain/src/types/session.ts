@@ -145,7 +145,7 @@ export const AGENT_PROVIDERS: AgentProviderConfig[] = [
     command: "agent",
     configFile: "AGENTS.md",
     defaultFlags: [],
-    dangerousFlags: ["--force", "--yolo"],
+    dangerousFlags: ["-f", "--force", "--yolo"],
   },
   {
     id: "none",

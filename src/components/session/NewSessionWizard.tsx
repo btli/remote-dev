@@ -25,6 +25,7 @@ import { BranchPicker } from "@/components/github/BranchPicker";
 import type { GitHubRepository, GitHubBranch } from "@/types/github";
 import {
   AGENT_PRESETS,
+  LOOP_AGENT_PROVIDERS,
   WORKTREE_TYPES,
   type AgentPreset,
   type AgentProviderType,
@@ -186,7 +187,7 @@ export function NewSessionWizard({
   const [loopName, setLoopName] = useState("");
   const [loopProjectPath, setLoopProjectPath] = useState("");
   const [loopType, setLoopType] = useState<"conversational" | "monitoring">("conversational");
-  const [loopAgent, setLoopAgent] = useState<"claude" | "codex" | "gemini" | "opencode">("claude");
+  const [loopAgent, setLoopAgent] = useState<(typeof LOOP_AGENT_PROVIDERS)[number]>("claude");
   const [loopIntervalMinutes, setLoopIntervalMinutes] = useState(5);
   const [loopPromptTemplate, setLoopPromptTemplate] = useState("");
 
@@ -1134,8 +1135,8 @@ export function NewSessionWizard({
               {/* Agent provider */}
               <div className="space-y-2">
                 <Label className="text-sm font-medium">Agent</Label>
-                <div className="grid grid-cols-4 gap-2">
-                  {(["claude", "codex", "gemini", "opencode"] as const).map((agent) => (
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                  {LOOP_AGENT_PROVIDERS.map((agent) => (
                     <button
                       key={agent}
                       type="button"

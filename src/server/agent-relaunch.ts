@@ -16,6 +16,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { STABLE_SPAWN_CWD } from "@/lib/exec";
 import { createLogger } from "@/lib/logger";
+import { validatePath } from "@/server/validate-cwd";
 
 const execFileAsync = promisify(execFile);
 const log = createLogger("AgentRelaunch");
@@ -35,6 +36,7 @@ export interface RelaunchResult {
 export async function relaunchAgentInTmux(
   sessionId: string,
   tmuxName: string,
+  recreatedCwd?: string,
 ): Promise<RelaunchResult> {
   if (inFlight.has(sessionId)) {
     log.debug("Relaunch already in flight; skipping duplicate", { sessionId });
@@ -52,41 +54,93 @@ export async function relaunchAgentInTmux(
     const row = await db.query.terminalSessions.findFirst({
       where: eq(terminalSessions.id, sessionId),
     });
-    if (!row || row.terminalType !== "agent") {
+    if (
+      !row ||
+      (row.terminalType !== "agent" && row.terminalType !== "loop")
+    ) {
       log.debug("No agent session row to relaunch", { sessionId });
       return { resumed: false };
     }
 
     const session = SessionMapper.toDomain(row as Parameters<typeof SessionMapper.toDomain>[0]);
 
-    const [{ AgentResumeResolverImpl }, { AGENT_PROVIDERS }, { buildAgentCommand }] =
+    const [
+      { AgentResumeResolverImpl },
+      { AGENT_PROVIDERS },
+      { buildAgentCommand, quoteShellArg },
+      { resolveVerifiedProviderExecutable },
+      { stripSensitiveEnv },
+    ] =
       await Promise.all([
         import("@/infrastructure/agent-resume/AgentResumeResolverImpl"),
         import("@/types/session"),
         import("@/lib/terminal-plugins/agent-utils"),
+        import("@/services/agent-cli-service"),
+        import("@/lib/agent-resume/resume-binding"),
       ]);
 
-    // Durable binding's sanitized env locates the profile-isolated resume files.
+    // Durable binding locates resume files and, for Cursor, retains the exact
+    // executable that passed product-identity verification at create time.
     const binding = session.typeMetadata?.resumeBinding as
-      | { env?: Record<string, string> }
+      | { env?: Record<string, string>; executablePath?: string }
       | undefined;
     const env = binding?.env ?? {};
 
+    const launchEnv: NodeJS.ProcessEnv = { ...process.env, ...env };
+    const discoveryEnv = Object.fromEntries(
+      Object.entries(launchEnv).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    );
     const resolver = new AgentResumeResolverImpl();
-    const resolution = await resolver.resolveResume(session, env);
+    const resolution = await resolver.resolveResume(session, discoveryEnv);
 
     const provider =
       AGENT_PROVIDERS.find((p) => p.id === (session.agentProvider ?? "claude")) ??
       AGENT_PROVIDERS.find((p) => p.id === "claude")!;
+    if (provider.id === "none") {
+      throw new Error("Agent session has no runnable provider");
+    }
+    const verificationCommand =
+      provider.id === "cursor" && binding?.executablePath
+        ? binding.executablePath
+        : provider.command;
+    const verificationCwd =
+      validatePath(recreatedCwd) ??
+      validatePath(session.projectPath ?? undefined) ??
+      STABLE_SPAWN_CWD;
+    const executable = await resolveVerifiedProviderExecutable(
+      provider.id,
+      verificationCommand,
+      launchEnv,
+      verificationCwd,
+    );
+    if (!executable) {
+      throw new Error(`Executable '${provider.command}' is not the Cursor Agent CLI`);
+    }
     const cmd = resolution?.argvOverride
       ? resolution.argvOverride.join(" ")
-      : buildAgentCommand(provider, resolution?.resumeFlags ?? [], false);
+      : buildAgentCommand(
+          provider,
+          resolution?.resumeFlags ?? [],
+          false,
+          provider.id === "cursor" ? executable : undefined,
+        );
 
     // Re-inject the sanitized env into the tmux session BEFORE launching so the
     // agent process inherits it (crux for pod restart — the original initialEnv
     // and in-memory id map are gone). Secrets were stripped at bind time; the
     // agent re-resolves API keys from its own profile credential store.
-    for (const [k, v] of Object.entries(env)) {
+    const relaunchEnv = { ...env };
+    if (
+      provider.id === "cursor" &&
+      discoveryEnv.CURSOR_DATA_DIR &&
+      !relaunchEnv.CURSOR_DATA_DIR
+    ) {
+      relaunchEnv.CURSOR_DATA_DIR = discoveryEnv.CURSOR_DATA_DIR;
+    }
+    const safeRelaunchEnv = stripSensitiveEnv(relaunchEnv);
+    for (const [k, v] of Object.entries(safeRelaunchEnv)) {
       try {
         await execFileAsync("tmux", ["set-environment", "-t", tmuxName, k, v], { cwd: STABLE_SPAWN_CWD });
       } catch (error) {
@@ -94,10 +148,18 @@ export async function relaunchAgentInTmux(
       }
     }
 
+    // tmux set-environment only affects future panes/processes; this relaunch
+    // types into a shell that already exists. Prefix the same allowlisted,
+    // shell-quoted assignments so the agent process actually inherits them.
+    const envPrefix = Object.entries(safeRelaunchEnv)
+      .map(([key, value]) => `${key}=${quoteShellArg(value)}`)
+      .join(" ");
+    const launchCommand = envPrefix ? `${envPrefix} ${cmd}` : cmd;
+
     // Send the command literally (-l), then a separate Enter (C-m) to submit.
     // Mirrors TmuxService.sendKeys: literal text avoids tmux interpreting
     // special chars, and C-m is the canonical carriage-return keypress.
-    await execFileAsync("tmux", ["send-keys", "-t", tmuxName, "-l", cmd], { cwd: STABLE_SPAWN_CWD });
+    await execFileAsync("tmux", ["send-keys", "-t", tmuxName, "-l", launchCommand], { cwd: STABLE_SPAWN_CWD });
     await execFileAsync("tmux", ["send-keys", "-t", tmuxName, "C-m"], { cwd: STABLE_SPAWN_CWD });
 
     log.info("Relaunched agent in tmux", {
@@ -108,7 +170,7 @@ export async function relaunchAgentInTmux(
     return { resumed: Boolean(resolution) };
   } catch (error) {
     log.error("Agent relaunch failed", { sessionId, error: String(error) });
-    return { resumed: false };
+    throw error;
   } finally {
     inFlight.delete(sessionId);
   }

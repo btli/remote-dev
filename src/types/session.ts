@@ -218,7 +218,7 @@ export const AGENT_PROVIDERS: AgentProviderConfig[] = [
     command: "agent",
     configFile: "AGENTS.md",
     defaultFlags: [],
-    dangerousFlags: ["--force", "--yolo"],
+    dangerousFlags: ["-f", "--force", "--yolo"],
   },
   {
     id: "none",
@@ -256,6 +256,15 @@ export const AGENT_PRESETS: AgentConfig[] = [
   { id: "cursor", label: "Cursor", command: "agent", description: "Cursor AI coding agent" },
   { id: "custom", label: "Custom", command: "", description: "Enter custom command" },
 ];
+
+/** Providers offered by the chat-first loop-session UI. */
+export const LOOP_AGENT_PROVIDERS = [
+  "claude",
+  "codex",
+  "gemini",
+  "opencode",
+  "cursor",
+] as const satisfies readonly Exclude<AgentProviderType, "none" | "antigravity">[];
 
 export interface UpdateSessionInput {
   name?: string;

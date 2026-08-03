@@ -1,7 +1,7 @@
 # Multi-Agent CLI Support
 
-Remote Dev runs multiple AI coding agents under one roof, each with an isolated,
-per-profile environment. This document is the canonical reference for the supported
+Remote Dev runs multiple AI coding agents under one roof with per-profile config,
+identity, and environment overlays. This document is the canonical reference for the supported
 provider roster, agent profile isolation, per-profile theming, CLI verification, and
 a summary of agent-to-agent peer communication.
 
@@ -116,15 +116,23 @@ To use Cursor in the UI:
    and choose the project's **Resume** action. Remote Dev lists only CLI chats
    whose stored `cwd` exactly matches that project's working directory.
 
-Per-agent settings can add extra flags. Cursor's `--force` and `--yolo` flags
-skip normal command approvals, so Remote Dev strips them unless **Allow dangerous
-flags** is explicitly enabled for Cursor.
+Per-agent settings can add extra flags. Cursor's `-f`/`--force` and `--yolo`
+flags skip normal command approvals, so Remote Dev strips their separate,
+attached, compact, and bundled forms (for example `--force=true`, `-ftrue`, and
+`-pf`) unless
+**Allow dangerous flags** is explicitly enabled for Cursor.
 
 If detection or resume does not work:
 
 - Run `command -v agent` and `agent --help`. Because `agent` is a generic binary
   name, Remote Dev accepts it only when the help output identifies **Cursor
-  Agent** and advertises `--resume`.
+  Agent**. Before initial launch, HTTP restart, or tmux recreate, Remote Dev
+  resolves and fingerprints the exact absolute executable selected by the
+  session environment, then launches that retained path; an alias, function,
+  PATH change, or unrelated executable named `agent` cannot replace it after
+  verification. Resume-token support is checked separately by startup
+  diagnostics so CLI version drift can be reported without misidentifying the
+  product.
 - Run `agent login` followed by `agent status` for authentication problems.
 - Run `agent ls` to confirm the conversation exists in Cursor's CLI history.
   Resume discovery reads metadata from
@@ -179,7 +187,7 @@ interface in [`src/types/agent.ts`](../src/types/agent.ts)):
 
 | Var | Role |
 |-----|------|
-| `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` | Redirect config/data/cache into the profile dir; Cursor honors the XDG config location without a dedicated `CURSOR_HOME` |
+| `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` | Redirect config/data/cache into the profile dir; Cursor honors XDG config, but its conversation index remains in the shared `~/.cursor/chats` data root |
 | `CODEX_HOME`, `GEMINI_HOME`, `ANTIGRAVITY_HOME`, `OPENCODE_HOME` | Per-provider config roots. **`CLAUDE_CONFIG_DIR` is deliberately absent** — Claude shares the real `~/.claude`; identity comes from an injected `CLAUDE_CODE_OAUTH_TOKEN` [remote-dev-n4x4.6] |
 | `GIT_CONFIG_GLOBAL`, `GIT_SSH_COMMAND` | Point git at the profile's `.gitconfig` / SSH key |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY` | Injected per provider |
@@ -445,11 +453,17 @@ Notes:
   pushed native id, when available, is stored in
   `typeMetadata.agentSessionId`; native ids are never part of the resume binding.
 - **Durable resume binding:** at create time a sanitized resume binding
-  (provider + flags + **secrets-stripped** env) is persisted into
+  (provider + flags + **secrets-stripped** env, plus Cursor's verified absolute
+  executable) is persisted into
   `terminalSessions.typeMetadata.resumeBinding`. After a pod restart this env is
-  re-injected into the recreated tmux so the profile-isolated home dir that
-  holds the resume files is present. Secrets are never persisted; the agent
-  re-resolves API keys from its own profile credential store.
+  re-injected into the recreated tmux and prefixed onto the relaunch command so
+  both future panes and the already-running shell receive provider-specific
+  resume locations. Cursor is the exception: its chats stay in shared
+  `~/.cursor/chats` unless `CURSOR_DATA_DIR` was supplied by the server process
+  or inherited project environment. The retained Cursor executable is
+  re-fingerprinted before use and fails closed if it no longer identifies as
+  Cursor Agent. Secrets are never persisted; the agent re-resolves API keys
+  from its own profile credential store.
 
 ---
 

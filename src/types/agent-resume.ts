@@ -60,6 +60,8 @@ export interface ResumeBinding {
   provider: AgentProviderType;
   resumeFlags: string[];
   argvOverride: string[] | null;
+  /** Canonical executable verified at initial launch; revalidated on recreate. */
+  executablePath?: string;
   /** Sanitized env (secrets stripped) to re-inject if tmux was recreated. */
   env: Record<string, string>;
   capturedAt: string; // ISO

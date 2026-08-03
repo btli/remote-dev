@@ -32,7 +32,7 @@ Status vocabulary:
 | Persistent tmux sessions | Multiple terminals backed by tmux; survive refreshes, disconnects, and server restarts. |
 | Suspend / resume | Detach and reattach with full scrollback. |
 | Multi-agent CLI support (6) | Claude Code, OpenAI Codex, Gemini CLI, Antigravity, OpenCode, Cursor — installation detection, version checks, and launch metadata. Antigravity has no public installer and no session resume. |
-| Agent profiles & isolation | Fully isolated `HOME` + agent config directories per profile: own credentials, git identity, and appearance/theming; per-project profile binding. |
+| Agent profiles & isolation | Profiles overlay provider config, credentials, git identity, SSH, and appearance/theming without replacing `HOME`; Claude config and Cursor conversation history intentionally remain shared. Per-project profile binding is supported. |
 | Live status & exit handling | Agent sessions expose a running/exited/restarting state machine, exit codes, restart counts, and a custom exit screen. |
 | Session resume | Automatic resume for Claude, Codex, Gemini, OpenCode, and Cursor. Cursor discovers matching conversations in its project-scoped chat index and relaunches with `agent --resume <id>`; Antigravity relaunches fresh. |
 | Claude usage-limit management | Per-profile 5h/7d limit state, **reactive** limit detection from terminal output, group-inherited primary + fallback pools with auto-rotation, and server-side auto-apply of the resolved profile at session creation. |

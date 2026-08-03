@@ -21,11 +21,13 @@ import * as TmuxService from "./tmux-service";
 import * as WorktreeService from "./worktree-service";
 import * as GitHubService from "./github-service";
 import * as AgentProfileService from "./agent-profile-service";
+import { resolveVerifiedProviderExecutable } from "./agent-cli-service";
 import { getResolvedPreferences, getFolderPreferences, getEnvironmentForSession, getFolderGitIdentity } from "./preferences-service";
 import { SessionServiceError } from "@/lib/errors";
 import { validatePath } from "@/server/validate-cwd";
 import { TerminalTypeServerRegistry } from "@/lib/terminal-plugins/server";
 import { initializeServerPlugins } from "@/lib/terminal-plugins/init-server";
+import { isDangerousAgentFlag, quoteShellArg } from "@/lib/terminal-plugins/agent-utils";
 import { githubAccountRepository, gitCredentialManager } from "@/infrastructure/container";
 import { GitHubAccountEnvironment } from "@/domain/value-objects/GitHubAccountEnvironment";
 import { requestedModelFromAgentFlags } from "@/domain/value-objects/ClaudeModelIdentity";
@@ -532,6 +534,47 @@ export async function createSessionWithDedupFlag(
       ? { ...(pluginMetadata ?? {}), ...(input.typeMetadata ?? {}) }
       : null;
 
+  // Fetch the profile's environment overlay before allocating a worktree or
+  // session API key. Cursor executable preflight needs the same profile/folder
+  // PATH layers as the eventual tmux launch, and a routine identity failure
+  // must not orphan resources created later in this function.
+  let profileEnv: Record<string, string> | undefined;
+  const profile =
+    effectiveProfile ??
+    (effectiveProfileId
+      ? await AgentProfileService.getProfile(effectiveProfileId, userId)
+      : null);
+  if (effectiveProfileId && profile) {
+    const env = await AgentProfileService.getProfileEnvironment(
+      effectiveProfileId,
+      userId,
+      profile,
+    );
+    if (env) {
+      profileEnv = Object.fromEntries(
+        Object.entries(env).filter(
+          (entry): entry is [string, string] => entry[1] !== undefined,
+        ),
+      );
+    }
+  }
+
+  const folderEnv = await getEnvironmentForSession(userId, input.projectId);
+
+  // Determine which sessions actually run an agent process and which merely
+  // opt into the agent-style exit screen.
+  const emitsExitEvents =
+    TerminalTypeServerRegistry.get(terminalType)?.emitsExitEvents ?? false;
+  const isAgentRuntime = Boolean(
+    (mergedAgentProvider && mergedAgentProvider !== "none" && input.autoLaunchAgent) ||
+      input.terminalType === "agent" ||
+      input.terminalType === "loop",
+  );
+  const isAgentSession = isAgentRuntime || emitsExitEvents;
+  const effectiveAgentProvider = mergedAgentProvider && mergedAgentProvider !== "none"
+    ? mergedAgentProvider
+    : "claude";
+
   // Get the next tab order
   const existingSessions = await db.query.terminalSessions.findMany({
     where: and(
@@ -554,6 +597,36 @@ export async function createSessionWithDedupFlag(
   // Determine working path and branch name
   let workingPath = input.projectPath ?? preferences.defaultWorkingDirectory ?? process.env.HOME;
   let branchName = input.worktreeBranch;
+
+  // `agent` is too generic to launch by name. Resolve and fingerprint it now,
+  // before any worktree/API-key allocation, then retain the absolute path for
+  // the command eventually typed into tmux. The overlay precedence mirrors the
+  // PATH-relevant portion of buildInitialEnv below.
+  let verifiedAgentExecutable: string | undefined;
+  if (isAgentRuntime && effectiveAgentProvider === "cursor") {
+    const provider = AGENT_PROVIDERS.find((candidate) => candidate.id === "cursor")!;
+    const preflightEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...(sessionConfig.environment ?? {}),
+      ...(profileEnv ?? {}),
+      ...(folderEnv ?? {}),
+    };
+    const preflightCwd = validatePath(workingPath) ?? os.homedir();
+    verifiedAgentExecutable =
+      (await resolveVerifiedProviderExecutable(
+        "cursor",
+        provider.command,
+        preflightEnv,
+        preflightCwd,
+      )) ?? undefined;
+    if (!verifiedAgentExecutable) {
+      throw new SessionServiceError(
+        `Executable '${provider.command}' is not the Cursor Agent CLI`,
+        "AGENT_CLI_IDENTITY_MISMATCH",
+        sessionId,
+      );
+    }
+  }
 
   // Track the *actually used* worktree repo path + whether a worktree block
   // ran, so the DB-insert failure cleanup below doesn't depend on the client
@@ -722,73 +795,6 @@ export async function createSessionWithDedupFlag(
       startupCommand = agentCommand;
     }
   }
-
-  // Fetch the profile's environment overlay if a profile is resolved. Uses
-  // `effectiveProfileId` so an auto-selected Claude profile contributes its
-  // env overlay just like an explicitly chosen one. That overlay carries XDG
-  // paths, git identity and SSH — but NOT `CLAUDE_CONFIG_DIR`, which
-  // ProfileIsolation deliberately no longer emits [remote-dev-n4x4.6]. The
-  // explicit-pin path already resolved `effectiveProfile` above (reused here,
-  // no double-fetch); the auto-select path only set the id, so fetch it once.
-  let profileEnv: Record<string, string> | undefined;
-  const profile =
-    effectiveProfile ??
-    (effectiveProfileId
-      ? await AgentProfileService.getProfile(effectiveProfileId, userId)
-      : null);
-  if (effectiveProfileId && profile) {
-    const env = await AgentProfileService.getProfileEnvironment(effectiveProfileId, userId, profile);
-    if (env) {
-      profileEnv = Object.fromEntries(
-        Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)
-      );
-    }
-  }
-
-  // Fetch folder environment variables for the session
-  const folderEnv = await getEnvironmentForSession(userId, input.projectId);
-
-  // Determine session role early — drives env-var injection and the
-  // tmux pane-exited hook below.
-  //
-  // `isAgentRuntime` — narrow flag: true ONLY when the tmux pane is actually
-  //   running an AI coding agent (Claude/Codex/Gemini/Antigravity/OpenCode/Cursor). Gates the
-  //   agent-specific side effects: API key creation, RDV env vars,
-  //   `ensureAgentConfig` settings.json injection, proxy env, claude defaults.
-  //
-  // `isAgentSession` — wider flag: true when the plugin opts into the agent-
-  //   style exit-screen / restart UX via `emitsExitEvents`. Currently agent /
-  //   loop / ssh. Used solely to (a) initialize `agentExitState = "running"`
-  //   on the DB row and (b) install the tmux `pane-exited` hook so the
-  //   client can render an exit screen with a Restart button.
-  //
-  // Splitting the two flags prevents agent-only side effects (like writing
-  // hooks into `~/.claude/settings.json`) from leaking into SSH sessions.
-  const emitsExitEvents =
-    TerminalTypeServerRegistry.get(terminalType)?.emitsExitEvents ?? false;
-  // First clause uses `mergedAgentProvider` for consistency with
-  // `effectiveAgentProvider` below. This is semantically identical to reading
-  // `input.agentProvider` here: for agent/loop the `terminalType` clauses
-  // already force `true`, and for every other terminal type
-  // `mergedAgentProvider === input.agentProvider` (it's only reassigned inside
-  // the agent/loop merge branch).
-  const isAgentRuntime =
-    (mergedAgentProvider && mergedAgentProvider !== "none" && input.autoLaunchAgent) ||
-    input.terminalType === "agent" ||
-    input.terminalType === "loop";
-  const isAgentSession = isAgentRuntime || emitsExitEvents;
-  // Derive the effective provider from the MERGED resolution, not raw
-  // `input.agentProvider`. For agent/loop sessions where the client omitted a
-  // provider, `mergedAgentProvider` folded in the folder/user default (→ "claude"
-  // as last resort), which is the provider that actually launches (plugin
-  // command) and is written to the DB row. Keying the durable resume binding,
-  // model-proxy scope, and claude-defaults gate off this — rather than off the
-  // raw input — keeps "what we recorded" in sync with "what we launched". For
-  // non-agent/loop types `mergedAgentProvider === input.agentProvider`, so this
-  // is semantics-preserving there. (remote-dev-u02r)
-  const effectiveAgentProvider = mergedAgentProvider && mergedAgentProvider !== "none"
-    ? mergedAgentProvider
-    : "claude"; // Default matches DB default on line ~350
 
   // RDV env vars for agent hook callbacks (session ID + terminal server address)
   // Socket mode (prod): uses TERMINAL_SOCKET; Port mode (dev): uses TERMINAL_PORT
@@ -965,7 +971,23 @@ export async function createSessionWithDedupFlag(
     // plugin returns the CLI command so the agent runs as tmux's shell and
     // the session exits when it exits. Fall back to the resolved user
     // startup command otherwise.
-    const effectiveStartupCommand = sessionConfig.shellCommand ?? startupCommand;
+    let effectiveStartupCommand = sessionConfig.shellCommand ?? startupCommand;
+    if (effectiveAgentProvider === "cursor" && verifiedAgentExecutable) {
+      const verifiedCursorCommand = buildAgentCommand(
+        effectiveAgentProvider,
+        mergedAgentFlags,
+        mergedAllowDangerous,
+        verifiedAgentExecutable,
+      );
+      if (!verifiedCursorCommand) {
+        throw new SessionServiceError(
+          "Cursor agent provider has no launch command",
+          "AGENT_CLI_IDENTITY_MISMATCH",
+          sessionId,
+        );
+      }
+      effectiveStartupCommand = verifiedCursorCommand;
+    }
     // [remote-dev-ipbo] Validate every candidate (the old HOME string fallback
     // was never checked) and always end on a real directory — createSession
     // now requires a cwd so `-c` is unconditionally passed to tmux.
@@ -989,6 +1011,7 @@ export async function createSessionWithDedupFlag(
             argvOverride: null,
           },
           initialEnv,
+          verifiedAgentExecutable,
         );
         mergedMetadata = { ...(mergedMetadata ?? {}), resumeBinding: binding };
       } catch (error) {
@@ -2014,6 +2037,7 @@ function buildAgentCommand(
   provider: AgentProviderType,
   flags?: string[],
   allowDangerous = false,
+  executableOverride?: string,
 ): string | null {
   const config = AGENT_PROVIDERS.find((p) => p.id === provider);
   if (!config || !config.command) {
@@ -2025,12 +2049,15 @@ function buildAgentCommand(
   // the same guard.
   const safeFlags = allowDangerous
     ? flags ?? []
-    : (flags ?? []).filter((f) => !config.dangerousFlags?.includes(f));
+    : (flags ?? []).filter((flag) => !isDangerousAgentFlag(config, flag));
 
   const allFlags = [...config.defaultFlags, ...safeFlags];
   const flagsStr = allFlags.length > 0 ? ` ${allFlags.join(" ")}` : "";
+  const executable = executableOverride
+    ? quoteShellArg(executableOverride)
+    : config.command;
 
-  return `${config.command}${flagsStr}`;
+  return `${executable}${flagsStr}`;
 }
 
 /**

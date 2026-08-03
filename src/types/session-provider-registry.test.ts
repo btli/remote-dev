@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_PROVIDERS,
   AGENT_PRESETS,
+  LOOP_AGENT_PROVIDERS,
 } from "./session";
 import { AGENT_PROVIDERS as DOMAIN_AGENT_PROVIDERS } from "../../packages/domain/src/types/session";
 import { buildAgentCommand } from "@/lib/terminal-plugins/agent-utils";
@@ -18,11 +19,30 @@ describe("Cursor agent provider metadata", () => {
       command: "agent",
       configFile: "AGENTS.md",
       defaultFlags: [],
-      dangerousFlags: ["--force", "--yolo"],
+      dangerousFlags: ["-f", "--force", "--yolo"],
     });
     expect(buildAgentCommand(cursor!)).toBe("agent");
-    expect(buildAgentCommand(cursor!, ["--force", "--model", "fast", "--yolo"])).toBe(
-      "agent --model fast",
+    expect(
+      buildAgentCommand(cursor!, [
+        "-f",
+        "-f=true",
+        "-fcompact",
+        "-pf",
+        "-Hfoo",
+        "-wfeature",
+        "--force",
+        "--force=true",
+        "--model",
+        "fast",
+        "--yolo",
+        "--yolo=true",
+      ]),
+    ).toBe("agent -Hfoo -wfeature --model fast");
+    expect(buildAgentCommand(cursor!, [], false, "/verified/cursor agent")).toBe(
+      "'/verified/cursor agent'",
+    );
+    expect(buildAgentCommand(cursor!, [], false, "/verified/cursor's agent")).toBe(
+      "'/verified/cursor'\\''s agent'",
     );
   });
 
@@ -30,7 +50,7 @@ describe("Cursor agent provider metadata", () => {
     expect(DOMAIN_AGENT_PROVIDERS.find((provider) => provider.id === "cursor")).toMatchObject({
       id: "cursor",
       command: "agent",
-      dangerousFlags: ["--force", "--yolo"],
+      dangerousFlags: ["-f", "--force", "--yolo"],
     });
   });
 
@@ -39,5 +59,6 @@ describe("Cursor agent provider metadata", () => {
       command: "agent",
       label: "Cursor",
     });
+    expect(LOOP_AGENT_PROVIDERS).toContain("cursor");
   });
 });
