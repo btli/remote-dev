@@ -15,7 +15,9 @@
  * Query params:
  *   provider     - One of claude|codex|gemini|opencode|cursor (required)
  *   projectPath  - Absolute path of the project directory (required)
- *   profileId    - Agent profile ID for profile-isolated config (optional)
+ *   projectId    - Project UUID for folder environment resolution (optional)
+ *   profileId    - Agent profile ID for profile-isolated config (optional;
+ *                  ignored for Claude and Cursor shared history)
  *   limit        - Max sessions to return (default: 20, max: 50)
  */
 
@@ -25,6 +27,7 @@ import { validateProjectPath } from "@/lib/api-validation";
 import { listResumableSessions } from "@/lib/agent-resume/session-id-discovery";
 import { getResumeSpec } from "@/lib/agent-resume/agent-resume-registry";
 import * as AgentProfileService from "@/services/agent-profile-service";
+import { getEnvironmentForSession } from "@/services/preferences-service";
 import type { AgentProviderType } from "@/types/session";
 
 const VALID_PROVIDERS: AgentProviderType[] = [
@@ -39,6 +42,7 @@ export const GET = withApiAuth(async (request, { userId }) => {
   const { searchParams } = new URL(request.url);
   const provider = searchParams.get("provider") as AgentProviderType | null;
   const rawPath = searchParams.get("projectPath");
+  const projectId = searchParams.get("projectId");
   const profileId = searchParams.get("profileId");
   const rawLimit = parseInt(searchParams.get("limit") ?? "20", 10);
   const limit = Math.min(Math.max(1, rawLimit), 50);
@@ -63,8 +67,22 @@ export const GET = withApiAuth(async (request, { userId }) => {
   // user's real `~/.claude/projects`, which is what discovery falls back to
   // when the var is absent. Pointing it at `<profileDir>/.claude` would scan a
   // directory Claude never writes to and return an empty resume picker.
-  const env: Record<string, string> = {};
-  if (profileId && provider !== "claude") {
+  // Cursor is also excluded: profile XDG/config isolation does not relocate
+  // its chat index, which remains under ~/.cursor/chats unless the process was
+  // launched with an explicit CURSOR_DATA_DIR (not emitted by profiles).
+  const env: Record<string, string> =
+    provider === "cursor" && process.env.CURSOR_DATA_DIR
+      ? { CURSOR_DATA_DIR: process.env.CURSOR_DATA_DIR }
+      : {};
+  if (provider === "cursor" && projectId) {
+    const folderEnv = await getEnvironmentForSession(userId, projectId);
+    if (folderEnv?.CURSOR_DATA_DIR) {
+      // Folder environment has the same higher precedence it receives during
+      // session creation, so picker discovery and launch use one data root.
+      env.CURSOR_DATA_DIR = folderEnv.CURSOR_DATA_DIR;
+    }
+  }
+  if (profileId && provider !== "claude" && provider !== "cursor") {
     const profile = await AgentProfileService.getProfile(profileId, userId);
     if (profile) {
       const spec = getResumeSpec(provider);

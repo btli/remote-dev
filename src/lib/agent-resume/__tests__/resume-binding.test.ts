@@ -34,7 +34,8 @@ describe("stripSensitiveEnv", () => {
 
   it("drops everything not explicitly safe (allowlist beats denylist)", () => {
     const out = stripSensitiveEnv({ SOME_RANDOM_VAR: "v", PATH: "/usr/bin" });
-    // PATH and arbitrary vars are not in the allowlist → dropped.
+    // Arbitrary vars remain dropped. PATH is unnecessary because Cursor's
+    // verified canonical executable is persisted separately.
     expect(out.SOME_RANDOM_VAR).toBeUndefined();
     expect(out.PATH).toBeUndefined();
   });
@@ -45,12 +46,14 @@ describe("buildResumeBinding", () => {
     const b = buildResumeBinding(
       { provider: "claude", resumeFlags: ["--resume", "abc"], argvOverride: null },
       { ANTHROPIC_API_KEY: "sk", HOME: "/h" },
+      "/verified/claude",
     );
     expect(b.resumeFlags).toEqual(["--resume", "abc"]);
     expect(b.argvOverride).toBeNull();
     expect(b.env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(b.env.HOME).toBe("/h");
     expect(b.provider).toBe("claude");
+    expect(b.executablePath).toBe("/verified/claude");
     expect(typeof b.capturedAt).toBe("string");
   });
 

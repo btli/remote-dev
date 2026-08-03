@@ -385,8 +385,11 @@ export class Session {
    * Mark agent as exited with exit code.
    */
   markAgentExited(exitCode: number | null): Session {
-    if (this.props.terminalType !== "agent") {
-      throw new InvalidValueError("terminalType", this.props.terminalType, "Must be 'agent' to mark as exited");
+    if (
+      this.props.terminalType !== "agent" &&
+      this.props.terminalType !== "loop"
+    ) {
+      throw new InvalidValueError("terminalType", this.props.terminalType, "Must be 'agent' or 'loop' to mark as exited");
     }
     return this.withUpdates({
       agentExitState: "exited",
@@ -399,8 +402,11 @@ export class Session {
    * Mark agent as restarting.
    */
   markAgentRestarting(): Session {
-    if (this.props.terminalType !== "agent") {
-      throw new InvalidValueError("terminalType", this.props.terminalType, "Must be 'agent' to mark as restarting");
+    if (
+      this.props.terminalType !== "agent" &&
+      this.props.terminalType !== "loop"
+    ) {
+      throw new InvalidValueError("terminalType", this.props.terminalType, "Must be 'agent' or 'loop' to mark as restarting");
     }
     return this.withUpdates({
       agentExitState: "restarting",
@@ -412,8 +418,11 @@ export class Session {
    * Mark agent as running (after restart).
    */
   markAgentRunning(): Session {
-    if (this.props.terminalType !== "agent") {
-      throw new InvalidValueError("terminalType", this.props.terminalType, "Must be 'agent' to mark as running");
+    if (
+      this.props.terminalType !== "agent" &&
+      this.props.terminalType !== "loop"
+    ) {
+      throw new InvalidValueError("terminalType", this.props.terminalType, "Must be 'agent' or 'loop' to mark as running");
     }
     return this.withUpdates({
       agentExitState: "running",
@@ -426,8 +435,11 @@ export class Session {
    * Mark agent session as closed (won't be restarted).
    */
   markAgentClosed(): Session {
-    if (this.props.terminalType !== "agent") {
-      throw new InvalidValueError("terminalType", this.props.terminalType, "Must be 'agent' to mark as closed");
+    if (
+      this.props.terminalType !== "agent" &&
+      this.props.terminalType !== "loop"
+    ) {
+      throw new InvalidValueError("terminalType", this.props.terminalType, "Must be 'agent' or 'loop' to mark as closed");
     }
     return this.withUpdates({
       agentExitState: "closed",

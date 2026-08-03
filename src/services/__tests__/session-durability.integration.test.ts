@@ -7,7 +7,8 @@
  *   - Suspend / resume     → tmux + agent survive → same as WS disconnect.
  *   - Terminal-server restart → tmux gone on reconnect → relaunch RESUMED.
  *   - Tmux death / pod restart → tmux gone + binding env → set-environment
- *     then send-keys "<cmd> --resume <id>" submitted with C-m.
+ *     for future processes, then send-keys with inline env assignments so the
+ *     existing shell launches "<cmd> --resume <id>" with the same binding.
  *
  * The first two modes are structural properties of terminal.ts: the attach
  * branch (`tmuxExists === true`) reattaches the surviving PTY and never calls
@@ -15,6 +16,13 @@
  * two and the graceful-fresh path for antigravity.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+vi.mock("@/services/agent-cli-service", () => ({
+  resolveVerifiedProviderExecutable: vi.fn(
+    async (provider: string, command: string) =>
+      provider === "cursor" ? "/verified/cursor-agent" : command,
+  ),
+}));
 
 const execFileCalls: string[][] = [];
 // Accept both call shapes: (cmd, args, cb) and (cmd, args, opts, cb) — the
@@ -132,6 +140,7 @@ describe.each(RESUMABLE)("durability for %s", (provider) => {
     const envIdx = execFileCalls.indexOf(envCall!);
     const sendIdx = execFileCalls.indexOf(sendKeys()!);
     expect(envIdx).toBeLessThan(sendIdx);
+    expect(sendKeys()![4]).toContain("XDG_CONFIG_HOME='/cfg'");
   });
 });
 

@@ -44,6 +44,11 @@ const hoisted = vi.hoisted(() => {
     >(),
     claimPortsForSession: vi.fn(async () => undefined),
     releasePortsForSession: vi.fn(async () => undefined),
+    createApiKey: vi.fn(async () => ({ key: "test-api-key" })),
+    createBranchWithWorktree: vi.fn(),
+    resolveVerifiedProviderExecutable: vi.fn(
+      async (_provider: string, command: string): Promise<string | null> => command,
+    ),
   };
 });
 
@@ -146,7 +151,7 @@ vi.mock("@/server/validate-cwd", () => ({
 
 vi.mock("@/services/worktree-service", () => ({
   isGitRepo: vi.fn(async () => false),
-  createBranchWithWorktree: vi.fn(),
+  createBranchWithWorktree: hoisted.createBranchWithWorktree,
   copyEnvFilesToWorktree: vi.fn(),
   removeWorktree: vi.fn(async () => undefined),
   sanitizeBranchName: (s: string) => s,
@@ -173,7 +178,11 @@ vi.mock("@/services/preferences-service", () => ({
 }));
 
 vi.mock("@/services/api-key-service", () => ({
-  createApiKey: vi.fn(async () => ({ key: "test-api-key" })),
+  createApiKey: hoisted.createApiKey,
+}));
+
+vi.mock("./agent-cli-service", () => ({
+  resolveVerifiedProviderExecutable: hoisted.resolveVerifiedProviderExecutable,
 }));
 
 // Port lifecycle (A3): claim-on-create reads the registry then claims; the
@@ -318,6 +327,12 @@ describe("SessionService.createSession — plugin dispatch", () => {
     hoisted.claimPortsForSession.mockResolvedValue(undefined);
     hoisted.releasePortsForSession.mockReset();
     hoisted.releasePortsForSession.mockResolvedValue(undefined);
+    hoisted.resolveVerifiedProviderExecutable.mockReset();
+    hoisted.resolveVerifiedProviderExecutable.mockImplementation(
+      async (_provider: string, command: string): Promise<string | null> => command,
+    );
+    hoisted.createApiKey.mockClear();
+    hoisted.createBranchWithWorktree.mockClear();
   });
 
   afterEach(() => {
@@ -899,5 +914,63 @@ describe("SessionService.createSession — server-resolved working dir (remote-d
     // The merged provider is also persisted on the row.
     const inserted = dbState.inserted[0] as { agentProvider: string | null };
     expect(inserted.agentProvider).toBe("claude");
+  });
+
+  it("does not launch a foreign agent executable through a non-agent plugin", async () => {
+    TerminalTypeServerRegistry.clear();
+    TerminalTypeServerRegistry.register(
+      makeFakePlugin("fake", { useTmux: true, shellCommand: null }),
+    );
+    TerminalTypeServerRegistry.setDefaultType("fake");
+    hoisted.resolveVerifiedProviderExecutable.mockResolvedValueOnce(null);
+
+    await expect(
+      createSession("user-1", {
+        ...baseInput(),
+        autoLaunchAgent: true,
+        agentProvider: "cursor",
+        createWorktree: true,
+      }),
+    ).rejects.toMatchObject({ code: "AGENT_CLI_IDENTITY_MISMATCH" });
+
+    expect(hoisted.resolveVerifiedProviderExecutable).toHaveBeenCalledWith(
+      "cursor",
+      "agent",
+      expect.objectContaining({ PATH: expect.any(String) }),
+      "/tmp",
+    );
+    expect(tmuxCreate).not.toHaveBeenCalled();
+    expect(hoisted.createApiKey).not.toHaveBeenCalled();
+    expect(hoisted.createBranchWithWorktree).not.toHaveBeenCalled();
+  });
+
+  it("launches the exact verified Cursor executable instead of bare agent", async () => {
+    TerminalTypeServerRegistry.clear();
+    TerminalTypeServerRegistry.register(
+      makeFakePlugin("fake", { useTmux: true, shellCommand: null }),
+    );
+    TerminalTypeServerRegistry.setDefaultType("fake");
+    hoisted.resolveVerifiedProviderExecutable.mockResolvedValueOnce(
+      "/verified/cursor agent",
+    );
+
+    await createSession("user-1", {
+      ...baseInput(),
+      autoLaunchAgent: true,
+      agentProvider: "cursor",
+    });
+
+    const [, , shellCmd] = tmuxCreate.mock.calls[0] as unknown as [
+      string,
+      string,
+      string,
+    ];
+    expect(shellCmd).toBe("'/verified/cursor agent'");
+
+    const inserted = dbState.inserted[0] as { typeMetadata: string | null };
+    const metadata = JSON.parse(inserted.typeMetadata!);
+    expect(metadata.resumeBinding.executablePath).toBe(
+      "/verified/cursor agent",
+    );
   });
 });

@@ -16,6 +16,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // (cmd, args, opts, cb) — the relaunch sites pass { cwd: STABLE_SPAWN_CWD }
 // (remote-dev-ipbo). cb(null, {stdout,stderr}).
 const execFileCalls: string[][] = [];
+const resolveVerifiedProviderExecutable = vi.fn();
+vi.mock("@/services/agent-cli-service", () => ({ resolveVerifiedProviderExecutable }));
+
 const execFile = vi.fn(
   (
     _cmd: string,
@@ -36,6 +39,11 @@ vi.mock("node:child_process", () => ({ execFile }));
 beforeEach(() => {
   execFileCalls.length = 0;
   execFile.mockClear();
+  resolveVerifiedProviderExecutable.mockReset().mockImplementation(
+    async (_provider: string, command: string) => command,
+  );
+  vi.unstubAllEnvs();
+  vi.doUnmock("@/infrastructure/agent-resume/AgentResumeResolverImpl");
   vi.resetModules();
 });
 
@@ -146,6 +154,125 @@ describe("relaunchAgentInTmux — resume", () => {
     const { resumed } = await relaunchAgentInTmux("missing", "tmux-z");
     expect(resumed).toBe(false);
   });
+
+  it("refuses to relaunch Cursor when agent is not Cursor's CLI", async () => {
+    resolveVerifiedProviderExecutable.mockResolvedValue(null);
+    mockAgentRow(fullRow({
+      id: "cursor-1",
+      terminalType: "agent",
+      agentProvider: "cursor",
+      projectPath: "/p",
+      typeMetadata: "{}",
+    }));
+
+    const { relaunchAgentInTmux } = await import("../agent-relaunch");
+    await expect(
+      relaunchAgentInTmux("cursor-1", "tmux-cursor"),
+    ).rejects.toThrow("is not the Cursor Agent CLI");
+
+    const [provider, command, launchEnv, cwd] =
+      resolveVerifiedProviderExecutable.mock.calls[0];
+    expect(provider).toBe("cursor");
+    expect(command).toBe("agent");
+    expect(launchEnv.PATH).toEqual(expect.any(String));
+    expect(cwd).not.toBe("/p");
+    expect(sendKeysArgs()).toBeUndefined();
+  });
+
+  it("launches Cursor by its verified absolute path", async () => {
+    resolveVerifiedProviderExecutable.mockResolvedValue("/verified/cursor agent");
+    mockAgentRow(fullRow({
+      id: "cursor-2",
+      terminalType: "agent",
+      agentProvider: "cursor",
+      projectPath: "/p",
+      typeMetadata: JSON.stringify({ agentSessionId: { cursor: "chat-2" } }),
+    }));
+
+    const { relaunchAgentInTmux } = await import("../agent-relaunch");
+    const result = await relaunchAgentInTmux("cursor-2", "tmux-cursor");
+
+    expect(result).toEqual({ resumed: true });
+    expect(sendKeysArgs()![4]).toBe("'/verified/cursor agent' --resume chat-2");
+  });
+
+  it("relaunches a Cursor loop row after tmux recreation", async () => {
+    resolveVerifiedProviderExecutable.mockResolvedValue("/verified/cursor-agent");
+    mockAgentRow(fullRow({
+      id: "cursor-loop",
+      terminalType: "loop",
+      agentProvider: "cursor",
+      projectPath: "/p",
+      typeMetadata: JSON.stringify({ agentSessionId: { cursor: "loop-chat" } }),
+    }));
+
+    const { relaunchAgentInTmux } = await import("../agent-relaunch");
+    const result = await relaunchAgentInTmux("cursor-loop", "tmux-loop");
+
+    expect(result).toEqual({ resumed: true });
+    expect(sendKeysArgs()![4]).toBe(
+      "'/verified/cursor-agent' --resume loop-chat",
+    );
+  });
+
+  it("revalidates Cursor's persisted executable and falls back from a deleted cwd", async () => {
+    resolveVerifiedProviderExecutable.mockResolvedValue("/folder/bin/agent");
+    mockAgentRow(fullRow({
+      id: "cursor-persisted",
+      terminalType: "agent",
+      agentProvider: "cursor",
+      projectPath: "/definitely/deleted/worktree",
+      typeMetadata: JSON.stringify({
+        resumeBinding: { executablePath: "/folder/bin/agent", env: {} },
+      }),
+    }));
+
+    const { relaunchAgentInTmux } = await import("../agent-relaunch");
+    await relaunchAgentInTmux("cursor-persisted", "tmux-cursor");
+
+    const [provider, command, launchEnv, cwd] =
+      resolveVerifiedProviderExecutable.mock.calls[0];
+    expect(provider).toBe("cursor");
+    expect(command).toBe("/folder/bin/agent");
+    expect(launchEnv.PATH).toEqual(expect.any(String));
+    expect(cwd).not.toContain("/definitely/deleted/worktree");
+  });
+
+  it("passes process-level CURSOR_DATA_DIR to cold-relaunch discovery", async () => {
+    vi.stubEnv("CURSOR_DATA_DIR", "/srv/cursor-data");
+    const resolveResume = vi.fn().mockResolvedValue(null);
+    vi.doMock("@/infrastructure/agent-resume/AgentResumeResolverImpl", () => ({
+      AgentResumeResolverImpl: class {
+        resolveResume = resolveResume;
+      },
+    }));
+    resolveVerifiedProviderExecutable.mockResolvedValue("/verified/cursor-agent");
+    mockAgentRow(fullRow({
+      id: "cursor-3",
+      terminalType: "agent",
+      agentProvider: "cursor",
+      projectPath: "/p",
+      typeMetadata: "{}",
+    }));
+
+    const { relaunchAgentInTmux } = await import("../agent-relaunch");
+    await relaunchAgentInTmux("cursor-3", "tmux-cursor");
+
+    expect(resolveResume).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ CURSOR_DATA_DIR: "/srv/cursor-data" }),
+    );
+    expect(setEnvArgs("CURSOR_DATA_DIR")).toEqual([
+      "set-environment",
+      "-t",
+      "tmux-cursor",
+      "CURSOR_DATA_DIR",
+      "/srv/cursor-data",
+    ]);
+    expect(sendKeysArgs()![4]).toBe(
+      "CURSOR_DATA_DIR='/srv/cursor-data' '/verified/cursor-agent'",
+    );
+  });
 });
 
 describe("relaunchAgentInTmux — pod-restart env re-injection (hgwo.5)", () => {
@@ -176,6 +303,36 @@ describe("relaunchAgentInTmux — pod-restart env re-injection (hgwo.5)", () => 
     const sendIdx = execFileCalls.indexOf(sendKeysArgs()!);
     expect(envIdx).toBeGreaterThanOrEqual(0);
     expect(envIdx).toBeLessThan(sendIdx);
+    expect(sendKeysArgs()![4]).toContain("CLAUDE_CONFIG_DIR='/profiles/p1/.config' claude");
+  });
+
+  it("rejects when the relaunch command cannot be sent", async () => {
+    mockAgentRow(fullRow({
+      id: "send-failure",
+      terminalType: "agent",
+      agentProvider: "claude",
+      projectPath: "/p",
+      typeMetadata: "{}",
+    }));
+    execFile.mockImplementationOnce(
+      (
+        _cmd: string,
+        _args: string[],
+        optsOrCb: unknown,
+        maybeCb?: (e: unknown, r: unknown) => void,
+      ) => {
+        const cb = (typeof optsOrCb === "function" ? optsOrCb : maybeCb) as (
+          e: unknown,
+          r: unknown,
+        ) => void;
+        cb(new Error("tmux send failed"), undefined);
+      },
+    );
+
+    const { relaunchAgentInTmux } = await import("../agent-relaunch");
+    await expect(
+      relaunchAgentInTmux("send-failure", "tmux-x"),
+    ).rejects.toThrow("tmux send failed");
   });
 });
 

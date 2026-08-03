@@ -4144,7 +4144,9 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         // alone does NOT reach here (tmux + agent survive → the attach branch).
         if (isAgentTerminalType(terminalType)) {
           void import("@/server/agent-relaunch")
-            .then(({ relaunchAgentInTmux }) => relaunchAgentInTmux(sessionId, tmuxSessionName))
+            .then(({ relaunchAgentInTmux }) =>
+              relaunchAgentInTmux(sessionId, tmuxSessionName, cwd),
+            )
             .catch((e) =>
               agentLog.error("Relaunch failed on cold-attach", {
                 sessionId, error: String(e),
@@ -4396,11 +4398,12 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
               }
               // Re-validate the connect-time cwd — the directory may have been
               // deleted (e.g. a worktree removed) since this WS attached.
+              const recreatedCwd = validatePath(cwd) ?? os.homedir();
               createTmuxSession(
                 tmuxSessionName,
                 connection.lastCols,
                 connection.lastRows,
-                validatePath(cwd) ?? os.homedir(),
+                recreatedCwd,
                 tmuxHistoryLimit,
               );
 
@@ -4474,7 +4477,9 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
               // stream the relaunched output. Broadcast resumed-vs-fresh once
               // the relaunch resolves so the UI (hgwo.7) can badge it.
               void import("@/server/agent-relaunch")
-                .then(({ relaunchAgentInTmux }) => relaunchAgentInTmux(sessionId, tmuxSessionName))
+                .then(({ relaunchAgentInTmux }) =>
+                  relaunchAgentInTmux(sessionId, tmuxSessionName, recreatedCwd),
+                )
                 .then(({ resumed }) => {
                   broadcastToSession(sessionId, {
                     type: "agent_restarted",
@@ -4488,10 +4493,8 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
                     sessionId, error: String(e),
                   });
                   broadcastToSession(sessionId, {
-                    type: "agent_restarted",
-                    sessionId,
-                    tmuxSessionName,
-                    resumed: false,
+                    type: "error",
+                    message: `Failed to restart agent: ${String(e)}`,
                   });
                 });
             } catch (error) {

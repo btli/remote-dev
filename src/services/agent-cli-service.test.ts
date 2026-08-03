@@ -1,14 +1,26 @@
 // @vitest-environment node
-import { describe, it, expect } from "vitest";
+import { chmod, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, it, expect, vi } from "vitest";
 
 import {
   getCLICommand,
   getInstallInstructions,
   getProviderDocsUrl,
   getRequiredEnvVars,
+  checkCLIStatus,
   checkRequiredEnvVars,
   matchesProviderIdentity,
+  resolveVerifiedProviderExecutable,
 } from "./agent-cli-service";
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
 
 describe("AgentCLIService", () => {
   describe("getCLICommand", () => {
@@ -28,12 +40,7 @@ describe("AgentCLIService", () => {
 
   describe("matchesProviderIdentity", () => {
     it("accepts Cursor's distinctive help output for the generic agent executable", () => {
-      expect(
-        matchesProviderIdentity(
-          "cursor",
-          "Usage: agent [options]\nStart the Cursor Agent\n--resume [chatId]",
-        ),
-      ).toBe(true);
+      expect(matchesProviderIdentity("cursor", "Start the Cursor Agent")).toBe(true);
     });
 
     it("rejects an unrelated executable named agent", () => {
@@ -42,6 +49,88 @@ describe("AgentCLIService", () => {
 
     it("does not add an identity requirement to provider-specific executable names", () => {
       expect(matchesProviderIdentity("codex", "")).toBe(true);
+    });
+
+    it("fingerprints the executable resolved from the supplied PATH", async () => {
+      const binDir = await mkdtemp(join(tmpdir(), "remote-dev-agent-identity-"));
+      tempDirs.push(binDir);
+      const agentPath = join(binDir, "agent");
+
+      await writeFile(agentPath, "#!/bin/sh\necho 'Generic automation agent'\n");
+      await chmod(agentPath, 0o755);
+      expect(
+        await resolveVerifiedProviderExecutable(
+          "cursor",
+          "agent",
+          { PATH: binDir, NODE_ENV: "test" },
+          process.cwd(),
+        ),
+      ).toBeNull();
+
+      await writeFile(
+        agentPath,
+        "#!/bin/sh\necho 'Cursor Agent'\n",
+      );
+      expect(
+        await resolveVerifiedProviderExecutable(
+          "cursor",
+          "agent",
+          { PATH: binDir, NODE_ENV: "test" },
+          process.cwd(),
+        ),
+      ).toBe(await realpath(agentPath));
+    });
+
+    it("accepts identifying help written by a CLI that exits non-zero", async () => {
+      const binDir = await mkdtemp(join(tmpdir(), "remote-dev-agent-identity-"));
+      tempDirs.push(binDir);
+      const agentPath = join(binDir, "agent");
+      await writeFile(agentPath, "#!/bin/sh\necho 'Cursor Agent' >&2\nexit 1\n");
+      await chmod(agentPath, 0o755);
+
+      expect(
+        await resolveVerifiedProviderExecutable("cursor", "agent", {
+          PATH: binDir,
+          NODE_ENV: "test",
+        }),
+      ).toBe(await realpath(agentPath));
+    });
+
+    it("reports a foreign agent executable as a Cursor identity mismatch", async () => {
+      const binDir = await mkdtemp(join(tmpdir(), "remote-dev-agent-status-"));
+      tempDirs.push(binDir);
+      const agentPath = join(binDir, "agent");
+      await writeFile(agentPath, "#!/bin/sh\necho 'Generic automation agent'\n");
+      await chmod(agentPath, 0o755);
+      vi.stubEnv("PATH", `${binDir}:${process.env.PATH ?? ""}`);
+
+      const status = await checkCLIStatus("cursor");
+
+      expect(status).toMatchObject({
+        provider: "cursor",
+        installed: false,
+        path: agentPath,
+        error: "Executable 'agent' is not the Cursor Agent CLI",
+      });
+    });
+
+    it("uses the fingerprinted Cursor executable for the version probe", async () => {
+      const binDir = await mkdtemp(join(tmpdir(), "remote-dev-agent-status-"));
+      tempDirs.push(binDir);
+      const agentPath = join(binDir, "agent");
+      await writeFile(
+        agentPath,
+        "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo 'Cursor Agent'; else echo '1.2.3'; fi\n",
+      );
+      await chmod(agentPath, 0o755);
+      vi.stubEnv("PATH", `${binDir}:${process.env.PATH ?? ""}`);
+
+      await expect(checkCLIStatus("cursor")).resolves.toMatchObject({
+        provider: "cursor",
+        installed: true,
+        path: await realpath(agentPath),
+        version: "1.2.3",
+      });
     });
   });
 

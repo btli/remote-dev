@@ -6,6 +6,9 @@
  */
 
 import { execFile } from "node:child_process";
+import { constants as fsConstants } from "node:fs";
+import { access, realpath, stat } from "node:fs/promises";
+import { delimiter, isAbsolute, resolve } from "node:path";
 import { promisify } from "node:util";
 import {
   AGENT_PROVIDERS,
@@ -40,25 +43,86 @@ export function matchesProviderIdentity(
   output: string,
 ): boolean {
   if (provider !== "cursor") return true;
-  return /Cursor Agent/i.test(output) && /--resume\b/.test(output);
+  return /Cursor Agent/i.test(output);
 }
 
-async function verifyProviderIdentity(
+function outputFromExecError(error: unknown): string {
+  if (!error || typeof error !== "object") return "";
+  const value = error as { stdout?: unknown; stderr?: unknown };
+  const stdout = typeof value.stdout === "string" || Buffer.isBuffer(value.stdout)
+    ? String(value.stdout)
+    : "";
+  const stderr = typeof value.stderr === "string" || Buffer.isBuffer(value.stderr)
+    ? String(value.stderr)
+    : "";
+  return `${stdout}\n${stderr}`;
+}
+
+async function resolveExecutablePath(
+  command: string,
+  env: NodeJS.ProcessEnv | undefined,
+  cwd: string,
+): Promise<string | null> {
+  const candidates = command.includes("/")
+    ? [isAbsolute(command) ? command : resolve(cwd, command)]
+    : (env?.PATH ?? process.env.PATH ?? "")
+        .split(delimiter)
+        .map((entry) => resolve(cwd, entry || ".", command));
+
+  for (const candidate of candidates) {
+    try {
+      await access(candidate, fsConstants.X_OK);
+      const canonical = await realpath(candidate);
+      if ((await stat(canonical)).isFile()) return canonical;
+    } catch {
+      // Try the next PATH entry.
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve and fingerprint the exact executable that a launch path must retain.
+ * Provider-specific command names stay unchanged; Cursor's generic `agent`
+ * name resolves to an absolute canonical path so shell aliases/functions and
+ * startup PATH changes cannot swap the binary after verification.
+ */
+export async function resolveVerifiedProviderExecutable(
+  provider: AgentCLIProvider,
+  command: string,
+  env?: NodeJS.ProcessEnv,
+  cwd = process.cwd(),
+): Promise<string | null> {
+  if (provider !== "cursor") return command;
+
+  const executablePath = await resolveExecutablePath(command, env, cwd);
+  if (!executablePath) return null;
+
+  try {
+    const { stdout, stderr } = await execFileAsync(executablePath, ["--help"], {
+      env,
+      cwd,
+      timeout: 5000,
+    });
+    return matchesProviderIdentity(provider, `${stdout}\n${stderr}`)
+      ? executablePath
+      : null;
+  } catch (error) {
+    // Some CLIs print valid help and exit non-zero. Identity is determined by
+    // the output, while ENOENT/timeouts (which have no identifying output)
+    // still fail closed.
+    return matchesProviderIdentity(provider, outputFromExecError(error))
+      ? executablePath
+      : null;
+  }
+}
+
+export async function verifyProviderIdentity(
   provider: AgentCLIProvider,
   command: string,
   env?: NodeJS.ProcessEnv,
 ): Promise<boolean> {
-  if (provider !== "cursor") return true;
-
-  try {
-    const { stdout, stderr } = await execFileAsync(command, ["--help"], {
-      env,
-      timeout: 5000,
-    });
-    return matchesProviderIdentity(provider, `${stdout}\n${stderr}`);
-  } catch {
-    return false;
-  }
+  return (await resolveVerifiedProviderExecutable(provider, command, env)) !== null;
 }
 
 /**
@@ -111,8 +175,12 @@ export async function checkCLIStatus(
     // Try to get the path using 'which'
     const { stdout: path } = await execFileAsync("which", [command]);
     const trimmedPath = path.trim();
+    const verifiedExecutable = await resolveVerifiedProviderExecutable(
+      provider,
+      provider === "cursor" ? trimmedPath : command,
+    );
 
-    if (!(await verifyProviderIdentity(provider, command))) {
+    if (!verifiedExecutable) {
       return {
         provider,
         installed: false,
@@ -126,14 +194,14 @@ export async function checkCLIStatus(
     let version: string | undefined;
     try {
       // Most CLIs support --version
-      const { stdout: versionOutput } = await execFileAsync(command, [
+      const { stdout: versionOutput } = await execFileAsync(verifiedExecutable, [
         "--version",
       ]);
       version = parseVersion(versionOutput);
     } catch {
       // Some CLIs might use -v or version subcommand
       try {
-        const { stdout: versionOutput } = await execFileAsync(command, ["-v"]);
+        const { stdout: versionOutput } = await execFileAsync(verifiedExecutable, ["-v"]);
         version = parseVersion(versionOutput);
       } catch {
         // Version check failed, but CLI is installed
@@ -146,7 +214,7 @@ export async function checkCLIStatus(
       installed: true,
       version,
       command,
-      path: trimmedPath,
+      path: provider === "cursor" ? verifiedExecutable : trimmedPath,
     };
   } catch {
     return {
@@ -279,7 +347,12 @@ export async function verifyCLIExecution(
     // Merge with current environment
     const fullEnv = { ...process.env, ...env };
 
-    if (!(await verifyProviderIdentity(provider, command, fullEnv as NodeJS.ProcessEnv))) {
+    const verifiedExecutable = await resolveVerifiedProviderExecutable(
+      provider,
+      command,
+      fullEnv as NodeJS.ProcessEnv,
+    );
+    if (!verifiedExecutable) {
       return {
         success: false,
         error: `Executable '${command}' is not the Cursor Agent CLI`,
@@ -287,7 +360,7 @@ export async function verifyCLIExecution(
     }
 
     // Try a simple command that should work on all CLIs
-    await execFileAsync(command, ["--version"], {
+    await execFileAsync(verifiedExecutable, ["--version"], {
       env: fullEnv as NodeJS.ProcessEnv,
       timeout: 5000,
     });
