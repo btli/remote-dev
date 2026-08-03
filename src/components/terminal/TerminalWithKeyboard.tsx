@@ -52,6 +52,10 @@ export interface TerminalWithKeyboardRef {
    * MobileKeyboard's camera button uses.
    */
   uploadImage: (file: File) => Promise<void>;
+  /** Enable/disable the native-owned session clipboard subscription. */
+  setClipboardSync: (enabled: boolean) => void;
+  /** Push native clipboard text to the active remote session. */
+  syncClipboard: (text: string) => void;
 }
 
 /**
@@ -119,6 +123,12 @@ interface TerminalWithKeyboardProps {
   onChannelMessageCreated?: (folderId: string, channelId: string, message: import("@/types/peer-chat").PeerChatMessage) => void;
   onThreadReplyCreated?: (folderId: string, parentMessageId: string, message: import("@/types/peer-chat").PeerChatMessage) => void;
   onChannelCreated?: (folderId: string, channel: import("@/types/channels").Channel) => void;
+  /** Browser owns navigator.clipboard; native mode delegates to Flutter. */
+  clipboardMode?: "browser" | "native";
+  /** Remote clipboard update callback, used by the native WebView adapter. */
+  onClipboardUpdate?: (text: string, revision: number) => void;
+  /** Native-only terminal selection callback. */
+  onSelectionChange?: (text: string) => void;
 }
 
 export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, TerminalWithKeyboardProps>(function TerminalWithKeyboard({
@@ -156,6 +166,9 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   onChannelMessageCreated,
   onThreadReplyCreated,
   onChannelCreated,
+  clipboardMode = "browser",
+  onClipboardUpdate,
+  onSelectionChange,
 }, ref) {
   const wsRef = useRef<WebSocket | null>(null);
   const terminalRef = useRef<TerminalRef>(null);
@@ -207,6 +220,12 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
     },
     uploadImage: async (file: File) => {
       await sendImageToTerminal(file, wsRef.current);
+    },
+    setClipboardSync: (enabled: boolean) => {
+      terminalRef.current?.setClipboardSync(enabled);
+    },
+    syncClipboard: (text: string) => {
+      terminalRef.current?.syncClipboard(text);
     },
   }), [useBuiltinMobileChrome]);
 
@@ -290,6 +309,9 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
         onChannelMessageCreated={onChannelMessageCreated}
         onThreadReplyCreated={onThreadReplyCreated}
         onChannelCreated={onChannelCreated}
+        clipboardMode={clipboardMode}
+        onClipboardUpdate={onClipboardUpdate}
+        onSelectionChange={onSelectionChange}
         onScrollStateChange={setIsTerminalScrolledUp}
       />
     </ErrorBoundary>

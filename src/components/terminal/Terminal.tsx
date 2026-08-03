@@ -6,8 +6,9 @@ import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import type { ImageAddon as ImageAddonType } from "@xterm/addon-image";
 import type { SearchAddon as SearchAddonType } from "@xterm/addon-search";
 import type { WebglAddon as WebglAddonType } from "@xterm/addon-webgl";
-import type { ConnectionStatus } from "@/types/terminal";
+import type { ConnectionStatus, ServerMessage } from "@/types/terminal";
 import { Search, X, ChevronUp, ChevronDown, Circle } from "lucide-react";
+import { toast } from "sonner";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useTerminalTheme } from "@/contexts/AppearanceContext";
 import { sendImageToTerminal } from "@/lib/image-upload";
@@ -25,6 +26,12 @@ import {
 } from "./resize-reconciler";
 
 import { apiFetch } from "@/lib/api-fetch";
+import { useClipboardSyncPreference } from "@/hooks/useClipboardSyncPreference";
+import {
+  TerminalClipboardSync,
+  readBrowserClipboard,
+  writeBrowserClipboard,
+} from "@/lib/terminal-clipboard-sync";
 
 export interface TerminalRef {
   focus: () => void;
@@ -58,6 +65,10 @@ export interface TerminalRef {
   closeSearch: () => void;
   /** Toggle the search overlay (convenience for menu buttons). */
   toggleSearch: () => void;
+  /** Enable/disable native-owned clipboard synchronization. */
+  setClipboardSync: (enabled: boolean) => void;
+  /** Push native clipboard text to the active remote session. */
+  syncClipboard: (text: string) => void;
 }
 
 export interface TerminalProps {
@@ -121,6 +132,12 @@ export interface TerminalProps {
   onScrollStateChange?: (isScrolledUp: boolean) => void;
   /** Called when the server changes which connection controls tmux resize */
   onPrimaryChange?: (isPrimary: boolean) => void;
+  /** Browser owns navigator.clipboard; native mode delegates to Flutter. */
+  clipboardMode?: "browser" | "native";
+  /** Called for remote clipboard updates in native mode. */
+  onClipboardUpdate?: (text: string, revision: number) => void;
+  /** Called when the xterm selection changes in native mode. */
+  onSelectionChange?: (text: string) => void;
 }
 
 export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal({
@@ -159,6 +176,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   onDimensionsChange,
   onScrollStateChange,
   onPrimaryChange,
+  clipboardMode = "browser",
+  onClipboardUpdate,
+  onSelectionChange,
 }, ref) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermContainerRef = useRef<HTMLDivElement>(null);
@@ -168,6 +188,44 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const searchAddonRef = useRef<SearchAddonType | null>(null);
   const webglAddonRef = useRef<WebglAddonType | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const clipboardModeRef = useRef(clipboardMode);
+  const onClipboardUpdateRef = useRef(onClipboardUpdate);
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  const nativeClipboardSyncEnabledRef = useRef(false);
+  const clipboardSyncRef = useRef<TerminalClipboardSync | null>(null);
+  if (clipboardSyncRef.current === null) {
+    clipboardSyncRef.current = new TerminalClipboardSync({
+      applyRemote: async (text, revision) => {
+        if (clipboardModeRef.current === "native") {
+          onClipboardUpdateRef.current?.(text, revision);
+          return;
+        }
+
+        const clipboard =
+          typeof navigator !== "undefined" ? navigator.clipboard : undefined;
+        await writeBrowserClipboard(text, {
+          clipboard,
+          onBlocked: (_blockedText, retry) => {
+            toast("Remote clipboard received", {
+              id: `remote-clipboard-${revision}`,
+              description:
+                "Browser permission blocked automatic copying. Copy it with one click.",
+              action: {
+                label: "Copy",
+                onClick: () => {
+                  void retry().catch(() => {
+                    toast.error("Clipboard permission was denied");
+                  });
+                },
+              },
+            });
+          },
+        });
+      },
+    });
+  }
+  const clipboardSync = clipboardSyncRef.current;
+  const [deviceClipboardSyncEnabled] = useClipboardSyncPreference();
   const clientInstanceIdRef = useRef<string | null>(null);
   const previousSessionIdentityRef = useRef<{
     sessionId: string;
@@ -294,6 +352,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     onDimensionsChangeRef.current = onDimensionsChange;
     onScrollStateChangeRef.current = onScrollStateChange;
     onPrimaryChangeRef.current = onPrimaryChange;
+    clipboardModeRef.current = clipboardMode;
+    onClipboardUpdateRef.current = onClipboardUpdate;
+    onSelectionChangeRef.current = onSelectionChange;
     recordActivityRef.current = recordActivity;
     // Keep font refs in sync for pending terminal initialization
     fontSizeRef.current = fontSize;
@@ -306,7 +367,16 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     environmentVarsRef.current = environmentVars;
     // Keep theme ref in sync for pending terminal initialization
     terminalThemeRef.current = terminalTheme;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onBeadsIssuesUpdated, onSessionRenamed, onNotification, onSessionStatus, onSessionProgress, onPeerMessageCreated, onChannelMessageCreated, onThreadReplyCreated, onChannelCreated, onOutput, onDimensionsChange, onScrollStateChange, onPrimaryChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, mobileMode, environmentVars, terminalTheme]);
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onBeadsIssuesUpdated, onSessionRenamed, onNotification, onSessionStatus, onSessionProgress, onPeerMessageCreated, onChannelMessageCreated, onThreadReplyCreated, onChannelCreated, onOutput, onDimensionsChange, onScrollStateChange, onPrimaryChange, clipboardMode, onClipboardUpdate, onSelectionChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, mobileMode, environmentVars, terminalTheme]);
+
+  useEffect(() => {
+    clipboardModeRef.current = clipboardMode;
+    clipboardSync.setEnabled(
+      clipboardMode === "browser"
+        ? deviceClipboardSyncEnabled
+        : nativeClipboardSyncEnabledRef.current,
+    );
+  }, [clipboardMode, clipboardSync, deviceClipboardSyncEnabled]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -361,7 +431,18 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         return next;
       });
     },
-  }), []);
+    setClipboardSync: (enabled: boolean) => {
+      nativeClipboardSyncEnabledRef.current = enabled;
+      if (clipboardModeRef.current === "native") {
+        clipboardSync.setEnabled(enabled);
+      }
+    },
+    syncClipboard: (text: string) => {
+      if (clipboardModeRef.current === "native") {
+        clipboardSync.writeLocalText(text);
+      }
+    },
+  }), [clipboardSync]);
 
   const updateStatus = useCallback(
     (status: ConnectionStatus) => {
@@ -404,6 +485,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       hasConnectedBeforeRef.current = false;
       lastDesiredFocusStateRef.current = null;
       pendingGenuineFocusRef.current = false;
+      clipboardSync.resetSession();
     }
 
     const releaseReconciler = (instance: ResizeReconciler | null) => {
@@ -758,7 +840,21 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       };
       const scrollDisposable = terminal.onScroll(updateScrollState);
       const bufferChangeDisposable = terminal.buffer.onBufferChange(updateScrollState);
-      terminalDisposablesRef.current.push(scrollDisposable, bufferChangeDisposable);
+      // Some alternate/test renderers implement only the core xterm surface;
+      // selection notifications are additive and should not block startup.
+      const selectionDisposable =
+        typeof terminal.onSelectionChange === "function"
+          ? terminal.onSelectionChange(() => {
+              if (clipboardModeRef.current === "native") {
+                onSelectionChangeRef.current?.(terminal.getSelection());
+              }
+            })
+          : { dispose: () => {} };
+      terminalDisposablesRef.current.push(
+        scrollDisposable,
+        bufferChangeDisposable,
+        selectionDisposable,
+      );
 
       // Custom keyboard handler for macOS shortcuts, clipboard, and special key sequences
       // xterm.js doesn't translate Cmd/Option key combinations by default
@@ -792,15 +888,20 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         const isCopyShortcut = event.key === "c" && (event.metaKey || event.ctrlKey);
         if (isCopyShortcut && terminal.hasSelection()) {
           const selectedText = terminal.getSelection();
-          navigator.clipboard.writeText(selectedText).then(() => {
-            // Keep selection visible for a moment so user sees what was copied
-            // Then clear it after a short delay
-            setTimeout(() => {
-              terminal.clearSelection();
-            }, 150);
-          }).catch((err) => {
-            console.error("Failed to copy to clipboard:", err);
-          });
+          clipboardSync.writeLocalText(selectedText);
+          // Flutter owns the native clipboard in embedded mode. Never invoke
+          // navigator.clipboard from inside its WebView.
+          if (clipboardModeRef.current === "browser") {
+            navigator.clipboard?.writeText(selectedText).then(() => {
+              // Keep selection visible for a moment so user sees what was copied
+              // Then clear it after a short delay
+              setTimeout(() => {
+                terminal.clearSelection();
+              }, 150);
+            }).catch((err) => {
+              console.error("Failed to copy to clipboard:", err);
+            });
+          }
           return false; // Prevent Ctrl+C from sending SIGINT
         }
 
@@ -950,6 +1051,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           updateStatus("connected");
           reconnectAttemptsRef.current = 0;
           lastSentFocusStateRef.current = null;
+          clipboardSync.openSocket(ws);
           onWebSocketReadyRef.current?.(ws);
           const pendingGenuineFocus = pendingGenuineFocusRef.current;
           const currentDesiredFocusState = getDesiredFocus() ? "focus" : "blur";
@@ -1117,6 +1219,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
                 onPrimaryChangeRef.current?.(next);
                 break;
               }
+              case "clipboard_update": {
+                void clipboardSync.receive(
+                  msg as Extract<ServerMessage, { type: "clipboard_update" }>,
+                );
+                break;
+              }
               case "error":
                 terminal.writeln(`\r\n\x1b[31mError: ${msg.message}\x1b[0m`);
                 // Check if this is an authentication error
@@ -1137,6 +1245,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         };
 
         ws.onclose = () => {
+          clipboardSync.closeSocket(ws);
           if (wsRef.current !== ws) return;
           if (isUnmountingRef.current) {
             return;
@@ -1243,6 +1352,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       }
 
       const handleVisibilityChange = () => {
+        clipboardSync.setPresented({
+          pageVisible: !document.hidden,
+          focused: !document.hidden && document.hasFocus(),
+        });
         syncFocusToServer();
         if (!document.hidden) {
           reconciler.request("page-visible");
@@ -1251,11 +1364,13 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       };
 
       const handleWindowFocus = () => {
+        clipboardSync.setPresented({ focused: true });
         syncFocusToServer();
         reconciler.request("window-focus");
       };
 
       const handleWindowBlur = () => {
+        clipboardSync.setPresented({ focused: false });
         syncFocusToServer();
       };
 
@@ -1325,6 +1440,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
       }
+      clipboardSync.closeSocket(wsRef.current ?? undefined);
       wsRef.current?.close();
       for (const d of terminalDisposablesRef.current) d.dispose();
       terminalDisposablesRef.current = [];
@@ -1339,17 +1455,108 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       wsRef.current = null;
       textareaFocusedRef.current = false;
     };
-  }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, terminalType, markIntentionalExit, focusIfPresented]);
+  }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, terminalType, markIntentionalExit, focusIfPresented, clipboardSync]);
 
   useLayoutEffect(() => {
     visibleRef.current = visible;
     isActiveRef.current = isActive;
-  }, [visible, isActive]);
+    clipboardSync.setPresented({
+      active: isActive,
+      visible,
+      pageVisible: !document.hidden,
+      focused: document.hasFocus(),
+    });
+  }, [visible, isActive, clipboardSync]);
 
   useEffect(() => {
     syncFocusToServerRef.current?.();
     reconcilerRef.current?.notifyPanelVisibility(visible);
   }, [visible]);
+
+  // Browser clipboard adapter. Reads are best-effort: browsers may deny them
+  // unless the page has focus, a user gesture, or clipboard-read permission.
+  // Permission failures are intentionally silent.
+  useEffect(() => {
+    if (
+      clipboardMode !== "browser" ||
+      !deviceClipboardSyncEnabled ||
+      !isActive ||
+      !visible
+    ) {
+      return;
+    }
+    const browserClipboard = navigator.clipboard;
+
+    const readAndSync = async () => {
+      if (
+        !clipboardSync.canReadLocalClipboard() ||
+        document.hidden ||
+        !document.hasFocus()
+      ) {
+        return;
+      }
+      await readBrowserClipboard(browserClipboard, (text) => {
+        clipboardSync.writeLocalText(text);
+      });
+    };
+    const handleCopy = () => {
+      queueMicrotask(() => void readAndSync());
+    };
+    const handlePaste = (event: ClipboardEvent) => {
+      const text = event.clipboardData?.getData("text/plain");
+      if (typeof text === "string" && text.length > 0) {
+        clipboardSync.writeLocalText(text);
+      } else {
+        void readAndSync();
+      }
+    };
+    const handleWindowFocus = () => {
+      clipboardSync.setPresented({ focused: true });
+      void readAndSync();
+    };
+    const handleWindowBlur = () => {
+      clipboardSync.setPresented({ focused: false });
+    };
+    const handleVisibility = () => {
+      clipboardSync.setPresented({
+        pageVisible: !document.hidden,
+        focused: !document.hidden && document.hasFocus(),
+      });
+      if (!document.hidden) void readAndSync();
+    };
+    const handleClipboardChange = () => void readAndSync();
+
+    document.addEventListener("copy", handleCopy, { capture: true });
+    document.addEventListener("paste", handlePaste, { capture: true });
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleWindowFocus);
+    window.addEventListener("blur", handleWindowBlur);
+    browserClipboard?.addEventListener?.(
+      "clipboardchange",
+      handleClipboardChange,
+    );
+    // Seed the active session when it becomes eligible; this is also the path
+    // used when returning from Settings without a window-level focus event.
+    void readAndSync();
+
+    return () => {
+      document.removeEventListener("copy", handleCopy, { capture: true });
+      document.removeEventListener("paste", handlePaste, { capture: true });
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleWindowFocus);
+      window.removeEventListener("blur", handleWindowBlur);
+      browserClipboard?.removeEventListener?.(
+        "clipboardchange",
+        handleClipboardChange,
+      );
+    };
+  }, [
+    clipboardMode,
+    clipboardSync,
+    deviceClipboardSyncEnabled,
+    isActive,
+    visible,
+  ]);
 
   // Update terminal options when font preferences change
   useEffect(() => {

@@ -21,6 +21,8 @@ function makeAdapter(overrides: Partial<RdvBridgeAdapter> = {}): RdvBridgeAdapte
     setFontSize: vi.fn(),
     setFontScale: vi.fn(),
     setCursorBlink: vi.fn(),
+    setClipboardSync: vi.fn(),
+    syncClipboard: vi.fn(),
     scrollToBottom: vi.fn(),
     refit: vi.fn(),
     openSearch: vi.fn(),
@@ -149,11 +151,20 @@ describe("rdv-bridge", () => {
       expect(adapter.uploadImage).toHaveBeenNthCalledWith(2, "AAAA", "image/jpeg");
     });
 
-    it("reports bridge version 4 (refit surface)", () => {
+    it("reports bridge version 5 (clipboard sync surface)", () => {
       installRdvBridge(makeAdapter());
-      // The native shell guards the refit() call on older builds, but the
-      // canonical current surface is v4.
-      expect(window.rdvBridge?.version).toBe(4);
+      expect(window.rdvBridge?.version).toBe(5);
+    });
+
+    it("exposes clipboard sync methods (bridge v5) and forwards them", () => {
+      const adapter = makeAdapter();
+      installRdvBridge(adapter);
+
+      window.rdvBridge?.setClipboardSync(true);
+      window.rdvBridge?.syncClipboard("native clipboard");
+
+      expect(adapter.setClipboardSync).toHaveBeenCalledWith(true);
+      expect(adapter.syncClipboard).toHaveBeenCalledWith("native clipboard");
     });
 
     it("exposes refit (bridge v4) and forwards it to the adapter", () => {
@@ -203,12 +214,14 @@ describe("rdv-bridge", () => {
       const callHandler = vi.fn().mockResolvedValue(undefined);
       window.flutter_inappwebview = { callHandler };
 
-      await notifyToNative("onSelectionChange", { text: "selected" });
+      await notifyToNative("onSelectionChange", "selected");
       await notifyToNative("onLinkOpen", { url: "https://example.com" });
 
-      expect(callHandler).toHaveBeenNthCalledWith(1, "onSelectionChange", {
-        text: "selected",
-      });
+      expect(callHandler).toHaveBeenNthCalledWith(
+        1,
+        "onSelectionChange",
+        "selected",
+      );
       expect(callHandler).toHaveBeenNthCalledWith(2, "onLinkOpen", {
         url: "https://example.com",
       });
@@ -248,6 +261,21 @@ describe("rdv-bridge", () => {
       await notifyToNative("onFontSizeChanged", { px: 18 });
 
       expect(callHandler).toHaveBeenCalledWith("onFontSizeChanged", { px: 18 });
+    });
+
+    it("forwards onClipboardWrite { text, revision } (v5)", async () => {
+      const callHandler = vi.fn().mockResolvedValue(undefined);
+      window.flutter_inappwebview = { callHandler };
+
+      await notifyToNative("onClipboardWrite", {
+        text: "remote clipboard",
+        revision: 7,
+      });
+
+      expect(callHandler).toHaveBeenCalledWith("onClipboardWrite", {
+        text: "remote clipboard",
+        revision: 7,
+      });
     });
   });
 });

@@ -19,10 +19,15 @@
  *   - onActivity forwards live agent activity-status transitions (from
  *     the session WebSocket) to the native shell so it can drive the
  *     in-session status-bar pip (remote-dev-sguu).
+ *   - onSelectionChange forwards selected terminal text as a legacy bare
+ *     string so both old and new Flutter shells can copy it safely.
  *   - onFontSizeChanged fires on a pinch-zoom commit with `{ px }` (the
  *     committed absolute terminal font size) so the native shell mirrors
  *     it into its appearance store and suppresses the echo `setFontSize`
  *     it would otherwise push back into this WebView (remote-dev-u5q5.3).
+ *   - onClipboardWrite fires for a subscribed remote clipboard update with
+ *     `{ text, revision }`; Flutter owns the platform clipboard and applies
+ *     the text outside the WebView (remote-dev-2gz7.2, bridge v5).
  *
  * @see docs/superpowers/specs/2026-05-08-flutter-app-redesign-design.md §4
  */
@@ -284,6 +289,21 @@ export function EmbeddedSessionView({
     [session.id],
   );
 
+  const handleClipboardUpdate = useCallback(
+    (text: string, revision: number) => {
+      notifyToNative("onClipboardWrite", { text, revision }).catch((err) => {
+        console.error("onClipboardWrite notify failed", err);
+      });
+    },
+    [],
+  );
+
+  const handleSelectionChange = useCallback((text: string) => {
+    notifyToNative("onSelectionChange", text).catch((err) => {
+      console.error("onSelectionChange notify failed", err);
+    });
+  }, []);
+
   // ── Agent session lifecycle (Restart / Delete from SessionEndedOverlay) ─
   // The overlay only renders when TerminalWithKeyboard receives a full
   // `session` prop (TerminalSession-shaped). The embed page hands us a
@@ -398,6 +418,12 @@ export function EmbeddedSessionView({
       },
       setCursorBlink: (blink) => {
         terminalRef.current?.setCursorBlink(blink);
+      },
+      setClipboardSync: (enabled) => {
+        terminalRef.current?.setClipboardSync(enabled);
+      },
+      syncClipboard: (text) => {
+        terminalRef.current?.syncClipboard(text);
       },
       scrollToBottom: () => terminalRef.current?.scrollToBottom(),
       refit: () => terminalRef.current?.refit(),
@@ -547,6 +573,11 @@ export function EmbeddedSessionView({
         fontSize={fontSize}
         fontFamily={fontFamily}
         mobileChrome="external"
+        clipboardMode="native"
+        isActive
+        visible
+        onClipboardUpdate={handleClipboardUpdate}
+        onSelectionChange={handleSelectionChange}
         onNotification={handleNotification}
         onAgentActivityStatus={handleAgentActivityStatus}
         onSessionRestart={handleSessionRestart}

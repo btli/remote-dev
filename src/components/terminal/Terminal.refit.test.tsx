@@ -33,6 +33,7 @@ import {
 } from "react";
 
 import type { TerminalRef } from "./Terminal";
+import { CLIPBOARD_SYNC_STORAGE_KEY } from "@/hooks/useClipboardSyncPreference";
 
 const reconcilerState = vi.hoisted(() => ({
   instances: [] as Array<{
@@ -284,6 +285,11 @@ const originalFetch = globalThis.fetch;
 const originalWebSocket = globalThis.WebSocket;
 let rectSpy: ReturnType<typeof vi.spyOn>;
 let hasFocusSpy: ReturnType<typeof vi.spyOn>;
+let originalLocalStorageDescriptor: PropertyDescriptor | undefined;
+let originalClipboardDescriptor: PropertyDescriptor | undefined;
+let localStorageValues: Map<string, string>;
+let clipboardReadText: ReturnType<typeof vi.fn>;
+let clipboardWriteText: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   // Token endpoint succeeds so connect() proceeds to open a WebSocket; any
   // other URL resolves benignly. The focus-frame test needs a live socket.
@@ -303,6 +309,32 @@ beforeEach(() => {
     } as Response);
   }) as unknown as typeof fetch;
   globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+  originalLocalStorageDescriptor = Object.getOwnPropertyDescriptor(
+    window,
+    "localStorage",
+  );
+  localStorageValues = new Map();
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key: string) => localStorageValues.get(key) ?? null,
+      setItem: (key: string, value: string) =>
+        localStorageValues.set(key, value),
+    },
+  });
+  originalClipboardDescriptor = Object.getOwnPropertyDescriptor(
+    navigator,
+    "clipboard",
+  );
+  clipboardReadText = vi.fn().mockResolvedValue("");
+  clipboardWriteText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: {
+      readText: clipboardReadText,
+      writeText: clipboardWriteText,
+    },
+  });
   blurBeforeSocketOpen = false;
   documentHasFocus = true;
   autoOpenSockets = true;
@@ -333,6 +365,26 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = originalFetch;
   globalThis.WebSocket = originalWebSocket;
+  if (originalLocalStorageDescriptor) {
+    Object.defineProperty(
+      window,
+      "localStorage",
+      originalLocalStorageDescriptor,
+    );
+  } else {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    delete (window as any).localStorage;
+  }
+  if (originalClipboardDescriptor) {
+    Object.defineProperty(
+      navigator,
+      "clipboard",
+      originalClipboardDescriptor,
+    );
+  } else {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    delete (navigator as any).clipboard;
+  }
   hasFocusSpy.mockRestore();
   rectSpy.mockRestore();
   xtermInstances.length = 0;
@@ -348,6 +400,157 @@ async function getTerminal() {
 }
 
 describe("Terminal.refit (remote-dev-u5q5.2)", () => {
+  it.each([
+    { name: "disabled", enabled: false, isActive: true, visible: true },
+    { name: "inactive", enabled: true, isActive: false, visible: true },
+    { name: "hidden", enabled: true, isActive: true, visible: false },
+  ])(
+    "never reads the browser clipboard while sync is $name",
+    async ({ enabled, isActive, visible }) => {
+      if (enabled) {
+        localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+      }
+      const Terminal = await getTerminal();
+      render(
+        <Terminal
+          sessionId="clipboard-guard"
+          tmuxSessionName="rdv-clipboard-guard"
+          wsUrl="ws://localhost:0"
+          terminalType="shell"
+          isActive={isActive}
+          visible={visible}
+        />,
+      );
+
+      await waitFor(() => expect(wsInstances.at(-1)).toBeDefined());
+      act(() => {
+        window.dispatchEvent(new Event("focus"));
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(clipboardReadText).not.toHaveBeenCalled();
+    },
+  );
+
+  it("re-subscribes before reading and writing the clipboard on window focus", async () => {
+    localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+    clipboardReadText.mockResolvedValue("initial clipboard");
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="clipboard-focus"
+        tmuxSessionName="rdv-clipboard-focus"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        isActive
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      const frames = wsInstances.at(-1)?.sent.map((frame) => JSON.parse(frame));
+      expect(frames).toContainEqual({
+        type: "clipboard_subscribe",
+        enabled: true,
+      });
+    });
+    const socket = wsInstances.at(-1)!;
+
+    act(() => window.dispatchEvent(new Event("blur")));
+    expect(socket.sent.map((frame) => JSON.parse(frame))).toContainEqual({
+      type: "clipboard_subscribe",
+      enabled: false,
+    });
+    socket.sent.length = 0;
+    clipboardReadText.mockResolvedValue("focused clipboard");
+
+    act(() => window.dispatchEvent(new Event("focus")));
+    await waitFor(() => {
+      expect(clipboardReadText).toHaveBeenCalledTimes(2);
+      expect(
+        socket.sent.map((frame) => JSON.parse(frame)).map((frame) => frame.type),
+      ).toContain("clipboard_write");
+    });
+
+    const clipboardFrames = socket.sent
+      .map((frame) => JSON.parse(frame))
+      .filter((frame) => frame.type.startsWith("clipboard_"));
+    expect(clipboardFrames[0]).toEqual({
+      type: "clipboard_subscribe",
+      enabled: true,
+    });
+    expect(clipboardFrames[1]).toEqual({
+      type: "clipboard_write",
+      data: "focused clipboard",
+      updateId: expect.any(String),
+    });
+  });
+
+  it("routes native clipboard writes and remote updates without navigator.clipboard", async () => {
+    const Terminal = await getTerminal();
+    const ref = createRef<TerminalRef>();
+    const onClipboardUpdate = vi.fn();
+    autoOpenSockets = false;
+    render(
+      <Terminal
+        ref={ref}
+        sessionId="clipboard-native"
+        tmuxSessionName="rdv-clipboard-native"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        clipboardMode="native"
+        isActive
+        visible
+        onClipboardUpdate={onClipboardUpdate}
+      />,
+    );
+
+    // Flutter calls these immediately after onTerminalReady, which only
+    // guarantees that the bridge mounted — the socket may still be opening.
+    act(() => {
+      ref.current?.setClipboardSync(true);
+      ref.current?.syncClipboard("from native");
+    });
+    await waitFor(() => expect(wsInstances.at(-1)).toBeDefined());
+    const socket = wsInstances.at(-1)!;
+    act(() => socket.open());
+    await waitFor(() => {
+      expect(socket.readyState).toBe(1);
+      expect(
+        socket.sent.map((frame) => JSON.parse(frame)),
+      ).toEqual(
+        expect.arrayContaining([
+          { type: "clipboard_subscribe", enabled: true },
+          {
+            type: "clipboard_write",
+            data: "from native",
+            updateId: expect.any(String),
+          },
+        ]),
+      );
+    });
+
+    act(() => {
+      socket.onmessage?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "clipboard_update",
+            data: "from host",
+            revision: 4,
+          }),
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(onClipboardUpdate).toHaveBeenCalledWith("from host", 4);
+    });
+    expect(clipboardWriteText).not.toHaveBeenCalled();
+    expect(clipboardReadText).not.toHaveBeenCalled();
+  });
+
   it("is a safe no-op before the terminal has initialized", async () => {
     const Terminal = await getTerminal();
     const ref = createRef<TerminalRef>();

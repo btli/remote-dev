@@ -46,8 +46,14 @@
  *       fires it on a pinch-zoom commit so the native shell can mirror the
  *       new absolute terminal font size into its own appearance store and
  *       avoid echoing a redundant setFontSize back into the WebView.
+ *   5 — add bidirectional clipboard synchronization (remote-dev-2gz7.2).
+ *       Native calls `setClipboardSync(enabled)` to subscribe the active
+ *       embedded terminal and `syncClipboard(text)` when the device clipboard
+ *       changes. The embed emits `onClipboardWrite: { text, revision }` for
+ *       remote clipboard changes; native owns all platform clipboard access.
+ *       Dart callers guard these methods when talking to older deployed PWAs.
  */
-export const RDV_BRIDGE_VERSION = 4;
+export const RDV_BRIDGE_VERSION = 5;
 
 export interface RdvBridgeKeyMods {
   ctrl?: boolean;
@@ -83,6 +89,10 @@ export interface RdvBridgeAdapter {
    * treat the call as a no-op.
    */
   setCursorBlink: (blink: boolean) => void;
+  /** Enable/disable session clipboard synchronization (session view only). */
+  setClipboardSync: (enabled: boolean) => void;
+  /** Push native clipboard text into the active remote session. */
+  syncClipboard: (text: string) => void;
   /** Scroll terminal viewport to the bottom (session view only). */
   scrollToBottom: () => void;
   /**
@@ -168,6 +178,8 @@ export function installRdvBridge(adapter: RdvBridgeAdapter): () => void {
     setFontSize: (px) => adapter.setFontSize(px),
     setFontScale: (scale) => adapter.setFontScale(scale),
     setCursorBlink: (blink) => adapter.setCursorBlink(blink),
+    setClipboardSync: (enabled) => adapter.setClipboardSync(enabled),
+    syncClipboard: (text) => adapter.syncClipboard(text),
     scrollToBottom: () => adapter.scrollToBottom(),
     refit: () => adapter.refit(),
     openSearch: () => adapter.openSearch(),
@@ -192,12 +204,15 @@ export type NotifyName =
   | "onWantsPaste"
   | "onActivity"
   | "onLinkOpen"
-  | "onFontSizeChanged";
+  | "onFontSizeChanged"
+  | "onClipboardWrite";
 
 /** Payload union — kept narrow on purpose; bump version to extend. */
 export type NotifyPayload =
   | { name: "onTerminalReady"; data: Record<string, never> }
-  | { name: "onSelectionChange"; data: { text: string } }
+  // Keep the legacy bare-string payload: deployed pre-v5 Flutter builds call
+  // args.first?.toString(), which would stringify an object as "{text: ...}".
+  | { name: "onSelectionChange"; data: string }
   | { name: "onWantsPaste"; data: Record<string, never> }
   | {
       name: "onActivity";
@@ -218,7 +233,11 @@ export type NotifyPayload =
   // [FONT_SIZE_MIN, FONT_SIZE_MAX]. The native shell mirrors it into its
   // appearance store and suppresses the echo setFontSize it would otherwise
   // push back into this WebView.
-  | { name: "onFontSizeChanged"; data: { px: number } };
+  | { name: "onFontSizeChanged"; data: { px: number } }
+  | {
+      name: "onClipboardWrite";
+      data: { text: string; revision: number };
+    };
 
 /**
  * Send an event to the native shell. No-op when not running inside a
