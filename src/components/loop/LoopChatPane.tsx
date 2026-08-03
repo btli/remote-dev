@@ -43,6 +43,7 @@ interface LoopChatPaneProps {
   scrollback?: number;
   tmuxHistoryLimit?: number;
   isActive?: boolean;
+  parentVisible?: boolean;
   environmentVars?: Record<string, string> | null;
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
   onBeadsIssuesUpdated?: (sessionId: string) => void;
@@ -76,6 +77,7 @@ export function LoopChatPane({
   scrollback = 10000,
   tmuxHistoryLimit = 50000,
   isActive = false,
+  parentVisible = true,
   environmentVars,
   onAgentActivityStatus,
   onBeadsIssuesUpdated,
@@ -332,6 +334,7 @@ export function LoopChatPane({
             scrollback={scrollback}
             tmuxHistoryLimit={tmuxHistoryLimit}
             isActive={isActive}
+            visible={parentVisible !== false && terminalVisible}
             environmentVars={environmentVars}
             terminalType="agent"
             onStatusChange={handleStatusChange}

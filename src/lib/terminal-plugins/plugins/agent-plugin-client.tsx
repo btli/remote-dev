@@ -44,6 +44,7 @@ function AgentSessionComponent(props: TerminalTypeClientComponentProps) {
     notificationsEnabled,
     isRecording,
     isActive,
+    visible,
     environmentVars,
     onOutput,
     onDimensionsChange,
@@ -80,6 +81,7 @@ function AgentSessionComponent(props: TerminalTypeClientComponentProps) {
       notificationsEnabled={notificationsEnabled}
       isRecording={isRecording}
       isActive={isActive}
+      visible={visible}
       environmentVars={environmentVars}
       onOutput={onOutput}
       onDimensionsChange={onDimensionsChange}

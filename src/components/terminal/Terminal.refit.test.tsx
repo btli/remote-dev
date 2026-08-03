@@ -15,31 +15,82 @@
  * disabled and the native shell owns the keyboard, so focusing here would
  * steal the keyboard context.
  *
- * This test asserts that calling `ref.refit()` drives the terminal's
- * scrollToBottom (an observable proxy for the refit pipeline running), that
- * it forces a fresh `client_focus` frame past the client-side dedupe before
- * the resize (Codex Fix 1 — the dedupe-trap on lifecycle edges), and that it
- * is a safe no-op before the terminal has finished initializing.
+ * These tests assert that calling `ref.refit()` issues a real reconciler
+ * request and resize frame, scrolls to the bottom, forces a fresh
+ * `client_focus` frame even while the derived state is blurred, suppresses that
+ * assertion while the panel/page is hidden, and remains a safe no-op before
+ * the terminal has finished initializing.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, render, cleanup, waitFor } from "@testing-library/react";
-import { createRef } from "react";
+import {
+  createRef,
+  startTransition,
+  StrictMode,
+  Suspense,
+  useLayoutEffect,
+  useState,
+} from "react";
 
 import type { TerminalRef } from "./Terminal";
+
+const reconcilerState = vi.hoisted(() => ({
+  instances: [] as Array<{
+    wasDisposed: boolean;
+    callsAfterDispose: number;
+    requests: string[];
+  }>,
+}));
+
+vi.mock("./resize-reconciler", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./resize-reconciler")>();
+  class TrackingResizeReconciler extends actual.ResizeReconciler {
+    wasDisposed = false;
+    callsAfterDispose = 0;
+    requests: string[] = [];
+
+    constructor(
+      ...args: ConstructorParameters<typeof actual.ResizeReconciler>
+    ) {
+      super(...args);
+      reconcilerState.instances.push(this);
+    }
+
+    request(reason: Parameters<typeof actual.ResizeReconciler.prototype.request>[0]) {
+      if (this.wasDisposed) this.callsAfterDispose++;
+      this.requests.push(reason);
+      return super.request(reason);
+    }
+
+    dispose() {
+      this.wasDisposed = true;
+      super.dispose();
+    }
+  }
+  return { ...actual, ResizeReconciler: TrackingResizeReconciler };
+});
 
 // Capture every XTerm instance so we can assert against its methods + textarea.
 const xtermInstances: Array<{
   scrollToBottom: ReturnType<typeof vi.fn>;
+  focus: ReturnType<typeof vi.fn>;
+  dispose: ReturnType<typeof vi.fn>;
   textarea: HTMLTextAreaElement;
+}> = [];
+const fitAddonInstances: Array<{
+  fit: ReturnType<typeof vi.fn>;
 }> = [];
 
 // ── Recording WebSocket mock ──────────────────────────────────────────────
 // The focus-frame assertion needs an OPEN socket that records sent frames.
-// Terminal.tsx's sendFocusSignal only sends when ws.readyState === OPEN, so a
+// Terminal.tsx only sends a focus signal when ws.readyState === OPEN, so a
 // plain 401 (no socket) wouldn't exercise the dedupe path. This minimal mock
 // opens synchronously-ish (onopen fired on a microtask) and captures every
 // JSON frame the component sends.
 const wsInstances: MockWebSocket[] = [];
+let blurBeforeSocketOpen = false;
+let documentHasFocus = true;
+let autoOpenSockets = true;
 class MockWebSocket {
   static readonly CONNECTING = 0;
   static readonly OPEN = 1;
@@ -49,7 +100,8 @@ class MockWebSocket {
   readonly OPEN = 1;
   readonly CLOSING = 2;
   readonly CLOSED = 3;
-  readyState = 1; // OPEN immediately so post-open sends land
+  readyState = MockWebSocket.CONNECTING;
+  closeCalls = 0;
   sent: string[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((e: MessageEvent) => void) | null = null;
@@ -58,13 +110,28 @@ class MockWebSocket {
   constructor(public url: string) {
     wsInstances.push(this);
     // Fire onopen on a microtask so the component's onopen handler runs.
-    queueMicrotask(() => this.onopen?.());
+    queueMicrotask(() => {
+      if (!autoOpenSockets || this.readyState !== MockWebSocket.CONNECTING) return;
+      if (blurBeforeSocketOpen) documentHasFocus = false;
+      this.readyState = MockWebSocket.OPEN;
+      this.onopen?.();
+    });
   }
   send(data: string) {
     this.sent.push(data);
   }
   close() {
+    this.closeCalls++;
     this.readyState = 3;
+    setTimeout(() => this.onclose?.(), 0);
+  }
+  open() {
+    this.readyState = MockWebSocket.OPEN;
+    this.onopen?.();
+  }
+  serverClose() {
+    this.readyState = MockWebSocket.CLOSED;
+    this.onclose?.();
   }
   /** Parsed frame `type`s in send order. */
   sentTypes(): string[] {
@@ -94,7 +161,9 @@ vi.mock("@xterm/xterm", () => {
       this.textarea = document.createElement("textarea");
       xtermInstances.push(this);
     }
-    loadAddon() {}
+    loadAddon(addon: { activate?: (terminal: FakeTerminal) => void }) {
+      addon.activate?.(this);
+    }
     open() {}
     onData() {
       return { dispose: () => {} };
@@ -106,10 +175,10 @@ vi.mock("@xterm/xterm", () => {
       return { dispose: () => {} };
     }
     attachCustomKeyEventHandler() {}
-    focus() {}
+    focus = vi.fn();
     write() {}
     writeln() {}
-    dispose() {}
+    dispose = vi.fn();
     clear() {}
   }
   return { Terminal: FakeTerminal };
@@ -117,9 +186,22 @@ vi.mock("@xterm/xterm", () => {
 
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class {
-    activate() {}
+    private terminal: { cols: number; rows: number } | null = null;
+    fit = vi.fn(() => {
+      if (!this.terminal) return;
+      this.terminal.cols = 100;
+      this.terminal.rows = 30;
+    });
+    constructor() {
+      fitAddonInstances.push(this);
+    }
+    activate(terminal: { cols: number; rows: number }) {
+      this.terminal = terminal;
+    }
+    proposeDimensions() {
+      return { cols: 100, rows: 30 };
+    }
     dispose() {}
-    fit() {}
   },
 }));
 
@@ -197,6 +279,8 @@ vi.mock("@/hooks/useNotifications", () => ({
 
 const originalFetch = globalThis.fetch;
 const originalWebSocket = globalThis.WebSocket;
+let rectSpy: ReturnType<typeof vi.spyOn>;
+let hasFocusSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   // Token endpoint succeeds so connect() proceeds to open a WebSocket; any
   // other URL resolves benignly. The focus-frame test needs a live socket.
@@ -216,6 +300,25 @@ beforeEach(() => {
     } as Response);
   }) as unknown as typeof fetch;
   globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+  blurBeforeSocketOpen = false;
+  documentHasFocus = true;
+  autoOpenSockets = true;
+  hasFocusSpy = vi
+    .spyOn(document, "hasFocus")
+    .mockImplementation(() => documentHasFocus);
+  rectSpy = vi
+    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+    .mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 800,
+      bottom: 480,
+      width: 800,
+      height: 480,
+      toJSON: () => ({}),
+    });
   if (!("fonts" in document)) {
     Object.defineProperty(document, "fonts", {
       configurable: true,
@@ -227,7 +330,11 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = originalFetch;
   globalThis.WebSocket = originalWebSocket;
+  hasFocusSpy.mockRestore();
+  rectSpy.mockRestore();
   xtermInstances.length = 0;
+  fitAddonInstances.length = 0;
+  reconcilerState.instances.length = 0;
   wsInstances.length = 0;
   cleanup();
 });
@@ -294,9 +401,9 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
       ref.current?.refit();
     });
 
-    // refit() calls scrollToBottom directly (the settle+fit half no-ops in a
-    // zero-size jsdom container, but scrollToBottom is unconditional and is a
-    // faithful proxy that the imperative path executed).
+    // refit() calls scrollToBottom directly — an unconditional, synchronous
+    // proxy that the imperative path executed (the reconcile half is async and
+    // is asserted separately).
     expect(xterm.scrollToBottom).toHaveBeenCalledTimes(1);
   });
 
@@ -360,5 +467,829 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
     });
 
     expect(ws.sentTypes()).toContain("client_focus");
+  });
+
+  it("flushes live document focus state when the socket opens", async () => {
+    const Terminal = await getTerminal();
+    blurBeforeSocketOpen = true;
+
+    render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_blur");
+    });
+    expect(wsInstances.at(-1)?.sentTypes()).not.toContain("client_focus");
+  });
+
+  it("uses committed panel visibility when a socket opens during a suspended render", async () => {
+    const Terminal = await getTerminal();
+    autoOpenSockets = false;
+    const neverResolves = new Promise<void>(() => {});
+    let speculativeRenderSeen = false;
+
+    function SuspendOnReveal({ visible }: { visible: boolean }) {
+      if (visible) {
+        speculativeRenderSeen = true;
+        throw neverResolves;
+      }
+      return null;
+    }
+
+    function Harness() {
+      const [visible, setVisible] = useState(false);
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => startTransition(() => setVisible(true))}
+          >
+            Reveal
+          </button>
+          <Suspense fallback={null}>
+            <Terminal
+              sessionId="s1"
+              tmuxSessionName="rdv-s1"
+              wsUrl="ws://localhost:0"
+              terminalType="shell"
+              visible={visible}
+            />
+            <SuspendOnReveal visible={visible} />
+          </Suspense>
+        </>
+      );
+    }
+
+    const view = render(<Harness />);
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.readyState).toBe(MockWebSocket.CONNECTING);
+    });
+    const socket = wsInstances.at(-1)!;
+
+    act(() => view.getByRole("button", { name: "Reveal" }).click());
+    expect(speculativeRenderSeen).toBe(true);
+    act(() => socket.open());
+
+    expect(socket.sentTypes()).toContain("client_blur");
+    expect(socket.sentTypes()).not.toContain("client_focus");
+  });
+
+  it("flushes blur when a socket opens after committed hide but before passive effects", async () => {
+    const Terminal = await getTerminal();
+    autoOpenSockets = false;
+
+    function OpenSocketOnCommittedHide({ visible }: { visible: boolean }) {
+      useLayoutEffect(() => {
+        if (!visible) wsInstances.at(-1)?.open();
+      }, [visible]);
+      return null;
+    }
+
+    function Harness() {
+      const [visible, setVisible] = useState(true);
+      return (
+        <>
+          <button type="button" onClick={() => setVisible(false)}>
+            Hide
+          </button>
+          <Terminal
+            sessionId="s1"
+            tmuxSessionName="rdv-s1"
+            wsUrl="ws://localhost:0"
+            terminalType="shell"
+            visible={visible}
+          />
+          <OpenSocketOnCommittedHide visible={visible} />
+        </>
+      );
+    }
+
+    const view = render(<Harness />);
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.readyState).toBe(MockWebSocket.CONNECTING);
+    });
+    const socket = wsInstances.at(-1)!;
+
+    act(() => view.getByRole("button", { name: "Hide" }).click());
+
+    expect(socket.sentTypes()).toContain("client_blur");
+    expect(socket.sentTypes()).not.toContain("client_focus");
+  });
+
+  it("sends a genuine focus assertion on the first socket open", async () => {
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const focusFrame = wsInstances
+      .at(-1)!
+      .sent.map((frame) => JSON.parse(frame) as { type: string; reassert?: boolean })
+      .find((frame) => frame.type === "client_focus");
+    expect(focusFrame).toEqual({ type: "client_focus" });
+  });
+
+  it("reasserts focus on an unattended reconnect without promoting recency", async () => {
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        firstSocket.serverClose();
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+
+      const reconnect = wsInstances.at(-1)!;
+      expect(reconnect).not.toBe(firstSocket);
+      const focusFrame = reconnect.sent
+        .map((frame) => JSON.parse(frame) as { type: string; reassert?: boolean })
+        .find((frame) => frame.type === "client_focus");
+      expect(focusFrame).toEqual({ type: "client_focus", reassert: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("flushes genuine focus when focus transitions while the replacement socket connects", async () => {
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+    documentHasFocus = false;
+    act(() => window.dispatchEvent(new Event("blur")));
+    vi.useFakeTimers();
+    try {
+      autoOpenSockets = false;
+      firstSocket.serverClose();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      const reconnect = wsInstances.at(-1)!;
+      expect(reconnect).not.toBe(firstSocket);
+      expect(reconnect.readyState).toBe(MockWebSocket.CONNECTING);
+
+      documentHasFocus = true;
+      act(() => window.dispatchEvent(new Event("focus")));
+      act(() => reconnect.open());
+
+      const focusFrame = reconnect.sent
+        .map((frame) => JSON.parse(frame) as { type: string; reassert?: boolean })
+        .find((frame) => frame.type === "client_focus");
+      expect(focusFrame).toEqual({ type: "client_focus" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears pending gap focus when the client blurs again before reopen", async () => {
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+    documentHasFocus = false;
+    act(() => window.dispatchEvent(new Event("blur")));
+    vi.useFakeTimers();
+    try {
+      autoOpenSockets = false;
+      firstSocket.serverClose();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      const reconnect = wsInstances.at(-1)!;
+      documentHasFocus = true;
+      act(() => window.dispatchEvent(new Event("focus")));
+      documentHasFocus = false;
+      act(() => window.dispatchEvent(new Event("blur")));
+      act(() => reconnect.open());
+
+      expect(reconnect.sentTypes()).toContain("client_blur");
+      expect(reconnect.sentTypes()).not.toContain("client_focus");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closes a stale socket if it opens after a replacement supersedes it", async () => {
+    autoOpenSockets = false;
+    const Terminal = await getTerminal();
+    const view = render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => expect(wsInstances.length).toBeGreaterThan(0));
+    const stale = wsInstances.at(-1)!;
+
+    view.rerender(
+      <Terminal
+        sessionId="s2"
+        tmuxSessionName="rdv-s2"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => expect(wsInstances.length).toBeGreaterThan(1));
+    const closesBeforeStaleOpen = stale.closeCalls;
+
+    act(() => stale.open());
+
+    expect(stale.closeCalls).toBe(closesBeforeStaleOpen + 1);
+  });
+
+  it("does not create a second replacement while a socket is connecting", async () => {
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+
+    vi.useFakeTimers();
+    try {
+      autoOpenSockets = false;
+      firstSocket.serverClose();
+      firstSocket.onclose?.();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+
+      expect(wsInstances).toHaveLength(2);
+      expect(wsInstances.at(-1)?.readyState).toBe(MockWebSocket.CONNECTING);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses one clientInstanceId and reasserts on a mobile-mode reconnect", async () => {
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        mobileMode
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+    const firstInstanceId = new URL(firstSocket.url).searchParams.get("clientInstanceId");
+    expect(firstInstanceId).toBeTruthy();
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        firstSocket.serverClose();
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+
+      const reconnect = wsInstances.at(-1)!;
+      expect(reconnect).not.toBe(firstSocket);
+      expect(new URL(reconnect.url).searchParams.get("clientInstanceId")).toBe(
+        firstInstanceId,
+      );
+      const focusFrame = reconnect.sent
+        .map((frame) => JSON.parse(frame) as { type: string; reassert?: boolean })
+        .find((frame) => frame.type === "client_focus");
+      expect(focusFrame).toEqual({ type: "client_focus", reassert: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps its mounted clientInstanceId and reasserts across a same-session effect restart", async () => {
+    const Terminal = await getTerminal();
+    const view = render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:1"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+    const clientInstanceId = new URL(firstSocket.url).searchParams.get(
+      "clientInstanceId",
+    );
+
+    view.rerender(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:2"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)).not.toBe(firstSocket);
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const replacement = wsInstances.at(-1)!;
+    expect(new URL(replacement.url).searchParams.get("clientInstanceId")).toBe(
+      clientInstanceId,
+    );
+    expect(
+      replacement.sent
+        .map((frame) => JSON.parse(frame) as { type: string; reassert?: boolean })
+        .find((frame) => frame.type === "client_focus"),
+    ).toEqual({ type: "client_focus", reassert: true });
+  });
+
+  it("flushes genuine focus when returning from chat during the restart import gap", async () => {
+    const Terminal = await getTerminal();
+    const view = render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:1"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+
+    view.rerender(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:1"
+        terminalType="shell"
+        visible={false}
+      />,
+    );
+    await waitFor(() => {
+      expect(firstSocket.sentTypes()).toContain("client_blur");
+    });
+
+    autoOpenSockets = false;
+    view.rerender(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:2"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => {
+      expect(wsInstances.at(-1)).not.toBe(firstSocket);
+      expect(wsInstances.at(-1)?.readyState).toBe(MockWebSocket.CONNECTING);
+    });
+
+    const replacement = wsInstances.at(-1)!;
+    act(() => replacement.open());
+    expect(
+      replacement.sent
+        .map((frame) => JSON.parse(frame) as { type: string; reassert?: boolean })
+        .find((frame) => frame.type === "client_focus"),
+    ).toEqual({ type: "client_focus" });
+  });
+
+  it("preserves a pending genuine focus across a same-session effect restart", async () => {
+    const Terminal = await getTerminal();
+    const view = render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:1"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+    documentHasFocus = false;
+    act(() => window.dispatchEvent(new Event("blur")));
+
+    autoOpenSockets = false;
+    view.rerender(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:2"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => {
+      expect(wsInstances.at(-1)).not.toBe(firstSocket);
+      expect(wsInstances.at(-1)?.readyState).toBe(MockWebSocket.CONNECTING);
+    });
+    const connectingSocket = wsInstances.at(-1)!;
+
+    documentHasFocus = true;
+    act(() => window.dispatchEvent(new Event("focus")));
+    view.rerender(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:3"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => {
+      expect(wsInstances.at(-1)).not.toBe(connectingSocket);
+      expect(wsInstances.at(-1)?.readyState).toBe(MockWebSocket.CONNECTING);
+    });
+
+    const replacement = wsInstances.at(-1)!;
+    act(() => replacement.open());
+    const focusFrame = replacement.sent
+      .map((frame) => JSON.parse(frame) as { type: string; reassert?: boolean })
+      .find((frame) => frame.type === "client_focus");
+    expect(focusFrame).toEqual({ type: "client_focus" });
+  });
+
+  it("keeps its mounted clientInstanceId but flushes genuine focus for a new session", async () => {
+    const Terminal = await getTerminal();
+    const view = render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:1"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+    const clientInstanceId = new URL(firstSocket.url).searchParams.get(
+      "clientInstanceId",
+    );
+
+    view.rerender(
+      <Terminal
+        sessionId="s2"
+        tmuxSessionName="rdv-s2"
+        wsUrl="ws://localhost:1"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)).not.toBe(firstSocket);
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const replacement = wsInstances.at(-1)!;
+    expect(new URL(replacement.url).searchParams.get("clientInstanceId")).toBe(
+      clientInstanceId,
+    );
+    expect(
+      replacement.sent
+        .map((frame) => JSON.parse(frame) as { type: string; reassert?: boolean })
+        .find((frame) => frame.type === "client_focus"),
+    ).toEqual({ type: "client_focus" });
+  });
+
+  it("clears stale textarea focus before a same-session effect restart", async () => {
+    const Terminal = await getTerminal();
+    const view = render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:1"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+    documentHasFocus = false;
+    act(() => {
+      xtermInstances.at(-1)?.textarea.dispatchEvent(new Event("focus"));
+    });
+
+    view.rerender(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:2"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)).not.toBe(firstSocket);
+      expect(wsInstances.at(-1)?.sent.length).toBeGreaterThan(0);
+    });
+    expect(wsInstances.at(-1)?.sentTypes()).toContain("client_blur");
+    expect(wsInstances.at(-1)?.sentTypes()).not.toContain("client_focus");
+  });
+
+  it("forces client_focus and a resize reconciliation while derived focus is blurred", async () => {
+    const Terminal = await getTerminal();
+    const ref = createRef<TerminalRef>();
+
+    render(
+      <Terminal
+        ref={ref}
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("resize");
+    });
+    const ws = wsInstances.at(-1)!;
+    documentHasFocus = false;
+    act(() => window.dispatchEvent(new Event("blur")));
+    expect(ws.sentTypes()).toContain("client_blur");
+
+    ws.sent.length = 0;
+    const reconciler = reconcilerState.instances.find(
+      (instance) => !instance.wasDisposed,
+    )!;
+    reconciler.requests.length = 0;
+    act(() => ref.current?.refit());
+
+    expect(ws.sentTypes()).toContain("client_focus");
+    expect(reconciler.requests).toContain("refit");
+    await waitFor(() => expect(ws.sentTypes()).toContain("resize"));
+
+    ws.sent.length = 0;
+    act(() => window.dispatchEvent(new Event("blur")));
+    expect(ws.sentTypes()).toContain("client_blur");
+  });
+
+  it("reconciles and sends dimensions when a hidden panel becomes visible", async () => {
+    const Terminal = await getTerminal();
+    const view = render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible={false}
+      />,
+    );
+
+    await waitFor(() => expect(wsInstances.length).toBeGreaterThan(0));
+    const ws = wsInstances.at(-1)!;
+    ws.sent.length = 0;
+
+    view.rerender(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        ws.sent
+          .map((frame) => JSON.parse(frame) as { type: string; cols?: number; rows?: number })
+          .find((frame) => frame.type === "resize"),
+      ).toEqual({ type: "resize", cols: 100, rows: 30 });
+    });
+  });
+
+  it("StrictMode leaves one live terminal and teardown prevents later fits", async () => {
+    const Terminal = await getTerminal();
+    const view = render(
+      <StrictMode>
+        <Terminal
+          sessionId="s1"
+          tmuxSessionName="rdv-s1"
+          wsUrl="ws://localhost:0"
+          terminalType="shell"
+          visible
+        />
+      </StrictMode>,
+    );
+
+    await waitFor(() => {
+      expect(
+        reconcilerState.instances.filter((reconciler) => !reconciler.wasDisposed),
+      ).toHaveLength(1);
+    });
+
+    view.unmount();
+    act(() => window.dispatchEvent(new Event("resize")));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(
+      reconcilerState.instances.filter((reconciler) => !reconciler.wasDisposed),
+    ).toHaveLength(0);
+    expect(
+      reconcilerState.instances.reduce(
+        (total, reconciler) => total + reconciler.callsAfterDispose,
+        0,
+      ),
+    ).toBe(0);
+  });
+
+  it("ignores an asynchronous close from a superseded StrictMode socket", async () => {
+    const Terminal = await getTerminal();
+    const onStatusChange = vi.fn();
+    const onWebSocketReady = vi.fn();
+    render(
+      <StrictMode>
+        <Terminal
+          sessionId="s1"
+          tmuxSessionName="rdv-s1"
+          wsUrl="ws://localhost:0"
+          terminalType="shell"
+          visible
+          onStatusChange={onStatusChange}
+          onWebSocketReady={onWebSocketReady}
+        />
+      </StrictMode>,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        firstSocket.serverClose();
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      const replacement = wsInstances.at(-1)!;
+      expect(replacement).not.toBe(firstSocket);
+      expect(onStatusChange).toHaveBeenLastCalledWith("connected");
+      expect(onWebSocketReady).toHaveBeenLastCalledWith(replacement);
+
+      const socketCount = wsInstances.length;
+      firstSocket.close();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(onStatusChange).toHaveBeenLastCalledWith("connected");
+      expect(onWebSocketReady).toHaveBeenLastCalledWith(replacement);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(wsInstances).toHaveLength(socketCount);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not send client_focus for a hidden panel on window focus", async () => {
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sent.length).toBeGreaterThan(0);
+    });
+    const ws = wsInstances.at(-1)!;
+    ws.sent.length = 0;
+
+    act(() => window.dispatchEvent(new Event("focus")));
+
+    expect(ws.sentTypes()).not.toContain("client_focus");
+  });
+
+  it("refit while the panel is hidden emits no client_focus frame", async () => {
+    const Terminal = await getTerminal();
+    const ref = createRef<TerminalRef>();
+    render(
+      <Terminal
+        ref={ref}
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        visible={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sent.length).toBeGreaterThan(0);
+    });
+    const ws = wsInstances.at(-1)!;
+    ws.sent.length = 0;
+
+    act(() => ref.current?.refit());
+
+    expect(ws.sentTypes()).not.toContain("client_focus");
+    expect(
+      reconcilerState.instances.find((instance) => !instance.wasDisposed)?.requests,
+    ).toContain("refit");
+  });
+
+  it("replays activation after async initialization with resize and keyboard focus", async () => {
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        isActive
+        visible
+      />,
+    );
+
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("resize");
+      expect(xtermInstances.at(-1)?.focus).toHaveBeenCalled();
+    });
   });
 });

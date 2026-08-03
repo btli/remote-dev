@@ -332,6 +332,8 @@ export interface TerminalRenderProps {
   fontFamily: string;
   /** Whether session is active (vs suspended) */
   isActive: boolean;
+  /** Whether the containing panel is currently visible */
+  visible?: boolean;
   /** Callback when terminal resizes */
   onResize?: (cols: number, rows: number) => void;
   /** Callback when terminal data received */
@@ -504,4 +506,3 @@ export interface SessionProgress {
   label?: string;
   updatedAt: string;
 }
-

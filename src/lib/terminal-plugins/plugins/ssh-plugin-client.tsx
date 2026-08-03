@@ -40,6 +40,7 @@ function SshSessionComponent(props: TerminalTypeClientComponentProps) {
     notificationsEnabled,
     isRecording,
     isActive,
+    visible,
     environmentVars,
     onOutput,
     onDimensionsChange,
@@ -76,6 +77,7 @@ function SshSessionComponent(props: TerminalTypeClientComponentProps) {
       notificationsEnabled={notificationsEnabled}
       isRecording={isRecording}
       isActive={isActive}
+      visible={visible}
       environmentVars={environmentVars}
       onOutput={onOutput}
       onDimensionsChange={onDimensionsChange}

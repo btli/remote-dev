@@ -42,6 +42,7 @@ function ShellSessionComponent(props: TerminalTypeClientComponentProps) {
     notificationsEnabled,
     isRecording,
     isActive,
+    visible,
     environmentVars,
     onOutput,
     onDimensionsChange,
@@ -78,6 +79,7 @@ function ShellSessionComponent(props: TerminalTypeClientComponentProps) {
       notificationsEnabled={notificationsEnabled}
       isRecording={isRecording}
       isActive={isActive}
+      visible={visible}
       environmentVars={environmentVars}
       onOutput={onOutput}
       onDimensionsChange={onDimensionsChange}

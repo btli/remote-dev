@@ -83,6 +83,7 @@ interface TerminalWithKeyboardProps {
   notificationsEnabled?: boolean;
   isRecording?: boolean;
   isActive?: boolean;
+  visible?: boolean;
   /** Environment variables to inject into new terminal sessions */
   environmentVars?: Record<string, string> | null;
   /**
@@ -134,6 +135,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   notificationsEnabled,
   isRecording,
   isActive,
+  visible = true,
   environmentVars,
   mobileChrome = "builtin",
   onStatusChange,
@@ -267,6 +269,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
         notificationsEnabled={notificationsEnabled}
         isRecording={isRecording}
         isActive={isActive}
+        visible={visible}
         environmentVars={environmentVars}
         terminalType={session?.terminalType}
         mobileMode={isMobile}
