@@ -16,7 +16,7 @@ import { createTouchScrollHandlers } from "./touch-scroll";
 import { createTouchInteractions, createTouchModeRef } from "./useTouchInteractions";
 import {
   createHttpLinkOpener,
-  createTerminalLinkProvider,
+  createTerminalLinkController,
 } from "./terminal-links";
 import {
   MIN_COLS,
@@ -506,9 +506,26 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       });
 
       fitAddon = new FitAddon();
-      const webLinksAddon = new WebLinksAddon((_event, uri) => {
-        openTerminalHttpLink(uri);
+      const terminalLinks = createTerminalLinkController(terminal, {
+        open: openTerminalHttpLink,
       });
+      const webLinksAddon = new WebLinksAddon(
+        (_event, uri) => {
+          terminalLinks.activateWebLink(uri);
+        },
+        {
+          // WebLinksAddon passes its ILink's actual 1-based inclusive buffer
+          // range here, despite the public option type being named
+          // IViewportRange. The controller deliberately consumes those same
+          // buffer coordinates when it rechecks the current rows.
+          hover: (_event, text, range) => {
+            terminalLinks.hoverWebLink(text, range);
+          },
+          leave: (_event, text) => {
+            terminalLinks.leaveWebLink(text);
+          },
+        },
+      );
       const imageAddon = new ImageAddon();
       const searchAddon = new SearchAddon();
 
@@ -517,9 +534,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       // from later providers. Register before WebLinksAddon so its truncated
       // first-row match cannot win over a reconstructed multi-row candidate.
       terminalDisposablesRef.current.push(
-        terminal.registerLinkProvider(
-          createTerminalLinkProvider(terminal, { open: openTerminalHttpLink }),
-        ),
+        terminal.registerLinkProvider(terminalLinks.linkProvider),
       );
       terminal.loadAddon(webLinksAddon);
       terminal.loadAddon(imageAddon);

@@ -26,6 +26,14 @@ const xtermInstances: Array<{
 }> = [];
 const linkRegistrationOrder: string[] = [];
 const webLinkHandlers: Array<(event: MouseEvent, uri: string) => void> = [];
+const webLinkOptions: Array<{
+  hover?(event: MouseEvent, text: string, range: {
+    start: { x: number; y: number };
+    end: { x: number; y: number };
+  }): void;
+  leave?(event: MouseEvent, text: string): void;
+}> = [];
+const WEB_LINK_TARGET = "http://web.test/path";
 
 vi.mock("@xterm/xterm", () => {
   class FakeTerminal {
@@ -38,7 +46,25 @@ vi.mock("@xterm/xterm", () => {
     rows = 24;
     textarea: HTMLTextAreaElement;
     buffer = {
-      active: { type: "normal" as const, viewportY: 0, baseY: 0 },
+      active: {
+        type: "normal" as const,
+        viewportY: 0,
+        baseY: 0,
+        length: 1,
+        getLine(index: number) {
+          if (index !== 0) return undefined;
+          return {
+            isWrapped: false,
+            length: 80,
+            getCell(column: number) {
+              return {
+                getChars: () => WEB_LINK_TARGET[column] ?? "",
+                getWidth: () => 1,
+              };
+            },
+          };
+        },
+      },
       onBufferChange: () => ({ dispose: () => {} }),
     };
     constructor(options: Record<string, unknown>) {
@@ -87,8 +113,12 @@ vi.mock("@xterm/addon-fit", () => ({
 
 vi.mock("@xterm/addon-web-links", () => ({
   WebLinksAddon: class {
-    constructor(private handler: (event: MouseEvent, uri: string) => void) {
+    constructor(
+      private handler: (event: MouseEvent, uri: string) => void,
+      options: (typeof webLinkOptions)[number],
+    ) {
       webLinkHandlers.push(handler);
+      webLinkOptions.push(options);
     }
     activate() {
       linkRegistrationOrder.push("web-links-addon");
@@ -217,6 +247,7 @@ afterEach(() => {
   xtermInstances.length = 0;
   linkRegistrationOrder.length = 0;
   webLinkHandlers.length = 0;
+  webLinkOptions.length = 0;
   cleanup();
 });
 
@@ -312,8 +343,16 @@ describe("Terminal fontSize race (remote-dev-3gtr)", () => {
     expect(openWindow).not.toHaveBeenCalled();
 
     osc8Handler.activate(event, "https://osc.test/path");
-    webLinkHandlers[0]!(event, "http://web.test/path");
+    webLinkHandlers[0]!(event, WEB_LINK_TARGET);
     expect(osc8Handler.allowNonHttpProtocols).toBe(false);
+    expect(openWindow).toHaveBeenCalledTimes(1);
+
+    const webRange = {
+      start: { x: 1, y: 1 },
+      end: { x: WEB_LINK_TARGET.length, y: 1 },
+    };
+    webLinkOptions[0]!.hover!(event, WEB_LINK_TARGET, webRange);
+    webLinkHandlers[0]!(event, WEB_LINK_TARGET);
     expect(openWindow).toHaveBeenNthCalledWith(
       1,
       "https://osc.test/path",
@@ -322,10 +361,14 @@ describe("Terminal fontSize race (remote-dev-3gtr)", () => {
     );
     expect(openWindow).toHaveBeenNthCalledWith(
       2,
-      "http://web.test/path",
+      WEB_LINK_TARGET,
       "_blank",
       "noopener,noreferrer",
     );
+
+    webLinkOptions[0]!.leave!(event, WEB_LINK_TARGET);
+    webLinkHandlers[0]!(event, WEB_LINK_TARGET);
+    expect(openWindow).toHaveBeenCalledTimes(2);
     openWindow.mockRestore();
   });
 });

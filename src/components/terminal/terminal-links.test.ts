@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-
 import {
   computeTerminalLinks,
+  createTerminalLinkController,
   createHttpLinkOpener,
   createTerminalLinkProvider,
   parseHttpUrl,
   type TerminalLinkCellSnapshot,
+  type TerminalLinkCandidate,
   type TerminalLinkRowSnapshot,
 } from "./terminal-links";
 import type { ILink, ILinkProvider } from "@xterm/xterm";
@@ -73,6 +74,25 @@ function terminalBuffer(rows: TerminalLinkRowSnapshot[]) {
     },
   };
   return terminal;
+}
+
+interface TestTerminalLinkController {
+  readonly linkProvider: ILinkProvider;
+  hoverWebLink(text: string, range: TerminalLinkCandidate["range"]): void;
+  leaveWebLink(text: string): void;
+  activateWebLink(text: string): boolean;
+}
+
+function terminalLinkController(
+  source: ReturnType<typeof terminalBuffer>,
+  options: {
+    confirm?: (target: string) => boolean;
+    open?: (target: string) => unknown;
+    cellBudget?: number;
+    codeUnitBudget?: number;
+  } = {},
+): TestTerminalLinkController {
+  return createTerminalLinkController(source, options);
 }
 
 function provide(provider: ILinkProvider, oneBasedRow: number): ILink[] {
@@ -642,6 +662,126 @@ describe("terminal link reconstruction", () => {
   });
 });
 
+describe("WebLinks activation arbitration", () => {
+  it("opens an ordinary exact current link only while its hover range matches", () => {
+    const target = "https://ordinary.test/path";
+    const source = terminalBuffer([row(0, target, target.length + 4)]);
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const controller = terminalLinkController(source, { confirm, open });
+    const range = {
+      start: { x: 1, y: 1 },
+      end: { x: target.length, y: 1 },
+    };
+
+    expect(controller.activateWebLink(target)).toBe(false);
+    controller.hoverWebLink(target, range);
+    expect(controller.activateWebLink(target)).toBe(true);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledWith(target);
+
+    controller.leaveWebLink(target);
+    expect(controller.activateWebLink(target)).toBe(false);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects both stock prefixes inside a fresh clipped guard component", () => {
+    const inspected = "https://example.test[!https://nested.test";
+    const text = `${inspected} rest`;
+    const source = terminalBuffer([row(0, text, text.length)]);
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const controller = terminalLinkController(source, {
+      cellBudget: text.length,
+      codeUnitBudget: inspected.length,
+      confirm,
+      open,
+    });
+
+    const outer = "https://example.test";
+    controller.hoverWebLink(outer, {
+      start: { x: 1, y: 1 },
+      end: { x: outer.length, y: 1 },
+    });
+    expect(controller.activateWebLink(outer)).toBe(false);
+
+    const nested = "https://nested.test";
+    controller.hoverWebLink(nested, {
+      start: { x: 23, y: 1 },
+      end: { x: 41, y: 1 },
+    });
+    expect(controller.activateWebLink(nested)).toBe(false);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("confirms and opens only the complete inferred hard-row target", () => {
+    const target = "https://example.test/a-long/path?value=one";
+    const cols = 21;
+    const source = terminalBuffer(rowsForUrl(target, cols));
+    const confirm = vi.fn(() => false);
+    const open = vi.fn(() => true);
+    const controller = terminalLinkController(source, { confirm, open });
+    const stockText = target.slice(0, cols);
+    controller.hoverWebLink(stockText, {
+      start: { x: 1, y: 1 },
+      end: { x: cols, y: 1 },
+    });
+
+    expect(controller.activateWebLink(stockText)).toBe(false);
+    expect(confirm).toHaveBeenCalledWith(target);
+    expect(open).not.toHaveBeenCalled();
+
+    confirm.mockReturnValue(true);
+    expect(controller.activateWebLink(stockText)).toBe(true);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith(target);
+    expect(open).not.toHaveBeenCalledWith(stockText);
+  });
+
+  it("rechecks every row intersected by a multi-row hover range", () => {
+    const target = "https://example.test/a-long/path";
+    const cols = 20;
+    const rows = rowsForUrl(target, cols);
+    const source = terminalBuffer(rows);
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const controller = terminalLinkController(source, { confirm, open });
+    const stockText = target.slice(0, cols);
+    controller.hoverWebLink(stockText, {
+      start: { x: 1, y: 1 },
+      end: { x: target.length - cols, y: 2 },
+    });
+
+    expect(controller.activateWebLink(stockText)).toBe(true);
+    expect(confirm).toHaveBeenCalledWith(target);
+    expect(open).toHaveBeenCalledWith(target);
+
+    source.setActiveRows([
+      rows[0],
+      row(1, "repainted second row", cols),
+    ]);
+    expect(controller.activateWebLink(stockText)).toBe(false);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the hovered exact range is repainted before activation", () => {
+    const target = "https://stale.test/path";
+    const rows = [row(0, target, target.length + 4)];
+    const source = terminalBuffer(rows);
+    const open = vi.fn(() => true);
+    const controller = terminalLinkController(source, { open });
+    controller.hoverWebLink(target, {
+      start: { x: 1, y: 1 },
+      end: { x: target.length, y: 1 },
+    });
+
+    rows.splice(0, 1, row(0, "repainted terminal output", target.length + 4));
+    expect(controller.activateWebLink(target)).toBe(false);
+    expect(open).not.toHaveBeenCalled();
+  });
+});
+
 describe("terminal link provider", () => {
   it("expands structurally beyond seventeen rows when the complete target is under budget", () => {
     const cols = 12;
@@ -1005,15 +1145,23 @@ describe("terminal link provider", () => {
     );
 
     const links = provide(provider, 1);
-    expect(links).toHaveLength(1);
-    expect(links[0]).toMatchObject({
-      text: inspected,
-      range: {
+    expect(links).toHaveLength(2);
+    expect(links.map((link) => link.range)).toEqual([
+      {
         start: { x: 1, y: 1 },
+        end: { x: 22, y: 1 },
+      },
+      {
+        start: { x: 23, y: 1 },
         end: { x: cols, y: 1 },
       },
-      decorations: { pointerCursor: false, underline: false },
-    });
+    ]);
+    for (const link of links) {
+      expect(link).toMatchObject({
+        text: inspected,
+        decorations: { pointerCursor: false, underline: false },
+      });
+    }
     for (let x = 1; x <= cols; x++) {
       expect(
         links.filter(
@@ -1023,7 +1171,9 @@ describe("terminal link provider", () => {
       ).toHaveLength(1);
     }
 
-    links[0].activate(new MouseEvent("click"), links[0].text);
+    for (const link of links) {
+      link.activate(new MouseEvent("click"), link.text);
+    }
     expect(confirm).not.toHaveBeenCalled();
     expect(open).not.toHaveBeenCalled();
   });
@@ -1046,9 +1196,11 @@ describe("terminal link provider", () => {
     );
 
     const links = provide(provider, 1);
-    expect(links).toHaveLength(2);
+    expect(links).toHaveLength(3);
     const exact = links.find((link) => !link.decorations);
-    const guard = links.find((link) => link.decorations?.underline === false);
+    const guards = links.filter(
+      (link) => link.decorations?.underline === false,
+    );
     expect(exact).toMatchObject({
       text: safe,
       range: {
@@ -1056,16 +1208,27 @@ describe("terminal link provider", () => {
         end: { x: safe.length, y: 1 },
       },
     });
-    expect(guard).toMatchObject({
-      range: {
+    expect(guards.map((guard) => guard.range)).toEqual([
+      {
         start: { x: guardStart, y: 1 },
+        end: { x: guardStart + 21, y: 1 },
+      },
+      {
+        start: { x: guardStart + 22, y: 1 },
         end: { x: cols, y: 1 },
       },
-      decorations: { pointerCursor: false, underline: false },
-    });
+    ]);
+    for (const guard of guards) {
+      expect(guard.decorations).toMatchObject({
+        pointerCursor: false,
+        underline: false,
+      });
+    }
 
     exact!.activate(new MouseEvent("click"), exact!.text);
-    guard!.activate(new MouseEvent("click"), guard!.text);
+    for (const guard of guards) {
+      guard.activate(new MouseEvent("click"), guard.text);
+    }
     expect(confirm).not.toHaveBeenCalled();
     expect(open).toHaveBeenCalledTimes(1);
     expect(open).toHaveBeenCalledWith(safe);

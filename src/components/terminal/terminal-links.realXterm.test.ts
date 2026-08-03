@@ -14,6 +14,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 
 import {
   createHttpLinkOpener,
+  createTerminalLinkController,
   createTerminalLinkProvider,
 } from "./terminal-links";
 
@@ -324,27 +325,46 @@ describe("terminal links against real xterm.js", () => {
     await write(term, text);
 
     const customOpen = vi.fn(() => true);
-    const stockOpen = vi.fn();
+    const controller = createTerminalLinkController(term, {
+      cellBudget: text.length,
+      codeUnitBudget: inspected.length,
+      confirm: () => true,
+      open: customOpen,
+    });
+    const webActivate = vi.fn((target: string) =>
+      controller.activateWebLink(target),
+    );
     term.registerLinkProvider(
-      createTerminalLinkProvider(term, {
-        cellBudget: inspected.length,
-        confirm: () => true,
-        open: customOpen,
+      controller.linkProvider,
+    );
+    term.loadAddon(
+      new WebLinksAddon((_event, target) => webActivate(target), {
+        hover: (_event, target, range) =>
+          controller.hoverWebLink(target, range),
+        leave: (_event, target) => controller.leaveWebLink(target),
       }),
     );
-    term.loadAddon(new WebLinksAddon((_event, target) => stockOpen(target)));
 
     const providers = core._linkProviderService.linkProviders;
     const custom = provide(providers[1], 1);
     const stock = provide(providers[2], 1);
-    expect(custom).toHaveLength(1);
-    expect(custom[0]).toMatchObject({
-      range: {
+    expect(custom).toHaveLength(2);
+    expect(custom.map((link) => link.range)).toEqual([
+      {
         start: { x: 1, y: 1 },
+        end: { x: 22, y: 1 },
+      },
+      {
+        start: { x: 23, y: 1 },
         end: { x: text.length, y: 1 },
       },
-      decorations: { pointerCursor: false, underline: false },
-    });
+    ]);
+    for (const link of custom) {
+      expect(link.decorations).toMatchObject({
+        pointerCursor: false,
+        underline: false,
+      });
+    }
     expect(stock.map((link) => link.text)).toEqual([
       "https://example.test",
       "https://nested.test",
@@ -359,13 +379,175 @@ describe("terminal links against real xterm.js", () => {
 
     movePointer(screen, 27);
     expect(core.linkifier?.currentLink?.link).toMatchObject({
-      range: custom[0].range,
+      range: custom[1].range,
       decorations: { pointerCursor: false, underline: false },
     });
     clickPointer(screen, 27);
 
+    expect(webActivate).not.toHaveBeenCalled();
     expect(customOpen).not.toHaveBeenCalled();
-    expect(stockOpen).not.toHaveBeenCalled();
+  });
+
+  it("does not let a one-cell OSC 8 link expose a cached nested WebLinks fallback", async () => {
+    const inspected = "https://example.test[!https://nested.test";
+    const text = `${inspected} rest`;
+    const oscTarget = "https://osc.test/one";
+    const oscOpen = vi.fn();
+    const { term, parent, screen, core } = openRealTerminal({
+      cols: text.length,
+      linkHandler: {
+        allowNonHttpProtocols: false,
+        activate: (_event, target) => oscOpen(target),
+      },
+    });
+    disposals.push(() => {
+      term.dispose();
+      parent.remove();
+    });
+    await write(
+      term,
+      `\x1b]8;;${oscTarget}\x1b\\${text[0]}\x1b]8;;\x1b\\${text.slice(1)}`,
+    );
+
+    const customOpen = vi.fn(() => true);
+    const controller = createTerminalLinkController(term, {
+      cellBudget: text.length,
+      codeUnitBudget: inspected.length,
+      confirm: () => true,
+      open: customOpen,
+    });
+    const webActivate = vi.fn((target: string) =>
+      controller.activateWebLink(target),
+    );
+    term.registerLinkProvider(
+      controller.linkProvider,
+    );
+    term.loadAddon(
+      new WebLinksAddon((_event, target) => webActivate(target), {
+        hover: (_event, target, range) =>
+          controller.hoverWebLink(target, range),
+        leave: (_event, target) => controller.leaveWebLink(target),
+      }),
+    );
+
+    const providers = core._linkProviderService.linkProviders;
+    expect(provide(providers[0], 1)[0]).toMatchObject({
+      text: oscTarget,
+      range: {
+        start: { x: 1, y: 1 },
+        end: { x: 1, y: 1 },
+      },
+    });
+    expect(provide(providers[1], 1).map((link) => link.range)).toEqual([
+      {
+        start: { x: 1, y: 1 },
+        end: { x: 22, y: 1 },
+      },
+      {
+        start: { x: 23, y: 1 },
+        end: { x: text.length, y: 1 },
+      },
+    ]);
+
+    movePointer(screen, 1);
+    expect(core.linkifier?.currentLink?.link.text).toBe(oscTarget);
+    clickPointer(screen, 1);
+    expect(oscOpen).toHaveBeenCalledWith(oscTarget);
+
+    movePointer(screen, 27);
+    expect(core.linkifier?.currentLink?.link).toMatchObject({
+      range: {
+        start: { x: 23, y: 1 },
+        end: { x: text.length, y: 1 },
+      },
+      decorations: { pointerCursor: false, underline: false },
+    });
+    clickPointer(screen, 27);
+
+    expect(webActivate).not.toHaveBeenCalled();
+    expect(customOpen).not.toHaveBeenCalled();
+  });
+
+  it("does not let an OSC 8 guard-gap cell expose a disjoint stock prefix", async () => {
+    const inspected = "https://example.test[!https://nested.test";
+    const text = `${inspected} rest`;
+    const oscTarget = "https://osc.test/gap";
+    const oscOpen = vi.fn();
+    const { term, parent, screen, core } = openRealTerminal({
+      cols: text.length,
+      linkHandler: {
+        allowNonHttpProtocols: false,
+        activate: (_event, target) => oscOpen(target),
+      },
+    });
+    disposals.push(() => {
+      term.dispose();
+      parent.remove();
+    });
+    const gapIndex = 20;
+    await write(
+      term,
+      `${text.slice(0, gapIndex)}\x1b]8;;${oscTarget}\x1b\\${text[gapIndex]}\x1b]8;;\x1b\\${text.slice(gapIndex + 1)}`,
+    );
+
+    const customOpen = vi.fn(() => true);
+    const controller = createTerminalLinkController(term, {
+      cellBudget: text.length,
+      codeUnitBudget: inspected.length,
+      confirm: () => true,
+      open: customOpen,
+    });
+    const webActivate = vi.fn((target: string) =>
+      controller.activateWebLink(target),
+    );
+    term.registerLinkProvider(controller.linkProvider);
+    term.loadAddon(
+      new WebLinksAddon((_event, target) => webActivate(target), {
+        hover: (_event, target, range) =>
+          controller.hoverWebLink(target, range),
+        leave: (_event, target) => controller.leaveWebLink(target),
+      }),
+    );
+
+    const providers = core._linkProviderService.linkProviders;
+    expect(provide(providers[0], 1)[0]).toMatchObject({
+      text: oscTarget,
+      range: {
+        start: { x: gapIndex + 1, y: 1 },
+        end: { x: gapIndex + 1, y: 1 },
+      },
+    });
+    const outerStock = provide(providers[2], 1)[0];
+    expect(outerStock.range).toEqual({
+      start: { x: 1, y: 1 },
+      end: { x: 20, y: 1 },
+    });
+
+    movePointer(screen, gapIndex + 1);
+    expect(core.linkifier?.currentLink?.link.text).toBe(oscTarget);
+    clickPointer(screen, gapIndex + 1);
+    expect(oscOpen).toHaveBeenCalledWith(oscTarget);
+
+    movePointer(screen, 27);
+    expect(core.linkifier?.currentLink?.link).toMatchObject({
+      range: {
+        start: { x: 23, y: 1 },
+        end: { x: text.length, y: 1 },
+      },
+      decorations: { pointerCursor: false, underline: false },
+    });
+    clickPointer(screen, 27);
+
+    expect(webActivate).not.toHaveBeenCalled();
+
+    // Even if xterm changes its cross-provider pruning and lets this disjoint
+    // WebLinks candidate survive, its public callbacks still pass through the
+    // fresh-buffer controller and cannot bypass the current custom guard.
+    const hoverEvent = new MouseEvent("mousemove");
+    outerStock.hover?.(hoverEvent, outerStock.text);
+    outerStock.activate(new MouseEvent("mouseup"), outerStock.text);
+    expect(webActivate).toHaveBeenCalledWith("https://example.test");
+    expect(customOpen).not.toHaveBeenCalled();
   });
 
   it("keeps clipped wide-cell guards disjoint so a later stock URL stays inert", async () => {

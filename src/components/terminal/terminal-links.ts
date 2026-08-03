@@ -975,6 +975,43 @@ function mergeAdjacentGuards(
   return result;
 }
 
+function partitionGuardAtCandidateBoundaries(
+  guard: BoundedProviderCandidate,
+  originals: readonly BoundedProviderCandidate[],
+  row: number,
+): BoundedProviderCandidate[] {
+  const boundaries = new Set<number>([guard.start, guard.end + 1]);
+  for (const original of originals) {
+    if (
+      original.start > guard.end ||
+      original.end < guard.start
+    ) {
+      continue;
+    }
+    if (original.start > guard.start) boundaries.add(original.start);
+    const afterOriginal = original.end + 1;
+    if (afterOriginal > guard.start && afterOriginal <= guard.end) {
+      boundaries.add(afterOriginal);
+    }
+  }
+  const sorted = [...boundaries].sort((left, right) => left - right);
+  return sorted.slice(0, -1).map((start, index) => {
+    const end = sorted[index + 1] - 1;
+    return {
+      candidate: {
+        ...guard.candidate,
+        range: {
+          start: { x: start, y: row },
+          end: { x: end, y: row },
+        },
+      },
+      start,
+      end,
+      order: guard.order,
+    };
+  });
+}
+
 /**
  * xterm removes later links when their inclusive ranges intersect an earlier
  * reply from the same provider. Collapse every guarded component before the
@@ -1063,8 +1100,11 @@ function normalizeProviderCandidates(
     normalized.filter(({ candidate }) => candidate.guard),
     row,
   );
+  const partitionedGuards = guards.flatMap((guard) =>
+    partitionGuardAtCandidateBoundaries(guard, bounded, row),
+  );
   return [
-    ...guards,
+    ...partitionedGuards,
     ...normalized.filter(({ candidate }) => !candidate.guard),
   ]
     .sort(
@@ -1191,26 +1231,50 @@ function linkIdentity(link: ProviderTerminalLinkCandidate): string {
   ].join("\u0000");
 }
 
-/**
- * Build an xterm provider that snapshots the current active buffer on every
- * request, avoiding stale ranges after TUI repaints and terminal resizes.
- */
-export function createTerminalLinkProvider(
-  source: TerminalLinkSource,
-  options: TerminalLinkProviderOptions = {},
-): ILinkProvider {
-  const confirm = options.confirm ?? defaultHardLinkConfirmation;
-  const open = options.open ?? createHttpLinkOpener();
-  const requestedCellBudget = options.cellBudget ?? DEFAULT_LINK_SCAN_CELL_BUDGET;
-  const cellBudget = Number.isFinite(requestedCellBudget)
-    ? Math.max(1, Math.floor(requestedCellBudget))
-    : DEFAULT_LINK_SCAN_CELL_BUDGET;
+export interface TerminalLinkController {
+  readonly linkProvider: ILinkProvider;
+  /** Record WebLinksAddon's current public hover range. */
+  hoverWebLink(
+    text: string,
+    range: TerminalLinkCandidate["range"],
+  ): void;
+  /** Clear a matching WebLinksAddon hover. */
+  leaveWebLink(text: string): void;
+  /** Re-arbitrate a WebLinksAddon activation against the current buffer. */
+  activateWebLink(text: string): boolean;
+}
+
+interface ResolvedTerminalLinkProviderOptions {
+  confirm: (target: string) => boolean;
+  open: (target: string) => unknown;
+  cellBudget: number;
+  codeUnitBudget: number;
+}
+
+function resolveTerminalLinkProviderOptions(
+  options: TerminalLinkProviderOptions,
+): ResolvedTerminalLinkProviderOptions {
+  const requestedCellBudget =
+    options.cellBudget ?? DEFAULT_LINK_SCAN_CELL_BUDGET;
   const requestedCodeUnitBudget =
     options.codeUnitBudget ?? DEFAULT_LINK_SCAN_CODE_UNIT_BUDGET;
-  const codeUnitBudget = Number.isFinite(requestedCodeUnitBudget)
-    ? Math.max(1, Math.floor(requestedCodeUnitBudget))
-    : DEFAULT_LINK_SCAN_CODE_UNIT_BUDGET;
+  return {
+    confirm: options.confirm ?? defaultHardLinkConfirmation,
+    open: options.open ?? createHttpLinkOpener(),
+    cellBudget: Number.isFinite(requestedCellBudget)
+      ? Math.max(1, Math.floor(requestedCellBudget))
+      : DEFAULT_LINK_SCAN_CELL_BUDGET,
+    codeUnitBudget: Number.isFinite(requestedCodeUnitBudget)
+      ? Math.max(1, Math.floor(requestedCodeUnitBudget))
+      : DEFAULT_LINK_SCAN_CODE_UNIT_BUDGET,
+  };
+}
 
+function createCurrentTerminalLinkProvider(
+  source: TerminalLinkSource,
+  options: ResolvedTerminalLinkProviderOptions,
+): ILinkProvider {
+  const { confirm, open, cellBudget, codeUnitBudget } = options;
   return {
     provideLinks(bufferLineNumber, callback) {
       const requestedRow = bufferLineNumber - 1;
@@ -1249,4 +1313,152 @@ export function createTerminalLinkProvider(
       callback(links.length > 0 ? links : undefined);
     },
   };
+}
+
+function rangesIntersect(
+  leftStart: number,
+  leftEnd: number,
+  rightStart: number,
+  rightEnd: number,
+): boolean {
+  return leftStart <= rightEnd && rightStart <= leftEnd;
+}
+
+function resolveHoveredWebLink(
+  source: TerminalLinkSource,
+  text: string,
+  range: TerminalLinkCandidate["range"],
+  cellBudget: number,
+  codeUnitBudget: number,
+): ProviderTerminalLinkCandidate | null {
+  const cols = Math.floor(source.cols);
+  const bufferLength = source.buffer.active.length;
+  const { start, end } = range;
+  if (
+    !Number.isFinite(cols) ||
+    cols < 1 ||
+    !Number.isInteger(start.x) ||
+    !Number.isInteger(start.y) ||
+    !Number.isInteger(end.x) ||
+    !Number.isInteger(end.y) ||
+    start.x < 1 ||
+    start.x > cols ||
+    end.x < 1 ||
+    end.x > cols ||
+    start.y < 1 ||
+    end.y < start.y ||
+    end.y > bufferLength ||
+    (start.y === end.y && end.x < start.x)
+  ) {
+    return null;
+  }
+  const rowCount = end.y - start.y + 1;
+  if (rowCount * cols > cellBudget) return null;
+
+  let resolved: ProviderTerminalLinkCandidate | null = null;
+  for (let oneBasedRow = start.y; oneBasedRow <= end.y; oneBasedRow++) {
+    const rowStart = oneBasedRow === start.y ? start.x : 1;
+    const rowEnd = oneBasedRow === end.y ? end.x : cols;
+    if (rowStart > rowEnd) return null;
+    const intersecting = computeCurrentTerminalLinks(
+      source,
+      oneBasedRow - 1,
+      cellBudget,
+      codeUnitBudget,
+    ).filter((candidate) =>
+      rangesIntersect(
+        candidate.range.start.x,
+        candidate.range.end.x,
+        rowStart,
+        rowEnd,
+      ),
+    );
+    if (intersecting.length !== 1) return null;
+    const owner = intersecting[0];
+    if (
+      owner.guard ||
+      owner.range.start.x > rowStart ||
+      owner.range.end.x < rowEnd
+    ) {
+      return null;
+    }
+    if (
+      resolved &&
+      (resolved.text !== owner.text ||
+        resolved.requiresConfirmation !== owner.requiresConfirmation)
+    ) {
+      return null;
+    }
+    resolved ??= owner;
+  }
+
+  if (
+    !resolved ||
+    (!resolved.requiresConfirmation && resolved.text !== text) ||
+    !parseHttpUrl(resolved.text)
+  ) {
+    return null;
+  }
+  return resolved;
+}
+
+/**
+ * Share fresh-buffer link semantics between the custom provider and
+ * WebLinksAddon's public hover/activation callbacks. This is the final safety
+ * boundary when xterm's cross-provider cache pruning removes a custom guard.
+ */
+export function createTerminalLinkController(
+  source: TerminalLinkSource,
+  requestedOptions: TerminalLinkProviderOptions = {},
+): TerminalLinkController {
+  const options = resolveTerminalLinkProviderOptions(requestedOptions);
+  let hovered:
+    | { text: string; range: TerminalLinkCandidate["range"] }
+    | undefined;
+
+  return {
+    linkProvider: createCurrentTerminalLinkProvider(source, options),
+    hoverWebLink(text, range) {
+      hovered = {
+        text,
+        range: {
+          start: { ...range.start },
+          end: { ...range.end },
+        },
+      };
+    },
+    leaveWebLink(text) {
+      if (hovered?.text === text) hovered = undefined;
+    },
+    activateWebLink(text) {
+      if (!hovered || hovered.text !== text) return false;
+      const current = resolveHoveredWebLink(
+        source,
+        text,
+        hovered.range,
+        options.cellBudget,
+        options.codeUnitBudget,
+      );
+      if (!current) return false;
+      if (
+        current.requiresConfirmation &&
+        !options.confirm(current.text)
+      ) {
+        return false;
+      }
+      options.open(current.text);
+      return true;
+    },
+  };
+}
+
+/**
+ * Build an xterm provider that snapshots the current active buffer on every
+ * request, avoiding stale ranges after TUI repaints and terminal resizes.
+ */
+export function createTerminalLinkProvider(
+  source: TerminalLinkSource,
+  options: TerminalLinkProviderOptions = {},
+): ILinkProvider {
+  return createTerminalLinkController(source, options).linkProvider;
 }
