@@ -7,7 +7,8 @@
  * usage-limit state, and the ids of any fallback pools it belongs to. This is
  * the single fetch that drives the Claude Accounts settings section.
  *
- * Tokens are never included — only `hasToken`.
+ * The account projection exposes credential-presence metadata (`hasToken` and
+ * `usageCredential`) without exposing either credential's token material.
  */
 
 import { NextResponse } from "next/server";
