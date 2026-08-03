@@ -110,6 +110,9 @@ async function readError(
   }
 }
 
+/** Shown when a token was stored but rejected and no diagnosis came back. */
+const REJECTED_TOKEN_MESSAGE = "Claude did not report a healthy sign-in.";
+
 /** The slice of a successful save response the dialog acts on. */
 interface SaveOutcome {
   /** Token-free account projection returned by both save routes. */
@@ -188,16 +191,16 @@ export function AddAccountDialog({
     [onOpenChange, reset]
   );
 
-  function handleSaveOutcome(
-    outcome: SaveOutcome,
-    rejectedFallback: string
-  ) {
+  function handleSaveOutcome(outcome: SaveOutcome) {
+    // The account row exists either way — even a dead token is stored — so the
+    // list always refreshes. A rejected token then shows its diagnosis here
+    // instead of closing the dialog as if the sign-in had worked.
     onAdded();
     if (
       outcome.tokenValid === false ||
       outcome.account?.authHealthy === false
     ) {
-      setError(outcome.tokenError ?? rejectedFallback);
+      setError(outcome.tokenError ?? REJECTED_TOKEN_MESSAGE);
       return;
     }
     if (
@@ -279,7 +282,7 @@ export function AddAccountDialog({
         return;
       }
       const outcome = (await response.json()) as SaveOutcome;
-      handleSaveOutcome(outcome, "Claude did not report a healthy sign-in.");
+      handleSaveOutcome(outcome);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to capture the account"
@@ -318,7 +321,7 @@ export function AddAccountDialog({
         return;
       }
       const outcome = (await response.json()) as SaveOutcome;
-      handleSaveOutcome(outcome, "Claude did not report a healthy sign-in.");
+      handleSaveOutcome(outcome);
     } catch (err) {
       setToken("");
       setError(

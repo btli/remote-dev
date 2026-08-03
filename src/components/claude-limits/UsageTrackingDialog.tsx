@@ -53,8 +53,28 @@ import { useSessionContext } from "@/contexts/SessionContext";
 import { apiFetch } from "@/lib/api-fetch";
 import type { ClaudeAccountSummary } from "@/types/claude-limits";
 
+/**
+ * Mirrors `CLAUDE_USAGE_SETUP_SESSION_MARKER`, duplicated rather than imported
+ * because that constant lives in a server-only service module.
+ */
 const USAGE_SETUP_MARKER = "rdvClaudeUsageSetupSession";
 const RECOVERY_RECONCILE_FALLBACK_MS = 100;
+
+/**
+ * Capture failures that invalidate the session and require a fresh sign-in. A
+ * Map, not an object literal, so an unrecognized server code cannot resolve to
+ * something inherited from `Object.prototype`.
+ */
+const RESTART_REQUIRED_MESSAGES = new Map<string, string>([
+  [
+    "MISSING_SCOPE",
+    "Usage permission was not granted. Start a new Claude usage sign-in and grant usage permission.",
+  ],
+  [
+    "ACCOUNT_MISMATCH",
+    "A different Claude account was used and was not attached. Start a new sign-in with the account shown here.",
+  ],
+]);
 
 interface ProjectOption {
   id: string;
@@ -387,27 +407,17 @@ export function UsageTrackingDialog({
           response,
           "Could not finish usage tracking. Try again."
         );
+        const restartMessage = failure.code
+          ? RESTART_REQUIRED_MESSAGES.get(failure.code)
+          : undefined;
         if (failure.code === "CREDENTIALS_NOT_READY") {
           setNotice(
             "Finish the Claude sign-in in the terminal, then try Finish again."
           );
-        } else if (failure.code === "MISSING_SCOPE") {
-          setError(
-            "Usage permission was not granted. Start a new Claude usage sign-in and grant usage permission."
-          );
-          setSetupSession(null);
-          try {
-            await refreshSessions();
-          } catch (caught) {
-            console.error(
-              "Failed to refresh sessions after terminal usage capture failure",
-              caught
-            );
-          }
-        } else if (failure.code === "ACCOUNT_MISMATCH") {
-          setError(
-            "A different Claude account was used and was not attached. Start a new sign-in with the account shown here."
-          );
+        } else if (restartMessage) {
+          // The server already cleaned up this session, so drop it and send
+          // the user back to the start gate for a fresh login.
+          setError(restartMessage);
           setSetupSession(null);
           try {
             await refreshSessions();
