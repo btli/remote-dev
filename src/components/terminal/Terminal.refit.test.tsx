@@ -34,7 +34,10 @@ import {
 
 import type { TerminalRef } from "./Terminal";
 import { MobileInputBar } from "./MobileInputBar";
-import { CLIPBOARD_SYNC_STORAGE_KEY } from "@/hooks/useClipboardSyncPreference";
+import {
+  CLIPBOARD_SYNC_STORAGE_KEY,
+  setClipboardSyncPreference,
+} from "@/hooks/useClipboardSyncPreference";
 
 const toastSpies = vi.hoisted(() => ({
   show: vi.fn(),
@@ -698,6 +701,610 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
     ).toEqual({ type: "clipboard_subscribe", enabled: false });
   });
 
+  it.each([
+    {
+      name: "Metadata (restored input first)",
+      selector: "button[data-reentry-target='metadata']",
+      windowFirst: false,
+    },
+    {
+      name: "Settings (restored input first)",
+      selector: "input[data-reentry-target='settings']",
+      windowFirst: false,
+    },
+    {
+      name: "Metadata (window first)",
+      selector: "button[data-reentry-target='metadata']",
+      windowFirst: true,
+    },
+    {
+      name: "Settings (window first)",
+      selector: "input[data-reentry-target='settings']",
+      windowFirst: true,
+    },
+  ])(
+    "does not expose the clipboard when window focus restores the mobile input before $name receives focus",
+    async ({ selector, windowFirst }) => {
+      localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+      clipboardReadText.mockResolvedValue("private re-entry clipboard");
+      const Terminal = await getTerminal();
+
+      function MobileBrowserReentry() {
+        const [mobileInputElement, setMobileInputElement] =
+          useState<HTMLTextAreaElement | null>(null);
+        return (
+          <>
+            <Terminal
+              sessionId="clipboard-mobile-reentry"
+              tmuxSessionName="rdv-clipboard-mobile-reentry"
+              wsUrl="ws://localhost:0"
+              terminalType="shell"
+              mobileMode
+              mobileInputElement={mobileInputElement}
+              isActive
+              visible
+            />
+            <MobileInputBar
+              ref={setMobileInputElement}
+              onSubmit={() => {}}
+              placeholder="PWA re-entry input"
+            />
+            <button type="button" data-reentry-target="metadata">
+              Metadata
+            </button>
+            <input aria-label="Settings" data-reentry-target="settings" />
+          </>
+        );
+      }
+
+      render(<MobileBrowserReentry />);
+      await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+      const socket = wsInstances.at(-1)!;
+      const mobileInput = document.querySelector<HTMLTextAreaElement>(
+        'textarea[placeholder="PWA re-entry input"]',
+      )!;
+      const destination = document.querySelector<HTMLElement>(selector)!;
+
+      act(() => {
+        dispatchSocketMessage(socket, {
+          type: "primary_changed",
+          isPrimary: true,
+        });
+        mobileInput.focus();
+      });
+      // A deliberate terminal-input focus remains immediately eligible.
+      expect(socket.sent.map((frame) => JSON.parse(frame))).toContainEqual({
+        type: "clipboard_subscribe",
+        enabled: true,
+      });
+      expect(clipboardReadText).toHaveBeenCalled();
+
+      documentHasFocus = false;
+      act(() => window.dispatchEvent(new Event("blur")));
+      expect(
+        socket.sent
+          .map((frame) => JSON.parse(frame))
+          .filter((frame) => frame.type === "clipboard_subscribe")
+          .at(-1),
+      ).toEqual({ type: "clipboard_subscribe", enabled: false });
+      socket.sent.length = 0;
+      clipboardReadText.mockClear();
+
+      // Chromium re-entry ordering when the user clicks a control outside
+      // the terminal: the prior textarea/window focus is restored first,
+      // then pointer dispatch transfers focus to the clicked control.
+      documentHasFocus = true;
+      act(() => {
+        if (windowFirst) {
+          window.dispatchEvent(new Event("focus"));
+          mobileInput.dispatchEvent(new FocusEvent("focus"));
+        } else {
+          mobileInput.dispatchEvent(new FocusEvent("focus"));
+          window.dispatchEvent(new Event("focus"));
+        }
+        destination.dispatchEvent(
+          new MouseEvent("mousedown", { bubbles: true, cancelable: true }),
+        );
+        destination.focus();
+      });
+      await act(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => resolve());
+          }),
+      );
+
+      expect(document.activeElement).toBe(destination);
+      expect(clipboardReadText).not.toHaveBeenCalled();
+      expect(
+        socket.sent
+          .map((frame) => JSON.parse(frame))
+          .filter(
+            (frame) =>
+              frame.type === "clipboard_write" ||
+              (frame.type === "clipboard_subscribe" && frame.enabled),
+          ),
+      ).toEqual([]);
+    },
+  );
+
+  it.each([
+    { name: "Metadata", selector: "button[data-initial-target='metadata']" },
+    { name: "Settings", selector: "input[data-initial-target='settings']" },
+  ])(
+    "keeps an initially blurred mount private when restored input precedes window focus and $name",
+    async ({ selector }) => {
+      localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+      clipboardReadText.mockResolvedValue("initially blurred clipboard");
+      documentHasFocus = false;
+      const Terminal = await getTerminal();
+
+      function InitiallyBlurredTerminal() {
+        const [mobileInputElement, setMobileInputElement] =
+          useState<HTMLTextAreaElement | null>(null);
+        return (
+          <>
+            <Terminal
+              sessionId="clipboard-initially-blurred"
+              tmuxSessionName="rdv-clipboard-initially-blurred"
+              wsUrl="ws://localhost:0"
+              terminalType="shell"
+              mobileMode
+              mobileInputElement={mobileInputElement}
+              isActive
+              visible
+            />
+            <MobileInputBar
+              ref={setMobileInputElement}
+              onSubmit={() => {}}
+              placeholder="Initially blurred terminal input"
+            />
+            <button type="button" data-initial-target="metadata">
+              Metadata
+            </button>
+            <input aria-label="Settings" data-initial-target="settings" />
+          </>
+        );
+      }
+
+      render(<InitiallyBlurredTerminal />);
+      await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+      const socket = wsInstances.at(-1)!;
+      const mobileInput = document.querySelector<HTMLTextAreaElement>(
+        'textarea[placeholder="Initially blurred terminal input"]',
+      )!;
+      const destination = document.querySelector<HTMLElement>(selector)!;
+      act(() => {
+        dispatchSocketMessage(socket, {
+          type: "primary_changed",
+          isPrimary: true,
+        });
+      });
+      socket.sent.length = 0;
+      clipboardReadText.mockClear();
+
+      documentHasFocus = true;
+      act(() => {
+        mobileInput.dispatchEvent(new FocusEvent("focus"));
+        window.dispatchEvent(new Event("focus"));
+        destination.focus();
+      });
+      await act(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => resolve());
+          }),
+      );
+
+      expect(document.activeElement).toBe(destination);
+      expect(clipboardReadText).not.toHaveBeenCalled();
+      expect(
+        socket.sent
+          .map((frame) => JSON.parse(frame))
+          .filter(
+            (frame) =>
+              frame.type === "clipboard_write" ||
+              (frame.type === "clipboard_subscribe" && frame.enabled),
+          ),
+      ).toEqual([]);
+    },
+  );
+
+  it("restores clipboard sync after exact terminal-input focus settles on window re-entry", async () => {
+    localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+    clipboardReadText.mockResolvedValue("exact re-entry clipboard");
+    const Terminal = await getTerminal();
+
+    render(
+      <Terminal
+        sessionId="clipboard-exact-reentry"
+        tmuxSessionName="rdv-clipboard-exact-reentry"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        isActive
+        visible
+      />,
+    );
+    await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+    const socket = wsInstances.at(-1)!;
+    const textarea = xtermInstances.at(-1)!.textarea;
+
+    act(() => {
+      dispatchSocketMessage(socket, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+      textarea.focus();
+    });
+    expect(clipboardReadText).toHaveBeenCalled();
+
+    documentHasFocus = false;
+    act(() => window.dispatchEvent(new Event("blur")));
+    socket.sent.length = 0;
+    clipboardReadText.mockClear();
+
+    documentHasFocus = true;
+    act(() => {
+      // Model Chromium's restoration event before the window-focus event.
+      textarea.dispatchEvent(new FocusEvent("focus"));
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(clipboardReadText).not.toHaveBeenCalled();
+
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        }),
+    );
+
+    expect(document.activeElement).toBe(textarea);
+    expect(clipboardReadText).toHaveBeenCalledTimes(1);
+    expect(
+      socket.sent.map((frame) => JSON.parse(frame)),
+    ).toEqual(
+      expect.arrayContaining([
+        { type: "clipboard_subscribe", enabled: true },
+        {
+          type: "clipboard_write",
+          data: "exact re-entry clipboard",
+          updateId: expect.any(String),
+        },
+      ]),
+    );
+  });
+
+  it("cancels pending clipboard focus settlement when the window blurs again", async () => {
+    localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+    clipboardReadText.mockResolvedValue("cancelled re-entry clipboard");
+    const Terminal = await getTerminal();
+
+    render(
+      <Terminal
+        sessionId="clipboard-cancelled-reentry"
+        tmuxSessionName="rdv-clipboard-cancelled-reentry"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        isActive
+        visible
+      />,
+    );
+    await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+    const socket = wsInstances.at(-1)!;
+    const textarea = xtermInstances.at(-1)!.textarea;
+
+    act(() => {
+      dispatchSocketMessage(socket, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+      textarea.focus();
+    });
+    documentHasFocus = false;
+    act(() => window.dispatchEvent(new Event("blur")));
+    socket.sent.length = 0;
+    clipboardReadText.mockClear();
+
+    act(() => {
+      documentHasFocus = true;
+      textarea.dispatchEvent(new FocusEvent("focus"));
+      window.dispatchEvent(new Event("focus"));
+      documentHasFocus = false;
+      window.dispatchEvent(new Event("blur"));
+    });
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        }),
+    );
+
+    expect(clipboardReadText).not.toHaveBeenCalled();
+    expect(
+      socket.sent
+        .map((frame) => JSON.parse(frame))
+        .filter(
+          (frame) =>
+            frame.type === "clipboard_write" ||
+            (frame.type === "clipboard_subscribe" && frame.enabled),
+        ),
+    ).toEqual([]);
+  });
+
+  it("keeps re-entry fail-closed across a session reset while the window is blurred", async () => {
+    localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+    clipboardReadText.mockResolvedValue("session-reset clipboard");
+    const Terminal = await getTerminal();
+    const sessionView = (sessionId: string) => (
+      <>
+        <Terminal
+          sessionId={sessionId}
+          tmuxSessionName={`rdv-${sessionId}`}
+          wsUrl="ws://localhost:0"
+          terminalType="shell"
+          isActive
+          visible
+        />
+        <input aria-label="Session reset destination" />
+      </>
+    );
+    const view = render(sessionView("clipboard-reset-a"));
+    await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+    const firstSocket = wsInstances.at(-1)!;
+    const firstTextarea = xtermInstances.at(-1)!.textarea;
+    act(() => {
+      dispatchSocketMessage(firstSocket, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+      firstTextarea.focus();
+    });
+
+    documentHasFocus = false;
+    act(() => window.dispatchEvent(new Event("blur")));
+    view.rerender(sessionView("clipboard-reset-b"));
+    await waitFor(() => {
+      expect(wsInstances.at(-1)).not.toBe(firstSocket);
+      expect(wsInstances.at(-1)?.readyState).toBe(1);
+    });
+    const replacement = wsInstances.at(-1)!;
+    const replacementTextarea = xtermInstances.at(-1)!.textarea;
+    const destination = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Session reset destination"]',
+    )!;
+    act(() => {
+      dispatchSocketMessage(replacement, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+    });
+    replacement.sent.length = 0;
+    clipboardReadText.mockClear();
+
+    documentHasFocus = true;
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+      replacementTextarea.dispatchEvent(new FocusEvent("focus"));
+      destination.focus();
+    });
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        }),
+    );
+
+    expect(clipboardReadText).not.toHaveBeenCalled();
+    expect(
+      replacement.sent
+        .map((frame) => JSON.parse(frame))
+        .filter(
+          (frame) =>
+            frame.type === "clipboard_write" ||
+            (frame.type === "clipboard_subscribe" && frame.enabled),
+        ),
+    ).toEqual([]);
+  });
+
+  it("does not revive stale input focus when browser sync is enabled while blurred", async () => {
+    clipboardReadText.mockResolvedValue("enable-while-blurred clipboard");
+    const Terminal = await getTerminal();
+    render(
+      <>
+        <Terminal
+          sessionId="clipboard-enable-blurred"
+          tmuxSessionName="rdv-clipboard-enable-blurred"
+          wsUrl="ws://localhost:0"
+          terminalType="shell"
+          isActive
+          visible
+        />
+        <input aria-label="Enable destination" />
+      </>,
+    );
+    await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+    const socket = wsInstances.at(-1)!;
+    const textarea = xtermInstances.at(-1)!.textarea;
+    const destination = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Enable destination"]',
+    )!;
+    act(() => {
+      dispatchSocketMessage(socket, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+      textarea.focus();
+    });
+    expect(clipboardReadText).not.toHaveBeenCalled();
+
+    documentHasFocus = false;
+    act(() => {
+      window.dispatchEvent(new Event("blur"));
+      setClipboardSyncPreference(true);
+    });
+    await act(async () => Promise.resolve());
+    socket.sent.length = 0;
+    clipboardReadText.mockClear();
+
+    documentHasFocus = true;
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+      textarea.dispatchEvent(new FocusEvent("focus"));
+      destination.focus();
+    });
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        }),
+    );
+
+    expect(clipboardReadText).not.toHaveBeenCalled();
+    expect(
+      socket.sent
+        .map((frame) => JSON.parse(frame))
+        .filter(
+          (frame) =>
+            frame.type === "clipboard_write" ||
+            (frame.type === "clipboard_subscribe" && frame.enabled),
+        ),
+    ).toEqual([]);
+  });
+
+  it("keeps browser mode fail-closed when switching from native while blurred", async () => {
+    localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+    clipboardReadText.mockResolvedValue("mode-while-blurred clipboard");
+    const Terminal = await getTerminal();
+    const terminalRef = createRef<TerminalRef>();
+    const terminalView = (clipboardMode: "browser" | "native") => (
+      <>
+        <Terminal
+          ref={terminalRef}
+          sessionId="clipboard-mode-blurred"
+          tmuxSessionName="rdv-clipboard-mode-blurred"
+          wsUrl="ws://localhost:0"
+          terminalType="shell"
+          clipboardMode={clipboardMode}
+          isActive
+          visible
+        />
+        <input aria-label="Mode destination" />
+      </>
+    );
+    const view = render(terminalView("native"));
+    await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+    const socket = wsInstances.at(-1)!;
+    const textarea = xtermInstances.at(-1)!.textarea;
+    const destination = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Mode destination"]',
+    )!;
+    act(() => {
+      dispatchSocketMessage(socket, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+      terminalRef.current?.setClipboardSync(true);
+      textarea.focus();
+    });
+
+    documentHasFocus = false;
+    act(() => window.dispatchEvent(new Event("blur")));
+    view.rerender(terminalView("browser"));
+    await act(async () => Promise.resolve());
+    socket.sent.length = 0;
+    clipboardReadText.mockClear();
+
+    documentHasFocus = true;
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+      textarea.dispatchEvent(new FocusEvent("focus"));
+      destination.focus();
+    });
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        }),
+    );
+
+    expect(clipboardReadText).not.toHaveBeenCalled();
+    expect(
+      socket.sent
+        .map((frame) => JSON.parse(frame))
+        .filter(
+          (frame) =>
+            frame.type === "clipboard_write" ||
+            (frame.type === "clipboard_subscribe" && frame.enabled),
+        ),
+    ).toEqual([]);
+  });
+
+  it("preserves native clipboard presentation across browser adapter cleanup", async () => {
+    localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+    const Terminal = await getTerminal();
+    const terminalRef = createRef<TerminalRef>();
+
+    function MobileModeTerminal({
+      clipboardMode,
+    }: {
+      clipboardMode: "browser" | "native";
+    }) {
+      const [mobileInputElement, setMobileInputElement] =
+        useState<HTMLTextAreaElement | null>(null);
+      return (
+        <>
+          <Terminal
+            ref={terminalRef}
+            sessionId="clipboard-browser-native"
+            tmuxSessionName="rdv-clipboard-browser-native"
+            wsUrl="ws://localhost:0"
+            terminalType="shell"
+            clipboardMode={clipboardMode}
+            mobileMode
+            mobileInputElement={mobileInputElement}
+            isActive
+            visible
+          />
+          <MobileInputBar
+            ref={setMobileInputElement}
+            onSubmit={() => {}}
+            placeholder="Browser to native input"
+          />
+        </>
+      );
+    }
+
+    const view = render(<MobileModeTerminal clipboardMode="browser" />);
+    await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+    const socket = wsInstances.at(-1)!;
+    const mobileInput = document.querySelector<HTMLTextAreaElement>(
+      'textarea[placeholder="Browser to native input"]',
+    )!;
+    act(() => {
+      dispatchSocketMessage(socket, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+      mobileInput.focus();
+    });
+    expect(socket.sent.map((frame) => JSON.parse(frame))).toContainEqual({
+      type: "clipboard_subscribe",
+      enabled: true,
+    });
+
+    socket.sent.length = 0;
+    view.rerender(<MobileModeTerminal clipboardMode="native" />);
+    await act(async () => Promise.resolve());
+    act(() => terminalRef.current?.setClipboardSync(true));
+
+    expect(
+      socket.sent
+        .map((frame) => JSON.parse(frame))
+        .filter((frame) => frame.type === "clipboard_subscribe")
+        .at(-1),
+    ).toEqual({ type: "clipboard_subscribe", enabled: true });
+  });
+
   it("does not sync paste from terminal search or unrelated dialog inputs", async () => {
     localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
     clipboardReadText.mockResolvedValue("initial seed");
@@ -1020,6 +1627,74 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
     ).toContainEqual({ type: "clipboard_subscribe", enabled: false });
     expect(document.activeElement).toBe(fallbackButton);
     fallbackButton.remove();
+  });
+
+  it("keeps re-entry gated when window blur invalidates a blocked fallback", async () => {
+    localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+    clipboardWriteText.mockRejectedValue(
+      new DOMException("Denied", "NotAllowedError"),
+    );
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="clipboard-blurred-fallback"
+        tmuxSessionName="rdv-clipboard-blurred-fallback"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        isActive
+        visible
+      />,
+    );
+
+    await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+    const socket = wsInstances.at(-1)!;
+    const textarea = xtermInstances.at(-1)!.textarea;
+    act(() => {
+      textarea.focus();
+      dispatchSocketMessage(socket, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+      dispatchSocketMessage(socket, {
+        type: "clipboard_update",
+        data: "blocked before blur",
+        revision: 1,
+      });
+    });
+    await waitFor(() => expect(toastSpies.show).toHaveBeenCalledTimes(1));
+    const destination = document.createElement("input");
+    document.body.appendChild(destination);
+
+    documentHasFocus = false;
+    act(() => window.dispatchEvent(new Event("blur")));
+    expect(toastSpies.dismiss).toHaveBeenCalled();
+    socket.sent.length = 0;
+    clipboardReadText.mockClear();
+
+    documentHasFocus = true;
+    act(() => {
+      textarea.dispatchEvent(new FocusEvent("focus"));
+      window.dispatchEvent(new Event("focus"));
+      destination.focus();
+    });
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        }),
+    );
+
+    expect(clipboardReadText).not.toHaveBeenCalled();
+    expect(
+      socket.sent
+        .map((frame) => JSON.parse(frame))
+        .filter(
+          (frame) =>
+            frame.type === "clipboard_write" ||
+            (frame.type === "clipboard_subscribe" && frame.enabled),
+        ),
+    ).toEqual([]);
+    destination.remove();
   });
 
   it("dismisses and invalidates a blocked fallback when primary is lost", async () => {

@@ -321,9 +321,18 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const reconcilerRef = useRef<ResizeReconciler | null>(null);
   const visibleRef = useRef(visible);
   const isActiveRef = useRef(isActive);
+  // mobileMode only matters at terminal construction (disableStdin can't change post-init)
+  const mobileModeRef = useRef(mobileMode);
   const textareaFocusedRef = useRef(false);
   const mobileInputElementRef = useRef<HTMLTextAreaElement | null>(null);
   const mobileInputFocusedRef = useRef(false);
+  const clipboardFocusSettlementGenerationRef = useRef(0);
+  const clipboardFocusSettlementRafRef = useRef<number | null>(null);
+  // Browsers can briefly restore the previously focused terminal input before
+  // moving focus to the control the user actually clicked on window re-entry.
+  // While this is true, exact input focus must settle for one frame before it
+  // can grant clipboard eligibility.
+  const clipboardFocusNeedsSettlementRef = useRef(false);
   const lastSentFocusStateRef = useRef<"focus" | "blur" | null>(null);
   const lastDesiredFocusStateRef = useRef<"focus" | "blur" | null>(null);
   const pendingGenuineFocusRef = useRef(false);
@@ -353,6 +362,85 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   // sidebar re-seed on reconnect (mirrors useTerminalWebSocket's hasConnectedBefore).
   const hasConnectedBeforeRef = useRef(false);
   const maxReconnectAttempts = 5;
+
+  const currentBrowserClipboardInput = useCallback(
+    (): HTMLTextAreaElement | null =>
+      mobileModeRef.current
+        ? mobileInputElementRef.current
+        : xtermRef.current?.textarea ?? null,
+    [],
+  );
+
+  const cancelClipboardFocusSettlement = useCallback(
+    (requireSettlement = false) => {
+      clipboardFocusSettlementGenerationRef.current += 1;
+      if (clipboardFocusSettlementRafRef.current !== null) {
+        cancelAnimationFrame(clipboardFocusSettlementRafRef.current);
+        clipboardFocusSettlementRafRef.current = null;
+      }
+      if (requireSettlement) {
+        clipboardFocusNeedsSettlementRef.current = true;
+      }
+    },
+    [],
+  );
+
+  const scheduleClipboardFocusSettlement = useCallback(() => {
+    if (clipboardModeRef.current !== "browser") return;
+
+    // Preserve a re-entry requirement established by window blur/page hide,
+    // but do not turn ordinary layout or preference reconciliation into one.
+    cancelClipboardFocusSettlement();
+    // Fail closed throughout the browser's transient re-entry ordering.
+    clipboardSync.setPresented({ focused: false });
+
+    const generation = clipboardFocusSettlementGenerationRef.current;
+    const input = currentBrowserClipboardInput();
+    clipboardFocusSettlementRafRef.current = requestAnimationFrame(() => {
+      if (
+        generation !== clipboardFocusSettlementGenerationRef.current
+      ) {
+        return;
+      }
+      clipboardFocusSettlementRafRef.current = null;
+
+      const currentInput = currentBrowserClipboardInput();
+      const browserContextSettled =
+        clipboardModeRef.current === "browser" &&
+        isActiveRef.current &&
+        visibleRef.current &&
+        !document.hidden &&
+        document.hasFocus();
+      const focused = Boolean(
+        browserContextSettled &&
+          input &&
+          input.isConnected &&
+          currentInput === input &&
+          document.activeElement === input,
+      );
+
+      // An unfocused frame while the page/window is unavailable is not a
+      // settled re-entry. Keep the gate closed until a foreground frame can
+      // identify the exact final focus owner.
+      if (browserContextSettled) {
+        clipboardFocusNeedsSettlementRef.current = false;
+      }
+      textareaFocusedRef.current =
+        focused && !mobileModeRef.current;
+      mobileInputFocusedRef.current =
+        focused && mobileModeRef.current;
+      clipboardSync.setPresented({
+        pageVisible: !document.hidden,
+        focused,
+      });
+      syncFocusToServerRef.current?.();
+      if (focused) readBrowserClipboardRef.current();
+    });
+  }, [
+    cancelClipboardFocusSettlement,
+    clipboardSync,
+    currentBrowserClipboardInput,
+  ]);
 
   /**
    * Atomically marks session exit as intentional and cancels any pending reconnect.
@@ -408,9 +496,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const fontFamilyRef = useRef(fontFamily);
   const scrollbackRef = useRef(scrollback);
   const tmuxHistoryLimitRef = useRef(tmuxHistoryLimit);
-  // mobileMode only matters at terminal construction (disableStdin can't change post-init)
-  const mobileModeRef = useRef(mobileMode);
-
   // FIX: Use ref for terminal theme to avoid recreating terminal on theme changes.
   // Theme updates are applied dynamically via terminal.options.theme
   const terminalThemeRef = useRef(terminalTheme);
@@ -460,15 +545,39 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
   useEffect(() => {
     clipboardModeRef.current = clipboardMode;
-    clipboardSync.setEnabled(
+    cancelClipboardFocusSettlement(
+      clipboardMode === "browser" &&
+        (document.hidden || !document.hasFocus()),
+    );
+    const enabled =
       clipboardMode === "browser"
         ? deviceClipboardSyncEnabled
-        : nativeClipboardSyncEnabledRef.current,
-    );
-  }, [clipboardMode, clipboardSync, deviceClipboardSyncEnabled]);
+        : nativeClipboardSyncEnabledRef.current;
+    clipboardSync.setEnabled(enabled);
+
+    if (clipboardMode === "browser") {
+      // Enabling browser sync must not revive a focus bit captured before a
+      // window/panel transition. Re-establish it from the exact DOM owner.
+      clipboardSync.setPresented({ focused: false });
+      if (enabled) scheduleClipboardFocusSettlement();
+    } else {
+      clipboardFocusNeedsSettlementRef.current = false;
+      // Passive cleanup from the prior browser adapter runs during this mode
+      // transition. Reassert native presentation after that teardown phase.
+      clipboardSync.setPresented({ focused: true });
+    }
+  }, [
+    cancelClipboardFocusSettlement,
+    clipboardMode,
+    clipboardSync,
+    deviceClipboardSyncEnabled,
+    scheduleClipboardFocusSettlement,
+  ]);
 
   useEffect(() => {
     const reconcileFallbackFocus = (refocus: boolean) => {
+      cancelClipboardFocusSettlement();
+      if (clipboardModeRef.current !== "browser") return;
       const terminal = xtermRef.current;
       const mobileInput = mobileInputElementRef.current;
       const clipboardInput = mobileModeRef.current
@@ -489,6 +598,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           terminal?.focus();
         }
         const refocused = document.activeElement === clipboardInput;
+        if (refocused) {
+          clipboardFocusNeedsSettlementRef.current = false;
+        }
         mobileInputFocusedRef.current = mobileModeRef.current && refocused;
         textareaFocusedRef.current = !mobileModeRef.current && refocused;
         clipboardSync.setPresented({ focused: refocused });
@@ -560,7 +672,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         toast.dismiss(REMOTE_CLIPBOARD_TOAST_ID);
       }
     };
-  }, [clipboardSync]);
+  }, [cancelClipboardFocusSettlement, clipboardSync]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -666,6 +778,13 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     // A same-session effect restart is another reopen of this mounted client,
     // while a different session must begin with a genuine focus assertion.
     if (isDifferentSession) {
+      const isInitialSession = previousSessionIdentity === null;
+      const initialSessionIsForeground =
+        isInitialSession && !document.hidden && document.hasFocus();
+      cancelClipboardFocusSettlement(!initialSessionIsForeground);
+      if (initialSessionIsForeground) {
+        clipboardFocusNeedsSettlementRef.current = false;
+      }
       hasConnectedBeforeRef.current = false;
       lastDesiredFocusStateRef.current = null;
       pendingGenuineFocusRef.current = false;
@@ -1524,14 +1643,26 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
             clipboardModeRef.current === "browser" &&
             !mobileModeRef.current
           ) {
-            clipboardSync.setPresented({
-              focused: !document.hidden && document.hasFocus(),
-            });
-            readBrowserClipboardRef.current();
+            if (clipboardFocusNeedsSettlementRef.current) {
+              scheduleClipboardFocusSettlement();
+            } else {
+              cancelClipboardFocusSettlement();
+              const focused =
+                document.activeElement === xtermTextarea &&
+                isActiveRef.current &&
+                visibleRef.current &&
+                !document.hidden &&
+                document.hasFocus();
+              clipboardSync.setPresented({ focused });
+              if (focused) readBrowserClipboardRef.current();
+            }
           }
           syncFocusToServer();
         };
         const onXtermBlur = (event: FocusEvent) => {
+          cancelClipboardFocusSettlement(
+            document.hidden || !document.hasFocus(),
+          );
           if (
             clipboardModeRef.current === "browser" &&
             !mobileModeRef.current &&
@@ -1540,6 +1671,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
             // The fallback button is an explicit clipboard surface. Keep the
             // current eligibility lease alive only for its user gesture; the
             // action reconciles focus back to xterm (or revokes it) in finally.
+            clipboardFocusNeedsSettlementRef.current = false;
             clipboardSync.setPresented({ focused: true });
             if (event.relatedTarget instanceof HTMLElement) {
               event.relatedTarget.addEventListener(
@@ -1601,39 +1733,40 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       }
 
       const handleVisibilityChange = () => {
-        clipboardSync.setPresented({
-          pageVisible: !document.hidden,
-          focused:
-            clipboardModeRef.current === "native"
-              ? true
-              : !document.hidden &&
-                document.hasFocus() &&
-                (mobileModeRef.current
-                  ? mobileInputFocusedRef.current
-                  : textareaFocusedRef.current),
-        });
+        if (document.hidden) {
+          cancelClipboardFocusSettlement(true);
+          clipboardSync.setPresented({
+            pageVisible: false,
+            focused: false,
+          });
+        } else if (clipboardModeRef.current === "browser") {
+          cancelClipboardFocusSettlement(true);
+          clipboardSync.setPresented({
+            pageVisible: true,
+            focused: false,
+          });
+          scheduleClipboardFocusSettlement();
+        } else {
+          clipboardSync.setPresented({ pageVisible: true, focused: true });
+        }
         syncFocusToServer();
         if (!document.hidden) {
           reconciler.request("page-visible");
           focusIfPresented();
-          readBrowserClipboardRef.current();
         }
       };
 
       const handleWindowFocus = () => {
         if (clipboardModeRef.current === "browser") {
-          clipboardSync.setPresented({
-            focused: mobileModeRef.current
-              ? mobileInputFocusedRef.current
-              : textareaFocusedRef.current,
-          });
-          readBrowserClipboardRef.current();
+          cancelClipboardFocusSettlement(true);
+          scheduleClipboardFocusSettlement();
         }
         syncFocusToServer();
         reconciler.request("window-focus");
       };
 
       const handleWindowBlur = () => {
+        cancelClipboardFocusSettlement(true);
         if (clipboardModeRef.current === "browser") {
           clipboardSync.setPresented({ focused: false });
         }
@@ -1700,6 +1833,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     return () => {
       mounted = false;
       isUnmountingRef.current = true;
+      cancelClipboardFocusSettlement();
       cleanup?.();
       releaseReconciler(liveReconciler);
       if (reconnectTimeoutRef.current) {
@@ -1721,24 +1855,57 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       wsRef.current = null;
       textareaFocusedRef.current = false;
     };
-  }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, terminalType, markIntentionalExit, focusIfPresented, clipboardSync]);
+  }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, terminalType, markIntentionalExit, focusIfPresented, clipboardSync, cancelClipboardFocusSettlement, scheduleClipboardFocusSettlement]);
 
   useLayoutEffect(() => {
     visibleRef.current = visible;
     isActiveRef.current = isActive;
+    mobileModeRef.current = mobileMode;
+    clipboardModeRef.current = clipboardMode;
+    cancelClipboardFocusSettlement();
+
+    if (clipboardMode === "native") {
+      clipboardFocusNeedsSettlementRef.current = false;
+      clipboardSync.setPresented({
+        active: isActive,
+        visible,
+        pageVisible: !document.hidden,
+        focused: true,
+      });
+      return;
+    }
+
+    // Prop/mode transitions may run between window-focus and the browser's
+    // eventual element-focus dispatch. Never restore browser eligibility from
+    // the cached focus booleans here.
     clipboardSync.setPresented({
       active: isActive,
       visible,
       pageVisible: !document.hidden,
-      focused:
-        clipboardMode === "native"
-          ? true
-          : document.hasFocus() &&
-            (mobileMode
-              ? mobileInputFocusedRef.current
-              : textareaFocusedRef.current),
+      focused: false,
     });
-  }, [visible, isActive, clipboardMode, clipboardSync, mobileMode]);
+    if (document.hidden || !document.hasFocus()) {
+      cancelClipboardFocusSettlement(true);
+    }
+    if (
+      deviceClipboardSyncEnabled &&
+      isActive &&
+      visible &&
+      !document.hidden &&
+      document.hasFocus()
+    ) {
+      scheduleClipboardFocusSettlement();
+    }
+  }, [
+    cancelClipboardFocusSettlement,
+    clipboardMode,
+    clipboardSync,
+    deviceClipboardSyncEnabled,
+    isActive,
+    mobileMode,
+    scheduleClipboardFocusSettlement,
+    visible,
+  ]);
 
   useEffect(() => {
     syncFocusToServerRef.current?.();
@@ -1754,25 +1921,50 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       mobileMode && clipboardMode === "browser" ? mobileInputElement : null;
     mobileInputElementRef.current = element;
     if (!element) {
+      cancelClipboardFocusSettlement();
       if (mobileInputFocusedRef.current) {
         mobileInputFocusedRef.current = false;
-        clipboardSync.setPresented({ focused: false });
+        if (clipboardModeRef.current === "browser") {
+          clipboardSync.setPresented({ focused: false });
+        }
       }
       return;
     }
 
     const onFocus = () => {
       mobileInputFocusedRef.current = true;
-      clipboardSync.setPresented({
-        focused: !document.hidden && document.hasFocus(),
-      });
-      readBrowserClipboardRef.current();
+      if (clipboardModeRef.current !== "browser") {
+        syncFocusToServerRef.current?.();
+        return;
+      }
+      if (clipboardFocusNeedsSettlementRef.current) {
+        scheduleClipboardFocusSettlement();
+      } else {
+        cancelClipboardFocusSettlement();
+        const focused =
+          document.activeElement === element &&
+          isActiveRef.current &&
+          visibleRef.current &&
+          !document.hidden &&
+          document.hasFocus();
+        clipboardSync.setPresented({ focused });
+        if (focused) readBrowserClipboardRef.current();
+      }
       syncFocusToServerRef.current?.();
     };
     const onBlur = (event: FocusEvent) => {
+      cancelClipboardFocusSettlement(
+        document.hidden || !document.hasFocus(),
+      );
+      if (clipboardModeRef.current !== "browser") {
+        mobileInputFocusedRef.current = false;
+        syncFocusToServerRef.current?.();
+        return;
+      }
       if (isClipboardFallbackActionTarget(event.relatedTarget)) {
         // The toast action is the only non-input surface allowed to retain
         // the current clipboard lease for its user gesture.
+        clipboardFocusNeedsSettlementRef.current = false;
         clipboardSync.setPresented({ focused: true });
         if (event.relatedTarget instanceof HTMLElement) {
           event.relatedTarget.addEventListener(
@@ -1810,6 +2002,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     if (document.activeElement === element) onFocus();
 
     return () => {
+      cancelClipboardFocusSettlement();
       element.removeEventListener("focus", onFocus);
       element.removeEventListener("blur", onBlur);
       element.removeEventListener("copy", onCopy);
@@ -1819,10 +2012,19 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       }
       if (mobileInputFocusedRef.current) {
         mobileInputFocusedRef.current = false;
-        clipboardSync.setPresented({ focused: false });
+        if (clipboardModeRef.current === "browser") {
+          clipboardSync.setPresented({ focused: false });
+        }
       }
     };
-  }, [clipboardMode, clipboardSync, mobileInputElement, mobileMode]);
+  }, [
+    cancelClipboardFocusSettlement,
+    clipboardMode,
+    clipboardSync,
+    mobileInputElement,
+    mobileMode,
+    scheduleClipboardFocusSettlement,
+  ]);
 
   useEffect(() => {
     if (
