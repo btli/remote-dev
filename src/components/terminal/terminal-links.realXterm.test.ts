@@ -57,12 +57,14 @@ function provide(provider: ILinkProvider, row: number): ILink[] {
 }
 
 function openRealTerminal(options: ConstructorParameters<typeof Terminal>[0] = {}) {
+  const cols = options.cols ?? COLS;
+  const rows = options.rows ?? ROWS;
   const parent = document.createElement("div");
   document.body.appendChild(parent);
   const term = new Terminal({
     allowProposedApi: true,
-    cols: COLS,
-    rows: ROWS,
+    cols,
+    rows,
     ...options,
   });
   term.open(parent);
@@ -73,10 +75,10 @@ function openRealTerminal(options: ConstructorParameters<typeof Terminal>[0] = {
     value: () => ({
       left: 0,
       top: 0,
-      right: COLS * CELL_WIDTH,
-      bottom: ROWS * CELL_HEIGHT,
-      width: COLS * CELL_WIDTH,
-      height: ROWS * CELL_HEIGHT,
+      right: cols * CELL_WIDTH,
+      bottom: rows * CELL_HEIGHT,
+      width: cols * CELL_WIDTH,
+      height: rows * CELL_HEIGHT,
       x: 0,
       y: 0,
       toJSON: () => "",
@@ -96,17 +98,40 @@ function openRealTerminal(options: ConstructorParameters<typeof Terminal>[0] = {
       get: (): RenderDimensions => ({
         css: {
           cell: { width: CELL_WIDTH, height: CELL_HEIGHT },
-          canvas: { width: COLS * CELL_WIDTH, height: ROWS * CELL_HEIGHT },
+          canvas: { width: cols * CELL_WIDTH, height: rows * CELL_HEIGHT },
         },
         device: {
           cell: { width: CELL_WIDTH, height: CELL_HEIGHT },
-          canvas: { width: COLS * CELL_WIDTH, height: ROWS * CELL_HEIGHT },
+          canvas: { width: cols * CELL_WIDTH, height: rows * CELL_HEIGHT },
         },
       }),
     });
   }
 
   return { term, parent, screen, core };
+}
+
+function movePointer(screen: HTMLElement, oneBasedColumn: number): void {
+  screen.dispatchEvent(
+    new MouseEvent("mousemove", {
+      bubbles: true,
+      clientX: (oneBasedColumn - 0.5) * CELL_WIDTH,
+      clientY: CELL_HEIGHT / 2,
+    }),
+  );
+}
+
+function clickPointer(screen: HTMLElement, oneBasedColumn: number): void {
+  for (const type of ["mousedown", "mouseup"]) {
+    screen.dispatchEvent(
+      new MouseEvent(type, {
+        bubbles: true,
+        button: 0,
+        clientX: (oneBasedColumn - 0.5) * CELL_WIDTH,
+        clientY: CELL_HEIGHT / 2,
+      }),
+    );
+  }
 }
 
 const disposals: Array<() => void> = [];
@@ -231,6 +256,124 @@ describe("terminal links against real xterm.js", () => {
       }),
     );
     expect(confirm).not.toHaveBeenCalled();
+    expect(customOpen).not.toHaveBeenCalled();
+    expect(stockOpen).not.toHaveBeenCalled();
+  });
+
+  it("guards WebLinksAddon's valid prefix when a clipped raw token is parser-invalid", async () => {
+    const text = "https://example.test[ rest";
+    const { term, parent, screen, core } = openRealTerminal({
+      cols: text.length,
+    });
+    disposals.push(() => {
+      term.dispose();
+      parent.remove();
+    });
+    await write(term, text);
+
+    const customOpen = vi.fn(() => true);
+    const stockOpen = vi.fn();
+    term.registerLinkProvider(
+      createTerminalLinkProvider(term, {
+        cellBudget: 21,
+        confirm: () => true,
+        open: customOpen,
+      }),
+    );
+    term.loadAddon(new WebLinksAddon((_event, target) => stockOpen(target)));
+
+    const providers = core._linkProviderService.linkProviders;
+    const custom = provide(providers[1], 1);
+    const stock = provide(providers[2], 1)[0];
+    expect(custom).toHaveLength(1);
+    expect(custom[0]).toMatchObject({
+      range: {
+        start: { x: 1, y: 1 },
+        end: { x: text.length, y: 1 },
+      },
+      decorations: { pointerCursor: false, underline: false },
+    });
+    expect(stock).toMatchObject({
+      text: "https://example.test",
+      range: {
+        start: { x: 1, y: 1 },
+        end: { x: 20, y: 1 },
+      },
+    });
+
+    movePointer(screen, 5);
+    expect(core.linkifier?.currentLink?.link).toMatchObject({
+      range: custom[0].range,
+      decorations: { pointerCursor: false, underline: false },
+    });
+    clickPointer(screen, 5);
+    expect(customOpen).not.toHaveBeenCalled();
+    expect(stockOpen).not.toHaveBeenCalled();
+  });
+
+  it("keeps clipped wide-cell guards disjoint so a later stock URL stays inert", async () => {
+    const prefix = "https://wide.test/";
+    const hidden = "https://hidden.test";
+    const cols = prefix.length + 2 + 1 + hidden.length;
+    const hiddenStart = prefix.length + 2 + 2;
+    const { term, parent, screen, core } = openRealTerminal({ cols });
+    disposals.push(() => {
+      term.dispose();
+      parent.remove();
+    });
+    await write(term, `${prefix}中 ${hidden}`);
+    expect(term.buffer.active.getLine(0)?.getCell(prefix.length)?.getWidth()).toBe(
+      2,
+    );
+    expect(
+      term.buffer.active.getLine(0)?.getCell(prefix.length + 1)?.getWidth(),
+    ).toBe(0);
+
+    const customOpen = vi.fn(() => true);
+    const stockOpen = vi.fn();
+    term.registerLinkProvider(
+      createTerminalLinkProvider(term, {
+        cellBudget: prefix.length + 1,
+        confirm: () => true,
+        open: customOpen,
+      }),
+    );
+    term.loadAddon(new WebLinksAddon((_event, target) => stockOpen(target)));
+
+    const providers = core._linkProviderService.linkProviders;
+    const custom = provide(providers[1], 1);
+    const hiddenStockLink = provide(providers[2], 1).find(
+      (link) => link.text === hidden,
+    );
+    expect(hiddenStockLink).toBeDefined();
+    for (let x = 1; x <= cols; x++) {
+      expect(
+        custom.filter(
+          (link) => link.range.start.x <= x && link.range.end.x >= x,
+        ),
+        `custom guard ownership at column ${x}`,
+      ).toHaveLength(1);
+    }
+
+    movePointer(screen, 5);
+    expect(core.linkifier?.currentLink?.link.decorations).toMatchObject({
+      pointerCursor: false,
+      underline: false,
+    });
+    clickPointer(screen, 5);
+
+    movePointer(screen, hiddenStart + 3);
+    expect(core.linkifier?.currentLink?.link).toMatchObject({
+      decorations: { pointerCursor: false, underline: false },
+    });
+    expect(core.linkifier?.currentLink?.link.range.start.x).toBeLessThanOrEqual(
+      hiddenStart,
+    );
+    expect(core.linkifier?.currentLink?.link.range.end.x).toBeGreaterThanOrEqual(
+      hiddenStart + hidden.length - 1,
+    );
+    clickPointer(screen, hiddenStart + 3);
+
     expect(customOpen).not.toHaveBeenCalled();
     expect(stockOpen).not.toHaveBeenCalled();
   });

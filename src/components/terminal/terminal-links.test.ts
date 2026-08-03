@@ -407,6 +407,28 @@ describe("terminal link reconstruction", () => {
     expect(open).toHaveBeenNthCalledWith(3, target);
   });
 
+  it("does not treat an ampersand in a URL path as nested-URL query state", () => {
+    const parts = [
+      "https://redirect.test/path",
+      "padding=123456789012&next=",
+      "https://dest.test/path",
+    ];
+    const cols = parts[0].length;
+    expect(parts[1]).toHaveLength(cols);
+    const outerPath = `${parts[0]}${parts[1]}`;
+    const rows = parts.map((part, index) => row(index, part, cols));
+
+    expect(computeTerminalLinks(rows, 0).map((link) => link.text)).toEqual([
+      outerPath,
+    ]);
+    expect(computeTerminalLinks(rows, 1).map((link) => link.text)).toEqual([
+      outerPath,
+    ]);
+    expect(computeTerminalLinks(rows, 2).map((link) => link.text)).toEqual([
+      parts[2],
+    ]);
+  });
+
   it.each([
     "- item",
     "* item",
@@ -941,6 +963,71 @@ describe("terminal link provider", () => {
       decorations: { pointerCursor: false, underline: false },
     });
     guard.activate(new MouseEvent("click"), guard.text);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("guards a stock-valid URL prefix when the clipped raw token is not parseable", () => {
+    const text = "https://example.test[ rest";
+    const cols = text.length;
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const provider = createTerminalLinkProvider(
+      terminalBuffer([row(0, text, cols)]),
+      { cellBudget: 21, confirm, open },
+    );
+
+    const links = provide(provider, 1);
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({
+      text: "https://example.test[",
+      range: {
+        start: { x: 1, y: 1 },
+        end: { x: cols, y: 1 },
+      },
+      decorations: { pointerCursor: false, underline: false },
+    });
+
+    links[0].activate(new MouseEvent("click"), links[0].text);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("returns non-overlapping guards when a cell budget ends after a width-2 lead", () => {
+    const prefix = "https://wide.test/";
+    const hidden = "https://hidden.test";
+    const cells: TerminalLinkCellSnapshot[] = [
+      ...cellsFromText(prefix, prefix.length),
+      { chars: "中", width: 2 },
+      { chars: "", width: 0 },
+      { chars: " ", width: 1 },
+      ...cellsFromText(hidden, hidden.length),
+    ];
+    const cols = cells.length;
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const provider = createTerminalLinkProvider(
+      terminalBuffer([{ index: 0, isWrapped: false, cells }]),
+      { cellBudget: prefix.length + 1, confirm, open },
+    );
+
+    const guards = provide(provider, 1);
+    expect(guards.length).toBeGreaterThan(0);
+    for (let x = 1; x <= cols; x++) {
+      expect(
+        guards.filter(
+          (guard) => guard.range.start.x <= x && guard.range.end.x >= x,
+        ),
+        `custom guard ownership at column ${x}`,
+      ).toHaveLength(1);
+    }
+    for (const guard of guards) {
+      expect(guard.decorations).toMatchObject({
+        pointerCursor: false,
+        underline: false,
+      });
+      guard.activate(new MouseEvent("click"), guard.text);
+    }
     expect(confirm).not.toHaveBeenCalled();
     expect(open).not.toHaveBeenCalled();
   });

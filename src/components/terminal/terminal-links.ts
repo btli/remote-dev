@@ -83,6 +83,13 @@ interface FullTerminalLinkCandidate {
   requiresConfirmation: boolean;
 }
 
+interface LexicalTerminalLinkCandidate {
+  rawText: string;
+  rawSegments: TerminalLinkCandidate["range"][];
+  rawTermination: "separator" | "group-end";
+  start: number;
+}
+
 interface ProviderTerminalLinkCandidate extends TerminalLinkCandidate {
   readonly guard: boolean;
 }
@@ -238,6 +245,12 @@ function hasUrlValueAssignmentSuffix(
   const schemeIndex = text.search(/https?:\/\//iu);
   if (requireScheme && schemeIndex < 0) return false;
   const token = schemeIndex >= 0 ? text.slice(schemeIndex) : text;
+  // An ampersand has query semantics only after the URL has entered a query
+  // or fragment. When the scheme is outside the inspected snapshot we cannot
+  // know that state, so the partial context remains conservatively eligible.
+  if (schemeIndex >= 0 && !token.includes("?") && !token.includes("#")) {
+    return false;
+  }
   const delimiterIndex = Math.max(
     token.lastIndexOf("?"),
     token.lastIndexOf("&"),
@@ -458,8 +471,10 @@ function segmentsForMapping(
   return result;
 }
 
-function linksInGroup(group: AssembledGroup): FullTerminalLinkCandidate[] {
-  const result: FullTerminalLinkCandidate[] = [];
+function lexicalLinksInGroup(
+  group: AssembledGroup,
+): LexicalTerminalLinkCandidate[] {
+  const result: LexicalTerminalLinkCandidate[] = [];
   URL_START.lastIndex = 0;
   let startMatch: RegExpExecArray | null;
   while ((startMatch = URL_START.exec(group.text))) {
@@ -470,24 +485,47 @@ function linksInGroup(group: AssembledGroup): FullTerminalLinkCandidate[] {
     }
 
     const rawText = group.text.slice(start, rawEnd);
-    const text = trimUrlToken(rawText);
-    const end = rawEnd - (rawText.length - text.length);
+    const rawSegments = segmentsForMapping(group.mapping, start, rawEnd);
+    if (rawSegments.length > 0) {
+      result.push({
+        rawText,
+        rawSegments,
+        rawTermination:
+          rawEnd === group.text.length ? "group-end" : "separator",
+        start,
+      });
+    }
+    // Preserve the previous scanner behavior: a valid outer URL owns nested
+    // schemes in its value, while an invalid outer token still lets a later
+    // scheme be considered independently.
+    if (parseHttpUrl(trimUrlToken(rawText))) {
+      URL_START.lastIndex = Math.max(URL_START.lastIndex, rawEnd);
+    }
+  }
+  return result;
+}
+
+function linksInGroup(group: AssembledGroup): FullTerminalLinkCandidate[] {
+  const result: FullTerminalLinkCandidate[] = [];
+  for (const lexical of lexicalLinksInGroup(group)) {
+    const text = trimUrlToken(lexical.rawText);
+    const end = lexical.start + text.length;
     if (!text || !parseHttpUrl(text)) continue;
 
-    const segments = segmentsForMapping(group.mapping, start, end);
-    const rawSegments = segmentsForMapping(group.mapping, start, rawEnd);
-    if (segments.length === 0 || rawSegments.length === 0) continue;
+    const segments = segmentsForMapping(group.mapping, lexical.start, end);
+    if (segments.length === 0) continue;
     result.push({
       text,
       segments,
-      rawSegments,
-      rawTermination: rawEnd === group.text.length ? "group-end" : "separator",
+      rawSegments: lexical.rawSegments,
+      rawTermination: lexical.rawTermination,
       requiresConfirmation: group.boundaries.some(
         (boundary) =>
-          boundary.kind === "hard" && boundary.index > start && boundary.index < end,
+          boundary.kind === "hard" &&
+          boundary.index > lexical.start &&
+          boundary.index < end,
       ),
     });
-    URL_START.lastIndex = Math.max(URL_START.lastIndex, end);
   }
   return result;
 }
@@ -595,6 +633,7 @@ function snapshotBufferRow(
   const cells: TerminalLinkCellSnapshot[] = [];
   let inspectedCells = 0;
   let inspectedCodeUnits = 0;
+  let resolvedEndColumn = 0;
   for (let column = 0; column < cols; column++) {
     if (inspectedCells >= cellBudget) break;
     const cell = column < line.length ? line.getCell(column) : undefined;
@@ -610,12 +649,16 @@ function snapshotBufferRow(
       chars,
       width,
     });
+    resolvedEndColumn = Math.min(
+      cols,
+      Math.max(resolvedEndColumn, column + Math.max(1, width)),
+    );
   }
   return {
     row: { index, isWrapped: line.isWrapped, cells },
     inspectedCells,
     inspectedCodeUnits,
-    resolvedEndColumn: cells.length,
+    resolvedEndColumn,
     clipped: cells.length < cols,
   };
 }
@@ -804,8 +847,11 @@ function collectStructuralSnapshot(
   };
 }
 
-function linkTouchesClippedEdge(
-  link: FullTerminalLinkCandidate,
+function lexicalLinkTouchesClippedEdge(
+  link: Pick<
+    LexicalTerminalLinkCandidate,
+    "rawSegments" | "rawTermination"
+  >,
   snapshot: StructuralSnapshot,
 ): boolean {
   const top = snapshot.rows[0];
@@ -853,6 +899,13 @@ function linkTouchesClippedEdge(
     }
   }
   return false;
+}
+
+function linkTouchesClippedEdge(
+  link: FullTerminalLinkCandidate,
+  snapshot: StructuralSnapshot,
+): boolean {
+  return lexicalLinkTouchesClippedEdge(link, snapshot);
 }
 
 function computeCurrentTerminalLinks(
@@ -903,6 +956,29 @@ function computeCurrentTerminalLinks(
         };
       },
     );
+    for (const group of assembleGroups(snapshot.rows)) {
+      for (const lexical of lexicalLinksInGroup(group)) {
+        if (parseHttpUrl(trimUrlToken(lexical.rawText))) continue;
+        if (!lexicalLinkTouchesClippedEdge(lexical, snapshot)) continue;
+        for (const rawRange of lexical.rawSegments) {
+          if (rawRange.start.y !== requestedRow + 1) continue;
+          const reachesRequestedClip =
+            snapshot.requestedResolvedEnd !== null &&
+            rawRange.end.x >= snapshot.requestedResolvedEnd;
+          candidates.push({
+            text: lexical.rawText,
+            range: reachesRequestedClip
+              ? {
+                  start: rawRange.start,
+                  end: { x: source.cols, y: requestedRow + 1 },
+                }
+              : rawRange,
+            requiresConfirmation: false,
+            guard: true,
+          });
+        }
+      }
+    }
     if (snapshot.requestedResolvedEnd !== null) {
       const firstUnresolvedX = snapshot.requestedResolvedEnd + 1;
       const unresolvedCovered = candidates.some(
