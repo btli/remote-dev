@@ -61,13 +61,28 @@ void main() {
       expect(payload?.revision, 7);
     });
 
-    test('rejects malformed and empty payloads', () {
+    test('accepts empty text as an explicit clipboard clear', () {
+      final payload = parseClipboardWritePayload(<dynamic>[
+        <String, Object>{'text': '', 'revision': 1},
+      ]);
+
+      expect(payload?.text, '');
+      expect(payload?.revision, 1);
+    });
+
+    test('rejects missing, null, and malformed payloads', () {
       expect(parseClipboardWritePayload(<dynamic>[]), isNull);
       expect(parseClipboardWritePayload(<dynamic>[null]), isNull);
       expect(parseClipboardWritePayload(<dynamic>['text']), isNull);
       expect(
         parseClipboardWritePayload(<dynamic>[
-          <String, Object>{'text': '', 'revision': 1},
+          <String, Object>{'revision': 1},
+        ]),
+        isNull,
+      );
+      expect(
+        parseClipboardWritePayload(<dynamic>[
+          <String, Object?>{'text': null, 'revision': 1},
         ]),
         isNull,
       );
@@ -183,6 +198,36 @@ void main() {
           'read',
           'sync:local clipboard',
         ]);
+      },
+    );
+
+    test('terminal ready publishes an empty native clipboard clear', () async {
+      enabled = true;
+      nativeText = '';
+
+      await sync.onTerminalReady();
+
+      expect(events, <String>['enabled:true', 'read', 'sync:']);
+    });
+
+    test('terminal ready rejects an oversized native clipboard', () async {
+      enabled = true;
+      nativeText = 'x' * (maxClipboardSyncUtf8Bytes + 1);
+
+      await sync.onTerminalReady();
+
+      expect(events, <String>['enabled:true', 'read']);
+    });
+
+    test(
+      'terminal ready does not publish a missing native clipboard',
+      () async {
+        enabled = true;
+        nativeText = null;
+
+        await sync.onTerminalReady();
+
+        expect(events, <String>['enabled:true', 'read']);
       },
     );
 
@@ -378,14 +423,38 @@ void main() {
       expect(events, isEmpty);
     });
 
+    test('eligible empty remote update clears the native clipboard', () async {
+      enabled = true;
+      nativeText = 'occupied';
+      final clear = <dynamic>[
+        <String, Object>{'text': '', 'revision': 3},
+      ];
+
+      await sync.onClipboardWrite(clear);
+      await sync.onClipboardWrite(clear);
+
+      expect(events, <String>['write:']);
+      expect(nativeText, '');
+
+      // The first native refresh consumes the pending remote echo. A later
+      // explicit refresh may publish the still-empty clipboard again.
+      await sync.onAppResumed();
+      expect(events, <String>['write:', 'refit', 'enabled:true', 'read']);
+      await sync.onAppResumed();
+      expect(events.last, 'sync:');
+    });
+
     test(
-      'remote write ignores malformed, empty, and oversized payloads',
+      'remote write ignores missing, malformed, and oversized payloads',
       () async {
         enabled = true;
 
         await sync.onClipboardWrite(<dynamic>[]);
         await sync.onClipboardWrite(<dynamic>[
-          <String, Object>{'text': '', 'revision': 1},
+          <String, Object>{'revision': 1},
+        ]);
+        await sync.onClipboardWrite(<dynamic>[
+          <String, Object?>{'text': null, 'revision': 1},
         ]);
         await sync.onClipboardWrite(<dynamic>[
           <String, Object>{
@@ -626,6 +695,24 @@ void main() {
         'paste:local clipboard',
         'sync:local clipboard',
       ]);
+    });
+
+    test('paste publishes an empty native clipboard clear', () async {
+      enabled = true;
+      nativeText = '';
+
+      await sync.onWantsPaste();
+
+      expect(events, <String>['read', 'sync:']);
+    });
+
+    test('paste does not treat a missing native clipboard as empty', () async {
+      enabled = true;
+      nativeText = null;
+
+      await sync.onWantsPaste();
+
+      expect(events, <String>['read']);
     });
 
     test('paste preserves terminal behavior while sync is disabled', () async {

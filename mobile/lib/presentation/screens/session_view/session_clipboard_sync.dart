@@ -13,9 +13,9 @@ class ClipboardWritePayload {
 
 /// Parses the first JavaScript-handler argument defensively.
 ///
-/// The canonical shape is `{text: string, revision: number}`. Empty text,
-/// fractional/negative revisions, malformed values, and text over 1 MiB UTF-8
-/// are ignored.
+/// The canonical shape is `{text: string, revision: number}`. Empty text is a
+/// valid clipboard clear; fractional/negative revisions, malformed values, and
+/// text over 1 MiB UTF-8 are ignored.
 ClipboardWritePayload? parseClipboardWritePayload(List<dynamic> args) {
   if (args.isEmpty || args.first is! Map) return null;
   final map = args.first as Map;
@@ -31,7 +31,6 @@ ClipboardWritePayload? parseClipboardWritePayload(List<dynamic> args) {
 }
 
 bool _isSyncableText(String text) {
-  if (text.isEmpty) return false;
   return utf8.encode(text).length <= maxClipboardSyncUtf8Bytes;
 }
 
@@ -179,12 +178,13 @@ class SessionClipboardSync {
     if (!_canAccessClipboard) return;
     final expectedGeneration = _presentationGeneration;
     final text = await _safeReadClipboard();
-    if (text == null ||
-        text.isEmpty ||
-        !_isCurrentPresentationGeneration(expectedGeneration)) {
+    if (text == null || !_isCurrentPresentationGeneration(expectedGeneration)) {
       return;
     }
-    _pasteToTerminal(text);
+    // An empty OS clipboard is still an explicit sync clear, but injecting an
+    // empty terminal paste is unnecessary. Keep absence (`null`) distinct from
+    // a present empty value throughout the native-to-web path.
+    if (text.isNotEmpty) _pasteToTerminal(text);
     _forgetRemoteDuplicate();
     _publishText(text, requireCurrent: true);
   }

@@ -242,6 +242,21 @@ void main() {
     expect(captured.join(), isNot(contains('stale secret')));
   });
 
+  test('queued clipboard sync preserves empty text as a clear', () {
+    bridge.setClipboardSync(true);
+    bridge.syncClipboard('');
+
+    bridge.markReady();
+
+    final captured =
+        verify(
+          () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
+        ).captured.cast<String>();
+    expect(captured, hasLength(2));
+    expect(captured.first, contains('setClipboardSync(true)'));
+    expect(captured.last, contains("syncClipboard('')"));
+  });
+
   test('disable clears queued clipboard text before ready', () {
     bridge.setClipboardSync(true);
     bridge.syncClipboard('stale secret');
