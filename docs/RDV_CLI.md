@@ -245,8 +245,8 @@ The first positional argument is always the target `<session-id>`.
 Inter-agent communication scoped to the current project (see [`AGENTS.md`](./AGENTS.md)
 §5). **bd tracks the work; chat tracks awareness.** Delivery uses a durable
 per-recipient inbox, but **automatic** delivery (the `rdv` MCP push + the poll
-hook) is wired only for **Claude Code**. Codex, Gemini, OpenCode, and Antigravity
-agents receive nothing automatically — they must drain their inbox by running
+hook) is wired only for **Claude Code**. Codex, Gemini, OpenCode, Antigravity,
+and Cursor agents receive nothing automatically — they must drain their inbox by running
 `rdv peer messages` themselves. Delivery is **at-least-once with idempotent
 de-duplication**, not exactly-once.
 
@@ -287,7 +287,7 @@ Multi-agent team orchestration — launch and coordinate child agent sessions.
 
 | Subcommand | Purpose |
 |------------|---------|
-| `rdv teams launch [--folder-id <id>] [--count <n>] [--provider <claude\|codex\|gemini>] [--name-prefix <p>] [--project-path <path>]` | Launch N coordinated agent sessions (default count 2, provider `claude`); children are parented to the current session |
+| `rdv teams launch [--folder-id <id>] [--count <n>] [--provider <claude\|codex\|gemini\|opencode\|cursor>] [--name-prefix <p>] [--project-path <path>]` | Launch N coordinated agent sessions (default count 2, provider `claude`); children are parented to the current session |
 | `rdv teams list [--parent-id <id>]` | List agent sessions grouped by parent |
 | `rdv teams wait <parent-id> [--timeout <seconds>]` | Wait for child sessions to finish (default 300 s) |
 | `rdv teams broadcast <parent-id> <text…>` | Send text to all children of a parent |
@@ -313,7 +313,7 @@ supervisor base URL + operator token come from `RDV_SUPERVISOR_URL` /
 
 ```bash
 rdv delegate --to <slug> --project-id <id> --prompt "<text>" \
-  [--provider <claude|codex|gemini|opencode>] [--provision-if-missing]
+  [--provider <claude|codex|gemini|opencode|cursor>] [--provision-if-missing]
 ```
 
 ## migrate

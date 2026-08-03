@@ -23,7 +23,13 @@ import { cn } from "@/lib/utils";
 import { RepositoryPicker } from "@/components/github/RepositoryPicker";
 import { BranchPicker } from "@/components/github/BranchPicker";
 import type { GitHubRepository, GitHubBranch } from "@/types/github";
-import { AGENT_PRESETS, WORKTREE_TYPES, type AgentPreset, type WorktreeType } from "@/types/session";
+import {
+  AGENT_PRESETS,
+  WORKTREE_TYPES,
+  type AgentPreset,
+  type AgentProviderType,
+  type WorktreeType,
+} from "@/types/session";
 import {
   Select,
   SelectContent,
@@ -51,7 +57,7 @@ interface NewSessionWizardProps {
     // Terminal type for plugin-based rendering
     terminalType?: "shell" | "agent" | "ssh" | "file" | "loop";
     // Agent-aware session fields
-    agentProvider?: "claude" | "codex" | "gemini" | "opencode" | "none";
+    agentProvider?: AgentProviderType;
     autoLaunchAgent?: boolean;
     agentFlags?: string[];
     worktreeType?: WorktreeType;
@@ -491,7 +497,7 @@ export function NewSessionWizard({
         worktreeType: featureCreateWorktree ? worktreeType : undefined,
         profileId: selectedProfileId || undefined,
         terminalType: "agent",
-        agentProvider: selectedAgent as "claude" | "codex" | "gemini" | "opencode",
+        agentProvider: selectedAgent as AgentProviderType,
         autoLaunchAgent: true,
       });
       handleClose();

@@ -69,4 +69,14 @@ describe("SessionMetadataBar", () => {
     );
     expect(container.firstChild).toBeNull();
   });
+
+  it("renders Cursor's agent chip for a Cursor TUI session", async () => {
+    const { SessionMetadataBar } = await import("../SessionMetadataBar");
+    render(
+      <SessionMetadataBar
+        session={{ ...session, agentProvider: "cursor" } as TerminalSession}
+      />,
+    );
+    expect(screen.getByText("cursor")).toBeTruthy();
+  });
 });

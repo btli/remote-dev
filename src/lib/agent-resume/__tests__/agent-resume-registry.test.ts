@@ -13,6 +13,7 @@ const ALL_PROVIDERS: AgentProviderType[] = [
   "gemini",
   "antigravity",
   "opencode",
+  "cursor",
   "none",
 ];
 
@@ -43,8 +44,17 @@ describe("AGENT_RESUME_REGISTRY", () => {
     expect(spec.resume.token).toBe("resume");
   });
 
+  it("uses agent --resume and Cursor's data-dir override", () => {
+    const spec = getResumeSpec("cursor");
+    expect(spec.supportsResume).toBe(true);
+    expect(spec.detect).toEqual({ command: "agent", versionArgs: ["--version"] });
+    expect(spec.resume).toEqual({ kind: "flag", token: "--resume" });
+    expect(spec.sessionIdSource.homeEnvVar).toBe("CURSOR_DATA_DIR");
+    expect(spec.sessionIdSource.defaultHomeSubpath).toBe(".cursor");
+  });
+
   it("exposes a sessionIdSource and detect for resumable providers", () => {
-    for (const p of ["claude", "codex", "gemini", "opencode"] as AgentProviderType[]) {
+    for (const p of ["claude", "codex", "gemini", "opencode", "cursor"] as AgentProviderType[]) {
       const spec = getResumeSpec(p);
       expect(spec.detect.command).toBeTruthy();
       expect(spec.sessionIdSource).toBeDefined();

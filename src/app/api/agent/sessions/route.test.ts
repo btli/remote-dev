@@ -70,6 +70,22 @@ describe("GET /api/agent/sessions", () => {
     expect(body.sessions).toEqual([]);
   });
 
+  it("accepts Cursor and returns its project-scoped discovery results", async () => {
+    listResumableSessions.mockResolvedValue([
+      { sessionId: "cursor-chat-1", lastModified: "2026-08-03T00:00:00.000Z" },
+    ]);
+    const res = await call(
+      "http://localhost/api/agent/sessions?provider=cursor&projectPath=/tmp/proj",
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      provider: "cursor",
+      sessions: [
+        { sessionId: "cursor-chat-1", lastModified: "2026-08-03T00:00:00.000Z" },
+      ],
+    });
+  });
+
   it("rejects an invalid provider", async () => {
     const res = await call("http://localhost/api/agent/sessions?provider=bogus&projectPath=/tmp/proj");
     expect(res.status).toBe(400);

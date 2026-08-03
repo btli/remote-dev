@@ -752,7 +752,7 @@ export async function createSessionWithDedupFlag(
   // tmux pane-exited hook below.
   //
   // `isAgentRuntime` — narrow flag: true ONLY when the tmux pane is actually
-  //   running an AI coding agent (Claude/Codex/Gemini/OpenCode). Gates the
+  //   running an AI coding agent (Claude/Codex/Gemini/Antigravity/OpenCode/Cursor). Gates the
   //   agent-specific side effects: API key creation, RDV env vars,
   //   `ensureAgentConfig` settings.json injection, proxy env, claude defaults.
   //

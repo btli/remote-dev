@@ -1,6 +1,6 @@
 # Remote Dev
 
-A modern, web-based terminal workspace for AI-assisted development. Run persistent terminal sessions in your browser, organize them into projects, and drive multiple AI coding agents — Claude Code, Codex, Gemini, Antigravity, and OpenCode — from one place, on desktop or mobile.
+A modern, web-based terminal workspace for AI-assisted development. Run persistent terminal sessions in your browser, organize them into projects, and drive multiple AI coding agents — Claude Code, Codex, Gemini, Antigravity, OpenCode, and Cursor — from one place, on desktop or mobile.
 
 [![Version][version-badge]][version-link]
 [![License][license-badge]][license-link]
@@ -49,10 +49,10 @@ Each capability below is tagged with its maturity so you know exactly what to ex
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Five agents, one workspace | Shipped | First-class Claude Code, OpenAI Codex, Gemini CLI, Antigravity, and OpenCode. Antigravity has no public installer and no session resume. |
+| Six agents, one workspace | Shipped | First-class Claude Code, OpenAI Codex, Gemini CLI, Antigravity, OpenCode, and Cursor (`agent`). Antigravity has no public installer and no session resume. |
 | Agent profiles & isolation | Shipped | Each profile is a fully isolated environment — its own `HOME`, agent config, git identity, and per-profile theming. |
 | Live status & exit handling | Shipped | Agent sessions report running/idle/waiting state and show a restart screen on exit. |
-| Session resume | Shipped | Reattach to prior agent sessions for four of five providers (Antigravity relaunches fresh). |
+| Session resume | Shipped | Automatic resume for Claude, Codex, Gemini, OpenCode, and Cursor. Cursor discovers matching conversations in its project-scoped chat index and relaunches with `agent --resume <id>`; Antigravity relaunches fresh. |
 | Claude usage-limit management | Shipped | Per-profile 5h/7d limit state, reactive limit detection from output, group-inherited primary + fallback pools with auto-rotation, and server-side auto-apply at session creation. |
 | Peer messaging | Beta | Durable push + poll delivery **for Claude Code**; other agents pull messages with `rdv peer`. At-least-once delivery with idempotent de-duplication. |
 | Claude auto-relaunch on limit | Beta | Opt-in `auto` relaunch works; `notify` mode raises a notification (no inline one-click relaunch button yet). |

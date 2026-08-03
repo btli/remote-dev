@@ -14,6 +14,7 @@ const ALL_PROVIDERS: AgentProviderType[] = [
   "gemini",
   "antigravity",
   "opencode",
+  "cursor",
   "none",
 ];
 
@@ -33,11 +34,12 @@ describe("CLIENT_RESUME_INFO — parity with the server registry", () => {
 });
 
 describe("providerSupportsResume", () => {
-  it("is true for the four resume-capable agents and false otherwise", () => {
+  it("is true for resume-capable agents and false otherwise", () => {
     expect(providerSupportsResume("claude")).toBe(true);
     expect(providerSupportsResume("codex")).toBe(true);
     expect(providerSupportsResume("gemini")).toBe(true);
     expect(providerSupportsResume("opencode")).toBe(true);
+    expect(providerSupportsResume("cursor")).toBe(true);
     expect(providerSupportsResume("antigravity")).toBe(false);
     expect(providerSupportsResume("none")).toBe(false);
   });
@@ -48,6 +50,7 @@ describe("buildResumeAgentFlags", () => {
     expect(buildResumeAgentFlags("claude", "abc")).toEqual(["--resume", "abc"]);
     expect(buildResumeAgentFlags("gemini", "abc")).toEqual(["--resume", "abc"]);
     expect(buildResumeAgentFlags("opencode", "abc")).toEqual(["--session", "abc"]);
+    expect(buildResumeAgentFlags("cursor", "chat-123")).toEqual(["--resume", "chat-123"]);
   });
 
   it("builds the subcommand pair for codex (appended after the command)", () => {

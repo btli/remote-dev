@@ -3,16 +3,17 @@
  *
  * [hgwo] Multi-provider resumable-session discovery. Generalizes the
  * Claude-only `/api/agent/claude-sessions` route to every resume-capable
- * provider (claude, codex, gemini, opencode) by delegating to the per-provider
- * discovery (`session-id-discovery.ts`). Claude keeps its rich `.jsonl`
- * previews (first message + git branch); codex/gemini/opencode return id +
- * timestamp from disk discovery (no cheap preview). Antigravity (no resume) is
- * rejected as an invalid provider, the same as `none`.
+ * provider (claude, codex, gemini, opencode, cursor) by delegating to the
+ * per-provider discovery (`session-id-discovery.ts`). Claude keeps its rich
+ * `.jsonl` previews (first message + git branch); codex/gemini/opencode return
+ * id + timestamp from flat-file disk discovery, while Cursor filters its
+ * nested CLI chat index by project path (no cheap preview). Antigravity (no
+ * resume) is rejected as an invalid provider, the same as `none`.
  *
  * Response: `{ provider, sessions: ResumableSessionSummary[] }`.
  *
  * Query params:
- *   provider     - One of claude|codex|gemini|opencode (required)
+ *   provider     - One of claude|codex|gemini|opencode|cursor (required)
  *   projectPath  - Absolute path of the project directory (required)
  *   profileId    - Agent profile ID for profile-isolated config (optional)
  *   limit        - Max sessions to return (default: 20, max: 50)
@@ -26,7 +27,13 @@ import { getResumeSpec } from "@/lib/agent-resume/agent-resume-registry";
 import * as AgentProfileService from "@/services/agent-profile-service";
 import type { AgentProviderType } from "@/types/session";
 
-const VALID_PROVIDERS: AgentProviderType[] = ["claude", "codex", "gemini", "opencode"];
+const VALID_PROVIDERS: AgentProviderType[] = [
+  "claude",
+  "codex",
+  "gemini",
+  "opencode",
+  "cursor",
+];
 
 export const GET = withApiAuth(async (request, { userId }) => {
   const { searchParams } = new URL(request.url);

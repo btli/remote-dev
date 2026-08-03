@@ -26,7 +26,7 @@ with the quick links below, or jump to a reference section.
 
 | Doc | Description |
 |-----|-------------|
-| [AGENTS.md](AGENTS.md) | The 5 agent CLIs (Claude Code, Codex, Gemini, Antigravity, OpenCode), profile isolation, appearance, CLI verification, and Claude usage-limit handling |
+| [AGENTS.md](AGENTS.md) | The 6 agent CLIs (Claude Code, Codex, Gemini, Antigravity, OpenCode, Cursor), profile isolation, appearance, CLI verification, and Claude usage-limit handling |
 | [RDV_CLI.md](RDV_CLI.md) | Full `rdv` Rust CLI command reference (the client agents drive via Bash) |
 
 ## Operations & Hosting

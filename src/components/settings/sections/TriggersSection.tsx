@@ -28,8 +28,6 @@ import {
 import { apiFetch } from "@/lib/api-fetch";
 import { useProjectTree } from "@/contexts/ProjectTreeContext";
 import { ProfileSelector } from "@/components/profiles/ProfileSelector";
-import { isClaudeCapableProvider } from "@/types/agent";
-import type { AgentProvider } from "@/types/agent";
 import type { TriggerKind } from "@/types/agent-run";
 
 interface TriggerConfigDTO {
@@ -50,7 +48,7 @@ const KIND_OPTIONS: { value: TriggerKind; label: string }[] = [
   { value: "ci_failed", label: "CI failed" },
 ];
 
-const PROVIDER_OPTIONS = ["claude", "codex", "gemini", "opencode"];
+const PROVIDER_OPTIONS = ["claude", "codex", "gemini", "opencode", "cursor"];
 
 export function TriggersSection() {
   const { activeNode } = useProjectTree();
@@ -211,9 +209,7 @@ function TriggerForm({
   const [saving, setSaving] = useState(false);
 
   // Profiles only apply to Claude-capable providers; other providers ignore them.
-  const showProfilePicker = isClaudeCapableProvider(
-    agentProvider as AgentProvider,
-  );
+  const showProfilePicker = agentProvider === "claude";
 
   async function save() {
     setSaving(true);

@@ -97,6 +97,20 @@ export const AGENT_RESUME_REGISTRY: Record<AgentProviderType, ProviderResumeSpec
     },
     resume: { kind: "flag", token: "--session" },
   },
+  cursor: {
+    provider: "cursor",
+    supportsResume: true,
+    detect: { command: "agent", versionArgs: ["--version"] },
+    // Cursor's project-scoped CLI chat index is nested rather than flat;
+    // session-id-discovery.ts handles it with a Cursor-specific scanner.
+    sessionIdSource: {
+      homeEnvVar: "CURSOR_DATA_DIR",
+      defaultHomeSubpath: ".cursor",
+      fileExtensions: [],
+      idFrom: "filename",
+    },
+    resume: { kind: "flag", token: "--resume" },
+  },
   antigravity: {
     provider: "antigravity",
     supportsResume: false,

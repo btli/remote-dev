@@ -1,7 +1,7 @@
 /**
  * Startup diagnostics for non-Claude resume flags.
  *
- * Non-Claude resume tokens (codex `resume` subcommand, gemini `--resume`,
+ * Non-Claude resume tokens (codex `resume` subcommand, gemini/cursor `--resume`,
  * opencode `--session`) come from plan research, not from CLI verification, so
  * they can drift when a provider renames or removes the flag. `verifyResumeFlag`
  * probes the installed CLI's `--help` for the registry token and warns on drift,
@@ -21,9 +21,12 @@
  * never block or crash boot.
  */
 
-import type { AgentProvider } from "@/types/agent";
 import type { AgentProviderType } from "@/types/session";
-import { checkAllCLIStatus, type AllCLIStatus } from "@/services/agent-cli-service";
+import {
+  checkAllCLIStatus,
+  type AgentCLIProvider,
+  type AllCLIStatus,
+} from "@/services/agent-cli-service";
 import {
   AGENT_RESUME_REGISTRY,
   getResumeSpec,
@@ -34,21 +37,17 @@ import { createLogger } from "@/lib/logger";
 const log = createLogger("ResumeFlagDiagnostics");
 
 /**
- * The concrete agent providers shared by both `AgentProvider` (CLI-status, has
- * the UI-only `"all"`) and `AgentProviderType` (registry, has `"none"`):
- * claude/codex/gemini/antigravity/opencode. Assignable to `AgentProviderType`,
- * so a value of this type is a valid registry key + `verifyResumeFlag` arg.
+ * Runnable CLI providers that also have a resume registry entry.
  */
-type ConcreteAgentProvider = Exclude<AgentProvider, "all">;
+type ConcreteAgentProvider = AgentCLIProvider;
 
 /**
  * Narrow the CLI-status provider union to the concrete providers.
- * `checkAllCLIStatus` only ever emits these five, but its element type is the
- * wider `AgentProvider`; gating on registry membership drops `"all"` safely
- * without a cast.
+ * `checkAllCLIStatus` only emits runnable providers; gating on registry
+ * membership keeps this helper aligned with the resume registry.
  */
-function isResumeProvider(p: AgentProvider): p is ConcreteAgentProvider {
-  return p !== "all" && p in AGENT_RESUME_REGISTRY;
+function isResumeProvider(p: AgentCLIProvider): p is ConcreteAgentProvider {
+  return p in AGENT_RESUME_REGISTRY;
 }
 
 /**

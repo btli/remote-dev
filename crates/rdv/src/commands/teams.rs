@@ -25,7 +25,7 @@ enum TeamsCommand {
         /// Number of agent sessions to create
         #[arg(long, default_value = "2")]
         count: usize,
-        /// Agent provider (claude, codex, gemini)
+        /// Agent provider (claude, codex, gemini, opencode, cursor)
         #[arg(long, default_value = "claude")]
         provider: String,
         /// Name prefix for sessions
@@ -59,9 +59,19 @@ enum TeamsCommand {
     },
 }
 
-pub async fn run(args: TeamsArgs, client: &Client, human: bool) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run(
+    args: TeamsArgs,
+    client: &Client,
+    human: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
-        TeamsCommand::Launch { folder_id, count, provider, name_prefix, project_path } => {
+        TeamsCommand::Launch {
+            folder_id,
+            count,
+            provider,
+            name_prefix,
+            project_path,
+        } => {
             let prefix = name_prefix.unwrap_or_else(|| "agent".to_string());
             let mut created_sessions = Vec::new();
 
@@ -167,10 +177,13 @@ pub async fn run(args: TeamsArgs, client: &Client, human: bool) -> Result<(), Bo
                 }
 
                 if human {
-                    let active = arr.iter().filter(|s| {
-                        let exit_state = s["agentExitState"].as_str().unwrap_or("");
-                        exit_state != "exited" && exit_state != "closed"
-                    }).count();
+                    let active = arr
+                        .iter()
+                        .filter(|s| {
+                            let exit_state = s["agentExitState"].as_str().unwrap_or("");
+                            exit_state != "exited" && exit_state != "closed"
+                        })
+                        .count();
                     eprint!("\rWaiting... {active}/{} sessions still active", arr.len());
                 }
 
@@ -190,7 +203,9 @@ pub async fn run(args: TeamsArgs, client: &Client, human: bool) -> Result<(), Bo
                     None => continue,
                 };
                 let status = s["status"].as_str().unwrap_or("");
-                if status == "closed" { continue; }
+                if status == "closed" {
+                    continue;
+                }
 
                 let body = json!({ "sessionId": sid, "text": format!("{message}\n") });
                 if let Err(e) = client.post_json("/internal/pty-write", &body).await {

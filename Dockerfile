@@ -262,6 +262,16 @@ RUN npm install -g \
         @google/gemini-cli \
         opencode-ai
 
+# Cursor CLI (`agent`). The official installer lays down a multi-file bundle
+# below HOME, so keep that bundle intact under a dedicated, world-readable
+# home and expose only its launcher on the system PATH. Copying the launcher
+# alone would strand the versioned files it resolves at runtime.
+RUN mkdir -p /opt/cursor-agent \
+    && HOME=/opt/cursor-agent sh -c 'curl https://cursor.com/install -fsS | bash' \
+    && test -x /opt/cursor-agent/.local/bin/agent \
+    && chmod -R a+rX /opt/cursor-agent \
+    && ln -sf /opt/cursor-agent/.local/bin/agent /usr/local/bin/agent
+
 # Antigravity CLI (`agy`) — BEST-EFFORT only, and deliberately NOT hard-gated.
 # The documented installer URL (https://google.dev/antigravity/install) is
 # currently unverified/404 (it redirects to a non-script HTML page), so `agy`
@@ -304,10 +314,11 @@ RUN curl -fsSL https://raw.githubusercontent.com/gastownhall/beads/main/scripts/
 # build flaky. `agy` is intentionally EXCLUDED: its installer is currently
 # unavailable (see above), so gating on it would fail every build.
 RUN command -v claude && command -v codex && command -v gemini \
-    && command -v opencode && command -v bd && command -v dolt
+    && command -v opencode && command -v agent \
+    && command -v bd && command -v dolt
 
 # [oyej] Golden dev-env image flavor (epic remote-dev-oyej.7). The runtime stage
-# above ALREADY bakes all 5 agent CLIs + sudo/apt + gh; this build-arg just lets
+# above ALREADY bakes all 6 agent CLIs + sudo/apt + gh; this build-arg just lets
 # the image self-identify so the warm pool can confirm a node can run agent runs,
 # and the entrypoint's opt-in AGENT_AUTO_UPDATE step can key off the flavor.
 # Default `dev-env` (the only flavor today). Do NOT pin the base images (global

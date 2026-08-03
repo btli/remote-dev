@@ -87,7 +87,7 @@ const enter = () => execFileCalls.find((a) => a.includes("send-keys") && a.inclu
 const setEnv = (k: string) =>
   execFileCalls.find((a) => a.includes("set-environment") && a.includes(k));
 
-const RESUMABLE = ["claude", "codex", "gemini", "opencode"] as const;
+const RESUMABLE = ["claude", "codex", "gemini", "opencode", "cursor"] as const;
 
 describe.each(RESUMABLE)("durability for %s", (provider) => {
   it("terminal-server restart: relaunches RESUMED when tmux is gone (stored id)", async () => {
@@ -120,14 +120,14 @@ describe.each(RESUMABLE)("durability for %s", (provider) => {
         agentProvider: provider,
         typeMetadata: JSON.stringify({
           agentSessionId: { [provider]: "nid-2" },
-          resumeBinding: { provider, env: { CLAUDE_CONFIG_DIR: "/cfg", CODEX_HOME: "/cfg" } },
+          resumeBinding: { provider, env: { XDG_CONFIG_HOME: "/cfg" } },
         }),
       }),
     );
     const { relaunchAgentInTmux } = await import("@/server/agent-relaunch");
     await relaunchAgentInTmux("123e4567-e89b-12d3-a456-426614174000", "tmux-s1");
 
-    const envCall = setEnv("CLAUDE_CONFIG_DIR") ?? setEnv("CODEX_HOME");
+    const envCall = setEnv("XDG_CONFIG_HOME");
     expect(envCall).toBeDefined();
     const envIdx = execFileCalls.indexOf(envCall!);
     const sendIdx = execFileCalls.indexOf(sendKeys()!);

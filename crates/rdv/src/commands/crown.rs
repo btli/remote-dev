@@ -28,7 +28,7 @@ enum CrownCommand {
         /// Number of candidate agents to fan out
         #[arg(long, default_value = "2")]
         count: u32,
-        /// Agent provider (claude, codex, gemini, opencode)
+        /// Agent provider (claude, codex, gemini, opencode, cursor)
         #[arg(long, default_value = "claude")]
         provider: String,
         /// The shared task prompt

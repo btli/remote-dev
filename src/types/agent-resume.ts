@@ -1,11 +1,11 @@
 /**
  * Shared types for agent session durability & resume (Vault).
  *
- * Native agent session ids (Claude/Codex/Gemini/OpenCode) are captured into
- * `terminalSessions.typeMetadata.agentSessionId` (a per-provider map) and a
- * durable resume binding is persisted under `typeMetadata.resumeBinding` so a
- * conversation can be resumed across process death, terminal-server restart,
- * and host/pod restart.
+ * Native agent session ids may be captured into
+ * `terminalSessions.typeMetadata.agentSessionId` (a per-provider map) or
+ * discovered from provider storage. A durable resume binding is persisted under
+ * `typeMetadata.resumeBinding` so a conversation can be resumed across process
+ * death, terminal-server restart, and host/pod restart.
  *
  * @see ../lib/agent-resume/agent-resume-registry.ts (declarative per-provider data)
  * @see ../infrastructure/agent-resume/AgentResumeResolverImpl.ts (resolver impl)
@@ -23,8 +23,8 @@ export type AgentSessionIdMap = Partial<Record<AgentProviderType, string>>;
  * `sessionId` + `lastModified` are always present (every discoverable provider
  * yields at least these). `firstUserMessage` / `gitBranch` are best-effort
  * previews — Claude populates them from its `.jsonl` headers; the disk-discovery
- * providers (codex/gemini/opencode) leave them undefined and the UI degrades to
- * showing just the id + timestamp.
+ * providers (codex/gemini/opencode/cursor) leave them undefined and the UI
+ * degrades to showing just the id + timestamp.
  */
 export interface ResumableSessionSummary {
   sessionId: string;

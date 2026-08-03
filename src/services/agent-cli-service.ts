@@ -7,16 +7,65 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { AgentProvider } from "@/types/agent";
-import { PROVIDER_CLI_COMMANDS } from "@/types/agent";
+import {
+  AGENT_PROVIDERS,
+  type AgentProviderConfig,
+  type AgentProviderType,
+} from "@/types/session";
 
 const execFileAsync = promisify(execFile);
+
+/** Runnable CLI providers (the `none` sentinel has no executable). */
+export type AgentCLIProvider = Exclude<AgentProviderType, "none">;
+
+const RUNNABLE_PROVIDERS = AGENT_PROVIDERS.filter(
+  (provider): provider is AgentProviderConfig & { id: AgentCLIProvider } =>
+    provider.id !== "none",
+);
+
+export const AGENT_CLI_PROVIDERS: readonly AgentCLIProvider[] =
+  RUNNABLE_PROVIDERS.map((provider) => provider.id);
+
+function providerCommand(provider: AgentCLIProvider): string | null {
+  return RUNNABLE_PROVIDERS.find((config) => config.id === provider)?.command ?? null;
+}
+
+/**
+ * Guard provider CLIs whose executable name is too generic to identify the
+ * product on its own. Provider-specific command names do not need an extra
+ * fingerprint.
+ */
+export function matchesProviderIdentity(
+  provider: AgentCLIProvider,
+  output: string,
+): boolean {
+  if (provider !== "cursor") return true;
+  return /Cursor Agent/i.test(output) && /--resume\b/.test(output);
+}
+
+async function verifyProviderIdentity(
+  provider: AgentCLIProvider,
+  command: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<boolean> {
+  if (provider !== "cursor") return true;
+
+  try {
+    const { stdout, stderr } = await execFileAsync(command, ["--help"], {
+      env,
+      timeout: 5000,
+    });
+    return matchesProviderIdentity(provider, `${stdout}\n${stderr}`);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * CLI installation status
  */
 export interface CLIStatus {
-  provider: AgentProvider;
+  provider: AgentCLIProvider;
   installed: boolean;
   version?: string;
   command: string;
@@ -36,18 +85,18 @@ export interface AllCLIStatus {
 /**
  * Get the CLI command for a provider
  */
-export function getCLICommand(provider: AgentProvider): string | null {
+export function getCLICommand(provider: AgentCLIProvider | "all"): string | null {
   if (provider === "all") return null;
-  return PROVIDER_CLI_COMMANDS[provider] || null;
+  return providerCommand(provider);
 }
 
 /**
  * Check if a CLI is installed and get its version
  */
 export async function checkCLIStatus(
-  provider: Exclude<AgentProvider, "all">
+  provider: AgentCLIProvider
 ): Promise<CLIStatus> {
-  const command = PROVIDER_CLI_COMMANDS[provider];
+  const command = providerCommand(provider);
 
   if (!command) {
     return {
@@ -62,6 +111,16 @@ export async function checkCLIStatus(
     // Try to get the path using 'which'
     const { stdout: path } = await execFileAsync("which", [command]);
     const trimmedPath = path.trim();
+
+    if (!(await verifyProviderIdentity(provider, command))) {
+      return {
+        provider,
+        installed: false,
+        command,
+        path: trimmedPath,
+        error: `Executable '${command}' is not the Cursor Agent CLI`,
+      };
+    }
 
     // Try to get version
     let version: string | undefined;
@@ -103,13 +162,7 @@ export async function checkCLIStatus(
  * Check status of all CLIs
  */
 export async function checkAllCLIStatus(): Promise<AllCLIStatus> {
-  const providers: Exclude<AgentProvider, "all">[] = [
-    "claude",
-    "codex",
-    "gemini",
-    "antigravity",
-    "opencode",
-  ];
+  const providers = AGENT_CLI_PROVIDERS;
 
   const statuses = await Promise.all(
     providers.map((provider) => checkCLIStatus(provider))
@@ -153,9 +206,9 @@ function parseVersion(output: string): string {
  * Get recommended installation instructions for a provider
  */
 export function getInstallInstructions(
-  provider: Exclude<AgentProvider, "all">
+  provider: AgentCLIProvider
 ): string {
-  const instructions: Record<Exclude<AgentProvider, "all">, string> = {
+  const instructions: Record<AgentCLIProvider, string> = {
     claude: `# Install Claude Code CLI
 npm install -g @anthropic-ai/claude-code
 # Or with bun
@@ -180,6 +233,9 @@ curl -fsSL https://google.dev/antigravity/install | sh`,
 npm install -g opencode-ai
 # Or with bun
 bun install -g opencode-ai`,
+
+    cursor: `# Install Cursor CLI
+curl https://cursor.com/install -fsS | bash`,
   };
 
   return instructions[provider];
@@ -189,14 +245,15 @@ bun install -g opencode-ai`,
  * Get provider documentation URL
  */
 export function getProviderDocsUrl(
-  provider: Exclude<AgentProvider, "all">
+  provider: AgentCLIProvider
 ): string {
-  const urls: Record<Exclude<AgentProvider, "all">, string> = {
+  const urls: Record<AgentCLIProvider, string> = {
     claude: "https://docs.anthropic.com/claude-code",
     codex: "https://platform.openai.com/docs/codex-cli",
     gemini: "https://geminicli.com/docs/",
     antigravity: "https://antigravity.google/docs/cli-overview",
     opencode: "https://opencode.ai/docs/",
+    cursor: "https://docs.cursor.com/en/cli/overview",
   };
 
   return urls[provider];
@@ -206,10 +263,10 @@ export function getProviderDocsUrl(
  * Verify that a CLI can be executed with the given environment
  */
 export async function verifyCLIExecution(
-  provider: Exclude<AgentProvider, "all">,
+  provider: AgentCLIProvider,
   env: Record<string, string | undefined>
 ): Promise<{ success: boolean; error?: string }> {
-  const command = PROVIDER_CLI_COMMANDS[provider];
+  const command = providerCommand(provider);
 
   if (!command) {
     return {
@@ -221,6 +278,13 @@ export async function verifyCLIExecution(
   try {
     // Merge with current environment
     const fullEnv = { ...process.env, ...env };
+
+    if (!(await verifyProviderIdentity(provider, command, fullEnv as NodeJS.ProcessEnv))) {
+      return {
+        success: false,
+        error: `Executable '${command}' is not the Cursor Agent CLI`,
+      };
+    }
 
     // Try a simple command that should work on all CLIs
     await execFileAsync(command, ["--version"], {
@@ -241,14 +305,15 @@ export async function verifyCLIExecution(
  * Get required environment variables for a provider
  */
 export function getRequiredEnvVars(
-  provider: Exclude<AgentProvider, "all">
+  provider: AgentCLIProvider
 ): string[] {
-  const envVars: Record<Exclude<AgentProvider, "all">, string[]> = {
+  const envVars: Record<AgentCLIProvider, string[]> = {
     claude: ["ANTHROPIC_API_KEY"],
     codex: ["OPENAI_API_KEY"],
     gemini: ["GOOGLE_API_KEY"],
     antigravity: ["GOOGLE_API_KEY"],
     opencode: [], // OpenCode supports multiple providers, configured in its own config
+    cursor: [], // Browser login is supported; CURSOR_API_KEY is optional
   };
 
   return envVars[provider];
@@ -258,7 +323,7 @@ export function getRequiredEnvVars(
  * Check if required environment variables are set
  */
 export function checkRequiredEnvVars(
-  provider: Exclude<AgentProvider, "all">,
+  provider: AgentCLIProvider,
   env: Record<string, string | undefined>
 ): { valid: boolean; missing: string[] } {
   const required = getRequiredEnvVars(provider);

@@ -230,6 +230,12 @@ echo "[entrypoint] kicking off background agent-CLI auto-update + provisioning (
                 @openai/codex \
                 @google/gemini-cli \
                 opencode-ai
+            # Cursor's official installer lives as a multi-file bundle under
+            # /opt/cursor-agent. Its updater is best-effort inside this already
+            # non-fatal background block; HOME points it back at that bundle.
+            if command -v agent >/dev/null 2>&1; then
+                sudo env HOME=/opt/cursor-agent agent update
+            fi
             # Antigravity: best-effort. Use its own updater if present, else try
             # the installer (whose URL is currently 404 — this will simply no-op
             # until it is restored). Errors swallowed by the enclosing `set +e`.

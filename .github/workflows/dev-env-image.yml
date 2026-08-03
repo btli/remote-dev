@@ -2,8 +2,9 @@
 #
 # Build + smoke the "golden dev-env" Docker image (root Dockerfile, epic
 # remote-dev-oyej.7) on Node 24 BEFORE it is ever tagged/pushed. The runtime
-# stage bakes all 5 agent CLIs (claude, codex, gemini, opencode + best-effort
-# `agy`) plus the beads stack (`bd` + `dolt`, remote-dev-vpap) and sudo/apt;
+# stage bakes all 6 agent CLIs (claude, codex, gemini, opencode, cursor's
+# `agent` + best-effort `agy`) plus the beads stack (`bd` + `dolt`,
+# remote-dev-vpap) and sudo/apt;
 # this workflow proves the image actually builds under CI (network + Node-24
 # ABI) and that the agent-CLI + bd/dolt smoke gate passes.
 #
@@ -72,7 +73,7 @@ jobs:
 
       - name: Smoke test — Node 24 + agent CLIs + bd/dolt present
         timeout-minutes: 5
-        # Assert Node is v24 and the 4 hard-gated agent CLIs plus the beads
+        # Assert Node is v24 and the 5 hard-gated agent CLIs plus the beads
         # stack (`bd` + `dolt`, remote-dev-vpap) resolve on PATH. antigravity
         # (`agy`) is BEST-EFFORT (its installer 404s) — intentionally NOT
         # asserted here, mirroring the Dockerfile's build-time smoke gate. A
@@ -91,6 +92,7 @@ jobs:
               && command -v codex \
               && command -v gemini \
               && command -v opencode \
+              && command -v agent \
               && command -v bd \
               && command -v dolt
           '

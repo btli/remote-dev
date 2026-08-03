@@ -75,7 +75,7 @@ export function ResumeSessionModal({
         if (profileId) params.set("profileId", profileId);
 
         // Generic multi-provider discovery (Claude keeps its rich previews;
-        // codex/gemini/opencode return id + timestamp).
+        // codex/gemini/opencode/cursor return id + timestamp).
         const res = await apiFetch(`/api/agent/sessions?${params}`);
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
