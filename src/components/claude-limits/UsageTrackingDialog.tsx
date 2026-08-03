@@ -6,9 +6,10 @@
  * The dialog loads the user's projects, then POSTs `{ projectId, accountId }`
  * to the usage setup route. That route creates an isolated shell session and
  * returns only the safe terminal handoff: session id, command, send status,
- * and instructions. `useSessionContext()` refreshes and activates that session;
- * the dialog never copies a filesystem path or usage OAuth credential into its
- * own state.
+ * and instructions. The intentionally returned command may contain the
+ * absolute scratch path; the UI never reads or renders separate `scratchDir`
+ * metadata or usage OAuth credential material. `useSessionContext()` refreshes
+ * and activates the terminal session.
  *
  * Recovery is part of the start gate. Each open first refreshes sessions and
  * keeps Start disabled until SessionContext reconciles the resulting array.
@@ -150,6 +151,30 @@ export function UsageTrackingDialog({
     [onOpenChange, reset]
   );
 
+  const recoverUsageSession = useCallback(
+    (candidateSessions: typeof sessions) => {
+      const existing = candidateSessions.find(
+        (session) =>
+          session.status !== "closed" &&
+          session.status !== "trashed" &&
+          session.typeMetadata?.[USAGE_SETUP_MARKER] === true &&
+          session.typeMetadata.accountId === account.id
+      );
+      if (!existing) return;
+      setSetupSession({
+        sessionId: existing.id,
+        command: null,
+        commandSent: null,
+        instructions: [
+          "Complete the Claude sign-in in the terminal.",
+          "Return here after sign-in and choose Finish.",
+        ],
+        recovered: true,
+      });
+    },
+    [account.id]
+  );
+
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -199,45 +224,28 @@ export function UsageTrackingDialog({
       // swallowed a fetch failure, there is no reconciliation signal, so allow
       // a new setup after a short grace period instead of blocking forever.
       fallbackId = setTimeout(() => {
-        if (!cancelled) setRecoveryPhase("ready");
+        if (cancelled) return;
+        recoverUsageSession(currentSessionsRef.current);
+        setRecoveryPhase("ready");
       }, RECOVERY_RECONCILE_FALLBACK_MS);
     })();
     return () => {
       cancelled = true;
       if (fallbackId !== null) clearTimeout(fallbackId);
     };
-  }, [account.id, open, refreshSessions]);
+  }, [account.id, open, recoverUsageSession, refreshSessions]);
 
   useEffect(() => {
-    if (!open || setupSession) return;
-    const existing = sessions.find(
-      (session) =>
-        session.status !== "closed" &&
-        session.status !== "trashed" &&
-        session.typeMetadata?.[USAGE_SETUP_MARKER] === true &&
-        session.typeMetadata.accountId === account.id
-    );
-    if (existing) {
-      setSetupSession({
-        sessionId: existing.id,
-        command: null,
-        commandSent: null,
-        instructions: [
-          "Complete the Claude sign-in in the terminal.",
-          "Return here after sign-in and choose Finish.",
-        ],
-        recovered: true,
-      });
-      setRecoveryPhase("ready");
-      return;
-    }
     if (
-      recoveryPhase === "reconciling" &&
-      sessions !== recoveryBaselineRef.current
-    ) {
-      setRecoveryPhase("ready");
-    }
-  }, [account.id, open, recoveryPhase, sessions, setupSession]);
+      !open ||
+      setupSession ||
+      recoveryPhase !== "reconciling" ||
+      sessions === recoveryBaselineRef.current
+    )
+      return;
+    recoverUsageSession(sessions);
+    setRecoveryPhase("ready");
+  }, [open, recoverUsageSession, recoveryPhase, sessions, setupSession]);
 
   async function startSetupSession() {
     if (!projectId || recoveryPhase !== "ready") return;

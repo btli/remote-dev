@@ -150,6 +150,43 @@ describe("UsageTrackingDialog", () => {
     await waitFor(() => expect(startButton).toBeEnabled());
   });
 
+  it("does not recover a stale baseline session removed by refresh", async () => {
+    let resolveRefresh: (() => void) | null = null;
+    sessions = [
+      {
+        id: "stale-baseline-session",
+        status: "active",
+        typeMetadata: {
+          rdvClaudeUsageSetupSession: true,
+          accountId: "account-1",
+        },
+      },
+    ];
+    refreshSessions.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRefresh = resolve;
+        })
+    );
+    mockProjects();
+    const { rerenderDialog } = renderDialog();
+
+    await act(async () => {
+      sessions = [];
+      resolveRefresh?.();
+      rerenderDialog();
+      await Promise.resolve();
+    });
+
+    const startButton = await screen.findByRole("button", {
+      name: "Start usage sign-in",
+    });
+    await waitFor(() => expect(startButton).toBeEnabled());
+    expect(
+      screen.queryByText(/existing usage sign-in session/i)
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps Start unavailable until delayed session reconciliation recovers an existing flow", async () => {
     let resolveRefresh: (() => void) | null = null;
     refreshSessions.mockImplementation(
