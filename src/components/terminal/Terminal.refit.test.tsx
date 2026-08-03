@@ -769,6 +769,64 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
     ).toEqual({ type: "client_focus", reassert: true });
   });
 
+  it("preserves a pending genuine focus across a same-session effect restart", async () => {
+    const Terminal = await getTerminal();
+    const view = render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:1"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+    documentHasFocus = false;
+    act(() => window.dispatchEvent(new Event("blur")));
+
+    autoOpenSockets = false;
+    view.rerender(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:2"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => {
+      expect(wsInstances.at(-1)).not.toBe(firstSocket);
+      expect(wsInstances.at(-1)?.readyState).toBe(MockWebSocket.CONNECTING);
+    });
+    const connectingSocket = wsInstances.at(-1)!;
+
+    documentHasFocus = true;
+    act(() => window.dispatchEvent(new Event("focus")));
+    view.rerender(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:3"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => {
+      expect(wsInstances.at(-1)).not.toBe(connectingSocket);
+      expect(wsInstances.at(-1)?.readyState).toBe(MockWebSocket.CONNECTING);
+    });
+
+    const replacement = wsInstances.at(-1)!;
+    act(() => replacement.open());
+    const focusFrame = replacement.sent
+      .map((frame) => JSON.parse(frame) as { type: string; reassert?: boolean })
+      .find((frame) => frame.type === "client_focus");
+    expect(focusFrame).toEqual({ type: "client_focus" });
+  });
+
   it("keeps its mounted clientInstanceId but flushes genuine focus for a new session", async () => {
     const Terminal = await getTerminal();
     const view = render(

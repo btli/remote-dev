@@ -329,6 +329,7 @@ export function isTmuxSessionAuthorized(
 
 interface TerminalConnection {
   connectionId: string;
+  connectionSeq: number;
   clientInstanceId: string;
   // [remote-dev-d5ci] null for control-mode connections (no PTY/tmux attach).
   pty: IPty | null;
@@ -360,6 +361,7 @@ interface TerminalConnection {
 
 export interface PromotionConnectionState {
   connectionId: string;
+  connectionSeq: number;
   clientInstanceId: string | null;
   isVisible: boolean;
   isSocketOpen: boolean;
@@ -676,16 +678,18 @@ export class PrimaryPromotionCoordinator {
     const primary = primaryId
       ? this.host.getConnection(primaryId)
       : undefined;
-    const sameClientInstance =
-      primary?.clientInstanceId !== null &&
-      primary?.clientInstanceId === candidate.clientInstanceId;
+    const newerSameClientInstance =
+      primary !== undefined &&
+      primary.clientInstanceId !== null &&
+      primary.clientInstanceId === candidate.clientInstanceId &&
+      candidate.connectionSeq > primary.connectionSeq;
 
     if (reassert) {
       const pendingCandidate = this.pendingCandidates.get(sessionId)?.connectionId;
       if (pendingCandidate && pendingCandidate !== connectionId) return "ignored";
 
       if (
-        !sameClientInstance &&
+        !newerSameClientInstance &&
         primary?.isSocketOpen &&
         primary.isVisible &&
         connectionEngagement(primary) >= connectionEngagement(candidate)
@@ -790,10 +794,20 @@ export class PrimaryPromotionCoordinator {
         ? this.host.getConnection(primaryId)
         : undefined;
       const sameClientInstance =
-        primary?.clientInstanceId !== null &&
-        primary?.clientInstanceId === candidate.clientInstanceId;
+        primary !== undefined &&
+        primary.clientInstanceId !== null &&
+        primary.clientInstanceId === candidate.clientInstanceId;
       if (
-        !sameClientInstance &&
+        sameClientInstance &&
+        candidate.connectionSeq < primary.connectionSeq
+      ) {
+        this.clearIfCandidate(sessionId, connectionId);
+        return;
+      }
+      const newerSameClientInstance =
+        sameClientInstance && candidate.connectionSeq > primary.connectionSeq;
+      if (
+        !newerSameClientInstance &&
         primary?.isSocketOpen &&
         primary.isVisible &&
         (pendingReason === "genuine"
@@ -864,6 +878,7 @@ export function requestRestartPrimaryResize(
 
 // All active connections, keyed by connectionId (UUID)
 const connections = new Map<string, TerminalConnection>();
+let nextConnectionSeq = 0;
 
 // Session -> connection IDs for multi-client support
 const sessionConnections = new Map<string, Set<string>>();
@@ -884,6 +899,7 @@ const primaryPromotions = new PrimaryPromotionCoordinator(
       if (!connection) return undefined;
       return {
         connectionId,
+        connectionSeq: connection.connectionSeq,
         isVisible: connection.isVisible,
         isSocketOpen: connection.ws.readyState === WebSocket.OPEN,
         lastFocusAt: connection.lastFocusAt,
@@ -1617,8 +1633,7 @@ export function tmuxSessionConfirmedAbsent(
     return false;
   } catch (error) {
     if (!error || typeof error !== "object") return false;
-    const { status, stderr } = error as {
-      status?: unknown;
+    const { stderr } = error as {
       stderr?: unknown;
     };
     const stderrText = Buffer.isBuffer(stderr)
@@ -1626,11 +1641,8 @@ export function tmuxSessionConfirmedAbsent(
       : typeof stderr === "string"
         ? stderr
         : "";
-    if (/can't find session|no server running/i.test(stderrText)) return true;
-    return (
-      typeof status === "number" &&
-      status !== 0 &&
-      stderrText.trim().length === 0
+    return /can't find session|no server running|error connecting to .*(No such file or directory|Connection refused)/i.test(
+      stderrText,
     );
   }
 }
@@ -3827,6 +3839,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       }
       const controlConnection: TerminalConnection = {
         connectionId: controlConnectionId,
+        connectionSeq: ++nextConnectionSeq,
         clientInstanceId: controlConnectionId,
         pty: null,
         ws,
@@ -4135,6 +4148,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     );
     const connection: TerminalConnection = {
       connectionId,
+      connectionSeq: ++nextConnectionSeq,
       clientInstanceId,
       pty: ptyProcess,
       ws,

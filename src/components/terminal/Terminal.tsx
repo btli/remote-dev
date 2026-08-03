@@ -399,9 +399,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     previousSessionIdentityRef.current = { sessionId, tmuxSessionName };
     // A same-session effect restart is another reopen of this mounted client,
     // while a different session must begin with a genuine focus assertion.
-    if (isDifferentSession) hasConnectedBeforeRef.current = false;
-    lastDesiredFocusStateRef.current = null;
-    pendingGenuineFocusRef.current = false;
+    if (isDifferentSession) {
+      hasConnectedBeforeRef.current = false;
+      lastDesiredFocusStateRef.current = null;
+      pendingGenuineFocusRef.current = false;
+    }
 
     const releaseReconciler = (instance: ResizeReconciler | null) => {
       if (!instance) return;
@@ -1280,6 +1282,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       releaseReconciler(liveReconciler);
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
       }
       wsRef.current?.close();
       for (const d of terminalDisposablesRef.current) d.dispose();

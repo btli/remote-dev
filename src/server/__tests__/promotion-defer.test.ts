@@ -18,6 +18,7 @@ import {
 } from "@/server/terminal";
 
 type FocusedPromotionConnectionState = PromotionConnectionState & {
+  connectionSeq: number;
   lastFocusAt: number;
   lastInputAt: number;
   lastInputRecencyWriteAt: number;
@@ -25,12 +26,15 @@ type FocusedPromotionConnectionState = PromotionConnectionState & {
   clientInstanceId: string | null;
 };
 
+let nextConnectionSeq = 0;
+
 class FakePromotionHost implements PromotionCoordinatorHost {
   readonly connections = new Map<string, FocusedPromotionConnectionState>();
   readonly primaries = new Map<string, string>();
   readonly lastPromotionAt = new Map<string, number>();
   readonly reassertions: Array<{ sessionId: string; connectionId: string }> = [];
   readonly broadcasts: string[] = [];
+  currentTime: number | null = null;
 
   getConnection(connectionId: string): PromotionConnectionState | undefined {
     return this.connections.get(connectionId);
@@ -61,16 +65,18 @@ class FakePromotionHost implements PromotionCoordinatorHost {
   }
 
   now(): number {
-    return Date.now();
+    return this.currentTime ?? Date.now();
   }
 }
 
 function visibleOpenConnection(
   connectionId: string,
   lastFocusAt = 0,
+  connectionSeq = ++nextConnectionSeq,
 ): FocusedPromotionConnectionState {
   return {
     connectionId,
+    connectionSeq,
     clientInstanceId: null,
     isVisible: true,
     isSocketOpen: true,
@@ -91,6 +97,7 @@ describe("PrimaryPromotionCoordinator", () => {
     host = new FakePromotionHost();
     coordinator = new PrimaryPromotionCoordinator(host, 1000);
     instanceRecency = new ClientInstanceFocusRecency();
+    nextConnectionSeq = 0;
     host.connections.set("A", visibleOpenConnection("A"));
     host.connections.set("B", visibleOpenConnection("B"));
     host.connections.set("C", visibleOpenConnection("C"));
@@ -219,6 +226,31 @@ describe("PrimaryPromotionCoordinator", () => {
     expect(coordinator.getPendingCandidate("s1")).toBe("B");
     vi.advanceTimersByTime(1000);
 
+    expect(host.primaries.get("s1")).toBe("B");
+    expect(coordinator.getPendingCandidate("s1")).toBeNull();
+  });
+
+  it("re-defers after a handoff starts a fresh cooldown and eventually promotes", () => {
+    const startedAt = 10_000;
+    host.currentTime = startedAt;
+    host.lastPromotionAt.set("s1", startedAt);
+    host.connections.get("B")!.lastFocusAt = startedAt + 300;
+    host.connections.get("C")!.lastFocusAt = startedAt + 100;
+
+    coordinator.requestPromotion("s1", "B", false);
+    vi.advanceTimersByTime(200);
+    host.currentTime = startedAt + 200;
+
+    host.primaries.set("s1", "C");
+    host.lastPromotionAt.set("s1", host.now());
+
+    host.currentTime = startedAt + 1000;
+    vi.advanceTimersByTime(800);
+    expect(host.primaries.get("s1")).toBe("C");
+    expect(coordinator.getPendingCandidate("s1")).toBe("B");
+
+    host.currentTime = startedAt + 1200;
+    vi.advanceTimersByTime(200);
     expect(host.primaries.get("s1")).toBe("B");
     expect(coordinator.getPendingCandidate("s1")).toBeNull();
   });
@@ -385,6 +417,46 @@ describe("PrimaryPromotionCoordinator", () => {
 
     expect(host.primaries.get("s1")).toBe("B");
     expect(coordinator.getPendingCandidate("s1")).toBeNull();
+  });
+
+  it("drops an older pending socket instead of replacing its newer same-instance primary", () => {
+    const candidate = host.connections.get("B")!;
+    candidate.clientInstanceId = "stable-instance";
+    candidate.connectionSeq = 10;
+    candidate.lastFocusAt = 500;
+    coordinator.requestPromotion("s1", "B", false);
+
+    const replacement = host.connections.get("C")!;
+    replacement.clientInstanceId = "stable-instance";
+    replacement.connectionSeq = 11;
+    replacement.lastFocusAt = 500;
+    host.primaries.set("s1", "C");
+    host.lastPromotionAt.set("s1", Date.now());
+
+    vi.advanceTimersByTime(1000);
+
+    expect(host.primaries.get("s1")).toBe("C");
+    expect(coordinator.getPendingCandidate("s1")).toBeNull();
+    expect(host.broadcasts).toHaveLength(0);
+  });
+
+  it("does not give an older same-instance socket the request-time bypass", () => {
+    const candidate = host.connections.get("B")!;
+    candidate.clientInstanceId = "stable-instance";
+    candidate.connectionSeq = 10;
+    candidate.lastFocusAt = 500;
+    const primary = host.connections.get("C")!;
+    primary.clientInstanceId = "stable-instance";
+    primary.connectionSeq = 11;
+    primary.lastFocusAt = 500;
+    host.primaries.set("s1", "C");
+    host.lastPromotionAt.set("s1", Date.now() - 1000);
+
+    expect(coordinator.requestPromotion("s1", "B", false, true)).toBe(
+      "ignored",
+    );
+    expect(host.primaries.get("s1")).toBe("C");
+    expect(host.broadcasts).toHaveLength(0);
   });
 
   it("defers genuine focus from the primary's newer same-instance socket until cooldown expiry", () => {
@@ -843,5 +915,49 @@ describe("client instance recency orphan sweep", () => {
     );
 
     expect(recency.getSessionIds()).toEqual([]);
+  });
+});
+
+describe("tmuxSessionConfirmedAbsent", () => {
+  const probeFailure = (stderr: string) => () => {
+    throw Object.assign(new Error("tmux has-session exited 1"), {
+      status: 1,
+      stderr: Buffer.from(stderr),
+    });
+  };
+
+  it("accepts the tmux 3.7b missing-server socket response", () => {
+    expect(
+      tmuxSessionConfirmedAbsent(
+        "rdv-s1",
+        probeFailure(
+          "error connecting to /private/tmp/tmux-501/default (No such file or directory)",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts an explicit missing-session response", () => {
+    expect(
+      tmuxSessionConfirmedAbsent(
+        "rdv-s1",
+        probeFailure("can't find session: rdv-s1"),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not accept a silent nonzero exit as confirmed absence", () => {
+    expect(
+      tmuxSessionConfirmedAbsent("rdv-s1", probeFailure("")),
+    ).toBe(false);
+  });
+
+  it("does not accept unrelated nonzero stderr as confirmed absence", () => {
+    expect(
+      tmuxSessionConfirmedAbsent(
+        "rdv-s1",
+        probeFailure("open terminal failed: Operation not permitted (EPERM)"),
+      ),
+    ).toBe(false);
   });
 });
