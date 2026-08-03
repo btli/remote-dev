@@ -24,16 +24,25 @@ import {
 const ACCOUNT_ID = "acct-refresh-test";
 const USER_ID = "user-refresh-test";
 const NOW = 2_000_000;
+const REVISION_ONE = {
+  accessCiphertext: "test-access-ciphertext-v1",
+  refreshCiphertext: "test-refresh-ciphertext-v1",
+};
 
-function credential(expiresAt = new Date(NOW)): {
+function credential(
+  expiresAt = new Date(NOW),
+  revision = REVISION_ONE
+): {
   accessToken: string;
   refreshToken: string;
   expiresAt: Date;
+  revision: typeof REVISION_ONE;
 } {
   return {
     accessToken: "test-usage-access-before",
     refreshToken: "test-usage-refresh-before",
     expiresAt,
+    revision,
   };
 }
 
@@ -46,9 +55,78 @@ function accountStore(
 } {
   return {
     read: vi.fn(async () => stored),
-    store: vi.fn(async () => undefined),
-    quarantine: vi.fn(async () => undefined),
+    store: vi.fn(async () => true),
+    quarantine: vi.fn(async () => true),
   };
+}
+
+interface TestCredentialWrite {
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt: Date;
+}
+
+/**
+ * Stateful fake for cross-process refresh races. Unlike the service's
+ * in-instance singleflight, two service instances may refresh the same DB row
+ * concurrently, so this fake applies writes only against the exact revision
+ * returned by their earlier reads.
+ */
+function casAccountStore() {
+  let current = credential();
+  let revisionNumber = 1;
+  const sameRevision = (candidate: typeof REVISION_ONE | undefined): boolean =>
+    candidate?.accessCiphertext === current.revision.accessCiphertext &&
+    candidate.refreshCiphertext === current.revision.refreshCiphertext;
+  const read = vi.fn(async () => ({ ...current, revision: { ...current.revision } }));
+  const store = vi.fn(
+    async (
+      _accountId: string,
+      _userId: string,
+      write: TestCredentialWrite,
+      expectedRevision: typeof REVISION_ONE | undefined
+    ): Promise<boolean> => {
+      if (!sameRevision(expectedRevision)) return false;
+      revisionNumber += 1;
+      current = {
+        accessToken: write.accessToken,
+        refreshToken: write.refreshToken ?? current.refreshToken,
+        expiresAt: write.expiresAt,
+        revision: {
+          accessCiphertext: `test-access-ciphertext-v${revisionNumber}`,
+          refreshCiphertext: write.refreshToken
+            ? `test-refresh-ciphertext-v${revisionNumber}`
+            : current.revision.refreshCiphertext,
+        },
+      };
+      return true;
+    }
+  );
+  const quarantine = vi.fn(
+    async (
+      _accountId: string,
+      _userId: string,
+      expectedRevision: typeof REVISION_ONE | undefined
+    ): Promise<boolean> => sameRevision(expectedRevision)
+  );
+  const accounts = { read, store, quarantine } as unknown as
+    UsageCredentialAccountStore & {
+      read: typeof read;
+      store: typeof store;
+      quarantine: typeof quarantine;
+    };
+  return { accounts, current: () => current };
+}
+
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
 }
 
 function response(status: number, body: unknown): Awaited<ReturnType<OAuthRefreshFetch>> {
@@ -148,11 +226,16 @@ describe("AnthropicOAuthRefreshService", () => {
       refresh_token: "test-usage-refresh-before",
       client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
     });
-    expect(accounts.store).toHaveBeenCalledWith(ACCOUNT_ID, USER_ID, {
-      accessToken: "test-usage-access-after",
-      refreshToken: "test-usage-refresh-after",
-      expiresAt: new Date(NOW + 3_600_000),
-    });
+    expect(accounts.store).toHaveBeenCalledWith(
+      ACCOUNT_ID,
+      USER_ID,
+      {
+        accessToken: "test-usage-access-after",
+        refreshToken: "test-usage-refresh-after",
+        expiresAt: new Date(NOW + 3_600_000),
+      },
+      REVISION_ONE
+    );
   });
 
   it("preserves the current refresh token when the response omits rotation", async () => {
@@ -170,10 +253,15 @@ describe("AnthropicOAuthRefreshService", () => {
 
     await service.getFreshUsageAccessToken(ACCOUNT_ID, USER_ID);
 
-    expect(accounts.store).toHaveBeenCalledWith(ACCOUNT_ID, USER_ID, {
-      accessToken: "test-usage-access-after",
-      expiresAt: new Date(NOW + 60_000),
-    });
+    expect(accounts.store).toHaveBeenCalledWith(
+      ACCOUNT_ID,
+      USER_ID,
+      {
+        accessToken: "test-usage-access-after",
+        expiresAt: new Date(NOW + 60_000),
+      },
+      REVISION_ONE
+    );
   });
 
   it.each([
@@ -195,7 +283,11 @@ describe("AnthropicOAuthRefreshService", () => {
       await expect(
         service.getFreshUsageAccessToken(ACCOUNT_ID, USER_ID)
       ).resolves.toBeNull();
-      expect(accounts.quarantine).toHaveBeenCalledWith(ACCOUNT_ID, USER_ID);
+      expect(accounts.quarantine).toHaveBeenCalledWith(
+        ACCOUNT_ID,
+        USER_ID,
+        REVISION_ONE
+      );
       expect(accounts.store).not.toHaveBeenCalled();
       expect(logger.error).toHaveBeenCalledWith(
         "Usage refresh token rejected; usage tracking disabled until re-enabled",
@@ -227,6 +319,119 @@ describe("AnthropicOAuthRefreshService", () => {
       );
     }
   );
+
+  it("logs the OAuth rejection context when quarantine persistence throws", async () => {
+    const accounts = accountStore();
+    accounts.quarantine.mockRejectedValueOnce(new Error("database unavailable"));
+    const service = new AnthropicOAuthRefreshService(
+      accounts,
+      async () => response(401, { error: "invalid_client" }),
+      () => NOW
+    );
+
+    await expect(
+      service.getFreshUsageAccessToken(ACCOUNT_ID, USER_ID)
+    ).resolves.toBeNull();
+    expect(logger.error).toHaveBeenCalledWith(
+      "Failed to quarantine rejected usage OAuth credential",
+      {
+        accountId: ACCOUNT_ID,
+        status: 401,
+        oauthError: "invalid_client",
+        error: "Error: database unavailable",
+      }
+    );
+  });
+
+  it("does not quarantine a newer credential after another instance refreshes it", async () => {
+    const { accounts, current } = casAccountStore();
+    const success = deferred<Awaited<ReturnType<OAuthRefreshFetch>>>();
+    const rejection = deferred<Awaited<ReturnType<OAuthRefreshFetch>>>();
+    const firstService = new AnthropicOAuthRefreshService(
+      accounts,
+      () => success.promise,
+      () => NOW
+    );
+    const secondService = new AnthropicOAuthRefreshService(
+      accounts,
+      () => rejection.promise,
+      () => NOW
+    );
+
+    const first = firstService.getFreshUsageAccessToken(ACCOUNT_ID, USER_ID);
+    const second = secondService.getFreshUsageAccessToken(ACCOUNT_ID, USER_ID);
+    await vi.waitFor(() => expect(accounts.read).toHaveBeenCalledTimes(2));
+
+    success.resolve(
+      response(200, {
+        access_token: "test-first-instance-access",
+        refresh_token: "test-first-instance-refresh",
+        expires_in: 60,
+      })
+    );
+    await expect(first).resolves.toBe("test-first-instance-access");
+
+    rejection.resolve(response(400, { error: "invalid_grant" }));
+    await expect(second).resolves.toBeNull();
+
+    expect(current()).toMatchObject({
+      accessToken: "test-first-instance-access",
+      refreshToken: "test-first-instance-refresh",
+    });
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Stale usage OAuth rejection ignored",
+      { accountId: ACCOUNT_ID, status: 400, oauthError: "invalid_grant" }
+    );
+    expect(logger.error).not.toHaveBeenCalledWith(
+      "Usage refresh token rejected; usage tracking disabled until re-enabled",
+      expect.anything()
+    );
+  });
+
+  it("lets only the first same-refresh-token response update the credential", async () => {
+    const { accounts, current } = casAccountStore();
+    const firstResponse = deferred<Awaited<ReturnType<OAuthRefreshFetch>>>();
+    const secondResponse = deferred<Awaited<ReturnType<OAuthRefreshFetch>>>();
+    const firstService = new AnthropicOAuthRefreshService(
+      accounts,
+      () => firstResponse.promise,
+      () => NOW
+    );
+    const secondService = new AnthropicOAuthRefreshService(
+      accounts,
+      () => secondResponse.promise,
+      () => NOW
+    );
+
+    const first = firstService.getFreshUsageAccessToken(ACCOUNT_ID, USER_ID);
+    const second = secondService.getFreshUsageAccessToken(ACCOUNT_ID, USER_ID);
+    await vi.waitFor(() => expect(accounts.read).toHaveBeenCalledTimes(2));
+
+    firstResponse.resolve(
+      response(200, {
+        access_token: "test-first-concurrent-access",
+        expires_in: 60,
+      })
+    );
+    await expect(first).resolves.toBe("test-first-concurrent-access");
+
+    secondResponse.resolve(
+      response(200, {
+        access_token: "test-stale-concurrent-access",
+        expires_in: 60,
+      })
+    );
+    await expect(second).resolves.toBeNull();
+
+    expect(current()).toMatchObject({
+      accessToken: "test-first-concurrent-access",
+      refreshToken: "test-usage-refresh-before",
+    });
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Stale usage OAuth refresh response ignored",
+      { accountId: ACCOUNT_ID }
+    );
+  });
 
   it("leaves the credential unchanged for an HTML HTTP 401 proxy response", async () => {
     const accounts = accountStore();

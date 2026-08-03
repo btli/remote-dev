@@ -14,6 +14,8 @@
  *     and quarantines only usage data;
  *   - other 400/401 responses are transient because intermediaries and request
  *     validation can produce those statuses without invalidating the grant;
+ *   - successful and destructive writes compare both encrypted token values,
+ *     so a stale response from another process cannot replace newer state;
  *   - network/timeout, 429, 5xx, malformed, and unexpected responses are
  *     transient/safe failures that leave the stored credential unchanged;
  *   - every account operation remains scoped by account id and user id.
@@ -32,6 +34,14 @@ export interface UsageCredentialForRefresh {
   accessToken: string;
   refreshToken: string;
   expiresAt: Date;
+  /** Opaque CAS token; infrastructure only passes it back to the store. */
+  revision: UsageCredentialRevision;
+}
+
+/** Exact encrypted row values identifying the credential that was read. */
+export interface UsageCredentialRevision {
+  readonly accessCiphertext: string;
+  readonly refreshCiphertext: string;
 }
 
 export interface RefreshedUsageCredentialWrite {
@@ -49,9 +59,14 @@ export interface UsageCredentialAccountStore {
   store(
     accountId: string,
     userId: string,
-    credential: RefreshedUsageCredentialWrite
-  ): Promise<void>;
-  quarantine(accountId: string, userId: string): Promise<void>;
+    credential: RefreshedUsageCredentialWrite,
+    expectedRevision: UsageCredentialRevision
+  ): Promise<boolean>;
+  quarantine(
+    accountId: string,
+    userId: string,
+    expectedRevision: UsageCredentialRevision
+  ): Promise<boolean>;
 }
 
 /** Minimal fetch surface for the OAuth token endpoint. */
@@ -81,17 +96,22 @@ const defaultAccountStore: UsageCredentialAccountStore = {
     );
     return readOwnedUsageCredential(accountId, userId);
   },
-  async store(accountId, userId, credential) {
+  async store(accountId, userId, credential, expectedRevision) {
     const { storeRefreshedUsageCredential } = await import(
       "@/services/claude-account-service"
     );
-    await storeRefreshedUsageCredential(accountId, userId, credential);
+    return storeRefreshedUsageCredential(
+      accountId,
+      userId,
+      credential,
+      expectedRevision
+    );
   },
-  async quarantine(accountId, userId) {
+  async quarantine(accountId, userId, expectedRevision) {
     const { quarantineUsageCredential } = await import(
       "@/services/claude-account-service"
     );
-    await quarantineUsageCredential(accountId, userId);
+    return quarantineUsageCredential(accountId, userId, expectedRevision);
   },
 };
 
@@ -159,13 +179,20 @@ export class AnthropicOAuthRefreshService {
       return credential.accessToken;
     }
 
-    return this.refresh(accountId, userId, credential.refreshToken, now);
+    return this.refresh(
+      accountId,
+      userId,
+      credential.refreshToken,
+      credential.revision,
+      now
+    );
   }
 
   private async refresh(
     accountId: string,
     userId: string,
     refreshToken: string,
+    expectedRevision: UsageCredentialRevision,
     now: number
   ): Promise<string | null> {
     const controller = new AbortController();
@@ -215,18 +242,34 @@ export class AnthropicOAuthRefreshService {
           return null;
         }
 
+        let applied: boolean;
+        try {
+          applied = await this.accounts.quarantine(
+            accountId,
+            userId,
+            expectedRevision
+          );
+        } catch (error) {
+          log.error("Failed to quarantine rejected usage OAuth credential", {
+            accountId,
+            status: response.status,
+            oauthError,
+            error: String(error),
+          });
+          return null;
+        }
+        if (!applied) {
+          log.warn("Stale usage OAuth rejection ignored", {
+            accountId,
+            status: response.status,
+            oauthError,
+          });
+          return null;
+        }
         log.error(
           "Usage refresh token rejected; usage tracking disabled until re-enabled",
           { accountId, status: response.status, oauthError }
         );
-        try {
-          await this.accounts.quarantine(accountId, userId);
-        } catch (error) {
-          log.error("Failed to quarantine rejected usage OAuth credential", {
-            accountId,
-            error: String(error),
-          });
-        }
         return null;
       }
 
@@ -275,13 +318,22 @@ export class AnthropicOAuthRefreshService {
         ? refreshTokenValue
         : undefined;
       try {
-        await this.accounts.store(accountId, userId, {
-          accessToken,
-          expiresAt: new Date(expiresAtMs),
-          ...(rotatedRefreshToken
-            ? { refreshToken: rotatedRefreshToken }
-            : {}),
-        });
+        const applied = await this.accounts.store(
+          accountId,
+          userId,
+          {
+            accessToken,
+            expiresAt: new Date(expiresAtMs),
+            ...(rotatedRefreshToken
+              ? { refreshToken: rotatedRefreshToken }
+              : {}),
+          },
+          expectedRevision
+        );
+        if (!applied) {
+          log.warn("Stale usage OAuth refresh response ignored", { accountId });
+          return null;
+        }
       } catch (error) {
         log.error("Failed to store refreshed usage OAuth credential", {
           accountId,

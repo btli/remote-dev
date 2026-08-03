@@ -27,6 +27,8 @@ type Row = Record<string, unknown>;
 const rows = new Map<string, Row>();
 /** Every `project_profile_link` update the service performs. */
 const linkUpdates: Array<Record<string, unknown>> = [];
+/** Optional interleaving after a usage-credential SELECT snapshot. */
+let afterUsageCredentialRead: (() => void | Promise<void>) | null = null;
 
 /**
  * A drizzle-shaped fake. `where(...)` clauses are opaque predicate objects our
@@ -50,6 +52,8 @@ vi.mock("@/db/schema", () => ({
     profileId: "profileId",
     emailAddress: "emailAddress",
     tokenFingerprint: "tokenFingerprint",
+    usageOauthAccessEncrypted: "usageOauthAccessEncrypted",
+    usageOauthRefreshEncrypted: "usageOauthRefreshEncrypted",
   },
   projectProfileLinks: { accountId: "accountId" },
 }));
@@ -58,8 +62,25 @@ vi.mock("@/db", () => ({
   db: {
     query: {
       claudeAccounts: {
-        findFirst: async ({ where }: { where: Pred }) =>
-          [...rows.values()].find((r) => where(r)),
+        findFirst: async ({
+          where,
+          columns,
+        }: {
+          where: Pred;
+          columns?: Record<string, boolean>;
+        }) => {
+          const row = [...rows.values()].find((candidate) => where(candidate));
+          if (!row) return undefined;
+          const selected = columns
+            ? Object.fromEntries(
+                Object.keys(columns).map((column) => [column, row[column]])
+              )
+            : row;
+          if (columns?.usageOauthAccessEncrypted) {
+            await afterUsageCredentialRead?.();
+          }
+          return selected;
+        },
         findMany: async ({ where }: { where?: Pred }) =>
           [...rows.values()].filter((r) => (where ? where(r) : true)),
       },
@@ -90,14 +111,33 @@ vi.mock("@/db", () => ({
     }),
     update: (table: Record<string, string>) => ({
       set: (vals: Row) => ({
-        where: async (pred: Pred) => {
-          if (table.accountId && !table.id) {
-            linkUpdates.push(vals);
-            return;
-          }
-          for (const row of rows.values()) {
-            if (pred(row)) Object.assign(row, vals);
-          }
+        where: (pred: Pred) => {
+          const apply = (): Row[] => {
+            if (table.accountId && !table.id) {
+              linkUpdates.push(vals);
+              return [];
+            }
+            const affected: Row[] = [];
+            for (const row of rows.values()) {
+              if (!pred(row)) continue;
+              Object.assign(row, vals);
+              affected.push(row);
+            }
+            return affected;
+          };
+          return {
+            returning: async () => apply(),
+            then: (
+              onFulfilled: (value: undefined) => unknown,
+              onRejected: (reason: unknown) => unknown
+            ) =>
+              Promise.resolve()
+                .then(() => {
+                  apply();
+                  return undefined;
+                })
+                .then(onFulfilled, onRejected),
+          };
         },
       }),
     }),
@@ -174,6 +214,7 @@ const LOGGED_IN_JSON = JSON.stringify({
 beforeEach(() => {
   rows.clear();
   linkUpdates.length = 0;
+  afterUsageCredentialRead = null;
   validityProbeMock.mockReset();
   validityProbeMock.mockResolvedValue("valid");
 });
@@ -988,14 +1029,26 @@ function seedUsageCredentialRow(overrides: Row = {}): Row {
   return row;
 }
 
+function usageCredentialRevision(row: Row): {
+  accessCiphertext: string;
+  refreshCiphertext: string;
+} {
+  return {
+    accessCiphertext: row.usageOauthAccessEncrypted as string,
+    refreshCiphertext: row.usageOauthRefreshEncrypted as string,
+  };
+}
+
 describe("readOwnedUsageCredential", () => {
   it("returns only decrypted refresh inputs for an owned, complete credential", async () => {
-    seedUsageCredentialRow();
+    const row = seedUsageCredentialRow();
+    const revision = usageCredentialRevision(row);
 
     await expect(readOwnedUsageCredential("acct-usage", USER)).resolves.toEqual({
       accessToken: "usage-access-old",
       refreshToken: "usage-refresh-old",
       expiresAt: new Date(10_000),
+      revision,
     });
   });
 
@@ -1038,6 +1091,30 @@ describe("readOwnedUsageCredential", () => {
       ).toBe(false);
     }
   );
+
+  it("does not quarantine a replacement installed after an undecryptable SELECT", async () => {
+    const row = seedUsageCredentialRow({
+      usageOauthAccessEncrypted: "malformed-ciphertext",
+    });
+    afterUsageCredentialRead = () => {
+      row.usageOauthAccessEncrypted = encrypt("replacement-access");
+      row.usageOauthRefreshEncrypted = encrypt("replacement-refresh");
+      row.usageOauthExpiresAt = new Date(90_000);
+      row.usageOauthScopes = '["user:profile"]';
+    };
+
+    await expect(
+      readOwnedUsageCredential("acct-usage", USER)
+    ).resolves.toBeNull();
+    expect(decrypt(row.usageOauthAccessEncrypted as string)).toBe(
+      "replacement-access"
+    );
+    expect(decrypt(row.usageOauthRefreshEncrypted as string)).toBe(
+      "replacement-refresh"
+    );
+    expect(row.usageOauthExpiresAt).toEqual(new Date(90_000));
+    expect(row.usageOauthScopes).toBe('["user:profile"]');
+  });
 });
 
 describe("storeInitialUsageCredential", () => {
@@ -1197,12 +1274,20 @@ describe("storeRefreshedUsageCredential", () => {
   it("encrypts refreshed access and rotated refresh tokens with the new expiry", async () => {
     const row = seedUsageCredentialRow();
     const expiresAt = new Date(90_000);
+    const revision = usageCredentialRevision(row);
 
-    await storeRefreshedUsageCredential("acct-usage", USER, {
-      accessToken: "usage-access-new",
-      refreshToken: "usage-refresh-rotated",
-      expiresAt,
-    });
+    await expect(
+      storeRefreshedUsageCredential(
+        "acct-usage",
+        USER,
+        {
+          accessToken: "usage-access-new",
+          refreshToken: "usage-refresh-rotated",
+          expiresAt,
+        },
+        revision
+      )
+    ).resolves.toBe(true);
 
     expect(decrypt(row.usageOauthAccessEncrypted as string)).toBe(
       "usage-access-new"
@@ -1216,11 +1301,19 @@ describe("storeRefreshedUsageCredential", () => {
   it("preserves the stored refresh token when the server does not rotate it", async () => {
     const row = seedUsageCredentialRow();
     const priorRefreshCiphertext = row.usageOauthRefreshEncrypted;
+    const revision = usageCredentialRevision(row);
 
-    await storeRefreshedUsageCredential("acct-usage", USER, {
-      accessToken: "usage-access-new",
-      expiresAt: new Date(90_000),
-    });
+    await expect(
+      storeRefreshedUsageCredential(
+        "acct-usage",
+        USER,
+        {
+          accessToken: "usage-access-new",
+          expiresAt: new Date(90_000),
+        },
+        revision
+      )
+    ).resolves.toBe(true);
 
     expect(row.usageOauthRefreshEncrypted).toBe(priorRefreshCiphertext);
     expect(decrypt(row.usageOauthRefreshEncrypted as string)).toBe(
@@ -1230,15 +1323,47 @@ describe("storeRefreshedUsageCredential", () => {
 
   it("includes owner and account id in the mutation predicate", async () => {
     const row = seedUsageCredentialRow();
+    const revision = usageCredentialRevision(row);
 
-    await storeRefreshedUsageCredential("acct-usage", "someone-else", {
-      accessToken: "must-not-store",
-      refreshToken: "must-not-store",
-      expiresAt: new Date(90_000),
-    });
+    await expect(
+      storeRefreshedUsageCredential(
+        "acct-usage",
+        "someone-else",
+        {
+          accessToken: "must-not-store",
+          refreshToken: "must-not-store",
+          expiresAt: new Date(90_000),
+        },
+        revision
+      )
+    ).resolves.toBe(false);
 
     expect(decrypt(row.usageOauthAccessEncrypted as string)).toBe(
       "usage-access-old"
+    );
+  });
+
+  it("does not overwrite a newer access ciphertext sharing the same refresh ciphertext", async () => {
+    const row = seedUsageCredentialRow();
+    const staleRevision = usageCredentialRevision(row);
+    row.usageOauthAccessEncrypted = encrypt("newer-access");
+
+    await expect(
+      storeRefreshedUsageCredential(
+        "acct-usage",
+        USER,
+        {
+          accessToken: "stale-response-access",
+          expiresAt: new Date(90_000),
+        },
+        staleRevision
+      )
+    ).resolves.toBe(false);
+    expect(decrypt(row.usageOauthAccessEncrypted as string)).toBe(
+      "newer-access"
+    );
+    expect(row.usageOauthRefreshEncrypted).toBe(
+      staleRevision.refreshCiphertext
     );
   });
 });
@@ -1247,8 +1372,11 @@ describe("quarantineUsageCredential", () => {
   it("nulls only the four usage columns for the owned account", async () => {
     const row = seedUsageCredentialRow();
     const sessionCiphertext = row.oauthTokenEncrypted;
+    const revision = usageCredentialRevision(row);
 
-    await quarantineUsageCredential("acct-usage", USER);
+    await expect(
+      quarantineUsageCredential("acct-usage", USER, revision)
+    ).resolves.toBe(true);
 
     expect(row).toMatchObject({
       usageOauthAccessEncrypted: null,
@@ -1263,8 +1391,11 @@ describe("quarantineUsageCredential", () => {
   it("does not quarantine a foreign account", async () => {
     const row = seedUsageCredentialRow();
     const priorAccessCiphertext = row.usageOauthAccessEncrypted;
+    const revision = usageCredentialRevision(row);
 
-    await quarantineUsageCredential("acct-usage", "someone-else");
+    await expect(
+      quarantineUsageCredential("acct-usage", "someone-else", revision)
+    ).resolves.toBe(false);
 
     expect(row.usageOauthAccessEncrypted).toBe(priorAccessCiphertext);
   });

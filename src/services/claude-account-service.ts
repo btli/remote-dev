@@ -789,6 +789,14 @@ export interface OwnedUsageCredential {
   accessToken: string;
   refreshToken: string;
   expiresAt: Date;
+  /** Opaque CAS token; callers may only return it to store/quarantine. */
+  revision: UsageCredentialRevision;
+}
+
+/** Exact encrypted values selected alongside one decrypted credential. */
+export interface UsageCredentialRevision {
+  readonly accessCiphertext: string;
+  readonly refreshCiphertext: string;
 }
 
 /**
@@ -883,8 +891,12 @@ export async function readOwnedUsageCredential(
     accountId,
     "access"
   );
+  const revision: UsageCredentialRevision = {
+    accessCiphertext: row.usageOauthAccessEncrypted,
+    refreshCiphertext: row.usageOauthRefreshEncrypted,
+  };
   if (accessToken === null) {
-    await quarantineUsageCredential(accountId, userId);
+    await quarantineUsageCredential(accountId, userId, revision);
     return null;
   }
   const refreshToken = decryptUsageToken(
@@ -893,11 +905,16 @@ export async function readOwnedUsageCredential(
     "refresh"
   );
   if (refreshToken === null) {
-    await quarantineUsageCredential(accountId, userId);
+    await quarantineUsageCredential(accountId, userId, revision);
     return null;
   }
   if (!accessToken || !refreshToken) return null;
-  return { accessToken, refreshToken, expiresAt: row.usageOauthExpiresAt };
+  return {
+    accessToken,
+    refreshToken,
+    expiresAt: row.usageOauthExpiresAt,
+    revision,
+  };
 }
 
 export interface RefreshedUsageCredential {
@@ -908,16 +925,21 @@ export interface RefreshedUsageCredential {
 }
 
 /**
- * Store a successful OAuth refresh under one ownership-scoped mutation.
+ * Store a successful OAuth refresh under one ownership- and revision-scoped
+ * compare-and-swap mutation. Both selected ciphertexts participate: matching
+ * only the refresh token would let concurrent responses overwrite a newer
+ * access token when Anthropic did not rotate the refresh token.
+ *
  * Omitting `refreshToken` deliberately omits that column from the SET clause,
  * preserving its existing encrypted value byte-for-byte.
  */
 export async function storeRefreshedUsageCredential(
   accountId: string,
   userId: string,
-  credential: RefreshedUsageCredential
-): Promise<void> {
-  await db
+  credential: RefreshedUsageCredential,
+  expectedRevision: UsageCredentialRevision
+): Promise<boolean> {
+  const updated = await db
     .update(claudeAccounts)
     .set({
       usageOauthAccessEncrypted: encrypt(credential.accessToken),
@@ -926,19 +948,35 @@ export async function storeRefreshedUsageCredential(
         ? { usageOauthRefreshEncrypted: encrypt(credential.refreshToken) }
         : {}),
     })
-    .where(ownedBy(accountId, userId));
+    .where(
+      and(
+        ownedBy(accountId, userId),
+        eq(
+          claudeAccounts.usageOauthAccessEncrypted,
+          expectedRevision.accessCiphertext
+        ),
+        eq(
+          claudeAccounts.usageOauthRefreshEncrypted,
+          expectedRevision.refreshCiphertext
+        )
+      )
+    )
+    .returning({ id: claudeAccounts.id });
+  return updated.length > 0;
 }
 
 /**
  * Quarantine a rejected usage refresh token by nulling ONLY the four usage
- * columns. Session health and `oauthTokenEncrypted` are a separate credential
- * class and must remain untouched.
+ * columns when the exact selected ciphertext pair is still current. Session
+ * health and `oauthTokenEncrypted` are a separate credential class and must
+ * remain untouched.
  */
 export async function quarantineUsageCredential(
   accountId: string,
-  userId: string
-): Promise<void> {
-  await db
+  userId: string,
+  expectedRevision: UsageCredentialRevision
+): Promise<boolean> {
+  const updated = await db
     .update(claudeAccounts)
     .set({
       usageOauthAccessEncrypted: null,
@@ -946,7 +984,21 @@ export async function quarantineUsageCredential(
       usageOauthExpiresAt: null,
       usageOauthScopes: null,
     })
-    .where(ownedBy(accountId, userId));
+    .where(
+      and(
+        ownedBy(accountId, userId),
+        eq(
+          claudeAccounts.usageOauthAccessEncrypted,
+          expectedRevision.accessCiphertext
+        ),
+        eq(
+          claudeAccounts.usageOauthRefreshEncrypted,
+          expectedRevision.refreshCiphertext
+        )
+      )
+    )
+    .returning({ id: claudeAccounts.id });
+  return updated.length > 0;
 }
 
 /** Decrypt a usage token without ever placing token material in a log line. */
