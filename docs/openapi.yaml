@@ -1328,7 +1328,8 @@ paths:
         not request-body account or path values, selects the target account and
         scratch config. The credential must carry `user:profile`, and a known
         login email must match the target row. Success stores only encrypted
-        usage credentials, returns the token-free account projection, and
+        usage credentials and returns the token-free account projection plus
+        explicit validation, cleanup, and scheduled-polling outcomes. Cleanup
         best-effort removes scratch credentials, clears terminal scrollback,
         and closes the setup session.
       security:
@@ -2827,10 +2828,12 @@ components:
         sessionId: { type: string, pattern: '\S', description: Owner-scoped session returned by the usage setup endpoint; other request properties carry no account/path authority }
     ClaudeUsageCaptureResponse:
       type: object
-      required: [account, usageValidated]
+      required: [account, usageValidated, cleanupComplete, pollEnabled]
       properties:
         account: { $ref: '#/components/schemas/ClaudeAccount' }
         usageValidated: { type: boolean, description: True only when capture also wrote an immediate usage snapshot; false can mean validation was indeterminate or the snapshot write did not succeed even though the credential was stored }
+        cleanupComplete: { type: boolean, description: True only when credential deletion or confirmed absence, scratch-directory removal, terminal scrollback clearing, and setup-session closure all completed; false means the credential was stored but at least one cleanup step failed }
+        pollEnabled: { type: boolean, description: Whether scheduled usage polling is currently enabled; false means an immediate validation snapshot may exist but no scheduled refresh runs and readings can go stale until RDV_CLAUDE_USAGE_POLL_ENABLED=true }
     ClaudeUsageCaptureConflict:
       type: object
       required: [error, code]

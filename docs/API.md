@@ -1016,7 +1016,9 @@ successful `200` response is token-free:
 ```json
 {
   "account": { "...": "ClaudeAccount", "usageCredential": true },
-  "usageValidated": true
+  "usageValidated": true,
+  "cleanupComplete": true,
+  "pollEnabled": true
 }
 ```
 
@@ -1025,8 +1027,19 @@ written as the account's current usage snapshot. `false` means no immediate
 snapshot was stored, for example because validation was rate-limited or
 otherwise indeterminate, or because the snapshot write was declined/failed;
 the usage credential was still accepted and saved.
-After a successful save the server best-effort deletes the scratch credential
-and config directory, clears terminal scrollback, and closes the setup session.
+`cleanupComplete: true` means the server deleted or confirmed absence of the
+scratch credential, removed its config directory, cleared terminal scrollback,
+and closed the setup session. `false` means the credential was saved but at
+least one cleanup step failed; retryable scratch artifacts are retained when
+credential deletion fails so the next startup orphan sweep can try again.
+`pollEnabled` reports whether scheduled usage polling is enabled for this
+server. When it is `false`, the capture may still save one validation snapshot,
+but no scheduled refresh runs and that reading can go stale until
+`RDV_CLAUDE_USAGE_POLL_ENABLED=true` is set.
+
+The web dialog closes immediately only when all three booleans are true.
+Otherwise it keeps the completed result visible, explains the specific warning,
+and prevents the successful capture from being submitted twice.
 
 Expected conflicts keep the session available where a retry can help:
 

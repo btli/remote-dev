@@ -512,6 +512,10 @@ RDV_INSTANCE_SLUG=
 # rotation skip an account whose Fable/Opus/... weekly window is exhausted while
 # the subscription itself still reports "available". Subscription accounts only.
 #
+# Enabling an account's usage credential while this flag is off can save one
+# immediate validation snapshot, but no scheduled refresh follows. That reading
+# will go stale; the usage-tracking dialog reports the disabled polling state.
+#
 # Why it is opt-in rather than on: enabling it makes your server contact a third
 # party on a timer using stored user credentials. That is a choice an operator
 # should make deliberately, not inherit from an unchanged config file. Reactive

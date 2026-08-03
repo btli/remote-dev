@@ -20,10 +20,12 @@
  *
  * Finish POSTs exactly `{ sessionId }`. `CREDENTIALS_NOT_READY` remains a
  * retryable notice; missing scope and account mismatch stay hard, actionable
- * errors. Successful capture refreshes sessions after server-side cleanup,
- * calls the dashboard completion path, and closes with all local handoff state
- * reset. Client-side failures use console.error where diagnostic logging helps;
- * the structured server logger is intentionally not imported.
+ * errors. A fully validated, cleaned, poll-enabled capture closes immediately.
+ * Any false or malformed success field remains visible as a terminal completed
+ * state, so setup cannot be submitted twice and the user sees why readings may
+ * be absent, stale, or awaiting cleanup. Client-side failures use console.error
+ * where diagnostic logging helps; the structured server logger is intentionally
+ * not imported.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -63,6 +65,12 @@ interface UsageSetupSession {
   commandSent: boolean | null;
   instructions: string[];
   recovered: boolean;
+}
+
+interface UsageCaptureCompletion {
+  usageValidated: boolean | null;
+  cleanupComplete: boolean | null;
+  pollEnabled: boolean | null;
 }
 
 interface UsageTrackingDialogProps {
@@ -108,6 +116,32 @@ function parseSetupSession(data: unknown): UsageSetupSession | null {
   };
 }
 
+function parseCaptureCompletion(data: unknown): UsageCaptureCompletion | null {
+  if (!data || typeof data !== "object") return null;
+  const candidate = data as Record<string, unknown>;
+  const capturedAccount = candidate.account as
+    | Record<string, unknown>
+    | undefined;
+  if (
+    !capturedAccount ||
+    typeof capturedAccount !== "object" ||
+    Array.isArray(capturedAccount) ||
+    typeof capturedAccount.id !== "string" ||
+    capturedAccount.id.length === 0 ||
+    capturedAccount.usageCredential !== true ||
+    typeof candidate.usageValidated !== "boolean" ||
+    typeof candidate.cleanupComplete !== "boolean" ||
+    typeof candidate.pollEnabled !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    usageValidated: candidate.usageValidated,
+    cleanupComplete: candidate.cleanupComplete,
+    pollEnabled: candidate.pollEnabled,
+  };
+}
+
 export function UsageTrackingDialog({
   account,
   open,
@@ -120,6 +154,8 @@ export function UsageTrackingDialog({
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [setupSession, setSetupSession] =
     useState<UsageSetupSession | null>(null);
+  const [completion, setCompletion] =
+    useState<UsageCaptureCompletion | null>(null);
   const [busy, setBusy] = useState<"start" | "finish" | "terminal" | null>(
     null
   );
@@ -137,6 +173,7 @@ export function UsageTrackingDialog({
     setProjectId("");
     setProjectsLoading(true);
     setSetupSession(null);
+    setCompletion(null);
     setBusy(null);
     setError(null);
     setNotice(null);
@@ -337,14 +374,33 @@ export function UsageTrackingDialog({
         return;
       }
 
-      await response.json();
+      let responseBody: unknown = null;
+      try {
+        responseBody = await response.json();
+      } catch (caught) {
+        console.error("Failed to read usage capture response", caught);
+      }
+      const captured = parseCaptureCompletion(responseBody);
+      const nextCompletion = captured ?? {
+        usageValidated: null,
+        cleanupComplete: null,
+        pollEnabled: null,
+      };
       onCompleted();
       try {
         await refreshSessions();
       } catch (caught) {
         console.error("Failed to refresh sessions after usage capture", caught);
       }
-      handleOpenChange(false);
+      if (
+        captured?.usageValidated &&
+        captured.cleanupComplete &&
+        captured.pollEnabled
+      ) {
+        handleOpenChange(false);
+      } else {
+        setCompletion(nextCompletion);
+      }
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -362,13 +418,67 @@ export function UsageTrackingDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Enable usage tracking</DialogTitle>
+          <DialogTitle>
+            {completion ? "Usage tracking enabled" : "Enable usage tracking"}
+          </DialogTitle>
           <DialogDescription>
-            Sign in to {label} separately to enable the 5h and 7d usage bars.
+            {completion ? (
+              <>Usage credentials for {label} were saved.</>
+            ) : (
+              <>
+                Sign in to {label} separately to enable the 5h and 7d usage
+                bars.
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
 
-        {setupSession ? (
+        {completion ? (
+          <div
+            role="status"
+            aria-live="polite"
+            className="space-y-2 rounded-lg border border-border bg-muted/40 p-3 text-sm"
+          >
+            {completion.usageValidated === null ||
+            completion.cleanupComplete === null ||
+            completion.pollEnabled === null ? (
+              <p>
+                Credentials were saved, but Remote Dev could not confirm
+                validation, cleanup, or polling status. Check the account after
+                closing this dialog.
+              </p>
+            ) : (
+              <>
+                <p className="font-medium">Usage tracking is enabled.</p>
+                <ul className="list-disc space-y-1 pl-4 text-muted-foreground">
+                  {!completion.usageValidated && (
+                    <li>
+                      Credentials were saved, but no usage reading is available
+                      yet.
+                    </li>
+                  )}
+                  {!completion.cleanupComplete && (
+                    <li>
+                      Terminal or credential cleanup did not finish. A
+                      credential or sign-in scrollback may remain. Restart
+                      Remote Dev to retry retained credential cleanup.
+                    </li>
+                  )}
+                  {!completion.pollEnabled && (
+                    <li>
+                      Automatic usage refresh is disabled. Readings will go
+                      stale until{" "}
+                      <code className="font-mono text-foreground">
+                        RDV_CLAUDE_USAGE_POLL_ENABLED=true
+                      </code>{" "}
+                      is set.
+                    </li>
+                  )}
+                </ul>
+              </>
+            )}
+          </div>
+        ) : setupSession ? (
           <div className="space-y-3">
             <div className="rounded-lg border border-border bg-card/60 p-3 space-y-2">
               <p className="text-xs text-muted-foreground">
@@ -438,13 +548,13 @@ export function UsageTrackingDialog({
         <DialogFooter>
           <Button
             type="button"
-            variant="ghost"
+            variant={completion ? "default" : "ghost"}
             onClick={() => handleOpenChange(false)}
             disabled={busy !== null}
           >
-            Cancel
+            {completion ? "Close" : "Cancel"}
           </Button>
-          {setupSession ? (
+          {completion ? null : setupSession ? (
             <>
               <Button
                 type="button"

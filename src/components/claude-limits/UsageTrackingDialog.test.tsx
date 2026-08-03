@@ -59,6 +59,22 @@ const setup = {
   ],
 };
 
+function captureSuccess(
+  overrides: Partial<{
+    usageValidated: boolean;
+    cleanupComplete: boolean;
+    pollEnabled: boolean;
+  }> = {}
+) {
+  return {
+    account: { ...account, usageCredential: true },
+    usageValidated: true,
+    cleanupComplete: true,
+    pollEnabled: true,
+    ...overrides,
+  };
+}
+
 function jsonResponse(body: unknown, ok = true, status = ok ? 200 : 409) {
   return {
     ok,
@@ -304,7 +320,7 @@ describe("UsageTrackingDialog", () => {
                 },
                 false
               )
-            : jsonResponse({ account: { ...account, usageCredential: true }, usageValidated: true })
+            : jsonResponse(captureSuccess())
         );
       }
       throw new Error(`Unexpected request: ${url}`);
@@ -363,23 +379,64 @@ describe("UsageTrackingDialog", () => {
     expect(screen.queryByText("internal detail")).not.toBeInTheDocument();
   });
 
-  it.each([true, false])(
-    "completes, refreshes, closes, and resets when usageValidated is %s",
-    async (usageValidated) => {
+  it("completes, refreshes, closes, and resets when capture is fully ready", async () => {
+    apiFetch.mockImplementation((url: string) => {
+      if (url === "/api/projects") {
+        return Promise.resolve(
+          jsonResponse({ projects: [{ id: "project-1", name: "Remote Dev" }] })
+        );
+      }
+      if (url === "/api/claude-accounts/usage-setup-session") {
+        return Promise.resolve(jsonResponse(setup, true, 201));
+      }
+      if (url === "/api/claude-accounts/usage-capture") {
+        return Promise.resolve(jsonResponse(captureSuccess()));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const { onCompleted, onOpenChange } = renderDialog();
+    await startSession();
+
+    fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+
+    await waitFor(() => {
+      expect(onCompleted).toHaveBeenCalledTimes(1);
+      expect(refreshSessions).toHaveBeenCalled();
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+    expect(screen.queryByText("claude auth login")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "usage snapshot is unavailable",
+      { usageValidated: false },
+      /credentials were saved, but no usage reading is available yet/i,
+    ],
+    [
+      "cleanup is incomplete",
+      { cleanupComplete: false },
+      /terminal or credential cleanup did not finish.*may remain.*restart/i,
+    ],
+    [
+      "automatic polling is disabled",
+      { pollEnabled: false },
+      /automatic usage refresh is disabled.*RDV_CLAUDE_USAGE_POLL_ENABLED=true/i,
+    ],
+  ])(
+    "keeps the completed result visible when %s",
+    async (_caseName, overrides, message) => {
       apiFetch.mockImplementation((url: string) => {
         if (url === "/api/projects") {
-          return Promise.resolve(jsonResponse({ projects: [{ id: "project-1", name: "Remote Dev" }] }));
+          return Promise.resolve(
+            jsonResponse({ projects: [{ id: "project-1", name: "Remote Dev" }] })
+          );
         }
         if (url === "/api/claude-accounts/usage-setup-session") {
           return Promise.resolve(jsonResponse(setup, true, 201));
         }
         if (url === "/api/claude-accounts/usage-capture") {
-          return Promise.resolve(
-            jsonResponse({
-              account: { ...account, usageCredential: true },
-              usageValidated,
-            })
-          );
+          return Promise.resolve(jsonResponse(captureSuccess(overrides)));
         }
         throw new Error(`Unexpected request: ${url}`);
       });
@@ -388,12 +445,106 @@ describe("UsageTrackingDialog", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Finish" }));
 
-      await waitFor(() => {
-        expect(onCompleted).toHaveBeenCalledTimes(1);
-        expect(refreshSessions).toHaveBeenCalled();
-        expect(onOpenChange).toHaveBeenCalledWith(false);
+      expect(await screen.findByRole("status")).toHaveTextContent(message);
+      expect(onCompleted).toHaveBeenCalledTimes(1);
+      expect(onOpenChange).not.toHaveBeenCalledWith(false);
+      expect(
+        screen.queryByRole("button", { name: "Finish" })
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Open terminal session" })
+      ).not.toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: "Close" })[0]).toBeEnabled();
+    }
+  );
+
+  it("shows every applicable completion warning without allowing duplicate capture", async () => {
+    apiFetch.mockImplementation((url: string) => {
+      if (url === "/api/projects") {
+        return Promise.resolve(
+          jsonResponse({ projects: [{ id: "project-1", name: "Remote Dev" }] })
+        );
+      }
+      if (url === "/api/claude-accounts/usage-setup-session") {
+        return Promise.resolve(jsonResponse(setup, true, 201));
+      }
+      if (url === "/api/claude-accounts/usage-capture") {
+        return Promise.resolve(
+          jsonResponse(
+            captureSuccess({
+              usageValidated: false,
+              cleanupComplete: false,
+              pollEnabled: false,
+            })
+          )
+        );
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    renderDialog();
+    await startSession();
+
+    fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent(/no usage reading is available yet/i);
+    expect(status).toHaveTextContent(/cleanup did not finish/i);
+    expect(status).toHaveTextContent(/automatic usage refresh is disabled/i);
+    expect(apiFetch).toHaveBeenCalledTimes(3);
+    expect(
+      screen.queryByRole("button", { name: "Finish" })
+    ).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "missing outcome fields",
+      {
+        account: { ...account, usageCredential: true },
+        usageValidated: true,
+      },
+    ],
+    [
+      "invalid account projection",
+      {
+        account: {},
+        usageValidated: true,
+        cleanupComplete: true,
+        pollEnabled: true,
+      },
+    ],
+  ])(
+    "treats a 200 with %s as completed without pretending status is known",
+    async (_caseName, captureBody) => {
+      apiFetch.mockImplementation((url: string) => {
+        if (url === "/api/projects") {
+          return Promise.resolve(
+            jsonResponse({
+              projects: [{ id: "project-1", name: "Remote Dev" }],
+            })
+          );
+        }
+        if (url === "/api/claude-accounts/usage-setup-session") {
+          return Promise.resolve(jsonResponse(setup, true, 201));
+        }
+        if (url === "/api/claude-accounts/usage-capture") {
+          return Promise.resolve(jsonResponse(captureBody));
+        }
+        throw new Error(`Unexpected request: ${url}`);
       });
-      expect(screen.queryByText("claude auth login")).not.toBeInTheDocument();
+      const { onCompleted, onOpenChange } = renderDialog();
+      await startSession();
+
+      fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+
+      expect(await screen.findByRole("status")).toHaveTextContent(
+        /credentials were saved, but Remote Dev could not confirm validation, cleanup, or polling status/i
+      );
+      expect(onCompleted).toHaveBeenCalledTimes(1);
+      expect(onOpenChange).not.toHaveBeenCalledWith(false);
+      expect(
+        screen.queryByRole("button", { name: "Finish" })
+      ).not.toBeInTheDocument();
     }
   );
 
@@ -463,9 +614,7 @@ describe("UsageTrackingDialog", () => {
         return Promise.resolve(jsonResponse({ projects: [{ id: "project-1", name: "Remote Dev" }] }));
       }
       if (url === "/api/claude-accounts/usage-capture") {
-        return Promise.resolve(
-          jsonResponse({ account: { ...account, usageCredential: true }, usageValidated: true })
-        );
+        return Promise.resolve(jsonResponse(captureSuccess()));
       }
       throw new Error(`Unexpected request: ${url}`);
     });

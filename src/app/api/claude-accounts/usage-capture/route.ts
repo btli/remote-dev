@@ -6,10 +6,12 @@
  * `typeMetadata`; request-body account/path values are ignored. Account
  * ownership is re-checked before the trusted values reach orchestration.
  *
- * Responses expose only the token-free account view and whether the already
- * validated usage snapshot was recorded. Expected retry/action failures are
- * stable 409 codes; environmental errors are collapsed to a generic response
- * and logged at error level with a typed classification when one is available.
+ * Successful responses expose only the token-free account view plus three
+ * booleans: whether an immediate usage snapshot was recorded, whether all
+ * best-effort cleanup steps completed, and whether scheduled usage polling is
+ * enabled. Expected retry/action failures are stable 409 codes; environmental
+ * errors are collapsed to a generic response and logged at error level with a
+ * typed classification when one is available.
  */
 
 import { NextResponse } from "next/server";
