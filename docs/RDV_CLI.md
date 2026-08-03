@@ -57,7 +57,7 @@ Top-level commands from `main.rs`:
 | [`agent`](#agent) | Manage AI agent sessions |
 | [`group`](#group) | Manage project groups (containers) |
 | [`project`](#project) | Manage projects (leaves: sessions/tasks/channels) |
-| [`hook`](#hook) | Handle Claude Code lifecycle hooks |
+| [`hook`](#hook) | Handle Claude Code and Codex lifecycle hooks |
 | [`status`](#status) | System dashboard / report agent status |
 | [`system`](#system) | Updates and service control |
 | [`context`](#context) | Show the current session's context |
@@ -142,8 +142,11 @@ Manage projects (leaf nodes that own sessions, tasks, and channels).
 
 ## hook
 
-Handle Claude Code lifecycle hooks. These are wired into a profile's
-`.claude/settings.json` automatically; you rarely call them by hand.
+Handle Claude Code and Codex lifecycle hooks. Remote Dev wires these into
+Claude's `.claude/settings.json` or the active `$CODEX_HOME/hooks.json`
+automatically; you rarely call them by hand. Codex requires user trust for
+non-managed command hooks, so review the installed Remote Dev entries with
+`/hooks` after first launch.
 
 | Subcommand | Purpose |
 |------------|---------|
@@ -157,6 +160,7 @@ Handle Claude Code lifecycle hooks. These are wired into a profile's
 | `rdv hook notify <event> [--body <msg>]` | Send a notification for a lifecycle event |
 | `rdv hook validate` | Validate hooks: check server connectivity + auto-repair |
 | `rdv hook claude <event> [--agent <name>] [--reason <r>]` | Unified Claude hook dispatcher (e.g. `session-start`, `stop`, `notification`, `compacting`, `prompt-submit`, `post-tool-use`, `session-end`) |
+| `rdv hook codex <event>` | Unified Codex dispatcher (`session-start`, `prompt-submit`, `pre-tool-use`, `permission-request`, `post-tool-use`, `pre-compact`, `post-compact`, `subagent-start`, `subagent-stop`, `stop`, `session-end`) |
 
 ## status
 
@@ -290,10 +294,11 @@ The first positional argument is always the target `<session-id>`.
 Inter-agent communication scoped to the current project (see [`AGENTS.md`](./AGENTS.md)
 §5). **bd tracks the work; chat tracks awareness.** Delivery uses a durable
 per-recipient inbox, but **automatic** delivery (the `rdv` MCP push + the poll
-hook) is wired only for **Claude Code**. Codex, Gemini, OpenCode, Antigravity,
-and Cursor agents receive nothing automatically — they must drain their inbox by running
-`rdv peer messages` themselves. Delivery is **at-least-once with idempotent
-de-duplication**, not exactly-once.
+hook) is wired for **Claude Code**, while **Codex** uses its native lifecycle
+hooks to poll at session, prompt, and tool boundaries. Gemini, OpenCode, and
+Antigravity, and Cursor agents must drain their inbox by running `rdv peer messages`
+themselves. Delivery is **at-least-once with idempotent de-duplication**, not
+exactly-once.
 
 | Subcommand | Purpose |
 |------------|---------|
@@ -308,8 +313,14 @@ Without `--since`, `rdv peer messages` uses the **durable delivery cursor** and
 (this is the poll-fallback path for non-MCP providers). Pass `--since <iso-ts>`
 for an ad-hoc timestamp scan that does not advance the cursor.
 
-Lifecycle posts to `#agents` happen automatically **for Claude Code sessions**
-(they are driven by the lifecycle hooks, which only Claude profiles get): a
+Remote Dev merges its entries into `$CODEX_HOME/hooks.json` without replacing
+user hooks. Codex asks users to review non-managed command hooks: run `/hooks`
+and trust the Remote Dev entries after installation. To roll back the
+integration, set `RDV_CODEX_HOOKS_ENABLED=0` and start or resume the session;
+Remote Dev removes only its own entries and preserves user-authored hooks.
+
+Lifecycle posts to `#agents` happen automatically **for Claude Code and Codex
+sessions** (they are driven by provider-native lifecycle hooks): a
 **check-in** (branch + claimed bd issue) on session start and a **check-out** on
 Stop. The **start digest** printed at session start lists who's-working-on-what,
 recent gotchas, and collisions (another active session on your branch / worktree

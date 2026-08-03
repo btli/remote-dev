@@ -19,6 +19,11 @@ const execFileCalls: string[][] = [];
 const resolveVerifiedProviderExecutable = vi.fn();
 vi.mock("@/services/agent-cli-service", () => ({ resolveVerifiedProviderExecutable }));
 
+const createApiKeyMock = vi.fn().mockResolvedValue({ key: "rdv_relaunch_key" });
+const markAgentRunningMock = vi.fn().mockResolvedValue({ id: "running" });
+const markAgentExitedMock = vi.fn().mockResolvedValue({ id: "exited" });
+const markAgentRestartingMock = vi.fn().mockResolvedValue({ agentRestartCount: 1 });
+const prepareAgentLaunchMock = vi.fn().mockResolvedValue(undefined);
 const execFile = vi.fn(
   (
     _cmd: string,
@@ -31,19 +36,45 @@ const execFile = vi.fn(
       r: unknown,
     ) => void;
     execFileCalls.push(args);
-    cb(null, { stdout: "", stderr: "" });
+    cb(null, {
+      stdout: args[0] === "list-panes" ? "%7\t\n" : "",
+      stderr: "",
+    });
   },
 );
 vi.mock("node:child_process", () => ({ execFile }));
 
+function defaultExecFileImplementation(
+  _cmd: string,
+  args: string[],
+  optsOrCb: unknown,
+  maybeCb?: (e: unknown, r: unknown) => void,
+) {
+  const cb = (typeof optsOrCb === "function" ? optsOrCb : maybeCb) as (
+    e: unknown,
+    r: unknown,
+  ) => void;
+  execFileCalls.push(args);
+  cb(null, {
+    stdout: args[0] === "list-panes" ? "%7\t\n" : "",
+    stderr: "",
+  });
+}
+
 beforeEach(() => {
   execFileCalls.length = 0;
-  execFile.mockClear();
+  execFile.mockReset();
+  execFile.mockImplementation(defaultExecFileImplementation);
   resolveVerifiedProviderExecutable.mockReset().mockImplementation(
     async (_provider: string, command: string) => command,
   );
   vi.unstubAllEnvs();
   vi.doUnmock("@/infrastructure/agent-resume/AgentResumeResolverImpl");
+  createApiKeyMock.mockClear();
+  markAgentRunningMock.mockClear();
+  markAgentExitedMock.mockClear();
+  markAgentRestartingMock.mockClear();
+  prepareAgentLaunchMock.mockClear();
   vi.resetModules();
 });
 
@@ -82,16 +113,32 @@ function fullRow(over: Record<string, unknown>): Record<string, unknown> {
 
 function mockAgentRow(row: Record<string, unknown> | null) {
   vi.doMock("@/db", () => ({
-    db: { query: { terminalSessions: { findFirst: vi.fn().mockResolvedValue(row) } } },
+    db: {
+      query: { terminalSessions: { findFirst: vi.fn().mockResolvedValue(row) } },
+      delete: vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) })),
+    },
   }));
-  vi.doMock("@/db/schema", () => ({ terminalSessions: { id: "id" } }));
-  vi.doMock("drizzle-orm", () => ({ eq: vi.fn() }));
+  vi.doMock("@/db/schema", () => ({
+    terminalSessions: { id: "id" },
+    apiKeys: { userId: "userId", name: "name" },
+  }));
+  vi.doMock("drizzle-orm", () => ({ eq: vi.fn(), and: vi.fn() }));
+  vi.doMock("@/services/api-key-service", () => ({ createApiKey: createApiKeyMock }));
+  vi.doMock("@/services/session-service", () => ({
+    markAgentRestarting: markAgentRestartingMock,
+    markAgentRunning: markAgentRunningMock,
+    markAgentExited: markAgentExitedMock,
+  }));
+  vi.doMock("@/services/agent-launch-preparation", () => ({
+    prepareAgentLaunch: prepareAgentLaunchMock,
+  }));
 }
 
 const sendKeysArgs = () => execFileCalls.find((a) => a.includes("send-keys") && a.includes("-l"));
 const enterArgs = () => execFileCalls.find((a) => a.includes("send-keys") && a.includes("C-m"));
 const setEnvArgs = (key: string) =>
   execFileCalls.find((a) => a.includes("set-environment") && a.includes(key));
+const hookArgs = () => execFileCalls.find((a) => a.includes("set-hook") && a.includes("pane-died"));
 
 describe("relaunchAgentInTmux — resume", () => {
   it("relaunches claude RESUMED with --resume <stored id> and submits with C-m", async () => {
@@ -106,8 +153,32 @@ describe("relaunchAgentInTmux — resume", () => {
     const { resumed } = await relaunchAgentInTmux("s1", "tmux-x");
 
     expect(resumed).toBe(true);
-    expect(sendKeysArgs()).toEqual(["send-keys", "-t", "tmux-x", "-l", "claude --resume id9"]);
-    expect(enterArgs()).toEqual(["send-keys", "-t", "tmux-x", "C-m"]);
+    expect(createApiKeyMock).toHaveBeenCalledWith("u1", "agent-session-s1");
+    expect(setEnvArgs("RDV_API_KEY")).toEqual([
+      "set-environment",
+      "-t",
+      "tmux-x",
+      "RDV_API_KEY",
+      "rdv_relaunch_key",
+    ]);
+    expect(setEnvArgs("RDV_AGENT_GENERATION")).toEqual([
+      "set-environment",
+      "-t",
+      "tmux-x",
+      "RDV_AGENT_GENERATION",
+      "1",
+    ]);
+    expect(hookArgs()?.join(" ")).toContain("generation=1");
+    expect(hookArgs()?.join(" ")).toContain("Authorization: Bearer");
+    expect(markAgentRunningMock).toHaveBeenCalledWith("s1", "u1", 1);
+    expect(prepareAgentLaunchMock).toHaveBeenCalledWith(
+      expect.objectContaining({ RDV_AGENT_PROVIDER: "claude", RDV_AGENT_GENERATION: "1" }),
+    );
+    const respawn = execFileCalls.find((args) => args[0] === "respawn-pane");
+    expect(respawn).toEqual(["respawn-pane", "-k", "-t", "%7"]);
+    expect(execFileCalls.indexOf(respawn!)).toBeLessThan(execFileCalls.indexOf(sendKeysArgs()!));
+    expect(sendKeysArgs()).toEqual(["send-keys", "-t", "%7", "-l", "exec claude --resume id9"]);
+    expect(enterArgs()).toEqual(["send-keys", "-t", "%7", "C-m"]);
   });
 
   it("relaunches codex RESUMED via the resume subcommand argv", async () => {
@@ -122,7 +193,7 @@ describe("relaunchAgentInTmux — resume", () => {
     const { resumed } = await relaunchAgentInTmux("s1", "tmux-x");
 
     expect(resumed).toBe(true);
-    expect(sendKeysArgs()![4]).toBe("codex resume cx");
+    expect(sendKeysArgs()![4]).toBe("exec codex resume cx");
   });
 
   it("relaunches FRESH (no flags) and reports resumed=false for antigravity", async () => {
@@ -137,7 +208,7 @@ describe("relaunchAgentInTmux — resume", () => {
     const { resumed } = await relaunchAgentInTmux("s2", "tmux-y");
 
     expect(resumed).toBe(false);
-    expect(sendKeysArgs()![4]).toBe("agy"); // bare command, no flags
+    expect(sendKeysArgs()![4]).toBe("exec agy"); // fresh command owns the pane
   });
 
   it("no-ops for a non-agent row", async () => {
@@ -193,7 +264,7 @@ describe("relaunchAgentInTmux — resume", () => {
     const result = await relaunchAgentInTmux("cursor-2", "tmux-cursor");
 
     expect(result).toEqual({ resumed: true });
-    expect(sendKeysArgs()![4]).toBe("'/verified/cursor agent' --resume chat-2");
+    expect(sendKeysArgs()![4]).toBe("exec '/verified/cursor agent' --resume chat-2");
   });
 
   it("relaunches a Cursor loop row after tmux recreation", async () => {
@@ -211,7 +282,7 @@ describe("relaunchAgentInTmux — resume", () => {
 
     expect(result).toEqual({ resumed: true });
     expect(sendKeysArgs()![4]).toBe(
-      "'/verified/cursor-agent' --resume loop-chat",
+      "exec '/verified/cursor-agent' --resume loop-chat",
     );
   });
 
@@ -269,9 +340,7 @@ describe("relaunchAgentInTmux — resume", () => {
       "CURSOR_DATA_DIR",
       "/srv/cursor-data",
     ]);
-    expect(sendKeysArgs()![4]).toBe(
-      "CURSOR_DATA_DIR='/srv/cursor-data' '/verified/cursor-agent'",
-    );
+    expect(sendKeysArgs()![4]).toBe("exec '/verified/cursor-agent'");
   });
 });
 
@@ -303,7 +372,7 @@ describe("relaunchAgentInTmux — pod-restart env re-injection (hgwo.5)", () => 
     const sendIdx = execFileCalls.indexOf(sendKeysArgs()!);
     expect(envIdx).toBeGreaterThanOrEqual(0);
     expect(envIdx).toBeLessThan(sendIdx);
-    expect(sendKeysArgs()![4]).toContain("CLAUDE_CONFIG_DIR='/profiles/p1/.config' claude");
+    expect(sendKeysArgs()![4]).toBe("exec claude --resume id9");
   });
 
   it("rejects when the relaunch command cannot be sent", async () => {
@@ -354,5 +423,88 @@ describe("relaunchAgentInTmux — concurrency guard (hgwo.5)", () => {
     expect(sends).toHaveLength(1);
     // exactly one of the two calls performed the relaunch
     expect([a.resumed, b.resumed].filter(Boolean)).toHaveLength(1);
+  });
+
+  it("does not adopt a restarting generation claimed by another process", async () => {
+    mockAgentRow(fullRow({
+      id: "s1",
+      terminalType: "agent",
+      agentProvider: "codex",
+      agentExitState: "restarting",
+      agentRestartCount: 7,
+    }));
+    const { relaunchAgentInTmux } = await import("../agent-relaunch");
+
+    await expect(relaunchAgentInTmux("s1", "tmux-x")).rejects.toThrow(/already claimed/i);
+    expect(createApiKeyMock).not.toHaveBeenCalled();
+    expect(sendKeysArgs()).toBeUndefined();
+    expect(markAgentRestartingMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts only the generation explicitly handed off by its restart claimant", async () => {
+    mockAgentRow(fullRow({
+      id: "s1",
+      terminalType: "agent",
+      agentProvider: "codex",
+      agentExitState: "restarting",
+      agentRestartCount: 7,
+      typeMetadata: JSON.stringify({ agentSessionId: { codex: "cx" } }),
+    }));
+    const { relaunchAgentInTmux } = await import("../agent-relaunch");
+
+    await expect(relaunchAgentInTmux("s1", "tmux-x", 6)).rejects.toThrow(/generation/i);
+    const result = await relaunchAgentInTmux("s1", "tmux-x", 7);
+
+    expect(result.resumed).toBe(true);
+    expect(markAgentRestartingMock).not.toHaveBeenCalled();
+    expect(markAgentRunningMock).toHaveBeenCalledWith("s1", "u1", 7);
+    expect(sendKeysArgs()?.[4]).toBe("exec codex resume cx");
+  });
+});
+
+describe("relaunchAgentInTmux — failure containment", () => {
+  it("kills and confirms the tmux session before marking a submitted launch exited", async () => {
+    mockAgentRow(fullRow({ id: "s1", terminalType: "agent", agentProvider: "codex" }));
+    markAgentRunningMock.mockRejectedValueOnce(new Error("database unavailable"));
+    const { relaunchAgentInTmux } = await import("../agent-relaunch");
+
+    await expect(relaunchAgentInTmux("s1", "tmux-x")).rejects.toThrow(/database unavailable/);
+
+    expect(enterArgs()).toBeDefined();
+    expect(execFileCalls).toContainEqual(["kill-session", "-t", "tmux-x"]);
+    expect(markAgentExitedMock).toHaveBeenCalledWith("s1", "u1", 1, 1);
+  });
+
+  it("retains restarting when tmux cannot confirm the launched process stopped", async () => {
+    mockAgentRow(fullRow({ id: "s1", terminalType: "agent", agentProvider: "codex" }));
+    markAgentRunningMock.mockRejectedValueOnce(new Error("database unavailable"));
+    execFile.mockImplementation((
+      _cmd: string,
+      args: string[],
+      optsOrCb: unknown,
+      maybeCb?: (e: unknown, r: unknown) => void,
+    ) => {
+      const cb = (typeof optsOrCb === "function" ? optsOrCb : maybeCb) as (
+        e: unknown,
+        r: unknown,
+      ) => void;
+      execFileCalls.push(args);
+      if (args[0] === "kill-session") {
+        const error = Object.assign(new Error("permission denied"), { stderr: "permission denied" });
+        cb(error, { stdout: "", stderr: "permission denied" });
+        return;
+      }
+      if (args[0] === "has-session") {
+        cb(null, { stdout: "", stderr: "" });
+        return;
+      }
+      cb(null, { stdout: args[0] === "list-panes" ? "%7\t\n" : "", stderr: "" });
+    });
+    const { relaunchAgentInTmux } = await import("../agent-relaunch");
+
+    await expect(relaunchAgentInTmux("s1", "tmux-x")).rejects.toThrow(/database unavailable/);
+
+    expect(execFileCalls).toContainEqual(["has-session", "-t", "tmux-x"]);
+    expect(markAgentExitedMock).not.toHaveBeenCalled();
   });
 });

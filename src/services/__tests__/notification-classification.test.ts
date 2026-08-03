@@ -28,6 +28,10 @@ describe("notificationGroup", () => {
     expect(notificationGroup("agent_waiting")).toBe("agent_lifecycle");
     expect(notificationGroup("agent_exited")).toBe("agent_lifecycle");
   });
+  it("keeps heuristic and exact agent failures in the same group", () => {
+    expect(notificationGroup("agent_stuck")).toBe("agent_failure");
+    expect(notificationGroup("agent_error")).toBe("agent_failure");
+  });
   it("keeps info/update types in their own group", () =>
     expect(notificationGroup("info")).toBe("info"));
 });

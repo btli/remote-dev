@@ -34,7 +34,7 @@ type Equal<A, B> =
 // Compiles only when its argument resolves to the literal `true`.
 type Expect<T extends true> = T;
 
-// Per-table $inferSelect / $inferInsert parity for ALL 75 tables. A drift makes
+// Per-table $inferSelect / $inferInsert parity for all 85 tables. A drift makes
 // one of these `false`, which is a compile error on the `true[]` annotation.
 type _SchemaParity = [
   // users
@@ -175,6 +175,12 @@ type _SchemaParity = [
   // notificationEvents
   Expect<Equal<(typeof sqliteSchema.notificationEvents)["$inferSelect"], (typeof pgSchema.notificationEvents)["$inferSelect"]>>,
   Expect<Equal<(typeof sqliteSchema.notificationEvents)["$inferInsert"], (typeof pgSchema.notificationEvents)["$inferInsert"]>>,
+  // notificationDeliveries
+  Expect<Equal<(typeof sqliteSchema.notificationDeliveries)["$inferSelect"], (typeof pgSchema.notificationDeliveries)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.notificationDeliveries)["$inferInsert"], (typeof pgSchema.notificationDeliveries)["$inferInsert"]>>,
+  // agentStatusDeliveries
+  Expect<Equal<(typeof sqliteSchema.agentStatusDeliveries)["$inferSelect"], (typeof pgSchema.agentStatusDeliveries)["$inferSelect"]>>,
+  Expect<Equal<(typeof sqliteSchema.agentStatusDeliveries)["$inferInsert"], (typeof pgSchema.agentStatusDeliveries)["$inferInsert"]>>,
   // pushTokens
   Expect<Equal<(typeof sqliteSchema.pushTokens)["$inferSelect"], (typeof pgSchema.pushTokens)["$inferSelect"]>>,
   Expect<Equal<(typeof sqliteSchema.pushTokens)["$inferInsert"], (typeof pgSchema.pushTokens)["$inferInsert"]>>,
@@ -285,7 +291,7 @@ void _parityHolds;
 
 // Trivial runtime test so vitest treats this file as a (passing) suite. The
 // real guarantee is the compile-time tuple above, enforced by `tsc`.
-it("schema.sqlite and schema.pg expose the same 82 table exports", () => {
+it("schema.sqlite and schema.pg expose the same 85 table exports", () => {
   const sqliteTables = Object.keys(sqliteSchema).sort();
   const pgTables = Object.keys(pgSchema).sort();
   expect(sqliteTables).toEqual(pgTables);
@@ -298,6 +304,7 @@ it("schema.sqlite and schema.pg expose the same 82 table exports", () => {
   // claudeUsageLimitStates, claudeProfilePools, claudeProfilePoolMembers)
   // = 81. (x386.16 dropped message_replay_cursor.)
   // + 1 scheduleTemplates
-  // + 1 (remote-dev-n4x4.2: claudeUsageLimitWindows) = 83
-  expect(sqliteTables).toHaveLength(83);
+  // + 1 (remote-dev-n4x4.2: claudeUsageLimitWindows)
+  // + 2 (remote-dev-dexs lifecycle delivery receipts) = 85
+  expect(sqliteTables).toHaveLength(85);
 });

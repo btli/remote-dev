@@ -56,11 +56,26 @@ async function waitForPaneQuiescent(
   }
 }
 
+export interface LaunchCommandOptions {
+  /** Replace the interactive shell so pane exit tracks the launched process. */
+  replaceShell?: boolean;
+  /** Exact pane target for lifecycle sessions with auxiliary splits. */
+  targetPane?: string;
+}
+
 export interface TmuxSessionInfo {
   name: string;
   windowCount: number;
   created: Date;
   attached: boolean;
+}
+
+export type TmuxSessionPresence = "present" | "absent" | "unknown";
+
+function outputConfirmsTmuxAbsence(output: string): boolean {
+  return /can't find session|no server running|error connecting to .*(No such file or directory|Connection refused)/i.test(
+    output,
+  );
 }
 
 /**
@@ -85,9 +100,35 @@ export async function getTmuxVersion(): Promise<string | null> {
 /**
  * Check if a tmux session with the given name exists
  */
+export async function getSessionPresence(
+  sessionName: string,
+): Promise<TmuxSessionPresence> {
+  const result = await execFileNoThrow(
+    "tmux",
+    ["has-session", "-t", sessionName],
+    { timeout: 3_000 },
+  );
+  if (result.exitCode === 0) return "present";
+  return outputConfirmsTmuxAbsence(`${result.stderr}\n${result.stdout}`)
+    ? "absent"
+    : "unknown";
+}
+
 export async function sessionExists(sessionName: string): Promise<boolean> {
-  const result = await execFileNoThrow("tmux", ["has-session", "-t", sessionName]);
-  return result.exitCode === 0;
+  return (await getSessionPresence(sessionName)) === "present";
+}
+
+/** Stop the whole tmux session, never treating an ambiguous no-op as success. */
+export async function stopSessionAndConfirmAbsent(
+  sessionName: string,
+): Promise<boolean> {
+  const result = await execFileNoThrow(
+    "tmux",
+    ["kill-session", "-t", sessionName],
+    { timeout: 3_000 },
+  );
+  if (result.exitCode === 0) return true;
+  return (await getSessionPresence(sessionName)) === "absent";
 }
 
 /**
@@ -281,7 +322,8 @@ export async function killSession(sessionName: string): Promise<void> {
 export async function sendKeys(
   sessionName: string,
   command: string,
-  pressEnter = true
+  pressEnter = true,
+  targetPane = sessionName,
 ): Promise<void> {
   if (!(await sessionExists(sessionName))) {
     throw new TmuxServiceError(
@@ -301,7 +343,7 @@ export async function sendKeys(
     // payload is silently dropped/misinterpreted (literal-mode correctness +
     // a minor injection surface as more dynamic commands route through here).
     if (command) {
-      await execFile("tmux", ["send-keys", "-t", sessionName, "-l", "--", command]);
+      await execFile("tmux", ["send-keys", "-t", targetPane, "-l", "--", command]);
     }
 
     // Send Enter key separately. This works reliably across shells and
@@ -309,13 +351,114 @@ export async function sendKeys(
     // 1. The text was sent literally without interpretation
     // 2. Enter/C-m is a recognized tmux key binding that sends the actual keypress
     if (pressEnter) {
-      await execFile("tmux", ["send-keys", "-t", sessionName, "Enter"]);
+      await execFile("tmux", ["send-keys", "-t", targetPane, "Enter"]);
     }
   } catch (error) {
     throw new TmuxServiceError(
       `Failed to send keys to tmux session: ${(error as Error).message}`,
       "SEND_KEYS_FAILED",
       (error as Error).message
+    );
+  }
+}
+
+/** Wait for shell initialization, then launch a command into the pane. */
+export async function launchCommand(
+  sessionName: string,
+  command: string,
+  options: LaunchCommandOptions = {},
+): Promise<void> {
+  const targetPane = options.targetPane ?? sessionName;
+  await waitForPaneQuiescent(targetPane);
+  const launch = options.replaceShell ? `exec ${command}` : command;
+  await sendKeys(sessionName, launch, true, targetPane);
+}
+
+/** Resolve the one pane marked as the lifecycle owner (or a safe single-pane legacy session). */
+export async function resolveAgentPaneId(sessionName: string): Promise<string> {
+  const { stdout } = await execFile("tmux", [
+    "list-panes",
+    "-s",
+    "-t",
+    sessionName,
+    "-F",
+    "#{pane_id}\t#{@rdv_agent_pane}",
+  ]);
+  const panes = stdout
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => {
+      const [paneId, marker] = line.split("\t");
+      return { paneId: paneId.trim(), marked: marker?.trim() === "1" };
+    })
+    .filter(({ paneId }) => /^%\d+$/.test(paneId));
+  const marked = panes.filter((pane) => pane.marked);
+  const selected = marked.length === 1 ? marked[0] : panes.length === 1 ? panes[0] : null;
+  if (!selected) {
+    throw new TmuxServiceError(
+      `Failed to resolve one agent pane for ${sessionName}`,
+      "SESSION_NOT_FOUND",
+    );
+  }
+  return selected.paneId;
+}
+
+/**
+ * Keep an exited agent pane addressable until the UI restarts/closes it and use
+ * pane-died so tmux exposes the dead pane's real status in the correct session.
+ */
+export async function configureAgentPaneLifecycle(
+  sessionName: string,
+  hookCommand: string,
+  targetPane?: string,
+): Promise<void> {
+  const paneId = targetPane ?? await resolveAgentPaneId(sessionName);
+  // Mark the pane so reconciliation can ignore auxiliary panes and bind both
+  // options at pane scope. A session-scoped pane-died hook fires for every
+  // split, which can falsely report Codex exited while its pane is still live.
+  await execFile("tmux", [
+    "set-option",
+    "-p",
+    "-t",
+    paneId,
+    "@rdv_agent_pane",
+    "1",
+  ]);
+  await execFile("tmux", [
+    "set-option",
+    "-p",
+    "-t",
+    paneId,
+    "remain-on-exit",
+    "on",
+  ]);
+  await execFile("tmux", [
+    "set-hook",
+    "-p",
+    "-t",
+    paneId,
+    "pane-died",
+    hookCommand,
+  ]);
+}
+
+/** Replace a dead or running pane with a fresh bootstrap shell. */
+export async function respawnPane(sessionName: string): Promise<string> {
+  if (!(await sessionExists(sessionName))) {
+    throw new TmuxServiceError(
+      `Tmux session "${sessionName}" does not exist`,
+      "SESSION_NOT_FOUND",
+    );
+  }
+  try {
+    const paneId = await resolveAgentPaneId(sessionName);
+    await execFile("tmux", ["respawn-pane", "-k", "-t", paneId]);
+    return paneId;
+  } catch (error) {
+    throw new TmuxServiceError(
+      `Failed to respawn tmux pane: ${(error as Error).message}`,
+      "RESPAWN_FAILED",
+      (error as Error).message,
     );
   }
 }
@@ -616,6 +759,7 @@ export async function unsetSessionEnvironment(
  * Hook trigger events for tmux.
  */
 export type TmuxHookName =
+  | "pane-died"
   | "pane-exited"
   | "session-closed"
   | "client-attached"

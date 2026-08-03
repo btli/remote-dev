@@ -10,7 +10,7 @@
  * Two independent guards:
  *
  *  1. **Monotonic arrival.** A write only wins when its server-arrival time
- *     (`incomingAt`) is newer-or-equal than the persisted one (`currentAt`), or
+ *     (`incomingAt`) is strictly newer than the persisted one (`currentAt`), or
  *     no arrival has been recorded yet. This kills the late-hook race where a
  *     slow SubagentStop "running" (5s timeout) lands after a newer Stop "idle"
  *     (15s timeout) and resurrects the stale status.
@@ -35,13 +35,27 @@ export interface StatusWriteDecisionInput {
   source: string | null;
 }
 
+let lastArrivalOrder = 0;
+
+/**
+ * Allocate a safe-integer order token at request arrival, before authentication
+ * or any other await can invert completion order. Multiplying epoch-ms by 1000
+ * leaves room for same-millisecond arrivals while remaining below 2^53 until
+ * well beyond the expected lifetime of this schema.
+ */
+export function nextAgentStatusArrivalOrder(nowMs = Date.now()): number {
+  const wallClockFloor = nowMs * 1_000;
+  lastArrivalOrder = Math.max(wallClockFloor, lastArrivalOrder + 1);
+  return lastArrivalOrder;
+}
+
 /**
  * Returns true when the incoming write should be applied to the DB.
  * Mirrors the atomic SQL WHERE guard in `terminal.ts`.
  */
 export function shouldApplyStatusWrite(input: StatusWriteDecisionInput): boolean {
   // Guard 1: monotonic arrival ordering.
-  if (input.currentAt != null && input.incomingAt < input.currentAt) {
+  if (input.currentAt != null && input.incomingAt <= input.currentAt) {
     return false;
   }
 

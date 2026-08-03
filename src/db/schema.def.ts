@@ -399,13 +399,19 @@ export const schema: SchemaDefinition = [
       { field: "agentExitState", dbName: "agent_exit_state", kind: "text", typeBrand: "AgentExitState" },
       { field: "agentExitCode", dbName: "agent_exit_code", kind: "integer" },
       { field: "agentExitedAt", dbName: "agent_exited_at", kind: "timestampMs" },
+      // Durable notification intent: null means an exited generation still
+      // needs its lifecycle record materialized/repaired.
+      { field: "agentExitNotificationAt", dbName: "agent_exit_notification_at", kind: "timestampMs" },
       { field: "agentRestartCount", dbName: "agent_restart_count", kind: "integer", default: { kind: "value", value: "0" } },
       { field: "agentActivityStatus", dbName: "agent_activity_status", kind: "text" },
       // [remote-dev-1aa5] Server-arrival epoch ms of the most recent activity
       // status write. Plain integer (NOT timestampMs) so the value stays a raw
       // number comparable with `<=` in the monotonic WHERE guard that rejects
       // out-of-order writes. Nullable: older rows / non-agent sessions have none.
-      { field: "agentActivityStatusAt", dbName: "agent_activity_status_at", kind: "integer" },
+      { field: "agentActivityStatusAt", dbName: "agent_activity_status_at", kind: "bigint" },
+      // Strict monotonic order token. Date.now()*1000 plus a per-process
+      // same-millisecond sequence remains within JS's safe integer range.
+      { field: "agentActivityOrder", dbName: "agent_activity_order", kind: "bigint" },
       { field: "typeMetadata", dbName: "type_metadata", kind: "text" },
       { field: "scopeKey", dbName: "scope_key", kind: "text" },
       { field: "parentSessionId", dbName: "parent_session_id", kind: "text" },
@@ -1084,6 +1090,46 @@ export const schema: SchemaDefinition = [
       { name: "notification_event_user_read_idx", columns: ["userId","readAt"] },
       // [y5ch.5] Lookup for coalescing an open (unread) row in a group.
       { name: "notification_event_coalesce_idx", columns: ["userId","sessionId","coalesceKey","readAt"] },
+    ],
+  },
+  {
+    // Stable hook-delivery receipts are intentionally separate from visible
+    // notification rows: exact HTTP retries dedupe here while distinct events
+    // still coalesce into the user's one open notification.
+    exportName: "notificationDeliveries",
+    sqlName: "notification_delivery",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true },
+      { field: "userId", dbName: "user_id", kind: "text", notNull: true, references: { table: "users", column: "id", onDelete: "cascade" } },
+      { field: "notificationId", dbName: "notification_id", kind: "text", references: { table: "notificationEvents", column: "id", onDelete: "set null" } },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "notification_delivery_created_idx", columns: ["createdAt"] },
+    ],
+  },
+  {
+    // Status receipts make lifecycle state mutation idempotent independently
+    // from visible notification coalescing. A retry can repair notification
+    // storage without reapplying or rebroadcasting stale activity state.
+    exportName: "agentStatusDeliveries",
+    sqlName: "agent_status_delivery",
+    columns: [
+      { field: "id", dbName: "id", kind: "text", primaryKey: true },
+      { field: "userId", dbName: "user_id", kind: "text", notNull: true, references: { table: "users", column: "id", onDelete: "cascade" } },
+      { field: "sessionId", dbName: "session_id", kind: "text", notNull: true, references: { table: "terminalSessions", column: "id", onDelete: "cascade" } },
+      { field: "generation", dbName: "generation", kind: "integer", notNull: true },
+      { field: "deliveryId", dbName: "delivery_id", kind: "text", notNull: true },
+      { field: "status", dbName: "status", kind: "text", notNull: true },
+      { field: "source", dbName: "source", kind: "text" },
+      { field: "statusAt", dbName: "status_at", kind: "bigint", notNull: true },
+      { field: "arrivalOrder", dbName: "arrival_order", kind: "bigint", notNull: true },
+      { field: "applied", dbName: "applied", kind: "boolean", notNull: true, default: { kind: "value", value: "false" } },
+      { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
+    ],
+    indexes: [
+      { name: "agent_status_delivery_created_idx", columns: ["createdAt"] },
+      { name: "agent_status_delivery_session_idx", columns: ["sessionId","generation"] },
     ],
   },
   {

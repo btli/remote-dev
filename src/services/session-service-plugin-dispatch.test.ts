@@ -31,12 +31,25 @@ const hoisted = vi.hoisted(() => {
     state,
     tmuxCreate: vi.fn(async () => undefined),
     tmuxKill: vi.fn(async () => undefined),
+    tmuxExists: vi.fn(async () => true),
+    tmuxSetEnv: vi.fn(async () => undefined),
+    tmuxGetEnv: vi.fn(async () => ({ RDV_API_KEY: "test-api-key" })),
+    tmuxConfigureLifecycle: vi.fn(async () => undefined),
+    tmuxLaunch: vi.fn(async () => undefined),
+    installAgentHooks: vi.fn(async () => undefined),
+    createApiKey: vi.fn(async () => ({ key: "test-api-key" })),
+    dbDeleteWhere: vi.fn(async () => undefined),
     insertReturning: vi.fn<(values: Row) => Promise<Row[]>>(),
     findManyDedup: vi.fn<(args: unknown) => Promise<Row[]>>(),
     findManyTabOrder: vi.fn<(args: unknown) => Promise<Row[]>>(),
     getResolvedPreferences: vi.fn(async () => ({
       defaultWorkingDirectory: "/tmp",
     })),
+    getFolderPreferences: vi.fn(async (): Promise<{
+      localRepoPath?: string | null;
+      defaultWorkingDirectory?: string | null;
+      githubRepoId?: string | null;
+    } | null> => null),
     getPortsForFolder: vi.fn<
       (folderId: string, userId: string) => Promise<
         Array<{ port: number; variableName: string; projectId: string | null }>
@@ -44,8 +57,9 @@ const hoisted = vi.hoisted(() => {
     >(),
     claimPortsForSession: vi.fn(async () => undefined),
     releasePortsForSession: vi.fn(async () => undefined),
-    createApiKey: vi.fn(async () => ({ key: "test-api-key" })),
+    isGitRepo: vi.fn(async () => false),
     createBranchWithWorktree: vi.fn(),
+    removeWorktree: vi.fn(async () => undefined),
     resolveVerifiedProviderExecutable: vi.fn(
       async (_provider: string, command: string): Promise<string | null> => command,
     ),
@@ -65,6 +79,14 @@ const dbMocks = {
 const tmuxCreate = hoisted.tmuxCreate;
 const tmuxKill = hoisted.tmuxKill;
 const ensureClipboardShims = hoisted.ensureClipboardShims;
+const tmuxExists = hoisted.tmuxExists;
+const tmuxSetEnv = hoisted.tmuxSetEnv;
+const tmuxGetEnv = hoisted.tmuxGetEnv;
+const tmuxConfigureLifecycle = hoisted.tmuxConfigureLifecycle;
+const tmuxLaunch = hoisted.tmuxLaunch;
+const installAgentHooks = hoisted.installAgentHooks;
+const createApiKey = hoisted.createApiKey;
+const dbDeleteWhere = hoisted.dbDeleteWhere;
 
 vi.mock("@/db", () => ({
   db: {
@@ -95,7 +117,7 @@ vi.mock("@/db", () => ({
       })),
     })),
     delete: vi.fn(() => ({
-      where: vi.fn(async () => undefined),
+      where: hoisted.dbDeleteWhere,
     })),
     update: vi.fn(() => ({
       set: vi.fn(() => ({ where: vi.fn(async () => undefined) })),
@@ -137,8 +159,11 @@ vi.mock("@/services/tmux-service", () => ({
   generateSessionName: (id: string) => `rdv-${id}`,
   createSession: hoisted.tmuxCreate,
   killSession: hoisted.tmuxKill,
-  setSessionEnvironment: vi.fn(async () => undefined),
-  setHook: vi.fn(async () => undefined),
+  sessionExists: hoisted.tmuxExists,
+  setSessionEnvironment: hoisted.tmuxSetEnv,
+  getSessionEnvironment: hoisted.tmuxGetEnv,
+  configureAgentPaneLifecycle: hoisted.tmuxConfigureLifecycle,
+  launchCommand: hoisted.tmuxLaunch,
   TmuxServiceError: class TmuxServiceError extends Error {},
 }));
 
@@ -152,10 +177,10 @@ vi.mock("@/server/validate-cwd", () => ({
 }));
 
 vi.mock("@/services/worktree-service", () => ({
-  isGitRepo: vi.fn(async () => false),
+  isGitRepo: hoisted.isGitRepo,
   createBranchWithWorktree: hoisted.createBranchWithWorktree,
   copyEnvFilesToWorktree: vi.fn(),
-  removeWorktree: vi.fn(async () => undefined),
+  removeWorktree: hoisted.removeWorktree,
   sanitizeBranchName: (s: string) => s,
   WorktreeServiceError: class WorktreeServiceError extends Error {},
 }));
@@ -168,13 +193,13 @@ vi.mock("@/services/agent-profile-service", () => ({
   getProfile: vi.fn(async () => null),
   getProfileEnvironment: vi.fn(async () => null),
   resolveEffectiveHome: vi.fn(async () => null),
-  installAgentHooks: vi.fn(async () => undefined),
+  installAgentHooks: hoisted.installAgentHooks,
   validateAgentHooks: vi.fn(async () => ({ valid: true })),
 }));
 
 vi.mock("@/services/preferences-service", () => ({
   getResolvedPreferences: hoisted.getResolvedPreferences,
-  getFolderPreferences: vi.fn(async () => null),
+  getFolderPreferences: hoisted.getFolderPreferences,
   getEnvironmentForSession: vi.fn(async () => ({})),
   getFolderGitIdentity: vi.fn(async () => ({ env: {} })),
 }));
@@ -245,6 +270,7 @@ import {
   createSession,
   createSessionWithDedupFlag,
   closeSession,
+  resumeSession,
   SessionServiceError,
 } from "./session-service";
 
@@ -318,9 +344,26 @@ describe("SessionService.createSession — plugin dispatch", () => {
     TerminalTypeServerRegistry.clear();
     dbState.inserted = [];
     hoisted.state.queryFindManyCalls = 0;
+    hoisted.state.closeSessionRow = null;
     tmuxCreate.mockClear();
     tmuxKill.mockClear();
     ensureClipboardShims.mockClear();
+    tmuxExists.mockReset();
+    tmuxExists.mockResolvedValue(true);
+    tmuxSetEnv.mockReset();
+    tmuxSetEnv.mockResolvedValue(undefined);
+    tmuxGetEnv.mockReset();
+    tmuxGetEnv.mockResolvedValue({ RDV_API_KEY: "test-api-key" });
+    tmuxConfigureLifecycle.mockReset();
+    tmuxConfigureLifecycle.mockResolvedValue(undefined);
+    tmuxLaunch.mockReset();
+    tmuxLaunch.mockResolvedValue(undefined);
+    installAgentHooks.mockReset();
+    installAgentHooks.mockResolvedValue(undefined);
+    createApiKey.mockReset();
+    createApiKey.mockResolvedValue({ key: "test-api-key" });
+    dbDeleteWhere.mockReset();
+    dbDeleteWhere.mockResolvedValue(undefined);
 
     // Default: dedup query finds nothing, tab-order query returns empty
     dbMocks.findManyDedup.mockResolvedValue([]);
@@ -331,6 +374,8 @@ describe("SessionService.createSession — plugin dispatch", () => {
     hoisted.getResolvedPreferences.mockResolvedValue({
       defaultWorkingDirectory: "/tmp",
     });
+    hoisted.getFolderPreferences.mockReset();
+    hoisted.getFolderPreferences.mockResolvedValue(null);
     // Default: project has no registered ports → claim is skipped entirely.
     hoisted.getPortsForFolder.mockReset();
     hoisted.getPortsForFolder.mockResolvedValue([]);
@@ -343,7 +388,11 @@ describe("SessionService.createSession — plugin dispatch", () => {
       async (_provider: string, command: string): Promise<string | null> => command,
     );
     hoisted.createApiKey.mockClear();
+    hoisted.isGitRepo.mockReset();
+    hoisted.isGitRepo.mockResolvedValue(false);
     hoisted.createBranchWithWorktree.mockClear();
+    hoisted.removeWorktree.mockReset();
+    hoisted.removeWorktree.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -520,6 +569,149 @@ describe("SessionService.createSession — plugin dispatch", () => {
     ];
     expect(ensureClipboardShims).not.toHaveBeenCalled();
     expect(env).toEqual({ TERM: "xterm-256color" });
+  });
+
+  it("rolls back the lifecycle key and worktree when Codex hook installation fails", async () => {
+    TerminalTypeServerRegistry.clear();
+    TerminalTypeServerRegistry.register(
+      makeFakePlugin("agent", { useTmux: true, shellCommand: "codex" }),
+    );
+    TerminalTypeServerRegistry.setDefaultType("agent");
+    hoisted.isGitRepo.mockResolvedValue(true);
+    hoisted.getFolderPreferences.mockResolvedValue({ localRepoPath: "/repo" });
+    hoisted.createBranchWithWorktree.mockResolvedValue({
+      worktreePath: "/repo/worktrees/fix-cleanup",
+      created: true,
+    });
+    installAgentHooks.mockRejectedValueOnce(new Error("invalid Codex hooks.json"));
+
+    await expect(createSession("user-1", {
+      name: "Codex cleanup",
+      terminalType: "agent",
+      agentProvider: "codex",
+      autoLaunchAgent: true,
+      createWorktree: true,
+      projectId: "project-1",
+      worktreeType: "fix",
+      featureDescription: "cleanup",
+    })).rejects.toThrow("invalid Codex hooks.json");
+
+    expect(createApiKey).toHaveBeenCalledTimes(1);
+    // One delete removes a stale same-name key before minting; the second
+    // revokes the newly minted key during hook-install rollback.
+    expect(dbDeleteWhere).toHaveBeenCalledTimes(2);
+    expect(hoisted.removeWorktree).toHaveBeenCalledWith(
+      "/repo",
+      "/repo/worktrees/fix-cleanup",
+      true,
+    );
+    expect(tmuxCreate).not.toHaveBeenCalled();
+    expect(dbState.inserted).toHaveLength(0);
+  });
+
+  it("preserves a reused worktree when Codex hook installation fails", async () => {
+    TerminalTypeServerRegistry.clear();
+    TerminalTypeServerRegistry.register(
+      makeFakePlugin("agent", { useTmux: true, shellCommand: "codex" }),
+    );
+    TerminalTypeServerRegistry.setDefaultType("agent");
+    hoisted.isGitRepo.mockResolvedValue(true);
+    hoisted.getFolderPreferences.mockResolvedValue({ localRepoPath: "/repo" });
+    hoisted.createBranchWithWorktree.mockResolvedValue({
+      worktreePath: "/repo/worktrees/fix-reused",
+      created: false,
+    });
+    installAgentHooks.mockRejectedValueOnce(new Error("invalid Codex hooks.json"));
+
+    await expect(createSession("user-1", {
+      name: "Codex reused cleanup",
+      terminalType: "agent",
+      agentProvider: "codex",
+      autoLaunchAgent: true,
+      createWorktree: true,
+      projectId: "project-1",
+      worktreeType: "fix",
+      featureDescription: "reused",
+    })).rejects.toThrow("invalid Codex hooks.json");
+
+    expect(dbDeleteWhere).toHaveBeenCalledTimes(2);
+    expect(hoisted.removeWorktree).not.toHaveBeenCalled();
+    expect(tmuxCreate).not.toHaveBeenCalled();
+    expect(dbState.inserted).toHaveLength(0);
+  });
+
+  it("preserves a reused worktree when pane lifecycle setup fails", async () => {
+    TerminalTypeServerRegistry.clear();
+    TerminalTypeServerRegistry.register(
+      makeFakePlugin("agent", { useTmux: true, shellCommand: "codex" }),
+    );
+    TerminalTypeServerRegistry.setDefaultType("agent");
+    hoisted.isGitRepo.mockResolvedValue(true);
+    hoisted.getFolderPreferences.mockResolvedValue({ localRepoPath: "/repo" });
+    hoisted.createBranchWithWorktree.mockResolvedValue({
+      worktreePath: "/repo/worktrees/fix-reused-pane",
+      created: false,
+    });
+    tmuxConfigureLifecycle.mockRejectedValueOnce(new Error("tmux hook failed"));
+
+    await expect(createSession("user-1", {
+      name: "Codex reused pane",
+      terminalType: "agent",
+      agentProvider: "codex",
+      autoLaunchAgent: true,
+      createWorktree: true,
+      projectId: "project-1",
+      worktreeType: "fix",
+      featureDescription: "reused-pane",
+    })).rejects.toMatchObject({ code: "AGENT_CALLBACK_SETUP_FAILED" });
+
+    expect(tmuxCreate).toHaveBeenCalledTimes(1);
+    expect(tmuxKill).toHaveBeenCalledTimes(1);
+    expect(dbDeleteWhere).toHaveBeenCalledTimes(2);
+    expect(hoisted.removeWorktree).not.toHaveBeenCalled();
+    expect(dbState.inserted).toHaveLength(0);
+  });
+
+  it("repairs Codex hooks in the durable CODEX_HOME when resuming a session", async () => {
+    const plugin: TerminalTypeServerPlugin = {
+      ...makeFakePlugin("agentlike", { useTmux: true, shellCommand: "codex" }),
+      onSessionExit: () => ({
+        showExitScreen: true,
+        canRestart: true,
+        autoClose: false,
+      }),
+    };
+    TerminalTypeServerRegistry.register(plugin);
+    hoisted.state.closeSessionRow = makeDbRow({
+      id: "resume-codex",
+      terminalType: "agentlike",
+      agentProvider: "codex",
+      profileId: null,
+      typeMetadata: JSON.stringify({
+        resumeBinding: {
+          provider: "codex",
+          env: { CODEX_HOME: "/profiles/codex-home" },
+        },
+      }),
+    });
+
+    await resumeSession("resume-codex", "user-1");
+
+    expect(installAgentHooks).toHaveBeenCalledWith(
+      expect.any(String),
+      "codex",
+      expect.objectContaining({
+        CODEX_HOME: "/profiles/codex-home",
+        RDV_SESSION_ID: "resume-codex",
+      }),
+    );
+    // Resume repairs env/hooks but must not rotate the key underneath the
+    // process that is still running with the old RDV_API_KEY.
+    expect(createApiKey).not.toHaveBeenCalled();
+    expect(tmuxConfigureLifecycle).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringContaining("generation=0"),
+    );
   });
 
   it("does NOT thread any folder-level wrapper command into plugin input (regression for removed startupCommand mechanism)", async () => {
@@ -772,6 +964,7 @@ describe("SessionService.createSession — scope-key dedup", () => {
     expect(dbMocks.insertReturning).toHaveBeenCalledTimes(1);
     // Two dedup queries total: before INSERT (empty) and after conflict (winner).
     expect(dbMocks.findManyDedup).toHaveBeenCalledTimes(2);
+    expect(dbDeleteWhere).toHaveBeenCalled();
   });
 
   it("does NOT attempt race-recovery SELECT when error is not a constraint violation", async () => {
@@ -1011,8 +1204,15 @@ describe("SessionService.createSession — server-resolved working dir (remote-d
       string | undefined,
       Record<string, string> | undefined,
     ];
-    // claude provider → command "claude" with no default flags.
-    expect(shellCmd).toBe("claude");
+    // Agent sessions start as a bootstrap shell so lifecycle hooks can be
+    // installed and the DB row persisted before the process can exit.
+    expect(shellCmd).toBeUndefined();
+    // claude then replaces that shell and owns the pane.
+    expect(tmuxLaunch).toHaveBeenCalledWith(
+      expect.any(String),
+      "claude",
+      { replaceShell: true },
+    );
 
     // The merged provider is also persisted on the row.
     const inserted = dbState.inserted[0] as { agentProvider: string | null };
@@ -1066,9 +1266,16 @@ describe("SessionService.createSession — server-resolved working dir (remote-d
     const [, , shellCmd] = tmuxCreate.mock.calls[0] as unknown as [
       string,
       string,
-      string,
+      string | undefined,
     ];
-    expect(shellCmd).toBe("'/verified/cursor agent'");
+    // Lifecycle panes start as a bootstrap shell so the authenticated exit
+    // hook and DB row exist before the verified agent takes ownership.
+    expect(shellCmd).toBeUndefined();
+    expect(tmuxLaunch).toHaveBeenCalledWith(
+      expect.any(String),
+      "'/verified/cursor agent'",
+      { replaceShell: true },
+    );
 
     const inserted = dbState.inserted[0] as { typeMetadata: string | null };
     const metadata = JSON.parse(inserted.typeMetadata!);

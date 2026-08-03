@@ -25,6 +25,24 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 let insertedValues: Record<string, unknown> | null = null;
 /** Captured options passed to the mocked `issueProxyToken`. */
 let proxyTokenOpts: { providerScope?: string[] } | null = null;
+let installedHooks: Array<{
+  configDir: string;
+  provider: string;
+  env?: Record<string, string>;
+}> = [];
+let installedTmuxLifecycles: Array<{
+  sessionName: string;
+  command: string;
+}> = [];
+let launchedTmuxCommands: Array<{
+  sessionName: string;
+  command: string;
+  options?: { replaceShell?: boolean };
+}> = [];
+let createdTmuxSessions: Array<{
+  startupCommand: string | undefined;
+  env: Record<string, string> | undefined;
+}> = [];
 
 /**
  * Profile-resolution doubles (mutated per-test before importing the service):
@@ -47,6 +65,7 @@ const resolvedPreferences: {
   defaultWorkingDirectory?: string;
   agentProviderSettings?: Record<string, unknown>;
 } = {};
+let resolvedFolderEnvironment: Record<string, string> = {};
 
 /**
  * Install all the I/O-boundary mocks. Called inside each test AFTER
@@ -57,6 +76,10 @@ const resolvedPreferences: {
 function installMocks() {
   insertedValues = null;
   proxyTokenOpts = null;
+  installedHooks = [];
+  installedTmuxLifecycles = [];
+  launchedTmuxCommands = [];
+  createdTmuxSessions = [];
 
   // --- Database: dedup SELECTs return empty, INSERT echoes the row back. ---
   const insertChain = {
@@ -111,9 +134,26 @@ function installMocks() {
   // --- tmux: record nothing, just succeed. ---
   vi.doMock("@/services/tmux-service", () => ({
     generateSessionName: (id: string) => `rdv-${id}`,
-    createSession: vi.fn().mockResolvedValue(undefined),
+    createSession: vi.fn(async (
+      _name: string,
+      _cwd: string,
+      startupCommand?: string,
+      env?: Record<string, string>,
+    ) => {
+      createdTmuxSessions.push({ startupCommand, env });
+    }),
     setSessionEnvironment: vi.fn().mockResolvedValue(undefined),
-    setHook: vi.fn().mockResolvedValue(undefined),
+    getSessionEnvironment: vi.fn().mockResolvedValue({ RDV_API_KEY: "rdv_test_key" }),
+    configureAgentPaneLifecycle: vi.fn(async (sessionName: string, command: string) => {
+      installedTmuxLifecycles.push({ sessionName, command });
+    }),
+    launchCommand: vi.fn(async (
+      sessionName: string,
+      command: string,
+      options?: { replaceShell?: boolean },
+    ) => {
+      launchedTmuxCommands.push({ sessionName, command, options });
+    }),
     killSession: vi.fn().mockResolvedValue(undefined),
     TmuxServiceError: class TmuxServiceError extends Error {},
   }));
@@ -130,13 +170,13 @@ function installMocks() {
   vi.doMock("@/services/preferences-service", () => ({
     getResolvedPreferences: vi.fn().mockResolvedValue(resolvedPreferences),
     getFolderPreferences: vi.fn().mockResolvedValue(null),
-    getEnvironmentForSession: vi.fn().mockResolvedValue({}),
+    getEnvironmentForSession: vi.fn(async () => resolvedFolderEnvironment),
     getFolderGitIdentity: vi.fn().mockResolvedValue({ env: {} }),
   }));
 
   // --- profile: getProfile resolves ONLY ids in `ownedProfiles` (an unowned /
-  // stale pin → null). installAgentHooks / validateAgentHooks run only on the
-  // claude path (ensureAgentConfig), so stub them too. ---
+  // stale pin → null). Capture hook installation so provider dispatch remains
+  // aligned with the CLI that is actually launched. ---
   vi.doMock("@/services/agent-profile-service", () => ({
     getProfile: vi.fn(async (profileId: string) => {
       const p = ownedProfiles[profileId];
@@ -154,7 +194,11 @@ function installMocks() {
         : null;
     }),
     getProfileEnvironment: vi.fn().mockResolvedValue(undefined),
-    installAgentHooks: vi.fn().mockResolvedValue(undefined),
+    installAgentHooks: vi.fn(
+      async (configDir: string, provider: string, env?: Record<string, string>) => {
+        installedHooks.push({ configDir, provider, env });
+      },
+    ),
     validateAgentHooks: vi.fn().mockResolvedValue({ valid: true }),
   }));
 
@@ -241,9 +285,11 @@ beforeEach(() => {
   // Default profile-resolution doubles: nothing owned, no auto-select result.
   ownedProfiles = {};
   autoSelectResult = { profileId: null, wasAutoSelected: false };
+  resolvedFolderEnvironment = {};
   installMocks();
   // Enable the model-proxy so providerScopeFor(effectiveAgentProvider) runs.
   process.env.RDV_MODEL_PROXY_ENABLED = "1";
+  vi.stubEnv("HOME", "/home/rdv-test");
 });
 
 afterEach(() => {
@@ -282,6 +328,41 @@ describe("createSession provider resolution (remote-dev-u02r)", () => {
 
     // Sanity: the mapped session surfaces the merged provider too.
     expect(session.agentProvider).toBe("codex");
+
+    // Codex must receive hooks in the same HOME-derived config root it launches
+    // with; the old provider guard skipped this call entirely.
+    expect(installedHooks).toContainEqual({
+      configDir: "/home/rdv-test",
+      provider: "codex",
+      env: expect.objectContaining({ RDV_SESSION_ID: session.id }),
+    });
+
+    // The process-exit fallback must keep the dead pane addressable and include
+    // tmux's authoritative status + signal. Authentication and generation are
+    // read from the tmux session environment when the hook fires.
+    expect(installedTmuxLifecycles).toContainEqual({
+      sessionName: session.tmuxSessionName,
+      command: expect.stringMatching(
+        /Authorization: Bearer.*generation=0.*exitCode=#\{pane_dead_status\}.*signal=#\{pane_dead_signal\}/,
+      ),
+    });
+
+    // The agent must replace the bootstrap shell so its exit is the pane exit.
+    // Launch happens only after the DB row exists (the service defers it until
+    // after insert), closing the instant-crash callback race.
+    expect(launchedTmuxCommands).toContainEqual({
+      sessionName: session.tmuxSessionName,
+      command: "codex",
+      options: { replaceShell: true },
+    });
+    expect(createdTmuxSessions).toContainEqual({
+      startupCommand: undefined,
+      env: expect.objectContaining({
+        RDV_AGENT_PROVIDER: "codex",
+        DISABLE_AUTO_UPDATE: "true",
+        DISABLE_UPDATE_PROMPT: "true",
+      }),
+    });
   });
 
   it("still records claude when neither input nor preference default is set", async () => {
@@ -306,6 +387,27 @@ describe("createSession provider resolution (remote-dev-u02r)", () => {
     };
     expect(meta.resumeBinding?.provider).toBe("claude");
     expect(proxyTokenOpts!.providerScope).toEqual(["anthropic"]);
+  });
+
+  it("passes the launch-time CODEX_HOME override to hook installation", async () => {
+    resolvedFolderEnvironment = { CODEX_HOME: "/custom/codex-home" };
+    const { createSessionWithDedupFlag } = await import(
+      "@/services/session-service"
+    );
+
+    await createSessionWithDedupFlag("u1", {
+      projectId: "folder-1",
+      name: "Agent",
+      terminalType: "agent",
+      agentProvider: "codex",
+      autoLaunchAgent: true,
+    });
+
+    expect(installedHooks).toContainEqual({
+      configDir: "/home/rdv-test",
+      provider: "codex",
+      env: expect.objectContaining({ CODEX_HOME: "/custom/codex-home" }),
+    });
   });
 
   it("honors an explicit input provider over the preference default", async () => {

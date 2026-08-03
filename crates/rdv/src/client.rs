@@ -1,5 +1,6 @@
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use std::time::Duration;
 
 use crate::config::{ConnectionMethod, ServerConfig};
 
@@ -54,10 +55,11 @@ impl Client {
         };
         let url = format!("{base}{path}");
         let builder = client.request(method, &url);
-        if !is_internal {
-            if let Some(ref key) = self.api_key {
-                return builder.header("authorization", format!("Bearer {key}"));
-            }
+        // Lifecycle endpoints are localhost-only but still cross a multi-user
+        // trust boundary. Send the session key to both API and terminal routes;
+        // the terminal server binds it to the exact session callback.
+        if let Some(ref key) = self.api_key {
+            return builder.header("authorization", format!("Bearer {key}"));
         }
         builder
     }
@@ -146,6 +148,27 @@ impl Client {
         let resp = self
             .request(reqwest::Method::POST, path)
             .query(query)
+            .send()
+            .await?;
+        handle_response(resp).await
+    }
+
+    /// POST an empty body with a query and a per-request deadline. Lifecycle
+    /// hooks use this bounded variant so a wedged local terminal server cannot
+    /// hold the agent indefinitely or prevent the shell transport fallback.
+    pub async fn post_empty_with_query_timeout<Q>(
+        &self,
+        path: &str,
+        query: &Q,
+        timeout: Duration,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error>>
+    where
+        Q: Serialize + ?Sized,
+    {
+        let resp = self
+            .request(reqwest::Method::POST, path)
+            .query(query)
+            .timeout(timeout)
             .send()
             .await?;
         handle_response(resp).await

@@ -14,6 +14,8 @@ import type {
 } from "@/application/ports/TmuxGateway";
 import { TmuxEnvironment } from "@/domain/value-objects/TmuxEnvironment";
 import * as TmuxService from "@/services/tmux-service";
+import { buildAgentExitHookCommand } from "@/services/agent-exit-hook";
+import { prepareAgentLaunch } from "@/services/agent-launch-preparation";
 
 export class TmuxGatewayImpl implements TmuxGateway {
   /**
@@ -42,6 +44,16 @@ export class TmuxGatewayImpl implements TmuxGateway {
    */
   async sessionExists(sessionName: string): Promise<boolean> {
     return TmuxService.sessionExists(sessionName);
+  }
+
+  async getSessionPresence(
+    sessionName: string,
+  ): Promise<import("@/application/ports/TmuxGateway").TmuxSessionPresence> {
+    return TmuxService.getSessionPresence(sessionName);
+  }
+
+  async stopSessionAndConfirmAbsent(sessionName: string): Promise<boolean> {
+    return TmuxService.stopSessionAndConfirmAbsent(sessionName);
   }
 
   /**
@@ -75,11 +87,36 @@ export class TmuxGatewayImpl implements TmuxGateway {
     }));
   }
 
-  /**
-   * Send keys to a tmux session.
-   */
-  async sendKeys(sessionName: string, keys: string): Promise<void> {
-    await TmuxService.sendKeys(sessionName, keys);
+  async replaceAgentProcess(sessionName: string, command: string): Promise<void> {
+    // Kill/respawn the old pane, bind the new generation's pane-died callback,
+    // then exec the command so the agent (not a parent shell) owns pane life.
+    const env = await TmuxService.getSessionEnvironment(sessionName);
+    const sessionId = env.RDV_SESSION_ID;
+    const generation = Number(env.RDV_AGENT_GENERATION);
+    if (!sessionId || !Number.isSafeInteger(generation) || generation < 0) {
+      throw new Error("Missing lifecycle session/generation for agent restart");
+    }
+    // Kill the prior generation first. If hook repair then fails, the durable
+    // error state cannot coexist with an untracked old agent still running.
+    // The fresh bootstrap shell inherits the new generation/key but no agent
+    // command is launched until preparation succeeds.
+    const paneId = await TmuxService.respawnPane(sessionName);
+    await prepareAgentLaunch(env);
+    await TmuxService.configureAgentPaneLifecycle(
+      sessionName,
+      buildAgentExitHookCommand({
+        sessionId,
+        tmuxSessionName: sessionName,
+        generation,
+        terminalSocket: env.RDV_TERMINAL_SOCKET,
+        terminalPort: env.RDV_TERMINAL_PORT,
+      }),
+      paneId,
+    );
+    await TmuxService.launchCommand(sessionName, command, {
+      replaceShell: true,
+      targetPane: paneId,
+    });
   }
 
   /**

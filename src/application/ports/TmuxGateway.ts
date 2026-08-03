@@ -17,6 +17,8 @@ export interface TmuxSessionInfo {
   windows?: number;
 }
 
+export type TmuxSessionPresence = "present" | "absent" | "unknown";
+
 export interface CreateTmuxSessionOptions {
   sessionName: string;
   workingDirectory?: string;
@@ -65,6 +67,12 @@ export interface TmuxGateway {
    */
   sessionExists(sessionName: string): Promise<boolean>;
 
+  /** Probe without collapsing transport/permission failures into absence. */
+  getSessionPresence(sessionName: string): Promise<TmuxSessionPresence>;
+
+  /** Kill the complete tmux session and return true only for confirmed absence. */
+  stopSessionAndConfirmAbsent(sessionName: string): Promise<boolean>;
+
   /**
    * Get information about a tmux session.
    */
@@ -75,10 +83,8 @@ export interface TmuxGateway {
    */
   listSessions(): Promise<TmuxSessionInfo[]>;
 
-  /**
-   * Send keys to a tmux session.
-   */
-  sendKeys(sessionName: string, keys: string): Promise<void>;
+  /** Replace the pane owner with a freshly prepared agent process. */
+  replaceAgentProcess(sessionName: string, command: string): Promise<void>;
 
   /**
    * Detach all clients from a tmux session.

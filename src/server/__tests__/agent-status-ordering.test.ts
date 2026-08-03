@@ -8,7 +8,10 @@
  *   - a subagent-stop "running" never resurrects a terminal 'idle'/'ended'
  */
 import { describe, it, expect } from "vitest";
-import { shouldApplyStatusWrite } from "../agent-status-ordering";
+import {
+  nextAgentStatusArrivalOrder,
+  shouldApplyStatusWrite,
+} from "../agent-status-ordering";
 
 describe("shouldApplyStatusWrite", () => {
   describe("monotonic arrival ordering", () => {
@@ -36,7 +39,7 @@ describe("shouldApplyStatusWrite", () => {
       ).toBe(true);
     });
 
-    it("applies an equal-timestamp write (newer-or-equal)", () => {
+    it("rejects an equal-order write so a tie cannot regress state", () => {
       expect(
         shouldApplyStatusWrite({
           incomingAt: 1000,
@@ -45,7 +48,7 @@ describe("shouldApplyStatusWrite", () => {
           status: "idle",
           source: null,
         })
-      ).toBe(true);
+      ).toBe(false);
     });
 
     it("rejects an older write (the late-hook race)", () => {
@@ -61,6 +64,12 @@ describe("shouldApplyStatusWrite", () => {
         })
       ).toBe(false);
     });
+  });
+
+  it("allocates a strictly increasing order inside the same millisecond", () => {
+    const first = nextAgentStatusArrivalOrder(1_700_000_000_000);
+    const second = nextAgentStatusArrivalOrder(1_700_000_000_000);
+    expect(second).toBeGreaterThan(first);
   });
 
   describe("subagent-stop terminal-status protection", () => {

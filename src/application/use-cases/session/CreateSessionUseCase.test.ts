@@ -32,6 +32,9 @@ describe("CreateSessionUseCase", () => {
         Promise.resolve(session)
       ),
       saveMany: vi.fn(),
+      claimAgentRestart: vi.fn(),
+      completeAgentRestart: vi.fn(),
+      failAgentRestart: vi.fn(),
       delete: vi.fn(),
       deleteMany: vi.fn(),
       updateTabOrders: vi.fn(),
@@ -44,9 +47,11 @@ describe("CreateSessionUseCase", () => {
       createSession: vi.fn().mockResolvedValue(undefined),
       killSession: vi.fn().mockResolvedValue(undefined),
       sessionExists: vi.fn(),
+      getSessionPresence: vi.fn(),
+      stopSessionAndConfirmAbsent: vi.fn(),
       getSessionInfo: vi.fn(),
       listSessions: vi.fn(),
-      sendKeys: vi.fn(),
+      replaceAgentProcess: vi.fn(),
       detachSession: vi.fn(),
       generateSessionName: vi.fn(),
       // Environment management

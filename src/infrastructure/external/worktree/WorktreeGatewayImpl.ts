@@ -36,7 +36,7 @@ export class WorktreeGatewayImpl implements WorktreeGateway {
     return {
       worktreePath: result.worktreePath,
       branchName: result.branch,
-      created: true,
+      created: result.created,
     };
   }
 

@@ -61,9 +61,9 @@ export function notificationGroup(type: NotificationType): string {
     case "agent_waiting":
     case "agent_complete":
     case "agent_exited":
-    case "agent_stuck":
       return "agent_lifecycle"; // collapse repeated lifecycle pings per session
     case "agent_error":
+    case "agent_stuck":
     case "build_fail":
       return "agent_failure";
     default:
@@ -131,4 +131,6 @@ export interface CreateNotificationInput {
   meta?: NotificationMeta;
   /** [y5ch] true when the target session is currently focused by the user (y5ch.4). */
   focused?: boolean;
+  /** Stable source delivery identity. Duplicate deliveries are not stored or pushed. */
+  idempotencyKey?: string;
 }

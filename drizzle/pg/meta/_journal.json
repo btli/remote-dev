@@ -127,6 +127,13 @@
       "when": 1785784488640,
       "tag": "0017_romantic_squadron_supreme",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1785802769580,
+      "tag": "0018_sturdy_white_queen",
+      "breakpoints": true
     }
   ]
 }

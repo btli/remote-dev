@@ -128,7 +128,11 @@ function computeBaseDecision(
   if (prefs.pushByType[input.type] === false) {
     return { store: true, push: false, reason: "type_opt_out" };
   }
-  if (SEVERITY_RANK[severity] < SEVERITY_RANK[prefs.minPushSeverity]) {
+  const explicitlyEnabled = prefs.pushByType[input.type] === true;
+  if (
+    !explicitlyEnabled &&
+    SEVERITY_RANK[severity] < SEVERITY_RANK[prefs.minPushSeverity]
+  ) {
     return { store: true, push: false, reason: "below_min_severity" };
   }
   if (severity !== "error" && inQuietHours(ctx.now, prefs.quietHours)) {

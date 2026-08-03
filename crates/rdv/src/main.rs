@@ -32,7 +32,7 @@ enum Command {
     Group(group::GroupArgs),
     /// Manage projects
     Project(project::ProjectArgs),
-    /// Handle Claude Code lifecycle hooks (stop, notify, session-end)
+    /// Handle Claude Code and Codex lifecycle hooks
     Hook(hook::HookArgs),
     /// Show dashboard status or report agent status
     Status(status::StatusArgs),

@@ -360,24 +360,28 @@ Agents in the **same project** can discover each other and coordinate. **bd
 — who's-active-right-now, gotchas, heads-ups, and overlap warnings that bd does
 not hold. Do **not** duplicate task state in chat.
 
-**Durable delivery — but automatic only for Claude Code.** Each message gets a
+**Durable delivery.** Each message gets a
 per-recipient **durable inbox** row (`message_delivery`) that advances
 `pending → delivered → acked`. How an agent *drains* that inbox depends on its
-provider, and **automatic delivery is gated to Claude Code**: both the MCP push
-and the poll hook are installed only when `provider === "claude"`
-(`ensureAgentConfig` in `src/services/session-service.ts` and `installAgentHooks`
-in `src/services/agent-profile-service.ts` return early for every other
-provider).
+provider. Claude uses MCP push plus a hook-driven poll fallback; Codex uses
+native lifecycle hooks to poll at turn/tool boundaries. Other providers poll
+manually.
 
-- **Claude Code — automatic (push + poll).** Only Claude profiles get the `rdv`
-  MCP server and the lifecycle hooks. The MCP server keeps a persistent Unix
+- **Claude Code — automatic (push + poll).** Claude profiles get the `rdv` MCP
+  server as well as lifecycle hooks. The MCP server keeps a persistent Unix
   socket and surfaces pushed messages instantly, **acking** each so the server
   marks it delivered; on (re)connect it requests a **replay** of anything it
   missed (compaction, brief disconnect), driven by a durable per-session cursor.
-  The PreToolUse hook additionally drains the inbox as a poll fallback. This is
-  the only provider with hands-off delivery.
-- **Codex, Gemini, OpenCode, Antigravity, Cursor — manual pull.** These providers have
-  **no MCP server and no hooks**, so nothing is pushed to them. They must poll
+  The PreToolUse hook additionally drains the inbox as a poll fallback.
+- **Codex — automatic poll.** Remote Dev merges lifecycle commands into the
+  active `$CODEX_HOME/hooks.json` without replacing user hooks. PreToolUse
+  drains the durable inbox and emits the start digest; SessionStart/Stop drive
+  check-in/check-out. Codex does not run the `rdv` MCP server, so delivery occurs
+  at the next matching hook rather than as an immediate push. Codex requires
+  users to review non-managed command hooks; run `/hooks` in Codex and trust the
+  Remote Dev entries after installation.
+- **Gemini, OpenCode, Antigravity, Cursor — manual pull.** These providers have
+  no RDV MCP server or installed lifecycle hooks. They must poll
   their own inbox by running `rdv peer messages` (which reads the same durable
   cursor and auto-acks the batch it returns). Until an agent calls it, queued
   messages simply wait in the durable inbox — there is no automatic delivery.
@@ -386,10 +390,11 @@ provider).
   `peer-server.ts`) plus the durable cursor prevent re-surfacing, but a
   delivered-but-unacked message can briefly appear twice (see the note below).
   De-dup by message id / timestamp.
-- **Channel subscriptions** — a channel's broadcasts auto-deliver only to
+- **Channel subscriptions** — a channel's broadcasts push immediately only to
   subscribed *Claude* sessions (`#general` is auto-subscribe for all; opt out
   with `direct_only`). Non-subscribers still get **@mentions** and
-  replies-to-them; non-Claude providers see channel traffic when they poll.
+  replies-to-them; Codex sees queued traffic at its next hook poll, while other
+  non-Claude providers see it when they poll manually.
 - **TTL** — awareness chat is ephemeral; messages prune after
   `RDV_CHAT_TTL_DAYS` (default 14), but **never** while an unacked delivery
   remains, so a long-disconnected agent never loses something it hasn't seen.
@@ -397,13 +402,15 @@ provider).
 The `rdv` MCP server is auto-registered into each **Claude Code** profile's
 `.claude/settings.json` at session creation (`installAgentHooks()`), alongside
 the lifecycle hooks (PreToolUse, PreCompact, Notification, Stop, SubagentStop,
-PostToolUse, SessionEnd). MCP tools handle the **write** side (`send_message`,
-`send_to_channel`, `set_summary`); read paths go through the `rdv` CLI. Non-Claude
-providers use the `rdv peer` / `rdv channel` CLI for both reading and writing.
+PostToolUse, SessionEnd). Codex receives its provider-native event map in
+`$CODEX_HOME/hooks.json`. MCP tools handle Claude's **write** side
+(`send_message`, `send_to_channel`, `set_summary`); read paths go through the
+`rdv` CLI. Non-Claude providers use the `rdv peer` / `rdv channel` CLI for both
+reading and writing.
 
 **Coordination discipline (check in → read peers → check out).** The
-*automatic* steps below fire from the lifecycle hooks, so they run hands-off
-**only for Claude Code**; agents on the other providers perform the equivalent
+*automatic* steps below fire from lifecycle hooks, so they run hands-off for
+**Claude Code and Codex**; agents on the other providers perform the equivalent
 by hand (e.g. `rdv peer note`, `rdv peer messages`, `rdv peer summary`).
 
 1. **Check in** (automatic, first PreToolUse) — a structured post to the
@@ -416,6 +423,23 @@ by hand (e.g. `rdv peer note`, `rdv peer messages`, `rdv peer summary`).
    (optionally `--kind heads-up|progress`) broadcasts it to `#agents` so it
    surfaces in every peer's next start digest.
 4. **Check out** (automatic, on Stop) — *"checked out — branch …"* to `#agents`.
+
+**Lifecycle delivery and restart safety.** Hook callbacks carry an authenticated
+session id, immutable process generation, and per-invocation delivery id. The
+`rdv` request and its curl fallback reuse that identity, so a lost response does
+not duplicate an attention/error notification. Every launch path repairs hooks
+before starting the CLI. Restarts claim the next generation atomically and keep
+it in `restarting` until the replacement has launched; an immediate replacement
+exit therefore wins over the final running transition instead of being erased.
+
+The agent process owns its tmux pane (`exec`) and `remain-on-exit` retains the
+authoritative exit code/signal. If the short pane callback retry window is
+exhausted, the terminal server's startup/30-second reconciliation reads the dead
+pane and applies the same deterministic notification. An exited session row is
+also durable notification intent, so a server crash between the state commit
+and notification insert is repaired after restart. A broader normalized
+lifecycle ledger/outbox and health UI remain tracked under `remote-dev-dexs.1`
+and `.2`.
 
 > Note on "acked": the MCP ack means the message was **surfaced to the client**,
 > the strongest signal MCP logging affords — not a guaranteed human/agent read.
@@ -465,8 +489,9 @@ Notes:
   if the token is missing, so drift is detectable without changing the resolver
   (adjust the registry only).
 - **Native id capture asymmetry:** Claude pushes its id in real time via the
-  Stop hook; Codex/Gemini/OpenCode rely on **flat-file disk discovery** at
-  relaunch. Cursor scans metadata in its nested
+  Stop hook. Codex has lifecycle hooks, but resume id capture still uses disk
+  discovery, as do Gemini and OpenCode (newest session file under the
+  profile-isolated home dir) at relaunch. Cursor scans metadata in its nested
   `~/.cursor/chats/<workspace-hash>/<chat-id>/meta.json` index, includes only
   entries whose `cwd` matches the requested project and whose
   `hasConversation` value is true, and respects `CURSOR_DATA_DIR` when set.

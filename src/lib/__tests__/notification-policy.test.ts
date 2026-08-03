@@ -53,6 +53,16 @@ describe("applyNotificationPolicy", () => {
     expect(d.reason).toBe("below_min_severity");
   });
 
+  it("lets an explicit per-type opt-in push passive completion", () => {
+    const prefs = { ...base, pushByType: { agent_complete: true } };
+    const d = applyNotificationPolicy(
+      { userId: "u", type: "agent_complete", title: "done" },
+      prefs,
+      { now: at(12), focused: false },
+    );
+    expect(d).toEqual({ store: true, push: true });
+  });
+
   it("honors per-type opt-out", () => {
     const prefs = { ...base, pushByType: { agent_waiting: false } };
     const d = applyNotificationPolicy(

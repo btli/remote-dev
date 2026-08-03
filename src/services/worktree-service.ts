@@ -375,14 +375,16 @@ export async function pruneWorktrees(repoPath: string): Promise<void> {
 }
 
 /**
- * Create a new branch and worktree for it
+ * Create a new branch and worktree for it, or reuse the same valid deterministic
+ * worktree left by an earlier retry. `created` is an ownership signal: callers
+ * may roll the path back only when it is true.
  */
 export async function createBranchWithWorktree(
   repoPath: string,
   branchName: string,
   baseBranch?: string,
   worktreePath?: string
-): Promise<{ branch: string; worktreePath: string }> {
+): Promise<{ branch: string; worktreePath: string; created: boolean }> {
   // Validate repo path first
   if (!(await isGitRepo(repoPath))) {
     throw new WorktreeServiceError(
@@ -458,6 +460,7 @@ export async function createBranchWithWorktree(
     return {
       branch: branchName,
       worktreePath: targetPath,
+      created: true,
     };
   } catch (error) {
     const err = error as Error & { stderr?: string };
@@ -467,7 +470,7 @@ export async function createBranchWithWorktree(
     // This handles retries where a previous attempt created the worktree
     // but session creation failed afterwards (e.g., "Start Working" on an issue).
     if (fs.existsSync(targetPath) && await isGitRepo(targetPath)) {
-      return { branch: branchName, worktreePath: targetPath };
+      return { branch: branchName, worktreePath: targetPath, created: false };
     }
 
     // "a branch named 'X' already exists" — branch exists from a previous
@@ -479,7 +482,7 @@ export async function createBranchWithWorktree(
       try {
         const retryArgs = ["-C", repoPath, "worktree", "add", targetPath, branchName];
         await execFile("git", retryArgs);
-        return { branch: branchName, worktreePath: targetPath };
+        return { branch: branchName, worktreePath: targetPath, created: true };
       } catch (retryError) {
         const retryErr = retryError as Error & { stderr?: string };
         const retryStderr = retryErr.stderr || retryErr.message;
@@ -1004,7 +1007,7 @@ export async function createWorktreeWithEnv(
  * @param repoPath - Path to the main repository
  * @param branchName - New branch name
  * @param options - Additional options
- * @returns The branch, worktree path, and copy result
+ * @returns The branch, worktree path, ownership, and copy result
  */
 export async function createBranchWithWorktreeAndEnv(
   repoPath: string,
@@ -1017,6 +1020,7 @@ export async function createBranchWithWorktreeAndEnv(
 ): Promise<{
   branch: string;
   worktreePath: string;
+  created: boolean;
   envFilesCopied: CopyEnvFilesResult;
 }> {
   const { baseBranch, worktreePath, copyEnvFiles = true } = options;
@@ -1038,6 +1042,7 @@ export async function createBranchWithWorktreeAndEnv(
   return {
     branch: result.branch,
     worktreePath: result.worktreePath,
+    created: result.created,
     envFilesCopied: envResult,
   };
 }

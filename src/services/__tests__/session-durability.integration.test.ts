@@ -25,6 +25,11 @@ vi.mock("@/services/agent-cli-service", () => ({
 }));
 
 const execFileCalls: string[][] = [];
+const createApiKey = vi.fn().mockResolvedValue({ key: "rdv_durability_key" });
+const markAgentRunning = vi.fn().mockResolvedValue({ id: "running" });
+const markAgentExited = vi.fn().mockResolvedValue({ id: "exited" });
+const markAgentRestarting = vi.fn().mockResolvedValue({ agentRestartCount: 1 });
+const prepareAgentLaunch = vi.fn().mockResolvedValue(undefined);
 // Accept both call shapes: (cmd, args, cb) and (cmd, args, opts, cb) — the
 // relaunch sites pass { cwd: STABLE_SPAWN_CWD } (remote-dev-ipbo).
 const execFile = vi.fn(
@@ -39,7 +44,10 @@ const execFile = vi.fn(
       r: unknown,
     ) => void;
     execFileCalls.push(args);
-    cb(null, { stdout: "", stderr: "" });
+    cb(null, {
+      stdout: args[0] === "list-panes" ? "%7\t\n" : "",
+      stderr: "",
+    });
   },
 );
 vi.mock("node:child_process", () => ({ execFile }));
@@ -47,6 +55,11 @@ vi.mock("node:child_process", () => ({ execFile }));
 beforeEach(() => {
   execFileCalls.length = 0;
   execFile.mockClear();
+  createApiKey.mockClear();
+  markAgentRunning.mockClear();
+  markAgentExited.mockClear();
+  markAgentRestarting.mockClear();
+  prepareAgentLaunch.mockClear();
   vi.resetModules();
 });
 
@@ -84,10 +97,23 @@ function fullRow(over: Record<string, unknown>): Record<string, unknown> {
 
 function mockRow(row: Record<string, unknown> | null) {
   vi.doMock("@/db", () => ({
-    db: { query: { terminalSessions: { findFirst: vi.fn().mockResolvedValue(row) } } },
+    db: {
+      query: { terminalSessions: { findFirst: vi.fn().mockResolvedValue(row) } },
+      delete: vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) })),
+    },
   }));
-  vi.doMock("@/db/schema", () => ({ terminalSessions: { id: "id" } }));
-  vi.doMock("drizzle-orm", () => ({ eq: vi.fn() }));
+  vi.doMock("@/db/schema", () => ({
+    terminalSessions: { id: "id" },
+    apiKeys: { userId: "userId", name: "name" },
+  }));
+  vi.doMock("drizzle-orm", () => ({ eq: vi.fn(), and: vi.fn() }));
+  vi.doMock("@/services/api-key-service", () => ({ createApiKey }));
+  vi.doMock("@/services/session-service", () => ({
+    markAgentRestarting,
+    markAgentRunning,
+    markAgentExited,
+  }));
+  vi.doMock("@/services/agent-launch-preparation", () => ({ prepareAgentLaunch }));
 }
 
 const sendKeys = () => execFileCalls.find((a) => a.includes("send-keys") && a.includes("-l"));
@@ -114,12 +140,12 @@ describe.each(RESUMABLE)("durability for %s", (provider) => {
     expect(resumed).toBe(true);
     const cmd = sendKeys()![4];
     if (provider === "codex") {
-      expect(cmd).toBe("codex resume nid-1");
+      expect(cmd).toBe("exec codex resume nid-1");
     } else {
-      expect(cmd).toMatch(/(--resume|--session) nid-1/);
+      expect(cmd).toMatch(/^exec .*?(--resume|--session) nid-1/);
     }
     // submitted with carriage return, not \n
-    expect(enter()).toEqual(["send-keys", "-t", "tmux-s1", "C-m"]);
+    expect(enter()).toEqual(["send-keys", "-t", "%7", "C-m"]);
   });
 
   it("pod restart: re-injects binding env BEFORE relaunching resumed", async () => {
@@ -140,7 +166,11 @@ describe.each(RESUMABLE)("durability for %s", (provider) => {
     const envIdx = execFileCalls.indexOf(envCall!);
     const sendIdx = execFileCalls.indexOf(sendKeys()!);
     expect(envIdx).toBeLessThan(sendIdx);
-    expect(sendKeys()![4]).toContain("XDG_CONFIG_HOME='/cfg'");
+    // The pane owner inherits the tmux session environment established above;
+    // keep the launch command itself exact so provider executable matching and
+    // process replacement are not obscured by an inline env prefix.
+    expect(sendKeys()![4]).toMatch(/^exec /);
+    expect(sendKeys()![4]).not.toContain("XDG_CONFIG_HOME=");
   });
 });
 
@@ -153,7 +183,7 @@ describe("durability for antigravity (no resume support)", () => {
       "tmux-s2",
     );
     expect(resumed).toBe(false);
-    expect(sendKeys()![4]).toBe("agy"); // fresh agy, no flags
+    expect(sendKeys()![4]).toBe("exec agy"); // fresh agent owns the pane
   });
 });
 

@@ -11,7 +11,8 @@ Make Codex lifecycle reporting as reliable and visible as Claude reporting witho
 ## Execution Rules
 
 - Use test-driven development for each task: add the failing fixture/test, run it, implement the smallest slice, and rerun the focused test before broader gates.
-- Keep the implementation behind `RDV_CODEX_HOOKS_ENABLED` until the live smoke gate passes.
+- Keep an immediate rollback through `RDV_CODEX_HOOKS_ENABLED=0`; the default
+  became enabled only after the live Codex smoke gate passed.
 - Preserve all user-authored hook entries and existing Claude behavior.
 - Do not edit generated schema files by hand. Change `src/db/schema.def.ts`, run `bun run db:codegen`, commit all three generated schema files, and generate the PostgreSQL migration through the repository workflow.
 - Use `createLogger`; do not log raw hook input.
@@ -306,13 +307,20 @@ bun run db:check-drift
 
 ### Steps
 
-1. Install `pane-exited` with the tmux `#{pane_dead_status}` format value and a stable process generation derived from the session restart generation.
+1. Make the agent process own the pane (`exec`), enable `remain-on-exit`, and
+   install a session-scoped `pane-died` callback carrying
+   `#{pane_dead_status}`, `#{pane_dead_signal}`, and a stable process generation.
 2. Make `/internal/agent-exit` normalize and delegate to `AgentLifecycleService`.
 3. Persist `agentExitState`, real exit code, exit time, and activity status before broadcasting.
 4. Emit one error notification for non-zero exit and one passive exit record for zero exit.
 5. Deduplicate the tmux hook, PTY callback, native SessionEnd, and liveness sweep by process generation/event key.
 6. Route liveness findings through the service. Only use `agent_stuck` when the exit code is unknown and death is independently confirmed.
 7. Ensure suspend/close/restart intentional exits do not create false error notifications.
+8. Serialize exact callback delivery and repair for each `(session, generation)`
+   through notification storage. A disconnected callback client must not release
+   that critical section while server work is still running.
+9. Persist liveness exit intent immediately, but defer repair longer than the
+   callback's bounded retry window so exact focus-aware delivery gets priority.
 
 ### Required tests
 
@@ -323,6 +331,9 @@ bun run db:check-drift
 - intentional suspend/close is silent
 - restart generation permits a new running state and rejects the previous generation
 - liveness sweep remains exactly-once at the user-notification layer
+- a fresh liveness exit creates no notification/receipt before callback arbitration
+- stale undelivered exit intent is eventually repaired
+- callback and repair work for one generation cannot overlap
 
 ### Focused gate
 
@@ -416,11 +427,59 @@ bun run test:run src/app/api/sessions/[id]/agent-lifecycle/route.test.ts src/com
 ### Focused gate
 
 ```bash
-bun run scripts/smoke-codex-hooks.ts
+bun scripts/smoke-codex-hooks.ts
 RDV_CODEX_HOOK_SMOKE=1 bun run test:run src/services/agent-hooks/__tests__/codex-real-smoke.test.ts
 ```
 
 The second command is a release/manual gate and may be skipped in CI with the skip reason recorded.
+
+### Phase 1 evidence (2026-08-03)
+
+- The isolated live smoke used Codex CLI 0.146.0 with a temporary `CODEX_HOME`
+  and the real installer. Remote Dev received `SessionStart`,
+  `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, and `SessionEnd`.
+- Real tmux integration tests prove the marked agent pane alone owns its
+  pane-scoped hook, auxiliary split exits are ignored, and the callback carries
+  the exact exit code and bearer credential.
+- Unit/integration coverage exercises authenticated generation checks, stale and
+  intentional-exit suppression, restart ordering, deterministic process-exit
+  notification delivery, safe config merge/uninstall, and user-hook preservation.
+- Adversarial hardening adds cross-process restart compare-and-set claims,
+  launch-time hook repair, immutable fallback identity, delivery-id attention
+  dedupe, strict request-arrival ordering, dead-pane reconciliation,
+  abandoned-restart containment, and exited-row notification replay. Separate
+  transactional status and notification receipts preserve retry idempotency
+  while distinct events continue to coalesce; PostgreSQL takes a
+  transaction-scoped advisory lock across service processes. The session row's
+  null `agent_exit_notification_at` marker is durable process-exit intent for
+  this phase. Repair observes a bounded grace longer than the exact callback's
+  transport retries, then replays any still-undelivered intent. Delivery
+  receipts have a bounded 30-day retention.
+- Status-derived notification validation and storage hold the session row in
+  one transaction, so a stale waiting callback cannot commit attention after a
+  newer running status. Heuristic and exact agent failures share one coalescing
+  group; legacy cross-group rows merge and repoint their receipts atomically.
+- Claude rolling upgrades import tmux credentials before invoking `rdv`, then
+  always post through the authenticated transport so a pre-feature binary that
+  swallows HTTP failures cannot suppress status. A blocked Stop publishes only
+  `running`, and both Rust and curl lifecycle transports have bounded deadlines.
+  Exact tmux callbacks can enrich a prior heuristic process-loss notification
+  in place without a second row or push.
+- Restart claims clear the prior generation's notification-delivery marker, and
+  abandoned restarts quarantine the whole tmux session only after confirmed
+  termination. Codex hook trust follows command hashes, so repair preserves user
+  hook definitions verbatim and removes obsolete Remote Dev entries without
+  adding no-op placeholders.
+- `PermissionRequest` is covered by the adapter/status fixtures but was not
+  forced in the non-interactive live smoke because `codex exec` runs with
+  approvals disabled.
+- The feature is default-on after that smoke. Setting
+  `RDV_CODEX_HOOKS_ENABLED=0` makes install/resume remove only Remote Dev's
+  Codex entries, preserving user hooks.
+
+The durable lifecycle outbox, runtime health UI, and server-push preference work
+described in Tasks 4, 6, and 7 remains intentionally tracked as follow-up rather
+than being claimed by this first implementation PR.
 
 ---
 
@@ -447,12 +506,12 @@ Then run the generated-config smoke and, before default enablement, the gated re
 - [ ] Feature flag defaults off in the first merge.
 - [ ] Existing Claude hook fixture is unchanged.
 - [ ] User Codex hook preservation is demonstrated with fixtures.
-- [ ] A detached non-zero Codex exit produces one durable error notification.
+- [x] A detached non-zero Codex exit produces one durable error notification.
 - [ ] Approval, completion, and restart/resume scenarios pass end to end.
 - [ ] A deliberately untrusted hook produces handshake-degraded health and `/hooks` remediation without asserting an unproven cause.
 - [ ] Metrics/logs distinguish config, connectivity, handshake, stale, and process-exit failures.
-- [ ] Live Codex smoke evidence is attached to `remote-dev-dexs`.
-- [ ] Feature flag default flips only after smoke evidence.
+- [x] Live Codex smoke evidence is attached to `remote-dev-dexs`.
+- [x] Feature flag default flips only after smoke evidence.
 
 ## Handoff
 

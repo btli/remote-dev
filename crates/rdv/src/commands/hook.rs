@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{Read, Write};
 
 use clap::{Args, Subcommand};
 use serde_json::json;
@@ -58,6 +58,91 @@ enum HookCommand {
         #[arg(long)]
         reason: Option<String>,
     },
+    /// Unified handler for OpenAI Codex lifecycle hooks
+    Codex {
+        /// Hook event: session-start, prompt-submit, pre-tool-use, permission-request,
+        /// post-tool-use, pre-compact, post-compact, subagent-start,
+        /// subagent-stop, stop, or session-end
+        event: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexHookAction {
+    Status(&'static str, Option<&'static str>),
+    PreToolUse,
+    PostToolUse,
+    Stop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StopWireFormat {
+    Claude,
+    Codex,
+}
+
+fn codex_action(event: &str, payload: &serde_json::Value) -> Result<CodexHookAction, String> {
+    let action = match event {
+        "session-start" | "prompt-submit" | "post-compact" => {
+            CodexHookAction::Status("running", None)
+        }
+        "pre-tool-use" => {
+            let tool_name = payload
+                .get("tool_name")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            if matches!(
+                tool_name,
+                "request_user_input" | "functions.request_user_input" | "AskUserQuestion"
+            ) {
+                CodexHookAction::Status("waiting", None)
+            } else {
+                CodexHookAction::PreToolUse
+            }
+        }
+        "permission-request" => CodexHookAction::Status("waiting", None),
+        "post-tool-use" => CodexHookAction::PostToolUse,
+        "pre-compact" => CodexHookAction::Status("compacting", None),
+        "subagent-start" => CodexHookAction::Status("subagent", None),
+        "subagent-stop" => CodexHookAction::Status("running", Some("subagent-stop")),
+        "stop" => CodexHookAction::Stop,
+        "session-end" => CodexHookAction::Status("ended", None),
+        unknown => return Err(format!("unknown codex hook event: {unknown}")),
+    };
+    Ok(action)
+}
+
+fn format_stop_block(format: StopWireFormat, reason: &str) -> String {
+    match format {
+        StopWireFormat::Claude => format!("{reason}\n"),
+        StopWireFormat::Codex => format!(
+            "{}\n",
+            serde_json::to_string(&json!({ "decision": "block", "reason": reason }))
+                .expect("static stop response must serialize")
+        ),
+    }
+}
+
+fn format_codex_pre_tool_response(
+    additional_context: Option<&str>,
+    denial_reason: Option<&str>,
+) -> Option<String> {
+    if additional_context.is_none() && denial_reason.is_none() {
+        return None;
+    }
+    let mut output = serde_json::Map::new();
+    output.insert("hookEventName".to_string(), json!("PreToolUse"));
+    if let Some(context) = additional_context {
+        output.insert("additionalContext".to_string(), json!(context));
+    }
+    if let Some(reason) = denial_reason {
+        output.insert("permissionDecision".to_string(), json!("deny"));
+        output.insert("permissionDecisionReason".to_string(), json!(reason));
+    }
+    Some(
+        serde_json::to_string(&json!({ "hookSpecificOutput": output }))
+            .expect("Codex pre-tool response must serialize"),
+    )
 }
 
 // ── Bash inspection ─────────────────────────────────────────────────
@@ -68,23 +153,60 @@ struct BashInspection {
     targets_main: bool,
 }
 
-/// Inspect a parsed tool-use payload for Bash commands of interest.
-/// Returns `None` if the payload is not a Bash tool call or has no command.
-fn inspect_bash_payload(payload: &serde_json::Value) -> Option<BashInspection> {
+/// Extract shell source across Claude and Codex tool naming/input shapes.
+fn shell_value(value: &serde_json::Value) -> Option<String> {
+    if let Some(command) = value.as_str() {
+        return Some(command.to_string());
+    }
+    value.as_array().and_then(|parts| {
+        parts
+            .iter()
+            .map(|part| part.as_str())
+            .collect::<Option<Vec<_>>>()
+            .map(|parts| parts.join(" "))
+    })
+}
+
+fn shell_command(payload: &serde_json::Value) -> Option<String> {
     let tool_name = payload.get("tool_name")?.as_str()?;
-    if tool_name != "Bash" {
+    if !matches!(
+        tool_name,
+        "Bash"
+            | "unified_exec"
+            | "local_shell"
+            | "exec_command"
+            | "functions.exec"
+            | "functions.exec_command"
+    ) {
         return None;
     }
-    let command = payload
-        .get("tool_input")?
-        .get("command")?
-        .as_str()?
-        .to_string();
+
+    for input_key in ["tool_input", "input", "arguments"] {
+        let Some(input) = payload.get(input_key) else {
+            continue;
+        };
+        if let Some(command) = shell_value(input) {
+            return Some(command);
+        }
+        for command_key in ["command", "cmd"] {
+            if let Some(command) = input.get(command_key).and_then(shell_value) {
+                return Some(command);
+            }
+        }
+    }
+    payload
+        .get("command")
+        .or_else(|| payload.get("cmd"))
+        .and_then(shell_value)
+}
+
+/// Inspect a parsed shell tool payload for git pushes of interest.
+fn inspect_bash_payload(payload: &serde_json::Value) -> Option<BashInspection> {
+    let command = shell_command(payload)?;
     let is_git_push = command.contains("git push") || command.contains("git-push");
     // If no explicit branch (bare `git push` or `git push origin`), assume it may target main
     let targets_main = is_git_push
-        && extract_branch_from_push(&command)
-            .map_or(true, |b| b == "main" || b == "master");
+        && extract_branch_from_push(&command).is_none_or(|b| b == "main" || b == "master");
     Some(BashInspection {
         command,
         targets_main,
@@ -105,7 +227,7 @@ fn strip_mention_tokens(body: &str) -> String {
     while let Some(start) = rest.find(PREFIX) {
         result.push_str(&rest[..start]);
         let after_prefix = &rest[start + PREFIX.len()..];
-        if after_prefix.len() >= UUID_LEN + 1 && after_prefix.as_bytes()[UUID_LEN] == SUFFIX as u8 {
+        if after_prefix.len() > UUID_LEN && after_prefix.as_bytes()[UUID_LEN] == SUFFIX as u8 {
             // Replace with @<first-8-chars-of-uuid>
             result.push('@');
             result.push_str(&after_prefix[..8]);
@@ -129,9 +251,7 @@ fn strip_mention_tokens(body: &str) -> String {
 /// and DEL (0x7f); the surviving text is inert. The replacement leaves the ESC
 /// gone so an OSC/CSI sequence degrades to harmless literal characters.
 fn sanitize_for_digest(s: &str) -> String {
-    s.chars()
-        .filter(|c| !c.is_control())
-        .collect()
+    s.chars().filter(|c| !c.is_control()).collect()
 }
 
 // ── Status reporting ────────────────────────────────────────────────
@@ -139,7 +259,9 @@ fn sanitize_for_digest(s: &str) -> String {
 /// Report an agent activity status to the terminal server.
 /// Silently returns if no session ID is available.
 async fn report_status(client: &Client, status: &str) {
-    report_status_with_source(client, status, None).await;
+    if let Err(error) = deliver_status_with_source(client, status, None).await {
+        eprintln!("warning: failed to report {status} status: {error}");
+    }
 }
 
 /// Report an agent activity status with an optional `source` tag.
@@ -150,15 +272,53 @@ async fn report_status(client: &Client, status: &str) {
 /// re-asserts running via PreToolUse immediately. Kept consistent with the curl
 /// fallback (`curlForStatus(status, "subagent-stop")`).
 async fn report_status_with_source(client: &Client, status: &str, source: Option<&str>) {
-    let Some(sid) = client.session_id() else {
-        return;
-    };
-    let mut query: Vec<(&str, &str)> = vec![("sessionId", sid), ("status", status)];
+    if let Err(error) = deliver_status_with_source(client, status, source).await {
+        eprintln!("warning: failed to report {status} status: {error}");
+    }
+}
+
+/// Deliver a status and preserve transport/server failures for Codex's shell
+/// wrapper, which then executes its authenticated curl fallback.
+async fn deliver_status_with_source(
+    client: &Client,
+    status: &str,
+    source: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let sid = client.session_id().ok_or("RDV_SESSION_ID not set")?;
+    let generation = std::env::var("RDV_AGENT_GENERATION").unwrap_or_else(|_| "0".to_string());
+    let mut query: Vec<(&str, &str)> = vec![
+        ("sessionId", sid),
+        ("generation", generation.as_str()),
+        ("status", status),
+    ];
     if let Some(src) = source {
         query.push(("source", src));
     }
-    if let Err(e) = client.post_empty_with_query("/internal/agent-status", &query).await {
-        eprintln!("warning: failed to report {status} status: {e}");
+    let delivery_id = std::env::var("RDV_HOOK_DELIVERY_ID").ok();
+    if let Some(id) = delivery_id.as_deref() {
+        query.push(("deliveryId", id));
+    }
+    client
+        .post_empty_with_query_timeout(
+            "/internal/agent-status",
+            &query,
+            std::time::Duration::from_secs(2),
+        )
+        .await?;
+    Ok(())
+}
+
+async fn deliver_status_for_wire(
+    client: &Client,
+    status: &str,
+    source: Option<&str>,
+    wire_format: StopWireFormat,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if wire_format == StopWireFormat::Codex {
+        deliver_status_with_source(client, status, source).await
+    } else {
+        report_status_with_source(client, status, source).await;
+        Ok(())
     }
 }
 
@@ -180,30 +340,36 @@ const SECTION_RULE: &str = "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2
 /// The heavy joins live server-side (`/internal/peers/digest`); this renders
 /// the payload. The "New messages" section uses the durable cursor so repeated
 /// calls don't re-show the same items.
-async fn print_peer_digest(client: &Client) {
-    let Some(sid) = client.session_id() else {
-        return;
-    };
+#[derive(Default)]
+struct PeerDigestOutput {
+    context: String,
+    message_ids: Vec<String>,
+}
 
-    // ── Team / gotchas / collisions (server-built digest) ────────────────
+async fn collect_peer_digest(client: &Client) -> PeerDigestOutput {
+    let Some(sid) = client.session_id() else {
+        return PeerDigestOutput::default();
+    };
+    let mut lines = Vec::new();
+
     let digest_query = [("sessionId", sid)];
     let digest: Result<serde_json::Value, _> = client
         .get_with_query("/internal/peers/digest", &digest_query)
         .await;
-
     if let Ok(d) = &digest {
-        // Team section.
         if let Some(peers) = d.get("peers").and_then(|v| v.as_array()) {
             if !peers.is_empty() {
-                eprintln!("{TEAM_HEADER}");
+                lines.push(TEAM_HEADER.to_string());
                 for peer in peers {
-                    // All peer-derived strings are control-char-stripped so a
-                    // crafted name/branch/issue can't inject escapes or newlines.
                     let name = sanitize_for_digest(
-                        peer.get("name").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                        peer.get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown"),
                     );
                     let status = sanitize_for_digest(
-                        peer.get("status").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                        peer.get("status")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown"),
                     );
                     let branch = sanitize_for_digest(
                         peer.get("branch").and_then(|v| v.as_str()).unwrap_or(""),
@@ -226,81 +392,115 @@ async fn print_peer_digest(client: &Client) {
                     } else {
                         format!(" {branch}")
                     };
-                    eprintln!("  {name} [{status}]{branch_part}{work}");
+                    lines.push(format!("  {name} [{status}]{branch_part}{work}"));
                 }
-                eprintln!("{SECTION_RULE}");
+                lines.push(SECTION_RULE.to_string());
             }
         }
 
-        // Recent gotchas.
         if let Some(gotchas) = d.get("gotchas").and_then(|v| v.as_array()) {
             if !gotchas.is_empty() {
-                eprintln!("{GOTCHA_HEADER}");
-                for g in gotchas {
+                lines.push(GOTCHA_HEADER.to_string());
+                for gotcha in gotchas {
                     let from = sanitize_for_digest(
-                        g.get("from").and_then(|v| v.as_str()).unwrap_or("peer"),
+                        gotcha
+                            .get("from")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("peer"),
                     );
-                    let raw_body = g.get("body").and_then(|v| v.as_str()).unwrap_or("");
+                    let raw_body = gotcha.get("body").and_then(|v| v.as_str()).unwrap_or("");
                     let body = sanitize_for_digest(&strip_mention_tokens(raw_body));
-                    eprintln!("  \u{26a0} {from}: {body}");
+                    lines.push(format!("  \u{26a0} {from}: {body}"));
                 }
-                eprintln!("{SECTION_RULE}");
+                lines.push(SECTION_RULE.to_string());
             }
         }
 
-        // Collisions.
         if let Some(collisions) = d.get("collisions").and_then(|v| v.as_array()) {
-            for c in collisions {
+            for collision in collisions {
                 let peer_name = sanitize_for_digest(
-                    c.get("peerName").and_then(|v| v.as_str()).unwrap_or("a peer"),
+                    collision
+                        .get("peerName")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("a peer"),
                 );
                 let reason = sanitize_for_digest(
-                    c.get("reason").and_then(|v| v.as_str()).unwrap_or("work"),
+                    collision
+                        .get("reason")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("work"),
                 );
                 let value = sanitize_for_digest(
-                    c.get("value").and_then(|v| v.as_str()).unwrap_or(""),
+                    collision
+                        .get("value")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(""),
                 );
-                eprintln!(
+                lines.push(format!(
                     "\u{26a0} COLLISION: {peer_name} shares your {reason} {value} \u{2014} coordinate before pushing."
-                );
+                ));
             }
         }
     }
 
-    // ── New messages (durable cursor, auto-acked) ────────────────────────
+    let mut message_ids = Vec::new();
     let msg_query = [("sessionId", sid), ("cursor", "durable")];
     let messages_result: Result<serde_json::Value, _> = client
         .get_with_query("/internal/peers/messages/poll", &msg_query)
         .await;
-
     if let Ok(resp) = messages_result {
         if let Some(messages) = resp.get("messages").and_then(|v| v.as_array()) {
             if !messages.is_empty() {
-                eprintln!("{MESSAGES_HEADER}");
-                // Ack the batch so the next digest doesn't re-show them.
-                let ids: Vec<&str> = messages
-                    .iter()
-                    .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
-                    .collect();
-                if !ids.is_empty() {
-                    let ack = json!({ "sessionId": sid, "messageIds": ids });
-                    let _ = client.post_json("/internal/peers/ack-batch", &ack).await;
-                }
-                for msg in messages {
+                lines.push(MESSAGES_HEADER.to_string());
+                message_ids.extend(
+                    messages
+                        .iter()
+                        .filter_map(|message| message.get("id").and_then(|v| v.as_str()))
+                        .map(String::from),
+                );
+                for message in messages {
                     let from = sanitize_for_digest(
-                        msg.get("fromSessionName")
+                        message
+                            .get("fromSessionName")
                             .and_then(|v| v.as_str())
                             .unwrap_or("unknown"),
                     );
-                    let raw_body = msg.get("body").and_then(|v| v.as_str()).unwrap_or("");
+                    let raw_body = message.get("body").and_then(|v| v.as_str()).unwrap_or("");
                     let body = sanitize_for_digest(&strip_mention_tokens(raw_body));
-                    let is_broadcast = msg.get("toSessionId").map_or(true, |v| v.is_null());
-                    let target = if is_broadcast { " (broadcast)" } else { "" };
-                    eprintln!("\u{1f4e8} {from}{target}: {body}");
+                    let target = if message.get("toSessionId").is_none_or(|v| v.is_null()) {
+                        " (broadcast)"
+                    } else {
+                        ""
+                    };
+                    lines.push(format!("\u{1f4e8} {from}{target}: {body}"));
                 }
-                eprintln!("{SECTION_RULE}");
+                lines.push(SECTION_RULE.to_string());
             }
         }
+    }
+
+    PeerDigestOutput {
+        context: lines.join("\n"),
+        message_ids,
+    }
+}
+
+async fn acknowledge_peer_digest(client: &Client, digest: &PeerDigestOutput) {
+    if digest.message_ids.is_empty() {
+        return;
+    }
+    let Some(sid) = client.session_id() else {
+        return;
+    };
+    let ack = json!({ "sessionId": sid, "messageIds": digest.message_ids });
+    let _ = client.post_json("/internal/peers/ack-batch", &ack).await;
+}
+
+async fn print_peer_digest(client: &Client) {
+    let digest = collect_peer_digest(client).await;
+    if !digest.context.is_empty() {
+        eprintln!("{}", digest.context);
+        acknowledge_peer_digest(client, &digest).await;
     }
 }
 
@@ -314,12 +514,10 @@ fn extract_branch_from_push(command: &str) -> Option<String> {
     // Find "push" in the args, then look for remote and branch
     let push_idx = parts.iter().position(|&w| w == "push")?;
     // Skip flags (starting with -)
-    let mut args_after_push = parts[push_idx + 1..]
-        .iter()
-        .filter(|w| !w.starts_with('-'));
+    let mut args_after_push = parts[push_idx + 1..].iter().filter(|w| !w.starts_with('-'));
     let _remote = args_after_push.next()?; // e.g. "origin"
     let branch = args_after_push.next()?; // e.g. "main"
-    // Handle refspec like "local:remote"
+                                          // Handle refspec like "local:remote"
     let branch_name = if let Some((_local, remote)) = branch.split_once(':') {
         remote
     } else {
@@ -338,7 +536,9 @@ async fn broadcast_git_push_to_peers(client: &Client, command: &str) {
         None => "pushed (branch unspecified) \u{2014} you may need to rebase".to_string(),
     };
     let payload = json!({ "fromSessionId": sid, "body": body });
-    let _ = client.post_json("/internal/peers/messages/send", &payload).await;
+    let _ = client
+        .post_json("/internal/peers/messages/send", &payload)
+        .await;
 }
 
 /// [x386.6] Check IN once per session (sentinel at /tmp/rdv-peer-start-{sid}).
@@ -415,8 +615,8 @@ async fn report_proxy_state(client: &Client) {
     }
 
     let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
-    let base_url = std::env::var("ANTHROPIC_BASE_URL")
-        .unwrap_or_else(|_| DEFAULT_ANTHROPIC_URL.to_string());
+    let base_url =
+        std::env::var("ANTHROPIC_BASE_URL").unwrap_or_else(|_| DEFAULT_ANTHROPIC_URL.to_string());
     let key_prefix: String = api_key.chars().take(12).collect();
 
     // Sentinel: only report on change
@@ -433,7 +633,11 @@ async fn report_proxy_state(client: &Client) {
         "apiKey": api_key,
     });
 
-    if client.post_json("/internal/proxy-state", &payload).await.is_ok() {
+    if client
+        .post_json("/internal/proxy-state", &payload)
+        .await
+        .is_ok()
+    {
         let _ = std::fs::write(&sentinel, &current);
     }
 }
@@ -443,35 +647,20 @@ async fn report_proxy_state(client: &Client) {
 /// Check if a git command in a sensitive folder would leak identity.
 /// Accepts a pre-parsed PreToolUse payload, inspects for git commit/push commands,
 /// and calls the git-guard API to evaluate identity risk.
-/// Returns true if the tool use should be blocked.
-async fn check_git_identity_guard(client: &Client, payload: &serde_json::Value) -> bool {
-    // Only check Bash tool calls
-    let tool_name = payload
-        .get("tool_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if tool_name != "Bash" {
-        return false;
-    }
-
-    let command = payload
-        .get("tool_input")
-        .and_then(|v| v.get("command"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+/// Returns the provider-neutral denial reason when the tool use must be blocked.
+async fn check_git_identity_guard(client: &Client, payload: &serde_json::Value) -> Option<String> {
+    let command = shell_command(payload)?;
 
     // Check if the command is a git commit or git push
     let is_git_commit = command.contains("git commit") || command.contains("git-commit");
     let is_git_push = command.contains("git push") || command.contains("git-push");
     if !is_git_commit && !is_git_push {
-        return false;
+        return None;
     }
 
     let operation = if is_git_push { "push" } else { "commit" };
 
-    let Some(sid) = client.session_id() else {
-        return false;
-    };
+    let sid = client.session_id()?;
 
     // Get the session's project and folder IDs
     #[derive(serde::Deserialize)]
@@ -484,7 +673,7 @@ async fn check_git_identity_guard(client: &Client, payload: &serde_json::Value) 
 
     let session: SessionInfo = match client.get(&format!("/api/sessions/{sid}")).await {
         Ok(s) => s,
-        Err(_) => return false,
+        Err(_) => return None,
     };
 
     // Prefer RDV_PROJECT_ID env var, then session.projectId, then fall back to folderId
@@ -493,9 +682,7 @@ async fn check_git_identity_guard(client: &Client, payload: &serde_json::Value) 
         .or_else(|| session.project_id.clone())
         .or_else(|| session.folder_id.clone());
 
-    let Some(ref folder_id) = project_id else {
-        return false;
-    };
+    let folder_id = project_id.as_ref()?;
 
     // Read git identity from environment (set by session-service)
     let proposed_name = std::env::var("GIT_AUTHOR_NAME")
@@ -522,30 +709,32 @@ async fn check_git_identity_guard(client: &Client, payload: &serde_json::Value) 
     }
 
     let result: GuardResult = match client
-        .post_json(&format!("/api/folders/{folder_id}/git-guard"), &guard_payload)
+        .post_json(
+            &format!("/api/folders/{folder_id}/git-guard"),
+            &guard_payload,
+        )
         .await
     {
         Ok(val) => match serde_json::from_value(val) {
             Ok(r) => r,
-            Err(_) => return false,
+            Err(_) => return None,
         },
-        Err(_) => return false,
+        Err(_) => return None,
     };
 
     match result.risk.as_str() {
-        "block" => {
-            if let Some(reason) = &result.reason {
-                eprintln!("\u{1f6e1}\u{fe0f}  Git identity guard: {reason}");
-            }
-            true
-        }
+        "block" => Some(
+            result
+                .reason
+                .unwrap_or_else(|| "Git identity policy blocked this commit or push".to_string()),
+        ),
         "warn" => {
             if let Some(reason) = &result.reason {
                 eprintln!("\u{26a0}\u{fe0f}  Git identity warning: {reason}");
             }
-            false
+            None
         }
-        _ => false,
+        _ => None,
     }
 }
 
@@ -560,14 +749,15 @@ async fn check_beads_unfinished() -> Option<String> {
     }
 
     // Run bd list to check for in-progress issues
-    let output = match tokio::process::Command::new("bd")
+    let mut command = tokio::process::Command::new("bd");
+    command
         .args(["list", "--status=in_progress", "--json", "--quiet"])
-        .output()
-        .await
-    {
-        Ok(o) => o,
-        Err(_) => return None, // bd not available, skip check
-    };
+        .kill_on_drop(true);
+    let output =
+        match tokio::time::timeout(std::time::Duration::from_secs(2), command.output()).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(_)) | Err(_) => return None, // unavailable or stalled: don't block Stop
+        };
 
     if !output.status.success() {
         return None; // bd command failed, don't block stop
@@ -590,7 +780,10 @@ async fn check_beads_unfinished() -> Option<String> {
         );
         for issue in &issues {
             let id = issue.get("id").and_then(|v| v.as_str()).unwrap_or("?");
-            let title = issue.get("title").and_then(|v| v.as_str()).unwrap_or("Untitled");
+            let title = issue
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Untitled");
             msg.push_str(&format!("- [{id}] {title}\n"));
         }
         msg.push_str(
@@ -616,6 +809,8 @@ async fn handle_stop(
     // without an #[allow].
     _agent: Option<String>,
     _reason: Option<String>,
+    wire_format: StopWireFormat,
+    supplied_payload: Option<&serde_json::Value>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let Some(sid) = client.session_id() else {
         return Ok(());
@@ -625,10 +820,16 @@ async fn handle_stop(
     // through the Stop hook, or if the payload carries an agent_id, treat it
     // as a subagent stop and skip the notification path. The dedicated
     // SubagentStop hook handler is the primary route — this is fallback.
-    let mut buf = Vec::new();
-    let _ = std::io::stdin().read_to_end(&mut buf);
-    let payload: serde_json::Value =
-        serde_json::from_slice(&buf).unwrap_or(serde_json::Value::Null);
+    let stdin_payload;
+    let payload = match supplied_payload {
+        Some(payload) => payload,
+        None => {
+            let mut buf = Vec::new();
+            let _ = std::io::stdin().read_to_end(&mut buf);
+            stdin_payload = serde_json::from_slice(&buf).unwrap_or(serde_json::Value::Null);
+            &stdin_payload
+        }
+    };
     let hook_event = payload
         .get("hook_event_name")
         .and_then(|v| v.as_str())
@@ -637,34 +838,42 @@ async fn handle_stop(
         // Parent is still active; do not flip to idle and do not notify.
         // [remote-dev-1aa5c] Tag the source so a subagent-stop "running" can't
         // resurrect a turn that already ended ('idle'/'ended').
-        report_status_with_source(client, "running", Some("subagent-stop")).await;
+        deliver_status_for_wire(client, "running", Some("subagent-stop"), wire_format).await?;
         return Ok(());
     }
 
     // Check for unfinished beads work before allowing stop
     if let Some(msg) = check_beads_unfinished().await {
-        // Print to stdout — Claude Code will see this and continue instead of stopping
-        println!("{msg}");
+        // Both providers use stdout to continue, but Codex requires structured
+        // JSON while the existing Claude hook consumes plain text.
+        print!("{}", format_stop_block(wire_format, &msg));
         // Still report running status since agent should continue
-        report_status(client, "running").await;
+        // The structured block is authoritative. A transient status outage
+        // must not make the wrapper run its idle fallback and contradict it.
+        if let Err(error) = deliver_status_for_wire(client, "running", None, wire_format).await {
+            eprintln!("warning: failed to preserve running status for blocked stop: {error}");
+        }
         return Ok(());
     }
 
-    // Clear peer summary (fire-and-forget)
+    // Deliver the authoritative lifecycle state before nonessential peer/API
+    // cleanup. A stalled auxiliary request must never consume Codex's outer
+    // timeout before the shell fallback has a chance to run.
+    deliver_status_for_wire(client, "idle", None, wire_format).await?;
+
+    // Clear peer summary (best effort)
     let clear_summary_payload = json!({ "sessionId": sid, "summary": "" });
-    let _ = client
-        .post_json("/internal/peers/summary", &clear_summary_payload)
-        .await;
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        client.post_json("/internal/peers/summary", &clear_summary_payload),
+    )
+    .await;
 
-    // Report idle status
-    let idle_query = [("sessionId", sid), ("status", "idle")];
-    if let Err(e) = client.post_empty_with_query("/internal/agent-status", &idle_query).await {
-        eprintln!("warning: failed to report idle status: {e}");
-    }
-
-    // [y5ch.2] A clean stop is PASSIVE — it creates NO user notification here.
-    // The old "Session ended normally" notify POST was the single biggest source
-    // of notification noise and has been removed. Stuck/crashed agents now
+    // [y5ch.2] A clean stop is PASSIVE — this CLI does not send a separate
+    // direct notification request. The idle status endpoint materializes one
+    // coalesced passive agent_complete record, below the default push threshold.
+    // The old direct "Session ended normally" POST was the single biggest source
+    // of notification noise and remains removed. Stuck/crashed agents now
     // surface via the server-side PID-liveness sweep (y5ch.9, emits agent_stuck),
     // and "agent needs you" surfaces via the Notification hook (waiting status).
     // The idle status report above and the peer check-out below remain.
@@ -673,24 +882,108 @@ async fn handle_stop(
     // Replaces the old "finished work" broadcast with a structured check-out
     // attributed to the agent as a system speaker in the per-project channel.
     let ctx_query = [("sessionId", sid)];
-    let branch = client
-        .get_with_query::<serde_json::Value, _>("/internal/work-context", &ctx_query)
-        .await
-        .ok()
-        .and_then(|v| v.get("context").cloned())
-        .and_then(|c| c.get("branch").and_then(|v| v.as_str()).map(String::from))
-        .filter(|s| !s.is_empty());
+    let branch = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        client.get_with_query::<serde_json::Value, _>("/internal/work-context", &ctx_query),
+    )
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .and_then(|v| v.get("context").cloned())
+    .and_then(|c| c.get("branch").and_then(|v| v.as_str()).map(String::from))
+    .filter(|s| !s.is_empty());
     let checkout_body = match branch {
         Some(b) => format!("checked out \u{2014} branch {b}"),
         None => "checked out".to_string(),
     };
     let checkout_payload =
         json!({ "fromSessionId": sid, "channelName": "agents", "body": checkout_body });
-    let _ = client
-        .post_json("/internal/channels/send", &checkout_payload)
-        .await;
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        client.post_json("/internal/channels/send", &checkout_payload),
+    )
+    .await;
 
     Ok(())
+}
+
+const MAX_HOOK_INPUT_BYTES: u64 = 1024 * 1024;
+
+fn read_hook_payload() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .take(MAX_HOOK_INPUT_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_HOOK_INPUT_BYTES {
+        return Err("hook input exceeds 1 MiB".into());
+    }
+    if bytes.is_empty() {
+        return Ok(serde_json::Value::Null);
+    }
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+async fn handle_pre_tool_use_payload(client: &Client, payload: &serde_json::Value) {
+    let is_subagent = payload.get("agent_id").is_some();
+    report_status(client, if is_subagent { "subagent" } else { "running" }).await;
+
+    if !is_subagent {
+        print_peer_digest(client).await;
+        broadcast_session_start(client).await;
+        report_proxy_state(client).await;
+    }
+
+    if let Some(reason) = check_git_identity_guard(client, payload).await {
+        eprintln!("\u{1f6e1}\u{fe0f}  Git identity guard: {reason}");
+        std::process::exit(2);
+    }
+}
+
+async fn handle_codex_pre_tool_use_payload(
+    client: &Client,
+    payload: &serde_json::Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let is_subagent = payload.get("agent_id").is_some();
+    // Status delivery failure must not bypass policy enforcement. Preserve it
+    // for the wrapper's curl fallback, but finish the guard and emit any
+    // structured denial first.
+    let status_result = deliver_status_with_source(
+        client,
+        if is_subagent { "subagent" } else { "running" },
+        None,
+    )
+    .await;
+
+    let policy_work = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let digest = if is_subagent {
+            PeerDigestOutput::default()
+        } else {
+            let digest = collect_peer_digest(client).await;
+            broadcast_session_start(client).await;
+            report_proxy_state(client).await;
+            digest
+        };
+        let denial_reason = check_git_identity_guard(client, payload).await;
+        (digest, denial_reason)
+    })
+    .await;
+    let (digest, denial_reason) = policy_work.unwrap_or_default();
+    let context = (!digest.context.is_empty()).then_some(digest.context.as_str());
+    if let Some(response) = format_codex_pre_tool_response(context, denial_reason.as_deref()) {
+        println!("{response}");
+        let _ = std::io::stdout().flush();
+        // Ack only after the structured context has been written for Codex.
+        acknowledge_peer_digest(client, &digest).await;
+    }
+    status_result
+}
+
+async fn handle_post_tool_use_payload(client: &Client, payload: &serde_json::Value) {
+    if let Some(inspection) = inspect_bash_payload(payload) {
+        if inspection.targets_main {
+            broadcast_git_push_to_peers(client, &inspection.command).await;
+        }
+    }
 }
 
 /// Drain stdin to prevent blocking the calling process.
@@ -715,21 +1008,7 @@ pub async fn run(
             let _ = std::io::stdin().read_to_end(&mut buf);
             let payload: serde_json::Value =
                 serde_json::from_slice(&buf).unwrap_or(serde_json::Value::Null);
-
-            let is_subagent = payload.get("agent_id").is_some();
-            report_status(client, if is_subagent { "subagent" } else { "running" }).await;
-
-            // Peer digest, session start broadcast, and proxy state are parent-only
-            // concerns — skip them when the call originated from a subagent.
-            if !is_subagent {
-                print_peer_digest(client).await;
-                broadcast_session_start(client).await;
-                report_proxy_state(client).await;
-            }
-
-            if check_git_identity_guard(client, &payload).await {
-                std::process::exit(2);
-            }
+            handle_pre_tool_use_payload(client, &payload).await;
         }
         HookCommand::PostToolUse => {
             // Read stdin, parse as JSON to check for Bash git push
@@ -738,12 +1017,7 @@ pub async fn run(
             let payload: serde_json::Value =
                 serde_json::from_slice(&buf).unwrap_or(serde_json::Value::Null);
 
-            // Broadcast to peers after successful git push to main/master
-            if let Some(inspection) = inspect_bash_payload(&payload) {
-                if inspection.targets_main {
-                    broadcast_git_push_to_peers(client, &inspection.command).await;
-                }
-            }
+            handle_post_tool_use_payload(client, &payload).await;
         }
         HookCommand::PreCompact => {
             report_status(client, "compacting").await;
@@ -752,7 +1026,12 @@ pub async fn run(
             report_status(client, "waiting").await;
         }
         HookCommand::Stop { agent, reason } => {
-            handle_stop(client, agent, reason).await?;
+            let wire_format = if agent.as_deref() == Some("codex") {
+                StopWireFormat::Codex
+            } else {
+                StopWireFormat::Claude
+            };
+            handle_stop(client, agent, reason, wire_format, None).await?;
         }
         HookCommand::Notify {
             event,
@@ -803,11 +1082,22 @@ pub async fn run(
                 json!({ "check": "session_id", "status": "fail", "error": "RDV_SESSION_ID not set" })
             });
 
-            // Check 2: Terminal server reachable (agent-status endpoint)
+            // Check 2: terminal server, callback key, and exact generation are
+            // valid. This endpoint is deliberately read-only: validation must
+            // never overwrite a real waiting/idle/subagent lifecycle state.
             let terminal_check = if let Some(s) = sid {
-                let query = [("sessionId", s), ("status", "running")];
+                let generation =
+                    std::env::var("RDV_AGENT_GENERATION").unwrap_or_else(|_| "0".to_string());
+                let query = [
+                    ("sessionId", s),
+                    ("generation", generation.as_str()),
+                    ("status", "running"),
+                ];
                 match client
-                    .post_empty_with_query("/internal/agent-status", &query)
+                    .get_with_query::<serde_json::Value, _>(
+                        "/internal/agent-hook-health",
+                        &query[..2],
+                    )
                     .await
                 {
                     Ok(_) => json!({ "check": "terminal_server", "status": "ok" }),
@@ -821,16 +1111,6 @@ pub async fn run(
                 json!({ "check": "terminal_server", "status": "skip", "reason": "no session ID" })
             };
             results.push(terminal_check);
-
-            // Check 3: API server reachable (sessions endpoint)
-            let api_check = match client.get::<serde_json::Value>("/api/sessions").await {
-                Ok(_) => json!({ "check": "api_server", "status": "ok" }),
-                Err(e) => {
-                    all_ok = false;
-                    json!({ "check": "api_server", "status": "fail", "error": e.to_string() })
-                }
-            };
-            results.push(api_check);
 
             let output = json!({
                 "valid": all_ok,
@@ -856,7 +1136,7 @@ pub async fn run(
                     broadcast_session_start(client).await;
                 }
                 "stop" | "idle" => {
-                    handle_stop(client, agent, reason).await?;
+                    handle_stop(client, agent, reason, StopWireFormat::Claude, None).await?;
                 }
                 "notification" | "notify" => {
                     report_status(client, "waiting").await;
@@ -877,6 +1157,38 @@ pub async fn run(
                 }
             }
         }
+        HookCommand::Codex { event } => {
+            let payload = read_hook_payload()?;
+            match codex_action(&event, &payload).map_err(std::io::Error::other)? {
+                CodexHookAction::Status(status, source) => {
+                    deliver_status_with_source(client, status, source).await?;
+                    if event == "session-start" {
+                        broadcast_session_start(client).await;
+                    }
+                }
+                CodexHookAction::PreToolUse => {
+                    handle_codex_pre_tool_use_payload(client, &payload).await?;
+                }
+                CodexHookAction::PostToolUse => {
+                    deliver_status_with_source(client, "running", None).await?;
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(2),
+                        handle_post_tool_use_payload(client, &payload),
+                    )
+                    .await;
+                }
+                CodexHookAction::Stop => {
+                    handle_stop(
+                        client,
+                        Some("codex".to_string()),
+                        None,
+                        StopWireFormat::Codex,
+                        Some(&payload),
+                    )
+                    .await?;
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -884,8 +1196,8 @@ pub async fn run(
 #[cfg(test)]
 mod stop_tests {
     /// [y5ch.2] Guard: the clean-stop path must not POST to /internal/notify.
-    /// A clean agent stop is passive and must create NO user notification —
-    /// this source-level assertion proves the noise POST stays gone.
+    /// A clean agent stop is passive and must not create a second direct notify
+    /// request; the status endpoint owns the coalesced completion record.
     #[test]
     fn handle_stop_source_has_no_notify_post() {
         let src = include_str!("hook.rs");
@@ -942,7 +1254,7 @@ mod stop_tests {
             .expect("stop-handler safety belt exists");
         let belt = &src[belt_start..belt_start + 400];
         assert!(
-            belt.contains(r#"report_status_with_source(client, "running", Some("subagent-stop"))"#),
+            belt.contains("deliver_status_for_wire(") && belt.contains(r#"Some("subagent-stop")"#),
             "Stop-handler safety belt must tag source=subagent-stop"
         );
     }
@@ -970,10 +1282,7 @@ mod sanitize_tests {
         let out = sanitize_for_digest(attack);
         assert!(!out.contains('\n'), "newlines must be stripped");
         // Renders as a single inert line (the warning glyph itself is harmless).
-        assert_eq!(
-            out,
-            "ok\u{26a0} COLLISION: spoofed shares your branch main"
-        );
+        assert_eq!(out, "ok\u{26a0} COLLISION: spoofed shares your branch main");
     }
 
     #[test]
@@ -989,5 +1298,142 @@ mod sanitize_tests {
         let attack = "a\u{9b}31mb\u{9d}0;x";
         let out = sanitize_for_digest(attack);
         assert_eq!(out, "a31mb0;x");
+    }
+}
+
+#[cfg(test)]
+mod codex_tests {
+    use serde_json::json;
+
+    use super::{
+        codex_action, format_codex_pre_tool_response, format_stop_block, inspect_bash_payload,
+        shell_command, CodexHookAction, StopWireFormat,
+    };
+
+    #[test]
+    fn maps_codex_lifecycle_events_to_rdv_actions() {
+        let ordinary_tool = json!({ "tool_name": "Bash", "tool_input": { "command": "true" } });
+        let question_tool = json!({ "tool_name": "request_user_input", "tool_input": {} });
+
+        assert_eq!(
+            codex_action("session-start", &json!({ "source": "startup" })).unwrap(),
+            CodexHookAction::Status("running", None)
+        );
+        assert_eq!(
+            codex_action("prompt-submit", &json!({})).unwrap(),
+            CodexHookAction::Status("running", None)
+        );
+        assert_eq!(
+            codex_action("pre-tool-use", &ordinary_tool).unwrap(),
+            CodexHookAction::PreToolUse
+        );
+        assert_eq!(
+            codex_action("pre-tool-use", &question_tool).unwrap(),
+            CodexHookAction::Status("waiting", None)
+        );
+        assert_eq!(
+            codex_action("permission-request", &json!({})).unwrap(),
+            CodexHookAction::Status("waiting", None)
+        );
+        assert_eq!(
+            codex_action("post-tool-use", &json!({})).unwrap(),
+            CodexHookAction::PostToolUse
+        );
+        assert_eq!(
+            codex_action("pre-compact", &json!({})).unwrap(),
+            CodexHookAction::Status("compacting", None)
+        );
+        assert_eq!(
+            codex_action("post-compact", &json!({})).unwrap(),
+            CodexHookAction::Status("running", None)
+        );
+        assert_eq!(
+            codex_action("subagent-start", &json!({})).unwrap(),
+            CodexHookAction::Status("subagent", None)
+        );
+        assert_eq!(
+            codex_action("subagent-stop", &json!({})).unwrap(),
+            CodexHookAction::Status("running", Some("subagent-stop"))
+        );
+        assert_eq!(
+            codex_action("stop", &json!({})).unwrap(),
+            CodexHookAction::Stop
+        );
+        assert_eq!(
+            codex_action("session-end", &json!({})).unwrap(),
+            CodexHookAction::Status("ended", None)
+        );
+        assert!(codex_action("not-real", &json!({})).is_err());
+    }
+
+    #[test]
+    fn codex_stop_block_is_valid_json_while_claude_stays_plain_text() {
+        let codex = format_stop_block(StopWireFormat::Codex, "unfinished work");
+        let parsed: serde_json::Value = serde_json::from_str(codex.trim()).unwrap();
+        assert_eq!(
+            parsed,
+            json!({ "decision": "block", "reason": "unfinished work" })
+        );
+
+        assert_eq!(
+            format_stop_block(StopWireFormat::Claude, "unfinished work"),
+            "unfinished work\n"
+        );
+    }
+
+    #[test]
+    fn extracts_codex_shell_tool_names_and_input_shapes() {
+        let cases = [
+            json!({ "tool_name": "Bash", "tool_input": { "command": "git push" } }),
+            json!({ "tool_name": "unified_exec", "tool_input": { "cmd": "git push" } }),
+            json!({ "tool_name": "local_shell", "input": { "command": "git push" } }),
+            json!({ "tool_name": "exec_command", "arguments": { "cmd": "git push" } }),
+            json!({ "tool_name": "functions.exec", "tool_input": "git push" }),
+            json!({ "tool_name": "functions.exec_command", "cmd": "git push" }),
+        ];
+        for payload in cases {
+            assert_eq!(shell_command(&payload).as_deref(), Some("git push"));
+            assert!(inspect_bash_payload(&payload).unwrap().targets_main);
+        }
+        let argv_cases = [
+            json!({ "tool_name": "exec_command", "arguments": { "cmd": ["git", "push"] } }),
+            json!({ "tool_name": "functions.exec_command", "cmd": ["git", "push"] }),
+        ];
+        for payload in argv_cases {
+            assert_eq!(shell_command(&payload).as_deref(), Some("git push"));
+            assert!(inspect_bash_payload(&payload).unwrap().targets_main);
+        }
+        assert_eq!(
+            shell_command(
+                &json!({ "tool_name": "read_file", "tool_input": { "command": "git push" } })
+            ),
+            None,
+        );
+        assert_eq!(
+            shell_command(
+                &json!({ "tool_name": "exec_command", "arguments": { "cmd": ["git", 42] } })
+            ),
+            None,
+        );
+    }
+
+    #[test]
+    fn codex_pre_tool_response_delivers_context_and_a_structured_denial() {
+        let response =
+            format_codex_pre_tool_response(Some("peer context"), Some("wrong git identity"))
+                .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(
+            parsed,
+            json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "additionalContext": "peer context",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": "wrong git identity"
+                }
+            }),
+        );
+        assert!(format_codex_pre_tool_response(None, None).is_none());
     }
 }

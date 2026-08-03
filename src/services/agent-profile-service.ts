@@ -14,6 +14,7 @@ import {
   agentProfiles,
   agentRuns,
   agentSchedules,
+  agentStatusDeliveries,
   projectProfileLinks,
   profileGitIdentities,
   profileSecretsConfig,
@@ -22,6 +23,7 @@ import {
 } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import { mkdir, writeFile, readFile, access } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { runtimeJoin as join, runtimeDirname as dirname } from "@/lib/dynamic-fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -29,9 +31,12 @@ import { createSecretsProvider, isProviderSupported } from "./secrets";
 import { encrypt, decryptSafe } from "@/lib/encryption";
 import { AgentProfileServiceError } from "@/lib/errors";
 import { createLogger } from "@/lib/logger";
-
-const log = createLogger("AgentProfile");
-import { execFileNoThrow } from "@/lib/exec";
+import {
+  codexHooksEnabled,
+  inspectInstalledCodexHooks,
+  installCodexHooks,
+  uninstallCodexHooks,
+} from "@/services/agent-hooks/codex-adapter";
 import { safeJsonParse } from "@/lib/utils";
 import { getProfilesDir } from "@/lib/paths";
 import { ProfileIsolation } from "@/domain/value-objects/ProfileIsolation";
@@ -47,6 +52,8 @@ import type {
   ProfileSecretsProviderType,
   UpdateProfileSecretsConfigInput,
 } from "@/types/agent";
+
+const log = createLogger("AgentProfile");
 
 // Profile base directory - use centralized path configuration
 const getProfilesBaseDir = () => getProfilesDir();
@@ -690,24 +697,43 @@ function withoutRdvHooks(arr: unknown[], markers: string[]): unknown[] {
  * Falls back to curl if rdv is not installed.
  */
 function rdvOrCurlCommand(rdvCmd: string, curlFallback: string): string {
-  return `if command -v rdv >/dev/null 2>&1; then ${rdvCmd}; else ${curlFallback}; fi`;
+  return (
+    DELIVERY_ID_PREAMBLE +
+    `if command -v rdv >/dev/null 2>&1; then ${rdvCmd}; _RDV_RC=$?; ` +
+    `if [ "$_RDV_RC" -eq 2 ]; then exit 2; elif [ "$_RDV_RC" -ne 0 ]; then ${curlFallback}; fi; ` +
+    `else ${curlFallback}; fi`
+  );
 }
 
-/** Env preamble for curl fallback (reads RDV vars from tmux) */
-const CURL_ENV_PREAMBLE =
-  '_RDV_SN=$(tmux display-message -p "#{session_name}" 2>/dev/null); ' +
-  '[ -z "$_RDV_SN" ] && exit 0; ' +
-  'eval "$(tmux show-environment -t "$_RDV_SN" 2>/dev/null | grep "^RDV_")" 2>/dev/null; ' +
-  '[ -z "$RDV_SESSION_ID" ] && exit 0; ';
+const DELIVERY_ID_PREAMBLE =
+  '_RDV_DELIVERY=$(uuidgen 2>/dev/null) || _RDV_DELIVERY="$$-$(date +%s)-${RANDOM:-0}"; ' +
+  'case "$_RDV_DELIVERY" in ""|*[!A-Za-z0-9._-]*) _RDV_DELIVERY="$$-$(date +%s)-0" ;; esac; ' +
+  'export RDV_HOOK_DELIVERY_ID="$_RDV_DELIVERY"; ';
+
+function importTmuxEnvIfMissing(key: string): string {
+  return (
+    `if [ -z "\${${key}:-}" ] && [ -n "$_RDV_SN" ]; then ` +
+    `_RDV_VALUE=$(tmux show-environment -t "$_RDV_SN" "${key}" 2>/dev/null) || true; ` +
+    `case "$_RDV_VALUE" in "${key}="*) export "$_RDV_VALUE" ;; esac; fi; `
+  );
+}
+
+/** Fill only missing RDV vars from tmux so rolling-upgrade processes see them. */
+const TMUX_ENV_PREAMBLE =
+  '_RDV_SN=$(tmux display-message -p "#{session_name}" 2>/dev/null) || true; ' +
+  ["RDV_SESSION_ID", "RDV_AGENT_GENERATION", "RDV_API_KEY", "RDV_TERMINAL_SOCKET", "RDV_TERMINAL_PORT"]
+    .map(importTmuxEnvIfMissing)
+    .join("");
 
 /** Build a curl command that hits an internal endpoint via socket or port.
  *  `prefix` is prepended before the if/else block (e.g. for piping stdin). */
 function curlCmd(path: string, opts = "", prefix = ""): string {
+  const transport = "--connect-timeout 1 --max-time 2 --retry 1 --retry-max-time 2 --retry-all-errors -o /dev/null";
   return prefix +
     'if [ -n "$RDV_TERMINAL_SOCKET" ]; then ' +
-    `curl --unix-socket "$RDV_TERMINAL_SOCKET" -s -X POST "http://localhost${path}" ${opts}; ` +
+    `curl --unix-socket "$RDV_TERMINAL_SOCKET" -fsS ${transport} -H "Authorization: Bearer $RDV_API_KEY" -X POST "http://localhost${path}" ${opts}; ` +
     'else ' +
-    `curl -s -X POST "http://localhost:\${RDV_TERMINAL_PORT}${path}" ${opts}; ` +
+    `curl -fsS ${transport} -H "Authorization: Bearer $RDV_API_KEY" -X POST "http://localhost:\${RDV_TERMINAL_PORT}${path}" ${opts}; ` +
     'fi';
 }
 
@@ -716,12 +742,52 @@ function curlForStatus(status: string, source?: string): string {
   // subagent-stop ordering rule (a subagent-stop "running" must not resurrect a
   // turn that already ended). Kept consistent with the rdv CLI hook path.
   const sourceParam = source ? `&source=${source}` : "";
-  return CURL_ENV_PREAMBLE + curlCmd(`/internal/agent-status?sessionId=\${RDV_SESSION_ID}&status=${status}${sourceParam}`) + ' || true';
+  return (
+    TMUX_ENV_PREAMBLE +
+    'if [ -n "$RDV_SESSION_ID" ] && [ -n "$RDV_AGENT_GENERATION" ] && [ -n "$RDV_API_KEY" ]; then ' +
+    curlCmd(`/internal/agent-status?sessionId=\${RDV_SESSION_ID}&generation=\${RDV_AGENT_GENERATION}&status=${status}${sourceParam}&deliveryId=\${RDV_HOOK_DELIVERY_ID}`) +
+    ' || true; fi'
+  );
+}
+
+/**
+ * Claude hook delivery must survive both rollout orders. Import the tmux
+ * credentials before invoking rdv, run rdv first for policy/peer side effects,
+ * then always make the bounded authenticated post because older binaries can
+ * swallow delivery failures. A blocked Stop prints plain stdout while exiting
+ * zero, so its final authoritative status must remain running (never briefly
+ * idle). Exit 2 remains available to policy hooks that use it.
+ */
+export function buildClaudeStatusHookCommand(
+  rdvCmd: string,
+  status: string,
+  source?: string,
+): string {
+  const invokeRdv = `if command -v rdv >/dev/null 2>&1; then ${rdvCmd}; _RDV_RC=$?; else _RDV_RC=0; fi; `;
+  if (status === "idle") {
+    return (
+      DELIVERY_ID_PREAMBLE +
+      TMUX_ENV_PREAMBLE +
+      `_RDV_OUT=""; if command -v rdv >/dev/null 2>&1; then _RDV_OUT=$(${rdvCmd}); _RDV_RC=$?; else _RDV_RC=0; fi; ` +
+      'if [ -n "$_RDV_OUT" ]; then printf \'%s\\n\' "$_RDV_OUT"; ' +
+      curlForStatus("running", source) + "; else " +
+      curlForStatus("idle", source) + "; fi; " +
+      'if [ "$_RDV_RC" -eq 2 ]; then exit 2; fi; exit 0'
+    );
+  }
+  return (
+    DELIVERY_ID_PREAMBLE +
+    TMUX_ENV_PREAMBLE +
+    invokeRdv +
+    curlForStatus(status, source) + "; " +
+    'if [ "$_RDV_RC" -eq 2 ]; then exit 2; fi; exit 0'
+  );
 }
 
 /**
  * Install hooks into the agent's settings file.
- * Currently supports Claude Code only (hooks in .claude/settings.json).
+ * Supports Claude Code (`.claude/settings.json`) and Codex
+ * (`$CODEX_HOME/hooks.json`).
  *
  * Uses rdv CLI when available, falls back to curl for environments
  * where the Rust binary isn't installed.
@@ -735,9 +801,17 @@ function curlForStatus(status: string, source?: string): string {
 export async function installAgentHooks(
   configDir: string,
   provider: AgentProvider,
-  rdvEnv?: Record<string, string>
+  agentEnv?: Record<string, string>
 ): Promise<void> {
-  // Only Claude Code supports hooks currently
+  if (provider === "codex") {
+    const codexHome = agentEnv?.CODEX_HOME ?? process.env.CODEX_HOME;
+    if (codexHooksEnabled()) {
+      await installCodexHooks(configDir, codexHome);
+    } else {
+      await uninstallCodexHooks(configDir, codexHome);
+    }
+    return;
+  }
   if (provider !== "claude") return;
 
   const settingsPath = join(configDir, ".claude", "settings.json");
@@ -755,22 +829,22 @@ export async function installAgentHooks(
   // Activity status hooks - rdv CLI preferred, curl fallback
   const preToolUseHook = {
     matcher: "",
-    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook pre-tool-use", curlForStatus("running")), timeout: 5 }],
+    hooks: [{ type: "command", command: buildClaudeStatusHookCommand("rdv hook pre-tool-use", "running"), timeout: 5 }],
   };
 
   const preCompactHook = {
     matcher: "",
-    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook pre-compact", curlForStatus("compacting")), timeout: 5 }],
+    hooks: [{ type: "command", command: buildClaudeStatusHookCommand("rdv hook pre-compact", "compacting"), timeout: 5 }],
   };
 
   const notificationHook = {
     matcher: "permission_prompt|elicitation_dialog",
-    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook notification", curlForStatus("waiting")), timeout: 5 }],
+    hooks: [{ type: "command", command: buildClaudeStatusHookCommand("rdv hook notification", "waiting"), timeout: 5 }],
   };
 
   // Stop hook: report idle + check for unfinished beads work
   const stopHook = {
-    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook claude stop", curlForStatus("idle")), timeout: 15 }],
+    hooks: [{ type: "command", command: buildClaudeStatusHookCommand("rdv hook claude stop", "idle"), timeout: 15 }],
   };
 
   // SubagentStop hook: a Task subagent finished; parent will resume.
@@ -779,7 +853,7 @@ export async function installAgentHooks(
   // [remote-dev-1aa5c] Tagged source=subagent-stop so the server refuses to let
   // this "running" overwrite a turn that already ended ('idle'/'ended').
   const subagentStopHook = {
-    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook subagent-stop", curlForStatus("running", "subagent-stop")), timeout: 5 }],
+    hooks: [{ type: "command", command: buildClaudeStatusHookCommand("rdv hook subagent-stop", "running", "subagent-stop"), timeout: 5 }],
   };
 
   // PostToolUse hook for Bash: git-push peer broadcast
@@ -790,7 +864,7 @@ export async function installAgentHooks(
 
   // SessionEnd hook: report "ended" status + optional learning analysis
   const sessionEndHook = {
-    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook session-end", curlForStatus("ended")), timeout: 10 }],
+    hooks: [{ type: "command", command: buildClaudeStatusHookCommand("rdv hook session-end", "ended"), timeout: 10 }],
   };
 
   // Merge with existing hooks — replace any old RDV hooks (both rdv CLI and legacy curl)
@@ -850,7 +924,7 @@ export async function installAgentHooks(
   const rdvKeys = ["RDV_SESSION_ID", "RDV_TERMINAL_SOCKET", "RDV_TERMINAL_PORT"] as const;
   const peerMcpEnv: Record<string, string> = {};
   for (const key of rdvKeys) {
-    if (rdvEnv?.[key]) peerMcpEnv[key] = rdvEnv[key];
+    if (agentEnv?.[key]) peerMcpEnv[key] = agentEnv[key];
   }
   mcpServers["rdv"] = {
     command: "npx",
@@ -897,60 +971,224 @@ async function cleanStaleMcpJson(mcpJsonPath: string): Promise<void> {
   }
 }
 
-/**
- * Validate that installed hooks are functional.
- * Runs `rdv hook validate` to check server connectivity and session context.
- * If validation fails and rdv is available, reinstalls hooks (auto-repair).
- *
- * @returns validation result with details
- */
+export interface AgentHookInspection {
+  configured: boolean;
+  error?: string;
+}
+
+export type AgentHookRuntimeTrust = "confirmed" | "unknown" | "not_applicable";
+
+export interface AgentHookValidationResult {
+  /** Fully healthy, including an observed hook heartbeat for Codex. */
+  valid: boolean;
+  repaired: boolean;
+  configured: boolean;
+  reachable: boolean;
+  runtimeTrust: AgentHookRuntimeTrust;
+  error?: string;
+}
+
+/** Inspect the exact provider configuration the launched process will read. */
+export async function inspectAgentHookInstallation(
+  configDir: string,
+  provider: AgentProvider,
+  env: Readonly<Record<string, string>> = {}
+): Promise<AgentHookInspection> {
+  if (provider === "codex") {
+    return inspectInstalledCodexHooks(
+      configDir,
+      env.CODEX_HOME ?? process.env.CODEX_HOME
+    );
+  }
+  if (provider !== "claude") return { configured: true };
+
+  try {
+    const raw = await readFile(join(configDir, ".claude", "settings.json"), "utf8");
+    const parsed = JSON.parse(raw) as { hooks?: Record<string, unknown[]> };
+    const hooks = parsed.hooks;
+    if (!hooks || typeof hooks !== "object") {
+      return { configured: false, error: "Claude settings have no hooks map" };
+    }
+    const required: Array<[string, string]> = [
+      ["PreToolUse", "rdv hook pre-tool-use"],
+      ["PreCompact", "rdv hook pre-compact"],
+      ["Notification", "rdv hook notification"],
+      ["Stop", "rdv hook claude stop"],
+      ["SubagentStop", "rdv hook subagent-stop"],
+      ["PostToolUse", "rdv hook post-tool-use"],
+      ["SessionEnd", "rdv hook session-end"],
+    ];
+    for (const [event, needle] of required) {
+      const serialized = JSON.stringify(hooks[event] ?? []);
+      if (!serialized.includes(needle) || !serialized.includes("RDV_HOOK_DELIVERY_ID")) {
+        return {
+          configured: false,
+          error: `Claude managed hook ${event} is missing or drifted`,
+        };
+      }
+    }
+    return { configured: true };
+  } catch (error) {
+    return {
+      configured: false,
+      error: `Unable to read Claude hooks: ${String(error)}`,
+    };
+  }
+}
+
+async function probeAgentHookHealth(
+  sessionId: string,
+  env: Readonly<Record<string, string>>
+): Promise<{ reachable: boolean; error?: string }> {
+  const generation = env.RDV_AGENT_GENERATION;
+  const apiKey = env.RDV_API_KEY;
+  if (!generation || !apiKey) {
+    return {
+      reachable: false,
+      error: "Missing lifecycle generation or callback key",
+    };
+  }
+  const path =
+    `/internal/agent-hook-health?sessionId=${encodeURIComponent(sessionId)}` +
+    `&generation=${encodeURIComponent(generation)}`;
+
+  return new Promise((resolve) => {
+    const socketPath = env.RDV_TERMINAL_SOCKET;
+    const port = Number(env.RDV_TERMINAL_PORT ?? "6002");
+    const request = httpRequest(
+      socketPath
+        ? {
+            socketPath,
+            path,
+            method: "GET",
+            headers: { authorization: `Bearer ${apiKey}` },
+          }
+        : {
+            hostname: "127.0.0.1",
+            port: Number.isSafeInteger(port) && port > 0 ? port : 6002,
+            path,
+            method: "GET",
+            headers: { authorization: `Bearer ${apiKey}` },
+          },
+      (response) => {
+        response.resume();
+        response.on("end", () => {
+          if (response.statusCode && response.statusCode >= 200 && response.statusCode < 300) {
+            resolve({ reachable: true });
+          } else {
+            resolve({
+              reachable: false,
+              error: `Lifecycle health returned HTTP ${response.statusCode ?? "unknown"}`,
+            });
+          }
+        });
+      }
+    );
+    request.setTimeout(3_000, () =>
+      request.destroy(new Error("Lifecycle health timed out"))
+    );
+    request.once("error", (error) =>
+      resolve({ reachable: false, error: String(error) })
+    );
+    request.end();
+  });
+}
+
+/** Validate on-disk configuration and the authenticated read-only callback. */
 export async function validateAgentHooks(
   configDir: string,
   provider: AgentProvider,
   sessionId: string,
   env: Record<string, string>
-): Promise<{ valid: boolean; repaired: boolean; error?: string }> {
-  if (provider !== "claude") return { valid: true, repaired: false };
-
-  // Check if rdv is available (hooks use curl fallback if not)
-  const versionCheck = await execFileNoThrow("rdv", ["--version"], { timeout: 3000 });
-  if (versionCheck.exitCode !== 0) {
-    return { valid: true, repaired: false };
+): Promise<AgentHookValidationResult> {
+  if (provider === "codex" && !codexHooksEnabled()) {
+    return {
+      valid: true,
+      repaired: false,
+      configured: true,
+      reachable: true,
+      runtimeTrust: "not_applicable",
+    };
+  }
+  if (provider !== "claude" && provider !== "codex") {
+    return {
+      valid: true,
+      repaired: false,
+      configured: true,
+      reachable: true,
+      runtimeTrust: "not_applicable",
+    };
   }
 
-  const mergedEnv = { ...process.env, ...env } as NodeJS.ProcessEnv;
-  const validateResult = await execFileNoThrow("rdv", ["hook", "validate"], {
-    timeout: 10000,
-    env: mergedEnv,
-  });
-
-  // Old rdv binary without the validate subcommand
-  if (validateResult.stderr.includes("unrecognized subcommand")) {
-    log.warn("rdv binary is outdated (missing hook validate), skipping validation", { sessionId });
-    return { valid: true, repaired: false };
+  let repaired = false;
+  let inspection = await inspectAgentHookInstallation(configDir, provider, env);
+  if (!inspection.configured) {
+    repaired = true;
+    log.warn("Hook structure validation failed, attempting repair", {
+      sessionId,
+      error: inspection.error,
+    });
+    await installAgentHooks(configDir, provider, env);
+    inspection = await inspectAgentHookInstallation(configDir, provider, env);
+  }
+  if (!inspection.configured) {
+    return {
+      valid: false,
+      repaired,
+      configured: false,
+      reachable: false,
+      runtimeTrust: provider === "codex" ? "unknown" : "not_applicable",
+      error: inspection.error ?? "Hook installation is invalid after repair",
+    };
   }
 
-  const parsed = safeJsonParse(validateResult.stdout, null as { valid: boolean; checks?: unknown[] } | null);
-  if (parsed?.valid) {
-    return { valid: true, repaired: false };
+  const health = await probeAgentHookHealth(sessionId, env);
+  if (!health.reachable) {
+    return {
+      valid: false,
+      repaired,
+      configured: true,
+      reachable: false,
+      runtimeTrust: provider === "codex" ? "unknown" : "not_applicable",
+      error: health.error ?? "Lifecycle health endpoint is unavailable",
+    };
   }
 
-  // Validation failed or parse failed -- attempt auto-repair
-  log.warn("Hook validation failed, attempting repair", { sessionId, checks: parsed?.checks, stderr: validateResult.stderr });
-  await installAgentHooks(configDir, provider);
-
-  // Re-validate after repair
-  const retryResult = await execFileNoThrow("rdv", ["hook", "validate"], {
-    timeout: 10000,
-    env: mergedEnv,
-  });
-  const retryParsed = safeJsonParse(retryResult.stdout, null as { valid: boolean } | null);
-  if (retryParsed?.valid) {
-    log.info("Hook auto-repair succeeded", { sessionId });
-    return { valid: true, repaired: true };
+  let runtimeTrust: AgentHookRuntimeTrust = "not_applicable";
+  if (provider === "codex") {
+    runtimeTrust = "unknown";
+    const generation = Number(env.RDV_AGENT_GENERATION);
+    if (Number.isSafeInteger(generation) && generation >= 0) {
+      try {
+        const heartbeat = await db.query.agentStatusDeliveries.findFirst({
+          where: and(
+            eq(agentStatusDeliveries.sessionId, sessionId),
+            eq(agentStatusDeliveries.generation, generation)
+          ),
+          columns: { id: true },
+        });
+        if (heartbeat) runtimeTrust = "confirmed";
+      } catch (error) {
+        log.warn("Unable to inspect Codex hook heartbeat", {
+          sessionId,
+          generation,
+          error: String(error),
+        });
+      }
+    }
   }
 
-  return { valid: false, repaired: true, error: "Auto-repair failed: hooks still invalid after reinstall" };
+  const valid = runtimeTrust !== "unknown";
+  return {
+    valid,
+    repaired,
+    configured: true,
+    reachable: true,
+    runtimeTrust,
+    ...(valid
+      ? {}
+      : { error: "Codex hook load/trust awaits the first real lifecycle heartbeat" }),
+  };
 }
 
 // ============================================================================

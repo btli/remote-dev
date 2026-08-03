@@ -292,6 +292,20 @@ command, env, metadata), `renderContent()`, `onSessionExit()`,
 (running/exited/restarting/closed), `agent_exit_code`, `agent_restarted_at`,
 `agent_restart_count`, `type_metadata` (JSON blob for plugin-specific data).
 
+Agent restarts use a database compare-and-set over `agent_restart_count` and
+`agent_exit_state`; this serializes HTTP, WebSocket, and cold-relaunch claims
+across server processes. Hook callbacks are authenticated and generation-bound.
+The launched CLI replaces the bootstrap shell, while tmux retains dead panes so
+the terminal server can reconcile an exact exit code/signal when the immediate
+callback cannot reach it. Every `exited` row whose
+`agent_exit_notification_at` marker is still null is replayed as a deterministic
+notification intent on startup and during the liveness sweep; there is no age
+cutoff on pending intent. Transactional status and notification receipts make
+HTTP retries idempotent and are pruned after 30 days once they are no longer
+needed for ordinary transport retry. This closes the
+state-commit/notification-insert crash window without duplicate panel rows or
+push attempts.
+
 ## Service Layer
 
 Roughly **87 service modules** live under `src/services/` (about 80 at the top level
@@ -558,9 +572,9 @@ Testcontainers suites (`bun run test:pg`) run **locally, not in CI** (see
 ## Agent Peer Communication
 
 Project-scoped inter-agent messaging lets agents in the same project discover one
-another and coordinate. Delivery is **not uniform across providers** — automatic
-push/poll delivery is currently a **Claude Code** capability; every other agent
-pulls its inbox on demand.
+another and coordinate. Delivery is **not uniform across providers**: Claude Code
+gets push plus a poll fallback, Codex polls automatically at native lifecycle
+boundaries, and the remaining providers pull on demand.
 
 - **Claude Code — durable push + poll.** An `rdv` MCP server is auto-registered in
   the profile's `settings.json` at session creation *only when the provider is
@@ -568,9 +582,12 @@ pulls its inbox on demand.
   terminal server pushes events over a Unix socket (`/tmp/rdv-mcp-{sessionId}.sock`)
   to that MCP server, which relays them to the agent via `sendLoggingMessage()`; a
   poll hook is the fallback path.
-- **All other agents (Codex, Gemini, Antigravity, OpenCode, Cursor) — pull only.** They are
-  not auto-wired for push/poll delivery; they read peer messages by running
-  `rdv peer` (via Bash) themselves.
+- **Codex — native-hook poll.** Remote Dev safely merges its event commands into
+  `$CODEX_HOME/hooks.json`. Session, prompt, and tool hooks drain the durable
+  inbox and surface context through Codex's structured hook output. This is not
+  immediate push: queued traffic appears at the next matching hook boundary.
+- **Gemini, Antigravity, OpenCode, and Cursor — pull only.** They read peer
+  messages by running `rdv peer` (via Bash) themselves.
 - **Delivery is at-least-once with idempotent de-duplication** (a bounded in-memory
   dedup cache), not exactly-once. Read operations (list peers, read channels) always
   go through the `rdv` CLI.
@@ -753,7 +770,7 @@ cross-platform builds, and an embedded process manager for the two servers
 
 `crates/rdv/` is a Rust CLI agents use (via Bash) to drive the terminal server —
 sessions, groups/projects, agents, worktrees, browser, peers, channels,
-notifications, and Claude Code lifecycle hooks. It discovers the servers via
+notifications, and Claude Code/Codex lifecycle hooks. It discovers the servers via
 `RDV_*` env vars and emits JSON by default (`--human` for tables). See
 [`docs/RDV_CLI.md`](./RDV_CLI.md).
 

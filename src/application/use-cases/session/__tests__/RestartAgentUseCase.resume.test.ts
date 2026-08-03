@@ -35,6 +35,21 @@ describe("RestartAgentUseCase — resume", () => {
       findByProject: vi.fn(),
       save: vi.fn().mockImplementation((s: Session) => Promise.resolve(s)),
       saveMany: vi.fn(),
+      claimAgentRestart: vi.fn(async () => {
+        const session = await repo.findById(
+          "123e4567-e89b-12d3-a456-426614174000",
+          "user-123",
+        );
+        return session?.markAgentRestarting() ?? null;
+      }),
+      completeAgentRestart: vi.fn(async () => {
+        const session = await repo.findById(
+          "123e4567-e89b-12d3-a456-426614174000",
+          "user-123",
+        );
+        return session?.markAgentRestarting().markAgentRunning() ?? null;
+      }),
+      failAgentRestart: vi.fn(),
       delete: vi.fn(),
       deleteMany: vi.fn(),
       updateTabOrders: vi.fn(),
@@ -44,14 +59,16 @@ describe("RestartAgentUseCase — resume", () => {
     } as unknown as SessionRepository;
     tmux = {
       sessionExists: vi.fn().mockResolvedValue(true),
-      sendKeys: vi.fn().mockResolvedValue(undefined),
-      setEnvironment: vi.fn().mockResolvedValue(undefined),
+      getSessionPresence: vi.fn().mockResolvedValue("present"),
+      stopSessionAndConfirmAbsent: vi.fn().mockResolvedValue(true),
       getEnvironment: vi.fn().mockResolvedValue({
         toRecord: () => ({
           PATH: "/session/bin",
           CURSOR_DATA_DIR: "/session/cursor-data",
         }),
       }),
+      replaceAgentProcess: vi.fn().mockResolvedValue(undefined),
+      setEnvironment: vi.fn().mockResolvedValue(undefined),
     } as unknown as TmuxGateway;
     resolver = { resolveResume: vi.fn() };
   });
@@ -71,7 +88,7 @@ describe("RestartAgentUseCase — resume", () => {
       userId: "user-123",
     });
 
-    expect(tmux.sendKeys).toHaveBeenCalledWith(expect.any(String), "claude --resume id1");
+    expect(tmux.replaceAgentProcess).toHaveBeenCalledWith(expect.any(String), "claude --resume id1");
     expect(out.resumed).toBe(true);
   });
 
@@ -90,7 +107,7 @@ describe("RestartAgentUseCase — resume", () => {
       userId: "user-123",
     });
 
-    expect(tmux.sendKeys).toHaveBeenCalledWith(expect.any(String), "codex resume cx");
+    expect(tmux.replaceAgentProcess).toHaveBeenCalledWith(expect.any(String), "codex resume cx");
   });
 
   it("relaunches fresh (bare command) when the resolver returns null", async () => {
@@ -103,7 +120,7 @@ describe("RestartAgentUseCase — resume", () => {
       userId: "user-123",
     });
 
-    expect(tmux.sendKeys).toHaveBeenCalledWith(expect.any(String), "claude");
+    expect(tmux.replaceAgentProcess).toHaveBeenCalledWith(expect.any(String), "claude");
     expect(out.resumed).toBe(false);
   });
 
@@ -116,7 +133,7 @@ describe("RestartAgentUseCase — resume", () => {
       userId: "user-123",
     });
 
-    expect(tmux.sendKeys).toHaveBeenCalledWith(expect.any(String), "claude");
+    expect(tmux.replaceAgentProcess).toHaveBeenCalledWith(expect.any(String), "claude");
     expect(out.resumed).toBe(false);
   });
 
@@ -147,7 +164,7 @@ describe("RestartAgentUseCase — resume", () => {
       }),
       "/home/user/project",
     );
-    expect(tmux.sendKeys).not.toHaveBeenCalled();
+    expect(tmux.replaceAgentProcess).not.toHaveBeenCalled();
   });
 
   it("resumes Cursor with the exact verified executable and tmux discovery env", async () => {
@@ -178,7 +195,7 @@ describe("RestartAgentUseCase — resume", () => {
       session,
       expect.objectContaining({ CURSOR_DATA_DIR: "/session/cursor-data" }),
     );
-    expect(tmux.sendKeys).toHaveBeenCalledWith(
+    expect(tmux.replaceAgentProcess).toHaveBeenCalledWith(
       expect.any(String),
       "CURSOR_DATA_DIR='/session/cursor-data' '/verified/cursor agent' --resume chat-1",
     );
@@ -199,7 +216,7 @@ describe("RestartAgentUseCase — resume", () => {
       userId: "user-123",
     });
 
-    expect(tmux.sendKeys).toHaveBeenCalledWith(
+    expect(tmux.replaceAgentProcess).toHaveBeenCalledWith(
       expect.any(String),
       "CURSOR_DATA_DIR='/session/cursor-data' '/verified/cursor-agent'",
     );
@@ -224,11 +241,15 @@ describe("RestartAgentUseCase — resume", () => {
       userId: "user-123",
     });
 
-    expect(tmux.setEnvironment).toHaveBeenCalledOnce();
-    const [, injected] = (tmux.setEnvironment as Mock).mock.calls[0];
+    const cursorEnvCall = (tmux.setEnvironment as Mock).mock.calls.find(
+      ([, injected]) => injected.toRecord().CURSOR_DATA_DIR === "/operator/cursor-data",
+    );
+    expect(cursorEnvCall).toBeDefined();
+    const [, injected] = cursorEnvCall!;
     expect(injected.toRecord()).toEqual({ CURSOR_DATA_DIR: "/operator/cursor-data" });
-    expect((tmux.setEnvironment as Mock).mock.invocationCallOrder[0]).toBeLessThan(
-      (tmux.sendKeys as Mock).mock.invocationCallOrder[0],
+    const cursorEnvCallIndex = (tmux.setEnvironment as Mock).mock.calls.indexOf(cursorEnvCall!);
+    expect((tmux.setEnvironment as Mock).mock.invocationCallOrder[cursorEnvCallIndex]).toBeLessThan(
+      (tmux.replaceAgentProcess as Mock).mock.invocationCallOrder[0],
     );
   });
 });

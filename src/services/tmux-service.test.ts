@@ -8,10 +8,39 @@ vi.mock("@/lib/exec", () => ({
   execFileNoThrow: vi.fn(async () => ({ stdout: "", stderr: "", exitCode: 1 })),
 }));
 
-import { execFile } from "@/lib/exec";
-import { createSession, resolveStartupEnv } from "./tmux-service";
+import { execFile, execFileNoThrow } from "@/lib/exec";
+import {
+  configureAgentPaneLifecycle,
+  createSession,
+  getSessionPresence,
+  launchCommand,
+  respawnPane,
+  resolveStartupEnv,
+} from "./tmux-service";
 
 const execFileMock = vi.mocked(execFile);
+const execFileNoThrowMock = vi.mocked(execFileNoThrow);
+
+describe("getSessionPresence", () => {
+  it("distinguishes confirmed presence, confirmed absence, and probe failure", async () => {
+    execFileNoThrowMock.mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 });
+    await expect(getSessionPresence("live")).resolves.toBe("present");
+
+    execFileNoThrowMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "can't find session: gone",
+      exitCode: 1,
+    });
+    await expect(getSessionPresence("gone")).resolves.toBe("absent");
+
+    execFileNoThrowMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "error connecting to /tmp/tmux: Permission denied",
+      exitCode: 1,
+    });
+    await expect(getSessionPresence("uncertain")).resolves.toBe("unknown");
+  });
+});
 
 describe("resolveStartupEnv", () => {
   it("returns suppression vars when startup command is present and no caller env", () => {
@@ -132,5 +161,74 @@ describe("createSession", () => {
     const [, args] = newSessionCall!;
     expect(args).not.toContain("-x");
     expect(args).not.toContain("-y");
+  });
+});
+
+describe("launchCommand", () => {
+  beforeEach(() => {
+    execFileMock.mockClear();
+    execFileMock.mockResolvedValue({ stdout: "", stderr: "", exitCode: 0 });
+  });
+
+  it("execs an agent command so the agent owns the pane lifetime", async () => {
+    execFileNoThrowMock.mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 });
+    await launchCommand("rdv-test-session", "codex --no-alt-screen", {
+      replaceShell: true,
+    });
+
+    const literal = execFileMock.mock.calls.find(
+      ([, args]) => args?.[0] === "send-keys" && args.includes("-l"),
+    );
+    expect(literal?.[1]).toEqual([
+      "send-keys",
+      "-t",
+      "rdv-test-session",
+      "-l",
+      "--",
+      "exec codex --no-alt-screen",
+    ]);
+  });
+
+  it("binds remain-on-exit and pane-died to the exact agent pane", async () => {
+    execFileNoThrowMock.mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 });
+    execFileMock.mockResolvedValue({ stdout: "%7\t\n", stderr: "", exitCode: 0 });
+    await configureAgentPaneLifecycle("rdv-test-session", "run-shell 'notify-rdv'");
+
+    expect(execFileMock).toHaveBeenCalledWith("tmux", [
+      "set-option",
+      "-p",
+      "-t",
+      "%7",
+      "remain-on-exit",
+      "on",
+    ]);
+    expect(execFileMock).toHaveBeenCalledWith("tmux", [
+      "set-option",
+      "-p",
+      "-t",
+      "%7",
+      "@rdv_agent_pane",
+      "1",
+    ]);
+    expect(execFileMock).toHaveBeenCalledWith("tmux", [
+      "set-hook",
+      "-p",
+      "-t",
+      "%7",
+      "pane-died",
+      "run-shell 'notify-rdv'",
+    ]);
+  });
+
+  it("respawns the pane before an intentional agent restart", async () => {
+    execFileNoThrowMock.mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 });
+    execFileMock.mockResolvedValue({ stdout: "%7\t1\n", stderr: "", exitCode: 0 });
+    await respawnPane("rdv-test-session");
+    expect(execFileMock).toHaveBeenCalledWith("tmux", [
+      "respawn-pane",
+      "-k",
+      "-t",
+      "%7",
+    ]);
   });
 });

@@ -242,6 +242,86 @@ export class DrizzleSessionRepository implements SessionRepository {
     });
   }
 
+  async claimAgentRestart(
+    id: string,
+    userId: string,
+    expectedGeneration: number,
+  ): Promise<Session | null> {
+    const now = new Date();
+    const [updated] = await db
+      .update(terminalSessions)
+      .set({
+        agentExitState: "restarting",
+        agentActivityStatus: "running",
+        agentActivityStatusAt: now.getTime(),
+        agentRestartCount: expectedGeneration + 1,
+        // Delivery markers belong to one exact generation. A failed launch of
+        // the new generation must remain eligible for liveness notification
+        // repair instead of inheriting the prior generation's success marker.
+        agentExitNotificationAt: null,
+        updatedAt: now,
+      })
+      .where(and(
+        eq(terminalSessions.id, id),
+        eq(terminalSessions.userId, userId),
+        inArray(terminalSessions.terminalType, ["agent", "loop"]),
+        sql`COALESCE(${terminalSessions.agentRestartCount}, 0) = ${expectedGeneration}`,
+        sql`${terminalSessions.agentExitState} IN ('running', 'exited')`,
+      ))
+      .returning();
+    return updated ? SessionMapper.toDomain(updated as SessionDbRecord) : null;
+  }
+
+  async completeAgentRestart(
+    id: string,
+    userId: string,
+    generation: number,
+  ): Promise<Session | null> {
+    const now = new Date();
+    const [updated] = await db
+      .update(terminalSessions)
+      .set({
+        agentExitState: "running",
+        agentExitCode: null,
+        agentExitedAt: null,
+        updatedAt: now,
+      })
+      .where(and(
+        eq(terminalSessions.id, id),
+        eq(terminalSessions.userId, userId),
+        sql`COALESCE(${terminalSessions.agentRestartCount}, 0) = ${generation}`,
+        eq(terminalSessions.agentExitState, "restarting"),
+      ))
+      .returning();
+    return updated ? SessionMapper.toDomain(updated as SessionDbRecord) : null;
+  }
+
+  async failAgentRestart(
+    id: string,
+    userId: string,
+    generation: number,
+  ): Promise<Session | null> {
+    const now = new Date();
+    const [updated] = await db
+      .update(terminalSessions)
+      .set({
+        agentExitState: "exited",
+        agentExitCode: null,
+        agentExitedAt: now,
+        agentActivityStatus: "error",
+        agentActivityStatusAt: now.getTime(),
+        updatedAt: now,
+      })
+      .where(and(
+        eq(terminalSessions.id, id),
+        eq(terminalSessions.userId, userId),
+        sql`COALESCE(${terminalSessions.agentRestartCount}, 0) = ${generation}`,
+        eq(terminalSessions.agentExitState, "restarting"),
+      ))
+      .returning();
+    return updated ? SessionMapper.toDomain(updated as SessionDbRecord) : null;
+  }
+
   /**
    * Delete a session by ID.
    */

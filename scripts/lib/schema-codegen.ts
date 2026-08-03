@@ -22,6 +22,7 @@
  *   timestampMs  → timestamptz (pg) / integer{mode:timestamp_ms} (sqlite)
  *   timestampS   → timestamptz (pg) / integer{mode:timestamp}    (sqlite)
  *   json         → jsonb (pg) / text{mode:json}              (sqlite)
+ *   bigint       → bigint{mode:number} (pg) / integer         (sqlite)
  *   text/integer → text/integer (both)
  */
 
@@ -32,6 +33,7 @@
 export type ColumnKind =
   | "text"
   | "integer"
+  | "bigint"
   | "boolean"
   | "timestampMs"
   | "timestampS"
@@ -224,6 +226,8 @@ function sqliteColumnBuilder(col: ColumnDefinition): string {
       return `text(${name}, { mode: "json" })`;
     case "integer":
       return `integer(${name})`;
+    case "bigint":
+      return `integer(${name})`;
     case "boolean":
       return `integer(${name}, { mode: "boolean" })`;
     case "timestampMs":
@@ -247,6 +251,8 @@ function pgColumnBuilder(col: ColumnDefinition): string {
       return `jsonb(${name})`;
     case "integer":
       return `integer(${name})`;
+    case "bigint":
+      return `bigint(${name}, { mode: "number" })`;
     case "boolean":
       return `boolean(${name})`;
     case "timestampMs":
@@ -347,6 +353,7 @@ interface ImportUsage {
   boolean: boolean; // a boolean column → pg `boolean`
   timestamp: boolean; // a timestamp column → pg `timestamp`
   json: boolean; // a json column → pg `jsonb`
+  bigint: boolean; // a bigint column → pg `bigint`
 }
 
 function detectImportUsage(schema: SchemaDefinition): ImportUsage {
@@ -359,6 +366,7 @@ function detectImportUsage(schema: SchemaDefinition): ImportUsage {
     boolean: false,
     timestamp: false,
     json: false,
+    bigint: false,
   };
   for (const t of schema) {
     if (t.primaryKey) u.composite = true;
@@ -375,6 +383,7 @@ function detectImportUsage(schema: SchemaDefinition): ImportUsage {
       if (c.kind === "boolean") u.boolean = true;
       if (c.kind === "timestampMs" || c.kind === "timestampS") u.timestamp = true;
       if (c.kind === "json") u.json = true;
+      if (c.kind === "bigint") u.bigint = true;
     }
   }
   return u;
@@ -407,6 +416,7 @@ function generateSqlite(schema: SchemaDefinition, typeImports: string): string {
 function generatePg(schema: SchemaDefinition, typeImports: string): string {
   const u = detectImportUsage(schema);
   const named = ["pgTable", "text", "integer"];
+  if (u.bigint) named.push("bigint");
   if (u.boolean) named.push("boolean");
   if (u.timestamp) named.push("timestamp");
   if (u.json) named.push("jsonb");
