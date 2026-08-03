@@ -422,6 +422,8 @@ export function MobileSessionView({
           isRecording={isRecording}
           environmentVars={environmentVars}
           mobileChrome="external"
+          isActive
+          visible
           onStatusChange={handleStatusChange}
           onAgentExited={handleAgentExited}
           onAgentRestarted={handleAgentRestarted}

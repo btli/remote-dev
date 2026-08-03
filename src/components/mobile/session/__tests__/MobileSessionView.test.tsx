@@ -29,6 +29,8 @@ type StubProps = {
   mobileChrome?: string;
   fontSize?: number;
   fontFamily?: string;
+  isActive?: boolean;
+  visible?: boolean;
   onStatusChange?: (s: string) => void;
   onAgentExited?: (code: number | null, at: string) => void;
   onAgentRestarted?: () => void;
@@ -231,6 +233,13 @@ describe("MobileSessionView, renderer wiring", () => {
     renderView({ initialFontSize: 14 });
     const stub = screen.getByTestId("stub-terminal-with-keyboard");
     expect(stub.getAttribute("data-mobile-chrome")).toBe("external");
+  });
+
+  it("presents the shared terminal for mobile PWA clipboard eligibility", () => {
+    renderView({ initialFontSize: 14 });
+
+    expect(capturedProps?.isActive).toBe(true);
+    expect(capturedProps?.visible).toBe(true);
   });
 
   it("forwards fontSize and fontFamily props to TerminalWithKeyboard", () => {

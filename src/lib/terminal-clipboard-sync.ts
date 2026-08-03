@@ -26,6 +26,7 @@ interface TerminalClipboardSyncOptions {
   applyRemote: (text: string, revision: number) => void | Promise<void>;
   createUpdateId?: () => string;
   now?: () => number;
+  onEligibilityInvalidated?: () => void;
 }
 
 interface PresentedState {
@@ -47,6 +48,42 @@ export function isClipboardTextWithinLimit(text: string): boolean {
 }
 
 /**
+ * Legacy, gesture-bound copy path for browsers without Clipboard API access.
+ * The selected textarea exists only for the synchronous execCommand call and
+ * is removed even when the browser rejects the copy.
+ */
+export function copyTextWithSelectionFallback(
+  text: string,
+  ownerDocument: Document | null =
+    typeof document === "undefined" ? null : document,
+): boolean {
+  if (!ownerDocument?.body) return false;
+  const textarea = ownerDocument.createElement("textarea");
+  textarea.value = text;
+  textarea.readOnly = true;
+  textarea.tabIndex = -1;
+  textarea.setAttribute("aria-hidden", "true");
+  textarea.setAttribute("data-rdv-clipboard-fallback", "");
+  Object.assign(textarea.style, {
+    position: "fixed",
+    inset: "0 auto auto -9999px",
+    opacity: "0",
+    pointerEvents: "none",
+  });
+  ownerDocument.body.appendChild(textarea);
+  try {
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
+    return ownerDocument.execCommand?.("copy") === true;
+  } catch {
+    return false;
+  } finally {
+    textarea.remove();
+  }
+}
+
+/**
  * Attempt a remote-to-browser write. A denied automatic write is converted
  * into a retry callback that UI can place behind a user gesture.
  */
@@ -55,12 +92,23 @@ export async function writeBrowserClipboard(
   { clipboard, onBlocked }: BrowserClipboardWriteOptions,
 ): Promise<void> {
   const retry = async () => {
-    if (!clipboard) throw new Error("Clipboard API unavailable");
-    await clipboard.writeText(text);
+    if (clipboard) {
+      try {
+        await clipboard.writeText(text);
+        return;
+      } catch {
+        // A user-gesture selection fallback can still work when permissions
+        // permanently deny navigator.clipboard.
+      }
+    }
+    if (!copyTextWithSelectionFallback(text)) {
+      throw new Error("Clipboard copy unavailable");
+    }
   };
 
   try {
-    await retry();
+    if (!clipboard) throw new Error("Clipboard API unavailable");
+    await clipboard.writeText(text);
   } catch {
     onBlocked(text, retry);
   }
@@ -93,6 +141,8 @@ export class TerminalClipboardSync {
     pageVisible: false,
     focused: false,
   };
+  private primary = false;
+  private eligibilityGeneration = 0;
   private lastSubscription: boolean | null = null;
   private lastRemoteText: string | null = null;
   private lastRemoteRevision = -1;
@@ -106,18 +156,21 @@ export class TerminalClipboardSync {
   private readonly applyRemote: TerminalClipboardSyncOptions["applyRemote"];
   private readonly createUpdateId: () => string;
   private readonly now: () => number;
+  private readonly onEligibilityInvalidated: () => void;
 
   constructor({
     applyRemote,
     createUpdateId = defaultUpdateId,
     now = Date.now,
+    onEligibilityInvalidated = () => {},
   }: TerminalClipboardSyncOptions) {
     this.applyRemote = applyRemote;
     this.createUpdateId = createUpdateId;
     this.now = now;
+    this.onEligibilityInvalidated = onEligibilityInvalidated;
   }
 
-  private get shouldSubscribe(): boolean {
+  private get isPresented(): boolean {
     return (
       this.enabled &&
       this.presented.active &&
@@ -125,6 +178,10 @@ export class TerminalClipboardSync {
       this.presented.pageVisible &&
       this.presented.focused
     );
+  }
+
+  private get shouldSubscribe(): boolean {
+    return this.isPresented && this.primary;
   }
 
   canSync(): boolean {
@@ -148,10 +205,31 @@ export class TerminalClipboardSync {
     this.pendingLocalText = null;
   }
 
-  private sendSubscription(force = false): void {
+  private invalidateEligibility(): void {
+    this.eligibilityGeneration += 1;
+    this.onEligibilityInvalidated();
+  }
+
+  createEligibilityToken(): number | null {
+    return this.canSync() ? this.eligibilityGeneration : null;
+  }
+
+  isEligibilityTokenCurrent(token: number | null): boolean {
+    return (
+      token !== null &&
+      token === this.eligibilityGeneration &&
+      this.canSync()
+    );
+  }
+
+  private sendSubscription(): void {
     const enabled = this.shouldSubscribe;
     if (!this.hasOpenSocket) return;
-    if (!force && this.lastSubscription === enabled) return;
+    // Do not disclose clipboard capability at all before the server has
+    // authoritatively promoted this socket. A false frame is needed only to
+    // revoke an established subscription.
+    if (!enabled && this.lastSubscription !== true) return;
+    if (this.lastSubscription === enabled) return;
     try {
       this.socket?.send(
         JSON.stringify({ type: "clipboard_subscribe", enabled }),
@@ -163,25 +241,15 @@ export class TerminalClipboardSync {
   }
 
   openSocket(socket: ClipboardSyncSocket): void {
+    this.invalidateEligibility();
     this.socket = socket;
+    this.primary = false;
     this.lastSubscription = null;
     // Revision is scoped to the terminal-server broker process. A reconnect
     // may land after that process restarted and began again at revision 1.
     this.lastRemoteRevision = -1;
     this.lastRemoteText = null;
     this.lastRemoteAppliedAt = Number.NEGATIVE_INFINITY;
-    this.sendSubscription(true);
-    if (
-      this.shouldSubscribe &&
-      this.lastSubscription === true &&
-      this.pendingLocalText !== null
-    ) {
-      const pending = this.pendingLocalText;
-      this.pendingLocalText = null;
-      if (!this.sendLocalText(pending)) {
-        this.pendingLocalText = pending;
-      }
-    }
   }
 
   closeSocket(socket?: ClipboardSyncSocket): void {
@@ -193,32 +261,75 @@ export class TerminalClipboardSync {
       this.pendingLocalText = this.lastLocalText ?? this.lastRemoteText;
     }
     this.socket = null;
+    this.primary = false;
     this.lastSubscription = null;
+    this.invalidateEligibility();
+  }
+
+  setPrimary(primary: boolean, socket: ClipboardSyncSocket): void {
+    if (socket !== this.socket || this.primary === primary) return;
+    this.primary = primary;
+    if (!primary) {
+      const pending = this.pendingLocalText;
+      this.lastRemoteText = null;
+      this.lastRemoteAppliedAt = Number.NEGATIVE_INFINITY;
+      this.lastLocalText = null;
+      this.lastLocalUpdateId = null;
+      this.lastLocalWrittenAt = Number.NEGATIVE_INFINITY;
+      this.pendingLocalText = pending;
+      this.invalidateEligibility();
+    }
+    this.sendSubscription();
+    if (primary) this.flushPendingLocalText();
+  }
+
+  private flushPendingLocalText(): void {
+    if (
+      !this.shouldSubscribe ||
+      this.lastSubscription !== true ||
+      this.pendingLocalText === null
+    ) {
+      return;
+    }
+    const pending = this.pendingLocalText;
+    this.pendingLocalText = null;
+    if (!this.sendLocalText(pending)) {
+      this.pendingLocalText = pending;
+    }
   }
 
   setEnabled(enabled: boolean): void {
     if (this.enabled === enabled) return;
+    const wasPresented = this.isPresented;
     this.enabled = enabled;
-    if (!this.shouldSubscribe) this.clearClipboardContents();
+    if (!this.isPresented) this.clearClipboardContents();
+    if (wasPresented && !this.isPresented) this.invalidateEligibility();
     this.sendSubscription();
+    if (this.shouldSubscribe) this.flushPendingLocalText();
   }
 
   setPresented(next: Partial<PresentedState>): void {
+    const wasPresented = this.isPresented;
     this.presented = { ...this.presented, ...next };
-    if (!this.shouldSubscribe) this.clearClipboardContents();
+    if (!this.isPresented) this.clearClipboardContents();
+    if (wasPresented && !this.isPresented) this.invalidateEligibility();
     this.sendSubscription();
+    if (this.shouldSubscribe) this.flushPendingLocalText();
   }
 
   resetSession(): void {
-    this.closeSocket();
+    this.socket = null;
+    this.primary = false;
+    this.lastSubscription = null;
     this.lastRemoteRevision = -1;
     this.clearClipboardContents();
     this.generatedUpdateIds.clear();
     this.generatedUpdateIdOrder.length = 0;
+    this.invalidateEligibility();
   }
 
   writeLocalText(text: string): boolean {
-    if (!this.shouldSubscribe) return false;
+    if (!this.isPresented) return false;
     if (!isClipboardTextWithinLimit(text)) return false;
     const now = this.now();
     if (
@@ -227,7 +338,11 @@ export class TerminalClipboardSync {
     ) {
       return false;
     }
-    if (!this.hasOpenSocket) {
+    if (
+      !this.shouldSubscribe ||
+      !this.hasOpenSocket ||
+      this.lastSubscription !== true
+    ) {
       if (text === this.pendingLocalText) return false;
       this.pendingLocalText = text;
       return true;
@@ -246,7 +361,13 @@ export class TerminalClipboardSync {
   }
 
   private sendLocalText(text: string, now = this.now()): boolean {
-    if (!this.hasOpenSocket) return false;
+    if (
+      !this.hasOpenSocket ||
+      !this.shouldSubscribe ||
+      this.lastSubscription !== true
+    ) {
+      return false;
+    }
     const updateId = this.createUpdateId();
     try {
       this.socket?.send(
@@ -275,8 +396,15 @@ export class TerminalClipboardSync {
     return true;
   }
 
-  async receive(message: ServerMessage): Promise<boolean> {
-    if (message.type !== "clipboard_update" || !this.shouldSubscribe) {
+  async receive(
+    message: ServerMessage,
+    source: ClipboardSyncSocket,
+  ): Promise<boolean> {
+    if (
+      source !== this.socket ||
+      message.type !== "clipboard_update" ||
+      !this.shouldSubscribe
+    ) {
       return false;
     }
     if (

@@ -33,6 +33,18 @@ import {
   writeBrowserClipboard,
 } from "@/lib/terminal-clipboard-sync";
 
+const REMOTE_CLIPBOARD_TOAST_ID = "remote-clipboard-fallback";
+const CLIPBOARD_FALLBACK_ACTION_ATTRIBUTE =
+  "data-rdv-clipboard-fallback-action";
+
+function isClipboardFallbackActionTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return (
+    target.hasAttribute(CLIPBOARD_FALLBACK_ACTION_ATTRIBUTE) ||
+    target.querySelector(`[${CLIPBOARD_FALLBACK_ACTION_ATTRIBUTE}]`) !== null
+  );
+}
+
 export interface TerminalRef {
   focus: () => void;
   /** Request agent restart (only valid for terminalType='agent') */
@@ -192,6 +204,21 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const onClipboardUpdateRef = useRef(onClipboardUpdate);
   const onSelectionChangeRef = useRef(onSelectionChange);
   const nativeClipboardSyncEnabledRef = useRef(false);
+  const readBrowserClipboardRef = useRef<() => void>(() => {});
+  const runClipboardFallbackRef = useRef<() => void>(() => {});
+  const reconcileClipboardFallbackFocusRef = useRef<
+    (refocus: boolean) => void
+  >(() => {});
+  const clipboardFallbackActionRunningRef = useRef(false);
+  const pendingClipboardFallbackRef = useRef<{
+    retry: () => Promise<void>;
+    token: number;
+    revision: number;
+  } | null>(null);
+  const latestRemoteClipboardRef = useRef<{
+    token: number;
+    revision: number;
+  } | null>(null);
   const clipboardSyncRef = useRef<TerminalClipboardSync | null>(null);
   if (clipboardSyncRef.current === null) {
     clipboardSyncRef.current = new TerminalClipboardSync({
@@ -201,26 +228,79 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           return;
         }
 
+        const sync = clipboardSyncRef.current;
+        if (!sync) return;
+        if (pendingClipboardFallbackRef.current) {
+          pendingClipboardFallbackRef.current = null;
+          toast.dismiss(REMOTE_CLIPBOARD_TOAST_ID);
+          // A prior toast may currently own focus via the explicit fallback
+          // exemption. Re-establish real xterm focus before granting the
+          // replacement update a lease; otherwise revoke and drop it.
+          reconcileClipboardFallbackFocusRef.current(true);
+        }
+        const token = sync.createEligibilityToken();
+        if (token === null) return;
+        latestRemoteClipboardRef.current = { token, revision };
         const clipboard =
           typeof navigator !== "undefined" ? navigator.clipboard : undefined;
         await writeBrowserClipboard(text, {
           clipboard,
           onBlocked: (_blockedText, retry) => {
+            const latest = latestRemoteClipboardRef.current;
+            if (
+              !sync.isEligibilityTokenCurrent(token) ||
+              latest?.token !== token ||
+              latest.revision !== revision
+            ) {
+              return;
+            }
+            pendingClipboardFallbackRef.current = {
+              retry,
+              token,
+              revision,
+            };
             toast("Remote clipboard received", {
-              id: `remote-clipboard-${revision}`,
+              id: REMOTE_CLIPBOARD_TOAST_ID,
               description:
                 "Browser permission blocked automatic copying. Copy it with one click.",
               action: {
-                label: "Copy",
+                label: (
+                  <span data-rdv-clipboard-fallback-action="">Copy</span>
+                ),
                 onClick: () => {
-                  void retry().catch(() => {
-                    toast.error("Clipboard permission was denied");
-                  });
+                  runClipboardFallbackRef.current();
                 },
+              },
+              onDismiss: () => {
+                const pending = pendingClipboardFallbackRef.current;
+                if (
+                  pending?.token === token &&
+                  pending.revision === revision
+                ) {
+                  pendingClipboardFallbackRef.current = null;
+                  reconcileClipboardFallbackFocusRef.current(false);
+                }
+              },
+              onAutoClose: () => {
+                const pending = pendingClipboardFallbackRef.current;
+                if (
+                  pending?.token === token &&
+                  pending.revision === revision
+                ) {
+                  pendingClipboardFallbackRef.current = null;
+                  reconcileClipboardFallbackFocusRef.current(false);
+                }
               },
             });
           },
         });
+      },
+      onEligibilityInvalidated: () => {
+        latestRemoteClipboardRef.current = null;
+        if (!pendingClipboardFallbackRef.current) return;
+        pendingClipboardFallbackRef.current = null;
+        toast.dismiss(REMOTE_CLIPBOARD_TOAST_ID);
+        reconcileClipboardFallbackFocusRef.current(false);
       },
     });
   }
@@ -247,9 +327,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
-  // Primary = this connection controls tmux sizing. Defaults to true so the
-  // single-client flow shows nothing until/unless the server demotes us.
-  const [isPrimary, setIsPrimary] = useState(true);
+  // Primary is authoritative server state. Each socket starts false until a
+  // primary_changed frame establishes ownership for that socket generation.
+  const [isPrimary, setIsPrimary] = useState(false);
   const isScrolledUpRef = useRef(false);
   const isUnmountingRef = useRef(false);
   // IDisposables registered against the terminal that need explicit cleanup
@@ -377,6 +457,91 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         : nativeClipboardSyncEnabledRef.current,
     );
   }, [clipboardMode, clipboardSync, deviceClipboardSyncEnabled]);
+
+  useEffect(() => {
+    const reconcileFallbackFocus = (refocus: boolean) => {
+      const terminal = xtermRef.current;
+      const canRefocus =
+        refocus &&
+        clipboardModeRef.current === "browser" &&
+        isActiveRef.current &&
+        visibleRef.current &&
+        !document.hidden &&
+        document.hasFocus() &&
+        terminal?.textarea;
+      if (canRefocus) {
+        terminal.focus();
+        const refocused = document.activeElement === terminal.textarea;
+        textareaFocusedRef.current = refocused;
+        clipboardSync.setPresented({ focused: refocused });
+      } else {
+        textareaFocusedRef.current = false;
+        clipboardSync.setPresented({ focused: false });
+      }
+      syncFocusToServerRef.current?.();
+    };
+    reconcileClipboardFallbackFocusRef.current = reconcileFallbackFocus;
+
+    const runFallback = () => {
+      const pending = pendingClipboardFallbackRef.current;
+      if (
+        !pending ||
+        !clipboardSync.isEligibilityTokenCurrent(pending.token)
+      ) {
+        pendingClipboardFallbackRef.current = null;
+        toast.dismiss(REMOTE_CLIPBOARD_TOAST_ID);
+        reconcileFallbackFocus(false);
+        return;
+      }
+
+      clipboardFallbackActionRunningRef.current = true;
+      void pending.retry().catch(() => {
+        toast.error("Clipboard permission was denied");
+      }).finally(() => {
+        const latest = latestRemoteClipboardRef.current;
+        const stillLatest =
+          latest?.token === pending.token &&
+          latest.revision === pending.revision;
+        if (pendingClipboardFallbackRef.current === pending) {
+          pendingClipboardFallbackRef.current = null;
+        }
+        if (!stillLatest) {
+          clipboardFallbackActionRunningRef.current = false;
+          return;
+        }
+        toast.dismiss(REMOTE_CLIPBOARD_TOAST_ID);
+
+        if (!clipboardSync.isEligibilityTokenCurrent(pending.token)) {
+          reconcileFallbackFocus(false);
+          clipboardFallbackActionRunningRef.current = false;
+          return;
+        }
+
+        // Moving focus to the toast action temporarily leaves xterm. Restore
+        // terminal focus after the gesture; if that cannot be done, revoke
+        // clipboard eligibility explicitly so it cannot remain stuck active.
+        reconcileFallbackFocus(true);
+        clipboardFallbackActionRunningRef.current = false;
+      });
+    };
+    runClipboardFallbackRef.current = runFallback;
+    return () => {
+      if (runClipboardFallbackRef.current === runFallback) {
+        runClipboardFallbackRef.current = () => {};
+      }
+      if (
+        reconcileClipboardFallbackFocusRef.current === reconcileFallbackFocus
+      ) {
+        reconcileClipboardFallbackFocusRef.current = () => {};
+      }
+      clipboardFallbackActionRunningRef.current = false;
+      latestRemoteClipboardRef.current = null;
+      if (pendingClipboardFallbackRef.current) {
+        pendingClipboardFallbackRef.current = null;
+        toast.dismiss(REMOTE_CLIPBOARD_TOAST_ID);
+      }
+    };
+  }, [clipboardSync]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -1051,6 +1216,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           updateStatus("connected");
           reconnectAttemptsRef.current = 0;
           lastSentFocusStateRef.current = null;
+          setIsPrimary(false);
           clipboardSync.openSocket(ws);
           onWebSocketReadyRef.current?.(ws);
           const pendingGenuineFocus = pendingGenuineFocusRef.current;
@@ -1081,6 +1247,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         };
 
         ws.onmessage = (event) => {
+          if (!mounted || wsRef.current !== ws) return;
           try {
             const msg = JSON.parse(event.data);
             switch (msg.type) {
@@ -1215,13 +1382,16 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
                 break;
               case "primary_changed": {
                 const next = Boolean(msg.isPrimary);
+                clipboardSync.setPrimary(next, ws);
                 setIsPrimary(next);
                 onPrimaryChangeRef.current?.(next);
+                if (next) readBrowserClipboardRef.current();
                 break;
               }
               case "clipboard_update": {
                 void clipboardSync.receive(
                   msg as Extract<ServerMessage, { type: "clipboard_update" }>,
+                  ws,
                 );
                 break;
               }
@@ -1253,11 +1423,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
           updateStatus("disconnected");
           onWebSocketReadyRef.current?.(null);
-          // Reset to optimistic primary so the "click to claim" pill doesn't
-          // hang around during reconnect (a click would no-op while the WS is
-          // closed). The server will broadcast `primary_changed` after the
-          // reconnect completes with the authoritative value.
-          setIsPrimary(true);
+          setIsPrimary(false);
 
           // Don't reconnect if this was an intentional exit (user typed "exit" or Ctrl+D)
           if (intentionalExitRef.current) {
@@ -1335,18 +1501,65 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       if (xtermTextarea) {
         const onXtermFocus = () => {
           textareaFocusedRef.current = true;
+          if (clipboardModeRef.current === "browser") {
+            clipboardSync.setPresented({
+              focused: !document.hidden && document.hasFocus(),
+            });
+            readBrowserClipboardRef.current();
+          }
           syncFocusToServer();
         };
-        const onXtermBlur = () => {
+        const onXtermBlur = (event: FocusEvent) => {
+          if (
+            clipboardModeRef.current === "browser" &&
+            isClipboardFallbackActionTarget(event.relatedTarget)
+          ) {
+            // The fallback button is an explicit clipboard surface. Keep the
+            // current eligibility lease alive only for its user gesture; the
+            // action reconciles focus back to xterm (or revokes it) in finally.
+            clipboardSync.setPresented({ focused: true });
+            if (event.relatedTarget instanceof HTMLElement) {
+              event.relatedTarget.addEventListener(
+                "blur",
+                () => {
+                  if (!clipboardFallbackActionRunningRef.current) {
+                    reconcileClipboardFallbackFocusRef.current(false);
+                  }
+                },
+                { once: true },
+              );
+            }
+            return;
+          }
           textareaFocusedRef.current = false;
+          if (clipboardModeRef.current === "browser") {
+            clipboardSync.setPresented({ focused: false });
+          }
           syncFocusToServer();
+        };
+        const onXtermCopy = () => {
+          if (clipboardModeRef.current !== "browser") return;
+          queueMicrotask(() => readBrowserClipboardRef.current());
+        };
+        const onXtermPaste = (event: ClipboardEvent) => {
+          if (clipboardModeRef.current !== "browser") return;
+          const text = event.clipboardData?.getData("text/plain");
+          if (typeof text === "string" && text.length > 0) {
+            clipboardSync.writeLocalText(text);
+          } else {
+            readBrowserClipboardRef.current();
+          }
         };
         xtermTextarea.addEventListener("focus", onXtermFocus);
         xtermTextarea.addEventListener("blur", onXtermBlur);
+        xtermTextarea.addEventListener("copy", onXtermCopy);
+        xtermTextarea.addEventListener("paste", onXtermPaste);
         terminalDisposablesRef.current.push({
           dispose: () => {
             xtermTextarea.removeEventListener("focus", onXtermFocus);
             xtermTextarea.removeEventListener("blur", onXtermBlur);
+            xtermTextarea.removeEventListener("copy", onXtermCopy);
+            xtermTextarea.removeEventListener("paste", onXtermPaste);
           },
         });
       }
@@ -1354,23 +1567,36 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       const handleVisibilityChange = () => {
         clipboardSync.setPresented({
           pageVisible: !document.hidden,
-          focused: !document.hidden && document.hasFocus(),
+          focused:
+            clipboardModeRef.current === "native"
+              ? true
+              : !document.hidden &&
+                document.hasFocus() &&
+                textareaFocusedRef.current,
         });
         syncFocusToServer();
         if (!document.hidden) {
           reconciler.request("page-visible");
           focusIfPresented();
+          readBrowserClipboardRef.current();
         }
       };
 
       const handleWindowFocus = () => {
-        clipboardSync.setPresented({ focused: true });
+        if (clipboardModeRef.current === "browser") {
+          clipboardSync.setPresented({
+            focused: textareaFocusedRef.current,
+          });
+          readBrowserClipboardRef.current();
+        }
         syncFocusToServer();
         reconciler.request("window-focus");
       };
 
       const handleWindowBlur = () => {
-        clipboardSync.setPresented({ focused: false });
+        if (clipboardModeRef.current === "browser") {
+          clipboardSync.setPresented({ focused: false });
+        }
         syncFocusToServer();
       };
 
@@ -1464,18 +1690,21 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       active: isActive,
       visible,
       pageVisible: !document.hidden,
-      focused: document.hasFocus(),
+      focused:
+        clipboardMode === "native"
+          ? true
+          : document.hasFocus() && textareaFocusedRef.current,
     });
-  }, [visible, isActive, clipboardSync]);
+  }, [visible, isActive, clipboardMode, clipboardSync]);
 
   useEffect(() => {
     syncFocusToServerRef.current?.();
     reconcilerRef.current?.notifyPanelVisibility(visible);
   }, [visible]);
 
-  // Browser clipboard adapter. Reads are best-effort: browsers may deny them
-  // unless the page has focus, a user gesture, or clipboard-read permission.
-  // Permission failures are intentionally silent.
+  // Browser clipboard adapter. DOM copy/paste listeners live on xterm's own
+  // textarea (installed with the terminal above), never on document, so text
+  // pasted into search, dialogs, Settings, or unrelated inputs is excluded.
   useEffect(() => {
     if (
       clipboardMode !== "browser" ||
@@ -1483,6 +1712,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       !isActive ||
       !visible
     ) {
+      readBrowserClipboardRef.current = () => {};
       return;
     }
     const browserClipboard = navigator.clipboard;
@@ -1499,38 +1729,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         clipboardSync.writeLocalText(text);
       });
     };
-    const handleCopy = () => {
-      queueMicrotask(() => void readAndSync());
-    };
-    const handlePaste = (event: ClipboardEvent) => {
-      const text = event.clipboardData?.getData("text/plain");
-      if (typeof text === "string" && text.length > 0) {
-        clipboardSync.writeLocalText(text);
-      } else {
-        void readAndSync();
-      }
-    };
-    const handleWindowFocus = () => {
-      clipboardSync.setPresented({ focused: true });
-      void readAndSync();
-    };
-    const handleWindowBlur = () => {
-      clipboardSync.setPresented({ focused: false });
-    };
-    const handleVisibility = () => {
-      clipboardSync.setPresented({
-        pageVisible: !document.hidden,
-        focused: !document.hidden && document.hasFocus(),
-      });
-      if (!document.hidden) void readAndSync();
-    };
     const handleClipboardChange = () => void readAndSync();
 
-    document.addEventListener("copy", handleCopy, { capture: true });
-    document.addEventListener("paste", handlePaste, { capture: true });
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("focus", handleWindowFocus);
-    window.addEventListener("blur", handleWindowBlur);
+    const invokeRead = () => void readAndSync();
+    readBrowserClipboardRef.current = invokeRead;
     browserClipboard?.addEventListener?.(
       "clipboardchange",
       handleClipboardChange,
@@ -1540,11 +1742,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     void readAndSync();
 
     return () => {
-      document.removeEventListener("copy", handleCopy, { capture: true });
-      document.removeEventListener("paste", handlePaste, { capture: true });
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("focus", handleWindowFocus);
-      window.removeEventListener("blur", handleWindowBlur);
+      if (readBrowserClipboardRef.current === invokeRead) {
+        readBrowserClipboardRef.current = () => {};
+      }
       browserClipboard?.removeEventListener?.(
         "clipboardchange",
         handleClipboardChange,

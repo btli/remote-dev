@@ -35,6 +35,19 @@ import {
 import type { TerminalRef } from "./Terminal";
 import { CLIPBOARD_SYNC_STORAGE_KEY } from "@/hooks/useClipboardSyncPreference";
 
+const toastSpies = vi.hoisted(() => ({
+  show: vi.fn(),
+  dismiss: vi.fn(),
+  error: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({
+  toast: Object.assign(toastSpies.show, {
+    dismiss: toastSpies.dismiss,
+    error: toastSpies.error,
+  }),
+}));
+
 const reconcilerState = vi.hoisted(() => ({
   instances: [] as Array<{
     wasDisposed: boolean;
@@ -168,7 +181,9 @@ vi.mock("@xterm/xterm", () => {
     registerLinkProvider() {
       return { dispose: () => {} };
     }
-    open() {}
+    open(container: HTMLElement) {
+      container.appendChild(this.textarea);
+    }
     onData() {
       return { dispose: () => {} };
     }
@@ -328,6 +343,9 @@ beforeEach(() => {
   );
   clipboardReadText = vi.fn().mockResolvedValue("");
   clipboardWriteText = vi.fn().mockResolvedValue(undefined);
+  toastSpies.show.mockReset();
+  toastSpies.dismiss.mockReset();
+  toastSpies.error.mockReset();
   Object.defineProperty(navigator, "clipboard", {
     configurable: true,
     value: {
@@ -399,6 +417,23 @@ async function getTerminal() {
   return mod.Terminal;
 }
 
+function dispatchSocketMessage(
+  socket: MockWebSocket,
+  message: Record<string, unknown>,
+) {
+  socket.onmessage?.(
+    new MessageEvent("message", { data: JSON.stringify(message) }),
+  );
+}
+
+function dispatchPaste(target: EventTarget, text: string) {
+  const event = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "clipboardData", {
+    value: { getData: () => text, items: [] },
+  });
+  target.dispatchEvent(event);
+}
+
 describe("Terminal.refit (remote-dev-u5q5.2)", () => {
   it.each([
     { name: "disabled", enabled: false, isActive: true, visible: true },
@@ -435,9 +470,9 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
     },
   );
 
-  it("re-subscribes before reading and writing the clipboard on window focus", async () => {
+  it("waits for xterm focus and authoritative primary before reading or subscribing", async () => {
     localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
-    clipboardReadText.mockResolvedValue("initial clipboard");
+    clipboardReadText.mockResolvedValue("focused clipboard");
     const Terminal = await getTerminal();
     render(
       <Terminal
@@ -450,26 +485,34 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
       />,
     );
 
-    await waitFor(() => {
-      const frames = wsInstances.at(-1)?.sent.map((frame) => JSON.parse(frame));
-      expect(frames).toContainEqual({
-        type: "clipboard_subscribe",
-        enabled: true,
-      });
-    });
+    await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
     const socket = wsInstances.at(-1)!;
+    expect(clipboardReadText).not.toHaveBeenCalled();
+    expect(
+      socket.sent
+        .map((frame) => JSON.parse(frame))
+        .filter((frame) => frame.type.startsWith("clipboard_")),
+    ).toEqual([]);
 
-    act(() => window.dispatchEvent(new Event("blur")));
-    expect(socket.sent.map((frame) => JSON.parse(frame))).toContainEqual({
-      type: "clipboard_subscribe",
-      enabled: false,
+    act(() => {
+      xtermInstances.at(-1)?.textarea.focus();
     });
-    socket.sent.length = 0;
-    clipboardReadText.mockResolvedValue("focused clipboard");
+    expect(clipboardReadText).not.toHaveBeenCalled();
+    expect(
+      socket.sent
+        .map((frame) => JSON.parse(frame))
+        .filter((frame) => frame.type.startsWith("clipboard_")),
+    ).toEqual([]);
 
-    act(() => window.dispatchEvent(new Event("focus")));
+    act(() => {
+      socket.onmessage?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "primary_changed", isPrimary: true }),
+        }),
+      );
+    });
     await waitFor(() => {
-      expect(clipboardReadText).toHaveBeenCalledTimes(2);
+      expect(clipboardReadText).toHaveBeenCalledTimes(1);
       expect(
         socket.sent.map((frame) => JSON.parse(frame)).map((frame) => frame.type),
       ).toContain("clipboard_write");
@@ -487,6 +530,409 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
       data: "focused clipboard",
       updateId: expect.any(String),
     });
+  });
+
+  it("does not sync paste from terminal search or unrelated dialog inputs", async () => {
+    localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+    clipboardReadText.mockResolvedValue("initial seed");
+    const Terminal = await getTerminal();
+    const ref = createRef<TerminalRef>();
+    render(
+      <Terminal
+        ref={ref}
+        sessionId="clipboard-scope"
+        tmuxSessionName="rdv-clipboard-scope"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        isActive
+        visible
+      />,
+    );
+
+    await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+    const socket = wsInstances.at(-1)!;
+    act(() => {
+      xtermInstances.at(-1)?.textarea.focus();
+      dispatchSocketMessage(socket, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+    });
+    await waitFor(() => expect(clipboardReadText).toHaveBeenCalled());
+
+    act(() => ref.current?.openSearch());
+    const searchInput = await waitFor(() => {
+      const input = document.querySelector<HTMLInputElement>(
+        'input[aria-label="Search terminal output"]',
+      );
+      expect(input).not.toBeNull();
+      return input!;
+    });
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    const dialogInput = document.createElement("input");
+    dialog.appendChild(dialogInput);
+    document.body.appendChild(dialog);
+
+    clipboardReadText.mockClear();
+    socket.sent.length = 0;
+    act(() => {
+      dispatchPaste(searchInput, "search only");
+      dispatchPaste(dialogInput, "dialog only");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(clipboardReadText).not.toHaveBeenCalled();
+    expect(
+      socket.sent
+        .map((frame) => JSON.parse(frame))
+        .filter((frame) => frame.type === "clipboard_write"),
+    ).toEqual([]);
+    dialog.remove();
+  });
+
+  it("does not apply a remote browser clipboard update after the terminal is covered", async () => {
+    localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+    const Terminal = await getTerminal();
+    const view = render(
+      <Terminal
+        sessionId="clipboard-covered"
+        tmuxSessionName="rdv-clipboard-covered"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        isActive
+        visible
+      />,
+    );
+
+    await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+    const socket = wsInstances.at(-1)!;
+    act(() => {
+      xtermInstances.at(-1)?.textarea.focus();
+      dispatchSocketMessage(socket, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+      dispatchSocketMessage(socket, {
+        type: "clipboard_update",
+        data: "visible update",
+        revision: 1,
+      });
+    });
+    await waitFor(() => {
+      expect(clipboardWriteText).toHaveBeenCalledWith("visible update");
+    });
+
+    view.rerender(
+      <Terminal
+        sessionId="clipboard-covered"
+        tmuxSessionName="rdv-clipboard-covered"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        isActive
+        visible={false}
+      />,
+    );
+    const writesBeforeCoveredUpdate = clipboardWriteText.mock.calls.length;
+    act(() => {
+      dispatchSocketMessage(socket, {
+        type: "clipboard_update",
+        data: "covered update",
+        revision: 2,
+      });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(clipboardWriteText).toHaveBeenCalledTimes(writesBeforeCoveredUpdate);
+  });
+
+  it("coalesces blocked remote updates and keeps the newest toast action valid", async () => {
+    localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+    clipboardWriteText.mockRejectedValue(
+      new DOMException("Denied", "NotAllowedError"),
+    );
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="clipboard-fallback"
+        tmuxSessionName="rdv-clipboard-fallback"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        isActive
+        visible
+      />,
+    );
+
+    await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+    const socket = wsInstances.at(-1)!;
+    act(() => {
+      xtermInstances.at(-1)?.textarea.focus();
+      dispatchSocketMessage(socket, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+      dispatchSocketMessage(socket, {
+        type: "clipboard_update",
+        data: "older remote",
+        revision: 1,
+      });
+      dispatchSocketMessage(socket, {
+        type: "clipboard_update",
+        data: "newest remote",
+        revision: 2,
+      });
+    });
+    await waitFor(() => expect(toastSpies.show).toHaveBeenCalledTimes(1));
+
+    const xterm = xtermInstances.at(-1)!;
+    xterm.focus.mockImplementation(() => xterm.textarea.focus());
+    const priorFallbackButton = document.createElement("button");
+    priorFallbackButton.setAttribute(
+      "data-rdv-clipboard-fallback-action",
+      "",
+    );
+    document.body.appendChild(priorFallbackButton);
+    act(() => priorFallbackButton.focus());
+    act(() => {
+      dispatchSocketMessage(socket, {
+        type: "clipboard_update",
+        data: "newest again",
+        revision: 3,
+      });
+    });
+    await waitFor(() => expect(toastSpies.show).toHaveBeenCalledTimes(2));
+    expect(document.activeElement).toBe(xterm.textarea);
+    priorFallbackButton.remove();
+
+    const firstOptions = toastSpies.show.mock.calls[0][1] as {
+      id: string;
+    };
+    const newestOptions = toastSpies.show.mock.calls[1][1] as {
+      id: string;
+      action: { onClick: (event: unknown) => void };
+    };
+    expect(newestOptions.id).toBe(firstOptions.id);
+
+    const fallbackButton = document.createElement("button");
+    fallbackButton.setAttribute("data-rdv-clipboard-fallback-action", "");
+    document.body.appendChild(fallbackButton);
+    xterm.focus.mockClear();
+    act(() => {
+      fallbackButton.focus();
+    });
+    clipboardWriteText.mockResolvedValueOnce(undefined);
+    act(() => newestOptions.action.onClick({}));
+    await waitFor(() => {
+      expect(clipboardWriteText).toHaveBeenLastCalledWith("newest again");
+      expect(xterm.focus).toHaveBeenCalledTimes(1);
+      expect(document.activeElement).toBe(xterm.textarea);
+    });
+    fallbackButton.remove();
+  });
+
+  it("does not let a late older clipboard rejection replace the newest fallback", async () => {
+    localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+    const rejectWrite = new Map<string, (reason?: unknown) => void>();
+    clipboardWriteText.mockImplementation(
+      (text: string) =>
+        new Promise<void>((_resolve, reject) => {
+          rejectWrite.set(text, reject);
+        }),
+    );
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="clipboard-fallback-order"
+        tmuxSessionName="rdv-clipboard-fallback-order"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        isActive
+        visible
+      />,
+    );
+
+    await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+    const socket = wsInstances.at(-1)!;
+    act(() => {
+      xtermInstances.at(-1)?.textarea.focus();
+      dispatchSocketMessage(socket, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+      dispatchSocketMessage(socket, {
+        type: "clipboard_update",
+        data: "remote A",
+        revision: 1,
+      });
+      dispatchSocketMessage(socket, {
+        type: "clipboard_update",
+        data: "remote B",
+        revision: 2,
+      });
+    });
+    await waitFor(() => {
+      expect(rejectWrite.has("remote A")).toBe(true);
+      expect(rejectWrite.has("remote B")).toBe(true);
+    });
+
+    act(() => {
+      rejectWrite.get("remote B")?.(
+        new DOMException("Denied", "NotAllowedError"),
+      );
+    });
+    await waitFor(() => expect(toastSpies.show).toHaveBeenCalledTimes(1));
+    const newestOptions = toastSpies.show.mock.calls[0][1] as {
+      action: { onClick: (event: unknown) => void };
+    };
+
+    act(() => {
+      rejectWrite.get("remote A")?.(
+        new DOMException("Denied", "NotAllowedError"),
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(toastSpies.show).toHaveBeenCalledTimes(1);
+
+    clipboardWriteText.mockResolvedValueOnce(undefined);
+    act(() => newestOptions.action.onClick({}));
+    await waitFor(() => {
+      expect(clipboardWriteText).toHaveBeenLastCalledWith("remote B");
+    });
+  });
+
+  it("revokes clipboard eligibility when a focused fallback dismisses without action", async () => {
+    localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+    clipboardWriteText.mockRejectedValue(
+      new DOMException("Denied", "NotAllowedError"),
+    );
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="clipboard-passive-dismiss"
+        tmuxSessionName="rdv-clipboard-passive-dismiss"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        isActive
+        visible
+      />,
+    );
+
+    await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+    const socket = wsInstances.at(-1)!;
+    act(() => {
+      xtermInstances.at(-1)?.textarea.focus();
+      dispatchSocketMessage(socket, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+      dispatchSocketMessage(socket, {
+        type: "clipboard_update",
+        data: "dismiss me",
+        revision: 1,
+      });
+    });
+    await waitFor(() => expect(toastSpies.show).toHaveBeenCalledTimes(1));
+    const options = toastSpies.show.mock.calls[0][1] as {
+      onDismiss: (toast: unknown) => void;
+    };
+    const fallbackButton = document.createElement("button");
+    fallbackButton.setAttribute("data-rdv-clipboard-fallback-action", "");
+    document.body.appendChild(fallbackButton);
+    act(() => fallbackButton.focus());
+    socket.sent.length = 0;
+
+    act(() => options.onDismiss({}));
+
+    expect(
+      socket.sent.map((frame) => JSON.parse(frame)),
+    ).toContainEqual({ type: "clipboard_subscribe", enabled: false });
+    expect(document.activeElement).toBe(fallbackButton);
+    fallbackButton.remove();
+  });
+
+  it("dismisses and invalidates a blocked fallback when primary is lost", async () => {
+    localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+    clipboardWriteText.mockRejectedValue(
+      new DOMException("Denied", "NotAllowedError"),
+    );
+    const Terminal = await getTerminal();
+    render(
+      <Terminal
+        sessionId="clipboard-invalidated-fallback"
+        tmuxSessionName="rdv-clipboard-invalidated-fallback"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        isActive
+        visible
+      />,
+    );
+
+    await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+    const socket = wsInstances.at(-1)!;
+    act(() => {
+      xtermInstances.at(-1)?.textarea.focus();
+      dispatchSocketMessage(socket, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+      dispatchSocketMessage(socket, {
+        type: "clipboard_update",
+        data: "must be released",
+        revision: 1,
+      });
+    });
+    await waitFor(() => expect(toastSpies.show).toHaveBeenCalledTimes(1));
+    const options = toastSpies.show.mock.calls[0][1] as {
+      id: string;
+      action: { onClick: (event: unknown) => void };
+    };
+    const callsBeforeInvalidation = clipboardWriteText.mock.calls.length;
+    const fallbackButton = document.createElement("button");
+    fallbackButton.setAttribute("data-rdv-clipboard-fallback-action", "");
+    document.body.appendChild(fallbackButton);
+    act(() => fallbackButton.focus());
+
+    act(() => {
+      dispatchSocketMessage(socket, {
+        type: "primary_changed",
+        isPrimary: false,
+      });
+    });
+    expect(toastSpies.dismiss).toHaveBeenCalledWith(options.id);
+    socket.sent.length = 0;
+
+    act(() => {
+      dispatchSocketMessage(socket, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+    });
+    expect(
+      socket.sent
+        .map((frame) => JSON.parse(frame))
+        .filter(
+          (frame) =>
+            frame.type === "clipboard_subscribe" && frame.enabled === true,
+        ),
+    ).toEqual([]);
+
+    act(() => xtermInstances.at(-1)?.textarea.focus());
+    expect(
+      socket.sent.map((frame) => JSON.parse(frame)),
+    ).toContainEqual({ type: "clipboard_subscribe", enabled: true });
+
+    act(() => options.action.onClick({}));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(clipboardWriteText).toHaveBeenCalledTimes(callsBeforeInvalidation);
+    fallbackButton.remove();
   });
 
   it("routes native clipboard writes and remote updates without navigator.clipboard", async () => {
@@ -516,7 +962,13 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
     });
     await waitFor(() => expect(wsInstances.at(-1)).toBeDefined());
     const socket = wsInstances.at(-1)!;
-    act(() => socket.open());
+    act(() => {
+      socket.open();
+      dispatchSocketMessage(socket, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+    });
     await waitFor(() => {
       expect(socket.readyState).toBe(1);
       expect(
@@ -549,6 +1001,73 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
     });
     expect(clipboardWriteText).not.toHaveBeenCalled();
     expect(clipboardReadText).not.toHaveBeenCalled();
+  });
+
+  it("ignores a stale old-session clipboard message after a replacement socket opens", async () => {
+    const Terminal = await getTerminal();
+    const ref = createRef<TerminalRef>();
+    const onClipboardUpdate = vi.fn();
+    const view = render(
+      <Terminal
+        ref={ref}
+        sessionId="clipboard-old-session"
+        tmuxSessionName="rdv-clipboard-old-session"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        clipboardMode="native"
+        isActive
+        visible
+        onClipboardUpdate={onClipboardUpdate}
+      />,
+    );
+    act(() => ref.current?.setClipboardSync(true));
+    await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+    const stale = wsInstances.at(-1)!;
+    act(() => {
+      dispatchSocketMessage(stale, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+    });
+
+    view.rerender(
+      <Terminal
+        ref={ref}
+        sessionId="clipboard-new-session"
+        tmuxSessionName="rdv-clipboard-new-session"
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        clipboardMode="native"
+        isActive
+        visible
+        onClipboardUpdate={onClipboardUpdate}
+      />,
+    );
+    await waitFor(() => {
+      expect(wsInstances.at(-1)).not.toBe(stale);
+      expect(wsInstances.at(-1)?.readyState).toBe(1);
+    });
+    const current = wsInstances.at(-1)!;
+    act(() => {
+      dispatchSocketMessage(current, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+    });
+    onClipboardUpdate.mockClear();
+
+    act(() => {
+      dispatchSocketMessage(stale, {
+        type: "clipboard_update",
+        data: "stale secret",
+        revision: 99,
+      });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onClipboardUpdate).not.toHaveBeenCalled();
   });
 
   it("is a safe no-op before the terminal has initialized", async () => {
