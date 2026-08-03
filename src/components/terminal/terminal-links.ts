@@ -51,6 +51,8 @@ export interface TerminalLinkCandidate {
 interface ContentBounds {
   start: number;
   end: number;
+  exteriorPrefix: string;
+  exteriorSuffix: string;
   leftBorder?: { column: number; chars: string };
   rightBorder?: { column: number; chars: string };
 }
@@ -73,13 +75,45 @@ interface AssembledGroup {
   boundaries: Array<{ index: number; kind: "soft" | "hard" }>;
 }
 
+interface FullTerminalLinkCandidate {
+  text: string;
+  segments: TerminalLinkCandidate["range"][];
+  requiresConfirmation: boolean;
+}
+
 const BORDER_CHARS = new Set(["│", "┃", "║", "|"]);
 const URL_START = /https?:\/\//gi;
-const URL_STOP = /[\s"'!*(){}|\\^<>`]/u;
-const URL_TRAILING_PUNCTUATION = /[,:.!?;\]}>)]+$/u;
+const URL_STOP = /[\s"'{}|\\^<>`]/u;
+const SENTENCE_PUNCTUATION = new Set([".", ",", "!", "?", ";", ":"]);
+const HARD_CONTINUATION_START = /^(?:https?:\/\/|[-*#]\s|[•◦‣⁃∙·▪▫●○◆◇▶▸])/iu;
 
 function isBlankCell(cell: TerminalLinkCellSnapshot | undefined): boolean {
   return !cell || cell.width === 0 || cell.chars === "" || /^\s+$/u.test(cell.chars);
+}
+
+function cellsSignature(
+  row: TerminalLinkRowSnapshot,
+  start: number,
+  end: number,
+): string {
+  return row.cells
+    .slice(start, end)
+    .map((cell) => `${cell.width}:${cell.chars || " "}`)
+    .join("\u0000");
+}
+
+function cellsText(
+  row: TerminalLinkRowSnapshot,
+  start: number,
+  end: number,
+): string {
+  let result = "";
+  for (let column = start; column < Math.min(end, row.cells.length); column++) {
+    const cell = row.cells[column];
+    if (!cell || cell.width === 0) continue;
+    result += cell.chars || " ";
+  }
+  return result;
 }
 
 function contentBounds(row: TerminalLinkRowSnapshot): ContentBounds {
@@ -92,6 +126,8 @@ function contentBounds(row: TerminalLinkRowSnapshot): ContentBounds {
   const bounds: ContentBounds = {
     start: first,
     end: row.cells.length,
+    exteriorPrefix: "",
+    exteriorSuffix: "",
   };
 
   const midpoint = Math.floor(row.cells.length / 2);
@@ -145,6 +181,11 @@ function contentBounds(row: TerminalLinkRowSnapshot): ContentBounds {
     }
   }
 
+  bounds.exteriorPrefix = cellsSignature(row, 0, bounds.start);
+  bounds.exteriorSuffix = bounds.rightBorder
+    ? cellsSignature(row, bounds.end, row.cells.length)
+    : "";
+
   return bounds;
 }
 
@@ -165,19 +206,12 @@ function matchingHardLayout(
   previous: ContentBounds,
   next: ContentBounds,
 ): boolean {
-  const previousHasBorder = Boolean(previous.leftBorder || previous.rightBorder);
-  const nextHasBorder = Boolean(next.leftBorder || next.rightBorder);
-  if (previousHasBorder || nextHasBorder) {
-    return (
-      previous.leftBorder?.column === next.leftBorder?.column &&
-      previous.leftBorder?.chars === next.leftBorder?.chars &&
-      previous.rightBorder?.column === next.rightBorder?.column &&
-      previous.rightBorder?.chars === next.rightBorder?.chars &&
-      previous.start === next.start &&
-      previous.end === next.end
-    );
-  }
-  return previous.start === next.start && previous.end === next.end;
+  return (
+    previous.start === next.start &&
+    previous.end === next.end &&
+    previous.exteriorPrefix === next.exteriorPrefix &&
+    previous.exteriorSuffix === next.exteriorSuffix
+  );
 }
 
 function connectionBetween(
@@ -206,6 +240,13 @@ function connectionBetween(
   if (!matchingHardLayout(previousBounds, nextBounds)) return null;
   if (lastContentEnd(previous, previousBounds.end) !== previousBounds.end) return null;
   if (firstContentColumn(next, nextBounds.start) !== nextBounds.start) return null;
+  if (
+    HARD_CONTINUATION_START.test(
+      cellsText(next, nextBounds.start, nextBounds.end),
+    )
+  ) {
+    return null;
+  }
   return {
     kind: "hard",
     previousEnd: previousBounds.end,
@@ -268,14 +309,65 @@ function assembleGroups(rows: readonly TerminalLinkRowSnapshot[]): AssembledGrou
   return groups;
 }
 
-function shouldCrossHardBoundary(prefix: string, suffix: string): boolean {
-  if (!parseHttpUrl(prefix)) return true;
-  if (/[/?.#=&%_~-]$/u.test(prefix)) return true;
-  return /[/?.#=&%_~-]/u.test(suffix);
+function trimUrlToken(token: string): string {
+  let end = token.length;
+  let changed = true;
+  while (changed && end > 0) {
+    changed = false;
+    while (end > 0 && SENTENCE_PUNCTUATION.has(token[end - 1])) {
+      end--;
+      changed = true;
+    }
+
+    const last = token[end - 1];
+    const pairs: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
+    const open = pairs[last];
+    if (open) {
+      const value = token.slice(0, end);
+      const opens = Array.from(value).filter((char) => char === open).length;
+      const closes = Array.from(value).filter((char) => char === last).length;
+      if (closes > opens) {
+        end--;
+        changed = true;
+      }
+    }
+  }
+  return token.slice(0, end);
 }
 
-function linksInGroup(group: AssembledGroup): TerminalLinkCandidate[] {
-  const result: TerminalLinkCandidate[] = [];
+function segmentsForMapping(
+  mapping: readonly MappedCodeUnit[],
+  start: number,
+  end: number,
+): TerminalLinkCandidate["range"][] {
+  const result: TerminalLinkCandidate["range"][] = [];
+  let first = mapping[start];
+  let last = first;
+  for (let index = start + 1; index < end; index++) {
+    const current = mapping[index];
+    if (!current) continue;
+    if (!first || !last || current.row !== last.row) {
+      if (first && last) {
+        result.push({
+          start: { x: first.startX, y: first.row + 1 },
+          end: { x: last.endX, y: last.row + 1 },
+        });
+      }
+      first = current;
+    }
+    last = current;
+  }
+  if (first && last) {
+    result.push({
+      start: { x: first.startX, y: first.row + 1 },
+      end: { x: last.endX, y: last.row + 1 },
+    });
+  }
+  return result;
+}
+
+function linksInGroup(group: AssembledGroup): FullTerminalLinkCandidate[] {
+  const result: FullTerminalLinkCandidate[] = [];
   URL_START.lastIndex = 0;
   let startMatch: RegExpExecArray | null;
   while ((startMatch = URL_START.exec(group.text))) {
@@ -283,36 +375,16 @@ function linksInGroup(group: AssembledGroup): TerminalLinkCandidate[] {
     let end = URL_START.lastIndex;
     while (end < group.text.length && !URL_STOP.test(group.text[end])) end++;
 
-    const candidateBoundaries = group.boundaries.filter(
-      (boundary) => boundary.index > start && boundary.index < end,
-    );
-    for (const boundary of candidateBoundaries) {
-      if (
-        boundary.kind === "hard" &&
-        !shouldCrossHardBoundary(
-          group.text.slice(start, boundary.index),
-          group.text.slice(boundary.index, end),
-        )
-      ) {
-        end = boundary.index;
-        break;
-      }
-    }
-
     const rawText = group.text.slice(start, end);
-    const text = rawText.replace(URL_TRAILING_PUNCTUATION, "");
+    const text = trimUrlToken(rawText);
     end -= rawText.length - text.length;
     if (!text || !parseHttpUrl(text)) continue;
 
-    const first = group.mapping[start];
-    const last = group.mapping[end - 1];
-    if (!first || !last) continue;
+    const segments = segmentsForMapping(group.mapping, start, end);
+    if (segments.length === 0) continue;
     result.push({
       text,
-      range: {
-        start: { x: first.startX, y: first.row + 1 },
-        end: { x: last.endX, y: last.row + 1 },
-      },
+      segments,
       requiresConfirmation: group.boundaries.some(
         (boundary) =>
           boundary.kind === "hard" && boundary.index > start && boundary.index < end,
@@ -334,10 +406,14 @@ export function computeTerminalLinks(
   const seen = new Set<string>();
   return assembleGroups(rows)
     .flatMap(linksInGroup)
-    .filter(
-      (link) =>
-        link.range.start.y <= requestedRow + 1 &&
-        link.range.end.y >= requestedRow + 1,
+    .flatMap((link) =>
+      link.segments
+        .filter((range) => range.start.y === requestedRow + 1)
+        .map((range) => ({
+          text: link.text,
+          range,
+          requiresConfirmation: link.requiresConfirmation,
+        })),
     )
     .filter((link) => {
       const key = `${link.range.start.x}:${link.range.start.y}-${link.range.end.x}:${link.range.end.y}:${link.text}`;
@@ -358,13 +434,15 @@ interface TerminalLinkBufferLine {
   getCell(column: number): TerminalLinkBufferCell | undefined;
 }
 
+interface TerminalLinkBuffer {
+  readonly length: number;
+  getLine(row: number): TerminalLinkBufferLine | undefined;
+}
+
 interface TerminalLinkSource {
   readonly cols: number;
   readonly buffer: {
-    readonly active: {
-      readonly length: number;
-      getLine(row: number): TerminalLinkBufferLine | undefined;
-    };
+    readonly active: TerminalLinkBuffer;
   };
 }
 
@@ -373,9 +451,11 @@ export interface TerminalLinkProviderOptions {
   readonly confirm?: (target: string) => boolean;
   /** Protocol-restricted opener, normally createHttpLinkOpener(). */
   readonly open?: (target: string) => unknown;
-  /** Number of rows examined above and below the requested row. */
-  readonly scanRadius?: number;
+  /** Maximum number of terminal cells inspected for one provider request. */
+  readonly cellBudget?: number;
 }
+
+const DEFAULT_LINK_SCAN_CELL_BUDGET = 16_384;
 
 function defaultHardLinkConfirmation(target: string): boolean {
   return window.confirm(
@@ -384,13 +464,14 @@ function defaultHardLinkConfirmation(target: string): boolean {
 }
 
 function snapshotBufferRow(
-  source: TerminalLinkSource,
+  buffer: TerminalLinkBuffer,
+  cols: number,
   index: number,
 ): TerminalLinkRowSnapshot | null {
-  const line = source.buffer.active.getLine(index);
+  const line = buffer.getLine(index);
   if (!line) return null;
   const cells: TerminalLinkCellSnapshot[] = [];
-  for (let column = 0; column < source.cols; column++) {
+  for (let column = 0; column < cols; column++) {
     const cell = column < line.length ? line.getCell(column) : undefined;
     cells.push({
       chars: cell?.getChars() ?? "",
@@ -398,6 +479,130 @@ function snapshotBufferRow(
     });
   }
   return { index, isWrapped: line.isWrapped, cells };
+}
+
+interface StructuralSnapshot {
+  rows: TerminalLinkRowSnapshot[];
+  clipped: boolean;
+}
+
+function couldContinueBefore(row: TerminalLinkRowSnapshot): boolean {
+  if (row.index === 0) return false;
+  if (row.isWrapped) return true;
+  const bounds = contentBounds(row);
+  if (firstContentColumn(row, bounds.start) !== bounds.start) return false;
+  return !HARD_CONTINUATION_START.test(
+    cellsText(row, bounds.start, bounds.end),
+  );
+}
+
+function couldContinueAfter(row: TerminalLinkRowSnapshot): boolean {
+  const bounds = contentBounds(row);
+  return lastContentEnd(row, bounds.end) === bounds.end;
+}
+
+/**
+ * Expand only through structurally connected rows, alternating upward and
+ * downward from the requested row. Cost is bounded by inspected terminal
+ * cells rather than a fixed row count. If the budget cannot resolve a
+ * potentially connected edge, the snapshot is clipped and must not yield a
+ * navigable candidate.
+ */
+function collectStructuralSnapshot(
+  source: TerminalLinkSource,
+  requestedRow: number,
+  cellBudget: number,
+): StructuralSnapshot {
+  const buffer = source.buffer.active;
+  const cols = source.cols;
+  if (
+    requestedRow < 0 ||
+    requestedRow >= buffer.length ||
+    cols <= 0 ||
+    cellBudget < cols
+  ) {
+    return { rows: [], clipped: false };
+  }
+
+  const initial = snapshotBufferRow(buffer, cols, requestedRow);
+  if (!initial) return { rows: [], clipped: false };
+
+  const rows = new Map<number, TerminalLinkRowSnapshot>([
+    [requestedRow, initial],
+  ]);
+  let inspectedCells = cols;
+  let top = requestedRow;
+  let bottom = requestedRow;
+  let topOpen = top > 0;
+  let bottomOpen = bottom < buffer.length - 1;
+  let clipped = false;
+  let expandTopNext = true;
+
+  while (topOpen || bottomOpen) {
+    const expandTop = topOpen && (!bottomOpen || expandTopNext);
+    expandTopNext = !expandTopNext;
+    const edgeIndex = expandTop ? top : bottom;
+    const edge = rows.get(edgeIndex)!;
+    const adjacentIndex = expandTop ? edgeIndex - 1 : edgeIndex + 1;
+
+    if (inspectedCells + cols > cellBudget) {
+      const couldContinue = expandTop
+        ? couldContinueBefore(edge)
+        : couldContinueAfter(edge);
+      if (couldContinue) clipped = true;
+      if (expandTop) topOpen = false;
+      else bottomOpen = false;
+      continue;
+    }
+
+    const adjacent = snapshotBufferRow(buffer, cols, adjacentIndex);
+    inspectedCells += cols;
+    const connection = adjacent
+      ? expandTop
+        ? connectionBetween(adjacent, edge)
+        : connectionBetween(edge, adjacent)
+      : null;
+    if (!adjacent || !connection) {
+      if (expandTop) topOpen = false;
+      else bottomOpen = false;
+      continue;
+    }
+
+    rows.set(adjacentIndex, adjacent);
+    if (expandTop) {
+      top = adjacentIndex;
+      topOpen = top > 0;
+    } else {
+      bottom = adjacentIndex;
+      bottomOpen = bottom < buffer.length - 1;
+    }
+  }
+
+  return {
+    rows: [...rows.values()].sort((a, b) => a.index - b.index),
+    clipped,
+  };
+}
+
+function computeCurrentTerminalLinks(
+  source: TerminalLinkSource,
+  requestedRow: number,
+  cellBudget: number,
+): TerminalLinkCandidate[] {
+  const snapshot = collectStructuralSnapshot(source, requestedRow, cellBudget);
+  if (snapshot.clipped) return [];
+  return computeTerminalLinks(snapshot.rows, requestedRow);
+}
+
+function linkIdentity(link: TerminalLinkCandidate): string {
+  return [
+    link.text,
+    link.requiresConfirmation ? "inferred" : "exact",
+    link.range.start.x,
+    link.range.start.y,
+    link.range.end.x,
+    link.range.end.y,
+  ].join("\u0000");
 }
 
 /**
@@ -410,30 +615,36 @@ export function createTerminalLinkProvider(
 ): ILinkProvider {
   const confirm = options.confirm ?? defaultHardLinkConfirmation;
   const open = options.open ?? createHttpLinkOpener();
-  const scanRadius = Math.max(1, options.scanRadius ?? 8);
+  const cellBudget = Math.max(
+    1,
+    options.cellBudget ?? DEFAULT_LINK_SCAN_CELL_BUDGET,
+  );
 
   return {
     provideLinks(bufferLineNumber, callback) {
       const requestedRow = bufferLineNumber - 1;
-      const start = Math.max(0, requestedRow - scanRadius);
-      const end = Math.min(
-        source.buffer.active.length - 1,
-        requestedRow + scanRadius,
+      const candidates = computeCurrentTerminalLinks(
+        source,
+        requestedRow,
+        cellBudget,
       );
-      const rows: TerminalLinkRowSnapshot[] = [];
-      for (let index = start; index <= end; index++) {
-        const row = snapshotBufferRow(source, index);
-        if (row) rows.push(row);
-      }
-
-      const links = computeTerminalLinks(rows, requestedRow).map((candidate) => ({
-        text: candidate.text,
-        range: candidate.range,
-        activate: () => {
-          if (candidate.requiresConfirmation && !confirm(candidate.text)) return;
-          open(candidate.text);
-        },
-      }));
+      const links = candidates.map((candidate) => {
+        const identity = linkIdentity(candidate);
+        return {
+          text: candidate.text,
+          range: candidate.range,
+          activate: () => {
+            const current = computeCurrentTerminalLinks(
+              source,
+              requestedRow,
+              cellBudget,
+            ).find((link) => linkIdentity(link) === identity);
+            if (!current) return;
+            if (current.requiresConfirmation && !confirm(current.text)) return;
+            open(current.text);
+          },
+        };
+      });
       callback(links.length > 0 ? links : undefined);
     },
   };

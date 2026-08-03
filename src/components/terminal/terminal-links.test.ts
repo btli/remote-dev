@@ -39,32 +39,40 @@ function rowsForUrl(
 }
 
 function terminalBuffer(rows: TerminalLinkRowSnapshot[]) {
-  return {
+  let activeRows = rows;
+  const terminal = {
     cols: rows[0]?.cells.length ?? 0,
     buffer: {
-      active: {
-        get length() {
-          return rows.length;
-        },
-        getLine(index: number) {
-          const source = rows[index];
-          if (!source) return undefined;
-          return {
-            isWrapped: source.isWrapped,
-            length: source.cells.length,
-            getCell(column: number) {
-              const cell = source.cells[column];
-              if (!cell) return undefined;
-              return {
-                getChars: () => cell.chars,
-                getWidth: () => cell.width,
-              };
-            },
-          };
-        },
+      get active() {
+        return {
+          get length() {
+            return activeRows.length;
+          },
+          getLine(index: number) {
+            const source = activeRows[index];
+            if (!source) return undefined;
+            return {
+              isWrapped: source.isWrapped,
+              length: source.cells.length,
+              getCell(column: number) {
+                const cell = source.cells[column];
+                if (!cell) return undefined;
+                return {
+                  getChars: () => cell.chars,
+                  getWidth: () => cell.width,
+                };
+              },
+            };
+          },
+        };
       },
     },
+    setActiveRows(nextRows: TerminalLinkRowSnapshot[]) {
+      activeRows = nextRows;
+      terminal.cols = nextRows[0]?.cells.length ?? terminal.cols;
+    },
   };
+  return terminal;
 }
 
 function provide(provider: ILinkProvider, oneBasedRow: number): ILink[] {
@@ -105,6 +113,42 @@ describe("terminal link security", () => {
 });
 
 describe("terminal link reconstruction", () => {
+  it.each([
+    ["https://example.test/pathlong", "continuation"],
+    ["https://example.test/?token=abc", "def"],
+  ])(
+    "never exposes a direct truncated fragment at an ambiguous alphanumeric hard boundary",
+    (prefix, continuation) => {
+      const cols = Math.max(prefix.length, continuation.length);
+      const rows = [row(0, prefix, cols), row(1, continuation, cols)];
+      const target = `${prefix}${continuation}`;
+      const confirm = vi.fn(() => true);
+      const open = vi.fn(() => true);
+      const provider = createTerminalLinkProvider(terminalBuffer(rows), {
+        confirm,
+        open,
+      });
+
+      for (const requestedRow of [1, 2]) {
+        const link = provide(provider, requestedRow)[0];
+        expect(link).toMatchObject({
+          text: target,
+          range: {
+            start: { y: requestedRow },
+            end: { y: requestedRow },
+          },
+        });
+        link.activate(new MouseEvent("click"), link.text);
+      }
+
+      expect(confirm).toHaveBeenCalledTimes(2);
+      expect(confirm).toHaveBeenNthCalledWith(1, target);
+      expect(confirm).toHaveBeenNthCalledWith(2, target);
+      expect(open).toHaveBeenNthCalledWith(1, target);
+      expect(open).toHaveBeenNthCalledWith(2, target);
+    },
+  );
+
   it("reconstructs a plain URL across hard terminal edges from either row", () => {
     const url = "https://example.test/a-long/path?value=one";
     const rows = rowsForUrl(url, 21);
@@ -114,9 +158,16 @@ describe("terminal link reconstruction", () => {
 
     expect(firstRowLinks).toHaveLength(1);
     expect(firstRowLinks[0]).toMatchObject({ text: url, requiresConfirmation: true });
-    expect(secondRowLinks).toEqual(firstRowLinks);
+    expect(secondRowLinks[0]).toMatchObject({
+      text: url,
+      requiresConfirmation: true,
+    });
     expect(firstRowLinks[0].range).toEqual({
       start: { x: 1, y: 1 },
+      end: { x: 21, y: 1 },
+    });
+    expect(secondRowLinks[0].range).toEqual({
+      start: { x: 1, y: 2 },
       end: { x: 21, y: 2 },
     });
   });
@@ -130,7 +181,7 @@ describe("terminal link reconstruction", () => {
         text: url,
         requiresConfirmation: false,
         range: {
-          start: { x: 1, y: 1 },
+          start: { x: 1, y: 2 },
           end: { x: 12, y: 2 },
         },
       },
@@ -150,7 +201,7 @@ describe("terminal link reconstruction", () => {
         text: url,
         requiresConfirmation: true,
         range: {
-          start: { x: 3, y: 1 },
+          start: { x: 3, y: 2 },
           end: { x: 14, y: 2 },
         },
       },
@@ -171,6 +222,51 @@ describe("terminal link reconstruction", () => {
     expect(links[0]).toMatchObject({ text: url, requiresConfirmation: true });
     expect(links[0].range).toEqual({
       start: { x: 3, y: 1 },
+      end: { x: 24, y: 1 },
+    });
+  });
+
+  it("returns only the visible URL cells as the hit range on each indented row", () => {
+    const url = "https://example.test/indented/path";
+    const cols = 24;
+    const contentCols = cols - 2;
+    const rows = rowsForUrl(url, contentCols).map((item) =>
+      row(item.index, `  ${item.cells.map((cell) => cell.chars).join("")}`, cols),
+    );
+    const provider = createTerminalLinkProvider(terminalBuffer(rows), {
+      confirm: () => true,
+      open: () => true,
+    });
+
+    expect(provide(provider, 1)[0].range).toEqual({
+      start: { x: 3, y: 1 },
+      end: { x: 24, y: 1 },
+    });
+    expect(provide(provider, 2)[0].range).toEqual({
+      start: { x: 3, y: 2 },
+      end: { x: 14, y: 2 },
+    });
+  });
+
+  it("excludes bordered panel gutters from every row-local hit range", () => {
+    const url = "https://example.test/panel/a-long-path";
+    const cols = 26;
+    const contentCols = cols - 4;
+    const rows = rowsForUrl(url, contentCols).map((item) => {
+      const content = item.cells.map((cell) => cell.chars || " ").join("");
+      return row(item.index, `│ ${content} │`, cols);
+    });
+    const provider = createTerminalLinkProvider(terminalBuffer(rows), {
+      confirm: () => true,
+      open: () => true,
+    });
+
+    expect(provide(provider, 1)[0].range).toEqual({
+      start: { x: 3, y: 1 },
+      end: { x: 24, y: 1 },
+    });
+    expect(provide(provider, 2)[0].range).toEqual({
+      start: { x: 3, y: 2 },
       end: { x: 18, y: 2 },
     });
   });
@@ -191,27 +287,99 @@ describe("terminal link reconstruction", () => {
         text: url,
         requiresConfirmation: true,
         range: {
-          start: { x: 6, y: 1 },
+          start: { x: 6, y: 2 },
           end: { x: 21, y: 2 },
         },
       },
     ]);
   });
 
-  it("does not append an unrelated next-row word to a complete last-cell URL", () => {
+  it("does not expose a complete last-cell URL as direct when the next row is ambiguous", () => {
     const url = "https://example.test/a";
     const cols = url.length;
     const rows = [row(0, url, cols), row(1, "unrelated status", cols)];
+    const inferred = `${url}unrelated`;
 
     expect(computeTerminalLinks(rows, 0)).toEqual([
       {
-        text: url,
-        requiresConfirmation: false,
+        text: inferred,
+        requiresConfirmation: true,
         range: {
           start: { x: 1, y: 1 },
           end: { x: cols, y: 1 },
         },
       },
+    ]);
+    expect(computeTerminalLinks(rows, 1)).toEqual([
+      {
+        text: inferred,
+        requiresConfirmation: true,
+        range: {
+          start: { x: 1, y: 2 },
+          end: { x: "unrelated".length, y: 2 },
+        },
+      },
+    ]);
+  });
+
+  it("treats a fresh HTTP scheme on the next row as a separate URL", () => {
+    const first = "https://first.test/path";
+    const second = "https://second.test/other";
+    const cols = Math.max(first.length, second.length);
+    const rows = [row(0, first.padEnd(cols, "x"), cols), row(1, second, cols)];
+    const firstTarget = first.padEnd(cols, "x");
+
+    expect(computeTerminalLinks(rows, 0).map((link) => link.text)).toEqual([
+      firstTarget,
+    ]);
+    expect(computeTerminalLinks(rows, 1).map((link) => link.text)).toEqual([
+      second,
+    ]);
+  });
+
+  it.each([
+    "- item",
+    "* item",
+    "# prompt",
+    "• bullet",
+    "◦ bullet",
+    "‣ bullet",
+  ])("does not cross into a leading prompt or bullet row: %s", (nextText) => {
+    const first = "https://example.test/path";
+    const cols = first.length;
+    const rows = [row(0, first, cols), row(1, nextText, cols)];
+
+    expect(computeTerminalLinks(rows, 0).map((link) => link.text)).toEqual([
+      first,
+    ]);
+    expect(computeTerminalLinks(rows, 1)).toEqual([]);
+  });
+
+  it("does not cross a blank hard row", () => {
+    const first = "https://example.test/path";
+    const cols = first.length;
+    const rows = [row(0, first, cols), row(1, "", cols)];
+
+    expect(computeTerminalLinks(rows, 0).map((link) => link.text)).toEqual([
+      first,
+    ]);
+    expect(computeTerminalLinks(rows, 1)).toEqual([]);
+  });
+
+  it("requires the complete labeled gutter exterior to remain stable", () => {
+    const trusted = "https://trusted.test";
+    const evil = `@evil.test/${"x".repeat(trusted.length - "@evil.test/".length)}`;
+    const makeLabeledRow = (index: number, label: string, content: string) => {
+      const text = `${label} │ ${content} │ ${label}`;
+      return row(index, text, text.length);
+    };
+    const rows = [
+      makeLabeledRow(0, "A", trusted),
+      makeLabeledRow(1, "B", evil),
+    ];
+
+    expect(computeTerminalLinks(rows, 0).map((link) => link.text)).toEqual([
+      trusted,
     ]);
     expect(computeTerminalLinks(rows, 1)).toEqual([]);
   });
@@ -226,6 +394,34 @@ describe("terminal link reconstruction", () => {
       "https://example.test/a",
       "https://second.test/b",
     ]);
+  });
+
+  it("supports IPv6, credentials, ports, escapes, query/hash, and balanced parentheses", () => {
+    const targets = [
+      "https://[::1]",
+      "https://[::1]:8443/path",
+      "https://user:pass@example.test:8443/a%20b?q=x%2Fy#frag",
+      "https://example.test/wiki/Foo_(bar)",
+    ];
+    const text = `${targets[0]} ${targets[1]}, ${targets[2]} ${targets[3]}.`;
+
+    expect(
+      computeTerminalLinks([row(0, text, text.length + 4)], 0).map(
+        (link) => link.text,
+      ),
+    ).toEqual(targets);
+  });
+
+  it("trims unmatched sentence delimiters but keeps balanced URL delimiters", () => {
+    const balanced = "https://example.test/wiki/Foo_(bar)";
+    const ipv6 = "https://[::1]";
+    const text = `${balanced}). ${ipv6}].`;
+
+    expect(
+      computeTerminalLinks([row(0, text, text.length + 2)], 0).map(
+        (link) => link.text,
+      ),
+    ).toEqual([balanced, ipv6]);
   });
 
   it("maps wide and combining cells back to xterm ranges", () => {
@@ -249,7 +445,7 @@ describe("terminal link reconstruction", () => {
         text: "https://example.test/cafe\u0301nd",
         requiresConfirmation: false,
         range: {
-          start: { x: 4, y: 1 },
+          start: { x: 1, y: 2 },
           end: { x: 3, y: 2 },
         },
       },
@@ -281,7 +477,7 @@ describe("terminal link reconstruction", () => {
         text: "https://example.test/caf中x",
         requiresConfirmation: false,
         range: {
-          start: { x: 1, y: 1 },
+          start: { x: 1, y: 2 },
           end: { x: 3, y: 2 },
         },
       },
@@ -306,6 +502,43 @@ describe("terminal link reconstruction", () => {
 });
 
 describe("terminal link provider", () => {
+  it("expands structurally beyond seventeen rows when the complete target is under budget", () => {
+    const cols = 12;
+    const url = `https://example.test/${"a".repeat(240)}`;
+    const rows = rowsForUrl(url, cols);
+    expect(rows.length).toBeGreaterThan(17);
+    const provider = createTerminalLinkProvider(terminalBuffer(rows), {
+      confirm: () => true,
+      open: () => true,
+    });
+
+    for (const rowIndex of [0, Math.floor(rows.length / 2), rows.length - 1]) {
+      const link = provide(provider, rowIndex + 1)[0];
+      expect(link).toMatchObject({
+        text: url,
+        range: {
+          start: { y: rowIndex + 1 },
+          end: { y: rowIndex + 1 },
+        },
+      });
+    }
+  });
+
+  it("returns no navigable fragment when a structural group exceeds the cell budget", () => {
+    const cols = 12;
+    const url = `https://example.test/${"a".repeat(240)}`;
+    const rows = rowsForUrl(url, cols);
+    const provider = createTerminalLinkProvider(terminalBuffer(rows), {
+      cellBudget: cols * 6,
+      confirm: () => true,
+      open: () => true,
+    });
+
+    for (const rowIndex of [0, Math.floor(rows.length / 2), rows.length - 1]) {
+      expect(provide(provider, rowIndex + 1)).toEqual([]);
+    }
+  });
+
   it("owns the complete hard-row range and confirms its full target synchronously", () => {
     const url = "https://example.test/a-long/path?value=one";
     const terminal = terminalBuffer(rowsForUrl(url, 21));
@@ -316,7 +549,13 @@ describe("terminal link provider", () => {
     const firstRowLink = provide(provider, 1)[0];
     const secondRowLink = provide(provider, 2)[0];
     expect(firstRowLink.text).toBe(url);
-    expect(secondRowLink).toMatchObject({ text: url, range: firstRowLink.range });
+    expect(secondRowLink).toMatchObject({
+      text: url,
+      range: {
+        start: { y: 2 },
+        end: { y: 2 },
+      },
+    });
 
     firstRowLink.activate(new MouseEvent("click"), firstRowLink.text);
     expect(confirm).toHaveBeenCalledWith(url);
@@ -360,8 +599,44 @@ describe("terminal link provider", () => {
       text: secondUrl,
       range: {
         start: { x: 1, y: 1 },
-        end: { x: 14, y: 2 },
+        end: { x: 24, y: 1 },
       },
     });
+  });
+
+  it("does not activate a cached link after the same cells are repainted", () => {
+    const cols = 18;
+    const oldUrl = "https://old.test/a-long/path";
+    const rows = rowsForUrl(oldUrl, cols);
+    const terminal = terminalBuffer(rows);
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const provider = createTerminalLinkProvider(terminal, { confirm, open });
+    const cachedLink = provide(provider, 1)[0];
+
+    rows.splice(
+      0,
+      rows.length,
+      ...rowsForUrl("https://new.test/a-long/path", cols),
+    );
+    cachedLink.activate(new MouseEvent("click"), cachedLink.text);
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("does not activate a cached normal-buffer link after switching buffers", () => {
+    const oldUrl = "https://normal.test/path";
+    const terminal = terminalBuffer([row(0, oldUrl, 32)]);
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const provider = createTerminalLinkProvider(terminal, { confirm, open });
+    const cachedLink = provide(provider, 1)[0];
+
+    terminal.setActiveRows([row(0, "alternate screen", 32)]);
+    cachedLink.activate(new MouseEvent("click"), cachedLink.text);
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
   });
 });
