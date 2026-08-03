@@ -319,6 +319,24 @@ function connectionBetween(
   };
 }
 
+function isAmbiguousRejectedHardBoundary(
+  previous: TerminalLinkRowSnapshot,
+  next: TerminalLinkRowSnapshot,
+): boolean {
+  if (next.index !== previous.index + 1 || next.isWrapped) return false;
+
+  const previousBounds = contentBounds(previous);
+  const nextBounds = contentBounds(next);
+  if (lastContentEnd(previous, previousBounds.end) !== previousBounds.end) {
+    return false;
+  }
+  const nextStart = firstContentColumn(next, nextBounds.start);
+  if (nextStart !== nextBounds.start || nextStart >= nextBounds.end) return false;
+  return !isHardBoundaryStart(
+    cellsText(next, nextBounds.start, nextBounds.end),
+  );
+}
+
 function appendRowCells(
   group: AssembledGroup,
   row: TerminalLinkRowSnapshot,
@@ -667,6 +685,8 @@ interface StructuralSnapshot {
   rows: TerminalLinkRowSnapshot[];
   clippedBefore: boolean;
   clippedAfter: boolean;
+  /** A visible following hard row could still belong to the edge token. */
+  ambiguousHardBoundaryAfter: boolean;
   requestedResolvedEnd: number | null;
 }
 
@@ -715,6 +735,7 @@ function collectStructuralSnapshot(
       rows: [],
       clippedBefore: false,
       clippedAfter: false,
+      ambiguousHardBoundaryAfter: false,
       requestedResolvedEnd: null,
     };
   }
@@ -731,6 +752,7 @@ function collectStructuralSnapshot(
       rows: [],
       clippedBefore: false,
       clippedAfter: false,
+      ambiguousHardBoundaryAfter: false,
       requestedResolvedEnd: null,
     };
   }
@@ -740,6 +762,7 @@ function collectStructuralSnapshot(
       clippedBefore:
         requestedRow > 0 && couldContinueBefore(initial.row),
       clippedAfter: true,
+      ambiguousHardBoundaryAfter: false,
       requestedResolvedEnd: initial.resolvedEndColumn,
     };
   }
@@ -755,6 +778,7 @@ function collectStructuralSnapshot(
   let bottomOpen = bottom < buffer.length - 1;
   let clippedBefore = false;
   let clippedAfter = false;
+  let ambiguousHardBoundaryAfter = false;
   let expandTopNext = true;
   const initialBounds = contentBounds(initial.row);
   let connectionContext = cellsText(
@@ -811,6 +835,13 @@ function collectStructuralSnapshot(
         : connectionBetween(edge, adjacent, connectionContext)
       : null;
     if (!adjacent || !connection) {
+      if (
+        !expandTop &&
+        adjacent &&
+        isAmbiguousRejectedHardBoundary(edge, adjacent)
+      ) {
+        ambiguousHardBoundaryAfter = true;
+      }
       if (expandTop) topOpen = false;
       else bottomOpen = false;
       continue;
@@ -843,6 +874,7 @@ function collectStructuralSnapshot(
     rows: [...rows.values()].sort((a, b) => a.index - b.index),
     clippedBefore,
     clippedAfter,
+    ambiguousHardBoundaryAfter,
     requestedResolvedEnd: null,
   };
 }
@@ -882,7 +914,10 @@ function lexicalLinkTouchesClippedEdge(
       }
     }
   }
-  if (snapshot.clippedAfter && bottom) {
+  if (
+    (snapshot.clippedAfter || snapshot.ambiguousHardBoundaryAfter) &&
+    bottom
+  ) {
     const bounds = contentBounds(bottom);
     const contentEnd = lastContentEnd(bottom, bounds.end);
     const possibleEarlyWideWrap =
@@ -1128,7 +1163,11 @@ function computeCurrentTerminalLinks(
     cellBudget,
     codeUnitBudget,
   );
-  if (snapshot.clippedBefore || snapshot.clippedAfter) {
+  if (
+    snapshot.clippedBefore ||
+    snapshot.clippedAfter ||
+    snapshot.ambiguousHardBoundaryAfter
+  ) {
     const requested = snapshot.rows.find((row) => row.index === requestedRow);
     const localCandidates = requested
       ? computeTerminalLinks([requested], requestedRow)

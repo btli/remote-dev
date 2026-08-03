@@ -663,6 +663,26 @@ describe("terminal link reconstruction", () => {
 });
 
 describe("WebLinks activation arbitration", () => {
+  it("rejects a stock URL prefix before a structurally rejected hard row", () => {
+    const prefix = "https://origin.test/prefix/";
+    const cols = prefix.length;
+    const source = terminalBuffer([
+      row(0, prefix, cols),
+      row(1, "https://dest.test/tail", cols),
+    ]);
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const controller = terminalLinkController(source, { confirm, open });
+    controller.hoverWebLink(prefix, {
+      start: { x: 1, y: 1 },
+      end: { x: cols, y: 1 },
+    });
+
+    expect(controller.activateWebLink(prefix)).toBe(false);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it("opens an ordinary exact current link only while its hover range matches", () => {
     const target = "https://ordinary.test/path";
     const source = terminalBuffer([row(0, target, target.length + 4)]);
@@ -783,6 +803,71 @@ describe("WebLinks activation arbitration", () => {
 });
 
 describe("terminal link provider", () => {
+  it.each([
+    {
+      boundary: "a fresh-scheme row",
+      rows: [
+        row(0, "https://origin.test/prefix/", 27),
+        row(1, "https://dest.test/tail", 27),
+      ],
+      range: {
+        start: { x: 1, y: 1 },
+        end: { x: 27, y: 1 },
+      },
+    },
+    {
+      boundary: "a changed labeled gutter",
+      rows: [
+        row(0, "A │ https://origin.test/prefix/ │ A", 35),
+        row(1, "B │ https://dest.test/tail/more │ B", 35),
+      ],
+      range: {
+        start: { x: 5, y: 1 },
+        end: { x: 31, y: 1 },
+      },
+    },
+  ])(
+    "guards an edge-ending URL prefix before $boundary",
+    ({ rows, range }) => {
+      const prefix = "https://origin.test/prefix/";
+      const confirm = vi.fn(() => true);
+      const open = vi.fn(() => true);
+      const provider = createTerminalLinkProvider(terminalBuffer(rows), {
+        confirm,
+        open,
+      });
+
+      const link = provide(provider, 1)[0];
+      expect(link).toMatchObject({ text: prefix, range });
+      link.activate(new MouseEvent("click"), link.text);
+
+      expect(confirm).not.toHaveBeenCalled();
+      expect(open).not.toHaveBeenCalled();
+      expect(link.decorations).toMatchObject({
+        pointerCursor: false,
+        underline: false,
+      });
+    },
+  );
+
+  it("revalidates a cached edge link when a fresh-scheme hard row appears", () => {
+    const prefix = "https://origin.test/prefix/";
+    const cols = prefix.length;
+    const rows = [row(0, prefix, cols)];
+    const terminal = terminalBuffer(rows);
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const provider = createTerminalLinkProvider(terminal, { confirm, open });
+    const cachedLink = provide(provider, 1)[0];
+    expect(cachedLink.decorations).toBeUndefined();
+
+    rows.push(row(1, "https://dest.test/tail", cols));
+    cachedLink.activate(new MouseEvent("click"), cachedLink.text);
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it("expands structurally beyond seventeen rows when the complete target is under budget", () => {
     const cols = 12;
     const url = `https://example.test/${"a".repeat(240)}`;
