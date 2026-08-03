@@ -101,7 +101,10 @@ const defaultFetch: OAuthRefreshFetch = (url, init) =>
 
 /** Resolve fresh usage access tokens and refresh expired/near-expiry tokens. */
 export class AnthropicOAuthRefreshService {
-  private readonly inFlight = new Map<string, Promise<string | null>>();
+  private readonly inFlight = new Map<
+    string,
+    { userId: string; promise: Promise<string | null> }
+  >();
 
   constructor(
     private readonly accounts: UsageCredentialAccountStore = defaultAccountStore,
@@ -114,7 +117,13 @@ export class AnthropicOAuthRefreshService {
     userId: string
   ): Promise<string | null> {
     const existing = this.inFlight.get(accountId);
-    if (existing) return existing;
+    if (existing) {
+      if (existing.userId !== userId) {
+        log.warn("Rejected cross-owner usage OAuth refresh join", { accountId });
+        return null;
+      }
+      return existing.promise;
+    }
 
     const pending = this.readOrRefresh(accountId, userId).catch((error) => {
       log.warn("Usage OAuth credential operation failed", {
@@ -123,13 +132,13 @@ export class AnthropicOAuthRefreshService {
       });
       return null;
     });
-    this.inFlight.set(accountId, pending);
+    this.inFlight.set(accountId, { userId, promise: pending });
     try {
       return await pending;
     } finally {
       // Identity check prevents an older completion from clearing a newer
       // flight if the implementation later grows cancellation/replacement.
-      if (this.inFlight.get(accountId) === pending) {
+      if (this.inFlight.get(accountId)?.promise === pending) {
         this.inFlight.delete(accountId);
       }
     }
@@ -158,88 +167,100 @@ export class AnthropicOAuthRefreshService {
   ): Promise<string | null> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    let response: Awaited<ReturnType<OAuthRefreshFetch>>;
     try {
-      response = await this.fetchImpl(TOKEN_ENDPOINT, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          grant_type: "refresh_token",
-          refresh_token: refreshToken,
-          client_id: CLAUDE_CODE_CLIENT_ID,
-        }),
-        signal: controller.signal,
+      let response: Awaited<ReturnType<OAuthRefreshFetch>>;
+      try {
+        response = await this.fetchImpl(TOKEN_ENDPOINT, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            grant_type: "refresh_token",
+            refresh_token: refreshToken,
+            client_id: CLAUDE_CODE_CLIENT_ID,
+          }),
+          signal: controller.signal,
+        });
+      } catch (error) {
+        log.warn("Usage OAuth refresh request failed transiently", {
+          accountId,
+          error: safeErrorName(error),
+        });
+        return null;
+      }
+
+      if (response.status === 400 || response.status === 401) {
+        log.warn(
+          "Usage refresh token rejected; usage tracking disabled until re-enabled",
+          { accountId, status: response.status }
+        );
+        await this.accounts.quarantine(accountId, userId);
+        return null;
+      }
+
+      if (response.status < 200 || response.status >= 300) {
+        log.warn("Usage OAuth refresh returned a non-success response", {
+          accountId,
+          status: response.status,
+        });
+        return null;
+      }
+
+      let body: Record<string, unknown> | null;
+      try {
+        body = await parseJsonBody(response);
+      } catch (error) {
+        log.warn("Usage OAuth refresh request failed transiently", {
+          accountId,
+          error: safeErrorName(error),
+        });
+        return null;
+      }
+      const accessToken = isNonBlankString(body?.access_token)
+        ? body.access_token
+        : null;
+      const expiresIn = body?.expires_in;
+      const refreshTokenValue = body?.refresh_token;
+      const expiresAtMs =
+        typeof expiresIn === "number" ? now + expiresIn * 1_000 : Number.NaN;
+      if (
+        accessToken === null ||
+        typeof expiresIn !== "number" ||
+        !Number.isFinite(expiresIn) ||
+        expiresIn <= 0 ||
+        !Number.isFinite(expiresAtMs) ||
+        (refreshTokenValue !== undefined &&
+          !isNonBlankString(refreshTokenValue))
+      ) {
+        log.warn("Usage OAuth refresh returned a malformed success response", {
+          accountId,
+          status: response.status,
+        });
+        return null;
+      }
+
+      const rotatedRefreshToken = isNonBlankString(refreshTokenValue)
+        ? refreshTokenValue
+        : undefined;
+      await this.accounts.store(accountId, userId, {
+        accessToken,
+        expiresAt: new Date(expiresAtMs),
+        ...(rotatedRefreshToken
+          ? { refreshToken: rotatedRefreshToken }
+          : {}),
       });
-    } catch (error) {
-      log.warn("Usage OAuth refresh request failed transiently", {
-        accountId,
-        error: safeErrorName(error),
-      });
-      return null;
+      return accessToken;
     } finally {
       clearTimeout(timer);
     }
-
-    if (response.status === 400 || response.status === 401) {
-      log.warn(
-        "Usage refresh token rejected; usage tracking disabled until re-enabled",
-        { accountId, status: response.status }
-      );
-      await this.accounts.quarantine(accountId, userId);
-      return null;
-    }
-
-    if (response.status < 200 || response.status >= 300) {
-      log.warn("Usage OAuth refresh returned a non-success response", {
-        accountId,
-        status: response.status,
-      });
-      return null;
-    }
-
-    const body = await parseJsonBody(response);
-    const accessToken = isNonBlankString(body?.access_token)
-      ? body.access_token
-      : null;
-    const expiresIn = body?.expires_in;
-    const refreshTokenValue = body?.refresh_token;
-    const expiresAtMs =
-      typeof expiresIn === "number" ? now + expiresIn * 1_000 : Number.NaN;
-    if (
-      accessToken === null ||
-      typeof expiresIn !== "number" ||
-      !Number.isFinite(expiresIn) ||
-      expiresIn <= 0 ||
-      !Number.isFinite(expiresAtMs) ||
-      (refreshTokenValue !== undefined &&
-        !isNonBlankString(refreshTokenValue))
-    ) {
-      log.warn("Usage OAuth refresh returned a malformed success response", {
-        accountId,
-        status: response.status,
-      });
-      return null;
-    }
-
-    const rotatedRefreshToken = isNonBlankString(refreshTokenValue)
-      ? refreshTokenValue
-      : undefined;
-    await this.accounts.store(accountId, userId, {
-      accessToken,
-      expiresAt: new Date(expiresAtMs),
-      ...(rotatedRefreshToken
-        ? { refreshToken: rotatedRefreshToken }
-        : {}),
-    });
-    return accessToken;
   }
 }
 
 async function parseJsonBody(
   response: Awaited<ReturnType<OAuthRefreshFetch>>
 ): Promise<Record<string, unknown> | null> {
+  const raw = await response.text();
   try {
-    const parsed: unknown = JSON.parse(await response.text());
+    const parsed: unknown = JSON.parse(raw);
     return isRecord(parsed) ? parsed : null;
   } catch {
     return null;

@@ -260,6 +260,54 @@ describe("AnthropicOAuthRefreshService", () => {
     expect(accounts.quarantine).not.toHaveBeenCalled();
   });
 
+  it("keeps the ten-second timeout active while consuming the response body", async () => {
+    vi.useFakeTimers();
+    const accounts = accountStore();
+    let responseSignal!: AbortSignal;
+    let resolveBody!: (body: string) => void;
+    let markBodyStarted!: () => void;
+    const bodyStarted = new Promise<void>((resolve) => {
+      markBodyStarted = resolve;
+    });
+    const fetchImpl: OAuthRefreshFetch = async (_url, init) => ({
+      status: 200,
+      headers: new Headers(),
+      text: () => {
+        responseSignal = init.signal;
+        markBodyStarted();
+        return new Promise<string>((resolve, reject) => {
+          resolveBody = resolve;
+          init.signal.addEventListener("abort", () =>
+            reject(new Error("body aborted"))
+          );
+        });
+      },
+    });
+    const service = new AnthropicOAuthRefreshService(
+      accounts,
+      fetchImpl,
+      () => NOW
+    );
+
+    const pending = service.getFreshUsageAccessToken(ACCOUNT_ID, USER_ID);
+    await bodyStarted;
+    await vi.advanceTimersByTimeAsync(10_000);
+    const bodyWasAborted = responseSignal.aborted;
+    if (!bodyWasAborted) {
+      // Let the pre-fix implementation settle instead of leaking a pending
+      // promise after the expected red assertion.
+      resolveBody(
+        JSON.stringify({ access_token: "test-body-access", expires_in: 60 })
+      );
+      await pending;
+    }
+
+    expect(bodyWasAborted).toBe(true);
+    await expect(pending).resolves.toBeNull();
+    expect(accounts.store).not.toHaveBeenCalled();
+    expect(accounts.quarantine).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["non-JSON", "not-json"],
     ["missing access token", { expires_in: 60 }],
@@ -317,6 +365,43 @@ describe("AnthropicOAuthRefreshService", () => {
       "test-shared-access-after",
       "test-shared-access-after",
     ]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(accounts.store).toHaveBeenCalledTimes(1);
+  });
+
+  it("never shares an owner's in-flight plaintext token with a foreign user", async () => {
+    const accounts = accountStore();
+    let resolveFetch!: (
+      value: Awaited<ReturnType<OAuthRefreshFetch>>
+    ) => void;
+    const pendingFetch = new Promise<
+      Awaited<ReturnType<OAuthRefreshFetch>>
+    >((resolve) => {
+      resolveFetch = resolve;
+    });
+    const fetchImpl = vi.fn<OAuthRefreshFetch>(() => pendingFetch);
+    const service = new AnthropicOAuthRefreshService(
+      accounts,
+      fetchImpl,
+      () => NOW
+    );
+
+    const owner = service.getFreshUsageAccessToken(ACCOUNT_ID, USER_ID);
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+    const foreign = service.getFreshUsageAccessToken(
+      ACCOUNT_ID,
+      "foreign-user"
+    );
+    resolveFetch(
+      response(200, {
+        access_token: "test-owner-only-access-after",
+        expires_in: 60,
+      })
+    );
+
+    await expect(owner).resolves.toBe("test-owner-only-access-after");
+    await expect(foreign).resolves.toBeNull();
+    expect(accounts.read).toHaveBeenCalledTimes(1);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(accounts.store).toHaveBeenCalledTimes(1);
   });
