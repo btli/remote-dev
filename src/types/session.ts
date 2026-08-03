@@ -115,6 +115,15 @@ export interface CreateSessionInput {
    * (userId, terminalType, scopeKey) instead of creating a new row.
    */
   scopeKey?: string | null;
+  /**
+   * Initial detached tmux window geometry (`new-session -x/-y`); both must be
+   * set to take effect. Without them a detached session is 80×24 until a
+   * client attaches. Used by the Claude setup-token flow to keep the ~108-char
+   * token from being clipped at the pane edge [remote-dev-307w]. Best-effort:
+   * an attaching client may resize the window to its own viewport afterwards.
+   */
+  initialCols?: number;
+  initialRows?: number;
   // Parent session for team orchestration
   parentSessionId?: string;
   // Feature session fields

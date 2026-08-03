@@ -148,13 +148,21 @@ export async function listSessions(): Promise<TmuxSessionInfo[]> {
  * @param startupCommand - Optional command to run after session creation
  * @param env - Optional environment variables for PTY spawn (initial shell env)
  * @param historyLimit - Optional tmux history-limit (scrollback buffer, default: 50000)
+ * @param dimensions - Optional initial window geometry (`new-session -x/-y`).
+ *   A detached session otherwise defaults to 80×24 until a client attaches,
+ *   which is narrow enough that width-sensitive TUI output (e.g. the ~108-char
+ *   token `claude setup-token` prints) gets clipped at the pane edge — and
+ *   `capture-pane -J` cannot rejoin breaks the TUI itself authored.
+ *   [remote-dev-307w] Best-effort: an attaching client may later resize the
+ *   window to its own viewport.
  */
 export async function createSession(
   sessionName: string,
   cwd: string,
   startupCommand?: string,
   env?: Record<string, string>,
-  historyLimit: number = 50000
+  historyLimit: number = 50000,
+  dimensions?: { cols: number; rows: number }
 ): Promise<void> {
   // Check if session already exists
   if (await sessionExists(sessionName)) {
@@ -172,6 +180,18 @@ export async function createSession(
     "-s",
     sessionName,
   ];
+
+  // Initial detached geometry. Guarded to sane positive integers so a bad
+  // caller value degrades to tmux's default instead of failing the create.
+  if (
+    dimensions &&
+    Number.isInteger(dimensions.cols) &&
+    Number.isInteger(dimensions.rows) &&
+    dimensions.cols > 0 &&
+    dimensions.rows > 0
+  ) {
+    args.push("-x", String(dimensions.cols), "-y", String(dimensions.rows));
+  }
 
   // Set working directory — ALWAYS passed (see @param cwd above).
   args.push("-c", cwd);

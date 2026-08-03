@@ -1005,7 +1005,13 @@ export async function createSessionWithDedupFlag(
         tmuxSessionName,
         effectiveCwd,
         effectiveStartupCommand,
-        Object.keys(initialEnv).length > 0 ? initialEnv : undefined
+        Object.keys(initialEnv).length > 0 ? initialEnv : undefined,
+        undefined, // historyLimit: default
+        // Initial detached geometry (e.g. the wide Claude setup-token pane
+        // [remote-dev-307w]); validated + defaulted inside TmuxService.
+        input.initialCols && input.initialRows
+          ? { cols: input.initialCols, rows: input.initialRows }
+          : undefined
       );
     } catch (error) {
       if (error instanceof TmuxService.TmuxServiceError) {

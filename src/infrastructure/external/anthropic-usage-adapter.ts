@@ -60,13 +60,17 @@
  *
  * ## Throttling (verified live 2026-08-03) [remote-dev-u7df]
  *
- * The read is free of QUOTA but not of RATE LIMIT: Anthropic throttles
- * long-lived `claude setup-token` credentials on this endpoint to roughly one
- * request per hour per token. Excess reads get HTTP 429 with a `retry-after`
- * header (observed: `retry-after: 3578` seconds, counting down toward a fixed
- * reset). Short-lived Keychain access tokens are NOT throttled this way
- * (proven: simultaneous 200 vs 429 from the same IP) — but the app stores
- * setup-tokens, so under any cadence faster than hourly most polls 429.
+ * The read is free of QUOTA but not of RATE LIMIT: Anthropic throttled the
+ * observed long-lived `claude setup-token` credentials on this endpoint to
+ * roughly one request per hour per token. Excess reads get HTTP 429 with a
+ * `retry-after` header (observed: `retry-after: 3578` seconds, counting down
+ * toward a fixed reset). Short-lived Keychain access tokens are NOT throttled
+ * this way (proven: simultaneous 200 vs 429 from the same IP). Caveat
+ * [remote-dev-307w]: the three observed tokens later turned out to be
+ * TRUNCATED, INVALID credentials, so the hourly figure is only confirmed for
+ * rejected tokens — the cadence allowed a VALID setup-token is unverified.
+ * The app stores setup-tokens either way, so a sub-hourly cadence must expect
+ * 429s.
  * {@link fetchClaudeUsage} therefore surfaces a 429 as a first-class
  * "rate-limited" outcome carrying the reset time, so the sweep can align its
  * next attempt to the quota window instead of discarding the header and

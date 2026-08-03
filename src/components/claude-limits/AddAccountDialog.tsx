@@ -14,10 +14,19 @@
  *      POST /api/claude-accounts/setup-session launches a real terminal
  *      session running `claude setup-token`. The user completes the browser
  *      sign-in, then presses Finish, which POSTs /api/claude-accounts/capture.
- *      A 409 `TOKEN_NOT_READY` keeps the dialog open with a retry.
+ *      A 409 `TOKEN_NOT_READY` keeps the dialog open with a retry; a 409
+ *      `TOKEN_TRUNCATED` (the pane clipped the printed token) surfaces the
+ *      truncation diagnosis — the setup session stays open server-side so the
+ *      user can widen the terminal, re-run, or fall back to the paste flow.
  *   2. "Paste a token" (always available; the remote / PWA fallback) —
  *      POST /api/claude-accounts with `{ token, alias? }`. A 400
- *      `INVALID_TOKEN_FORMAT` is surfaced verbatim.
+ *      `INVALID_TOKEN_FORMAT` or `TOKEN_TRUNCATED` is surfaced verbatim.
+ *
+ * Either path can succeed at STORING the token yet learn it is dead: the save
+ * response carries `tokenValid: false` + `tokenError` when Anthropic 401'd the
+ * token at save time [remote-dev-307w]. The dialog then shows that diagnosis
+ * (and refreshes the list — the unhealthy row exists) instead of closing as if
+ * the account were signed in.
  *
  * The token is only ever held in a transient input value that is cleared as
  * soon as the request resolves: it is never logged, never placed in a URL, and
@@ -87,6 +96,14 @@ async function readError(
   } catch {
     return { message: fallback, code: null };
   }
+}
+
+/** The slice of a successful save response the dialog acts on. */
+interface SaveOutcome {
+  /** False = Anthropic 401'd the token at save time. Null = indeterminate. */
+  tokenValid?: boolean | null;
+  /** Human-readable diagnosis, present exactly when `tokenValid` is false. */
+  tokenError?: string;
 }
 
 export function AddAccountDialog({
@@ -213,6 +230,14 @@ export function AddAccountDialog({
         setError(message);
         return;
       }
+      const outcome = (await response.json()) as SaveOutcome;
+      if (outcome.tokenValid === false) {
+        // The account row was stored (unhealthy), so refresh the list — but
+        // show the diagnosis instead of closing as if the sign-in worked.
+        onAdded();
+        setError(outcome.tokenError ?? "Anthropic rejected the captured token.");
+        return;
+      }
       onAdded();
       handleOpenChange(false);
     } catch (err) {
@@ -250,6 +275,14 @@ export function AddAccountDialog({
           "Failed to store the account token"
         );
         setError(message);
+        return;
+      }
+      const outcome = (await response.json()) as SaveOutcome;
+      if (outcome.tokenValid === false) {
+        // Stored but dead: refresh the list, keep the dialog open with the
+        // diagnosis so the user can paste a full token.
+        onAdded();
+        setError(outcome.tokenError ?? "Anthropic rejected that token.");
         return;
       }
       onAdded();

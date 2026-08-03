@@ -3,11 +3,24 @@
  * Tests for ClaudeAccountService — the Claude-account CRUD + identity +
  * credential path introduced by [remote-dev-n4x4.6 / n4x4.7 / n4x4.8].
  *
- * The `claude` CLI is ALWAYS injected as a fake runner: no test invokes the
- * real binary and no test makes a network call. The DB is a small in-memory
- * fake over the handful of drizzle calls the service makes.
+ * The `claude` CLI is ALWAYS injected as a fake runner and the remote validity
+ * probe [remote-dev-307w] is module-mocked (default: "valid"): no test invokes
+ * the real binary and no test makes a network call. The DB is a small
+ * in-memory fake over the handful of drizzle calls the service makes.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+/**
+ * The remote validity probe [remote-dev-307w]. Mocked at module level so
+ * `saveAccountToken` / `verifyAccount` callers that don't inject one never
+ * reach the network; individual tests flip it to "invalid"/"indeterminate".
+ */
+const validityProbeMock = vi.hoisted(() =>
+  vi.fn<(token: string) => Promise<"valid" | "invalid" | "indeterminate">>()
+);
+vi.mock("@/infrastructure/external/anthropic-token-validity", () => ({
+  probeTokenValidity: validityProbeMock,
+}));
 
 /** In-memory `claude_account` rows, keyed by id. */
 type Row = Record<string, unknown>;
@@ -98,6 +111,8 @@ import {
   parseAuthStatus,
   extractSetupToken,
   looksLikeOAuthToken,
+  isLikelyTruncatedToken,
+  MIN_SETUP_TOKEN_LENGTH,
   probeIdentity,
   saveAccountToken,
   verifyAccount,
@@ -117,8 +132,12 @@ import {
 import { decrypt } from "@/lib/encryption";
 
 const USER = "user-1";
-const TOKEN = "sk-ant-oat01-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const OTHER_TOKEN = "sk-ant-oat01-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+// Full-length (108-char) tokens matching what `claude setup-token` really
+// prints; shorter fragments are the TRUNCATED case [remote-dev-307w].
+const TOKEN = `sk-ant-oat01-${"A".repeat(95)}`;
+const OTHER_TOKEN = `sk-ant-oat01-${"B".repeat(95)}`;
+/** What an ~80-col pane leaves of a real token (observed live: 79 chars). */
+const CLIPPED_TOKEN = TOKEN.slice(0, 79);
 
 /** A runner that returns fixed stdout and records the env it was given. */
 function runnerWith(
@@ -144,6 +163,8 @@ const LOGGED_IN_JSON = JSON.stringify({
 beforeEach(() => {
   rows.clear();
   linkUpdates.length = 0;
+  validityProbeMock.mockReset();
+  validityProbeMock.mockResolvedValue("valid");
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -283,6 +304,35 @@ describe("looksLikeOAuthToken", () => {
   });
 });
 
+describe("isLikelyTruncatedToken [remote-dev-307w]", () => {
+  it("flags the live-observed 79-char pane-clipped fragment", () => {
+    // The fragment still matches the token PATTERN — that's exactly the bug —
+    // so the length floor is the only thing standing between it and storage.
+    expect(looksLikeOAuthToken(CLIPPED_TOKEN)).toBe(true);
+    expect(isLikelyTruncatedToken(CLIPPED_TOKEN)).toBe(true);
+  });
+
+  it("accepts a full ~108-char token (and tolerates surrounding whitespace)", () => {
+    expect(isLikelyTruncatedToken(TOKEN)).toBe(false);
+    expect(isLikelyTruncatedToken(`  ${TOKEN}  `)).toBe(false);
+  });
+
+  it("draws the line exactly at MIN_SETUP_TOKEN_LENGTH", () => {
+    const atFloor = `sk-ant-oat01-${"A".repeat(MIN_SETUP_TOKEN_LENGTH - 13)}`;
+    expect(atFloor).toHaveLength(MIN_SETUP_TOKEN_LENGTH);
+    expect(isLikelyTruncatedToken(atFloor)).toBe(false);
+    expect(isLikelyTruncatedToken(atFloor.slice(0, -1))).toBe(true);
+  });
+
+  it("still extracts the clipped fragment (rejection is the routes' job)", () => {
+    // extractSetupToken stays a pure pattern extractor; the capture route
+    // applies the floor and answers TOKEN_TRUNCATED.
+    expect(extractSetupToken(`$ claude setup-token\n${CLIPPED_TOKEN}\n`)).toBe(
+      CLIPPED_TOKEN
+    );
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Account CRUD + token encryption at rest
 // ─────────────────────────────────────────────────────────────────────────────
@@ -350,7 +400,10 @@ describe("saveAccountToken", () => {
     expect(rows.size).toBe(2);
   });
 
-  it("still stores the token when identity cannot be probed (marked unhealthy)", async () => {
+  it("still stores the token when NEITHER probe learns anything (marked unhealthy)", async () => {
+    // Fully offline: the CLI probe fails AND the network probe is
+    // indeterminate — nothing vouches for the token, so it stores unhealthy.
+    validityProbeMock.mockResolvedValue("indeterminate");
     const { account } = await saveAccountToken(
       { userId: USER, token: TOKEN },
       runnerWith("claude: command not found")
@@ -419,6 +472,92 @@ describe("saveAccountToken", () => {
       saveAccountToken({ userId: USER, token: "   " }, runnerWith(LOGGED_IN_JSON))
     ).rejects.toThrow(/token is required/i);
   });
+
+  // ── Remote validity probe [remote-dev-307w] ────────────────────────────────
+
+  it("marks the account UNHEALTHY when Anthropic 401s the token, even though the CLI says loggedIn", async () => {
+    // The exact live failure: `claude auth status --json` reports
+    // loggedIn:true (email null) for a dead token — only the network knows.
+    validityProbeMock.mockResolvedValue("invalid");
+
+    const { account, tokenValid } = await saveAccountToken(
+      { userId: USER, token: TOKEN },
+      runnerWith('{"loggedIn": true, "authMethod": "oauth_token"}')
+    );
+
+    expect(tokenValid).toBe(false);
+    expect(account.authHealthy).toBe(false);
+    // The token is still stored (the row keeps its identity for re-adding).
+    expect(account.hasToken).toBe(true);
+    expect(validityProbeMock).toHaveBeenCalledWith(TOKEN);
+  });
+
+  it("reports tokenValid: true when Anthropic accepts the token", async () => {
+    const { account, tokenValid } = await saveAccountToken(
+      { userId: USER, token: TOKEN },
+      runnerWith(LOGGED_IN_JSON)
+    );
+    expect(tokenValid).toBe(true);
+    expect(account.authHealthy).toBe(true);
+  });
+
+  it("keeps the CLI probe's answer when the network probe is indeterminate (offline)", async () => {
+    validityProbeMock.mockResolvedValue("indeterminate");
+
+    const { account, tokenValid } = await saveAccountToken(
+      { userId: USER, token: TOKEN },
+      runnerWith(LOGGED_IN_JSON)
+    );
+
+    // Offline never blocks a save and never overrides the CLI's verdict.
+    expect(tokenValid).toBeNull();
+    expect(account.authHealthy).toBe(true);
+    expect(account.hasToken).toBe(true);
+  });
+
+  it("marks the account HEALTHY when Anthropic confirms the token, even though the CLI probe failed", async () => {
+    // Network verdict is ground truth for credential liveness; a missing
+    // binary / CLI crash / --json shape change says nothing about the token.
+    const { account, tokenValid } = await saveAccountToken(
+      { userId: USER, token: TOKEN },
+      runnerWith("claude: command not found")
+    );
+    expect(tokenValid).toBe(true);
+    expect(account.authHealthy).toBe(true);
+  });
+
+  it("stays unhealthy when the CLI probe failed AND the network probe is indeterminate", async () => {
+    validityProbeMock.mockResolvedValue("indeterminate");
+    const { account, tokenValid } = await saveAccountToken(
+      { userId: USER, token: TOKEN },
+      runnerWith("claude: command not found")
+    );
+    expect(tokenValid).toBeNull();
+    expect(account.authHealthy).toBe(false);
+  });
+
+  it("runs the CLI and network probes concurrently, not sequentially", async () => {
+    // The CLI runner only resolves once the validity probe has STARTED — a
+    // sequential await-chain (CLI first) would deadlock and time the test out.
+    let validityStarted: () => void;
+    const validityGate = new Promise<void>((resolve) => {
+      validityStarted = resolve;
+    });
+    validityProbeMock.mockImplementation(async () => {
+      validityStarted();
+      return "valid";
+    });
+    const runner: ClaudeCliRunner = async () => {
+      await validityGate;
+      return { stdout: LOGGED_IN_JSON, stderr: "", exitCode: 0 };
+    };
+
+    const { account } = await saveAccountToken(
+      { userId: USER, token: TOKEN },
+      runner
+    );
+    expect(account.authHealthy).toBe(true);
+  });
 });
 
 describe("verifyAccount", () => {
@@ -443,18 +582,37 @@ describe("verifyAccount", () => {
     expect(result!.account.lastVerifiedAt).not.toBeNull();
   });
 
-  it("keeps the last-known fields when a probe comes back blank (offline)", async () => {
+  it("keeps the last-known fields when BOTH probes come back blank (offline)", async () => {
     const { account } = await saveAccountToken(
       { userId: USER, token: TOKEN },
       runnerWith(LOGGED_IN_JSON)
     );
 
+    // Fully offline: neither the CLI nor the network vouches for the token.
+    validityProbeMock.mockResolvedValue("indeterminate");
     const result = await verifyAccount(account.id, USER, runnerWith(""));
 
     expect(result!.account.authHealthy).toBe(false);
     // Display fields survive so the row doesn't blank out on a transient failure.
     expect(result!.account.emailAddress).toBe("person@example.com");
     expect(result!.account.rateLimitTier).toBe("max");
+  });
+
+  it("marks the account healthy on a network-confirmed token even when the CLI probe fails", async () => {
+    const { account } = await saveAccountToken(
+      { userId: USER, token: TOKEN },
+      runnerWith(LOGGED_IN_JSON)
+    );
+
+    // CLI env broke (binary gone) but Anthropic still accepts the credential.
+    const result = await verifyAccount(
+      account.id,
+      USER,
+      runnerWith("claude: command not found")
+    );
+
+    expect(result!.tokenValid).toBe(true);
+    expect(result!.account.authHealthy).toBe(true);
   });
 
   it("marks a token-less account unhealthy without running the CLI", async () => {
@@ -483,6 +641,37 @@ describe("verifyAccount", () => {
       runnerWith(LOGGED_IN_JSON)
     );
     expect(await verifyAccount(account.id, "someone-else", runnerWith(""))).toBeNull();
+  });
+
+  it("flips a healthy account to unhealthy when Anthropic starts 401ing its token", async () => {
+    const { account } = await saveAccountToken(
+      { userId: USER, token: TOKEN },
+      runnerWith(LOGGED_IN_JSON)
+    );
+    expect(account.authHealthy).toBe(true);
+
+    // Token revoked (or was truncated all along): the CLI still claims
+    // loggedIn, but the remote probe now says invalid. [remote-dev-307w]
+    validityProbeMock.mockResolvedValue("invalid");
+    const result = await verifyAccount(account.id, USER, runnerWith(LOGGED_IN_JSON));
+
+    expect(result!.tokenValid).toBe(false);
+    expect(result!.account.authHealthy).toBe(false);
+  });
+
+  it("reports tokenValid: null (not false) for a token-less account", async () => {
+    rows.set("acct-notoken", {
+      id: "acct-notoken",
+      userId: USER,
+      accountKind: "subscription",
+      authHealthy: true,
+      oauthTokenEncrypted: null,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+    const result = await verifyAccount("acct-notoken", USER, runnerWith(""));
+    expect(result!.tokenValid).toBeNull();
+    expect(validityProbeMock).not.toHaveBeenCalled();
   });
 });
 

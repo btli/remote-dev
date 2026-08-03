@@ -53,6 +53,18 @@ export const POST = withApiAuth(async (request, { userId }) => {
     // A shell session, NOT an agent session: we drive the `claude` CLI
     // ourselves and must not have an agent auto-launched over it.
     autoLaunchAgent: false,
+    // Wide pane [remote-dev-307w]: a detached tmux session defaults to 80×24,
+    // and the setup-token TUI clips its output at the pane width — an ~80-col
+    // pane leaves a 79-char fragment of the ~108-char token, which `capture`
+    // would previously store as a dead credential (`capture-pane -J` cannot
+    // rejoin TUI-authored line breaks). 220 cols leaves ample margin. This is
+    // the geometry while DETACHED — the common flow, since the user completes
+    // the sign-in in their browser without opening the terminal tab. If they
+    // do open it in a narrow viewport, the terminal server resizes the window
+    // down again; the length floor + remote validity probe in the capture path
+    // remain the hard guards for that case.
+    initialCols: 220,
+    initialRows: 50,
     ...(profileId ? { profileId } : {}),
     // Provenance marker. `POST /api/claude-accounts/capture` refuses to scrape
     // a token out of any session that does not carry it, so the capture

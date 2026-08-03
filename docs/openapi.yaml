@@ -1177,7 +1177,7 @@ paths:
       responses:
         '200': { description: Existing account updated in place, content: { application/json: { schema: { $ref: '#/components/schemas/ClaudeAccountSaveResult' } } } }
         '201': { description: Account created, content: { application/json: { schema: { $ref: '#/components/schemas/ClaudeAccountSaveResult' } } } }
-        '400': { description: "Missing token, or a value that is not shaped like an OAuth token (code INVALID_TOKEN_FORMAT)", content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '400': { description: "Missing token, a value that is not shaped like an OAuth token (code INVALID_TOKEN_FORMAT), or a pattern-valid token under 100 chars — a partial copy or terminal-clipped fragment that could only ever 401 (code TOKEN_TRUNCATED, remote-dev-307w)", content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /api/claude-accounts/{accountId}:
     parameters: [{ name: accountId, in: path, required: true, schema: { type: string } }]
     get:
@@ -1219,7 +1219,7 @@ paths:
         credential-file "Sync", which read a `.credentials.json` that never
         exists on macOS.
       responses:
-        '200': { description: Refreshed account, content: { application/json: { schema: { type: object, properties: { account: { $ref: '#/components/schemas/ClaudeAccount' }, loggedIn: { type: boolean }, authMethod: { type: string, nullable: true } } } } } }
+        '200': { description: Refreshed account, content: { application/json: { schema: { type: object, properties: { account: { $ref: '#/components/schemas/ClaudeAccount' }, loggedIn: { type: boolean }, authMethod: { type: string, nullable: true }, tokenValid: { type: boolean, nullable: true, description: "Remote validity of the stored token (remote-dev-307w): false when Anthropic 401'd it, true when accepted, null when indeterminate or no token is stored" }, tokenError: { type: string, description: Human-readable invalid-token diagnosis, present exactly when tokenValid is false } } } } } }
         '404': { $ref: '#/components/responses/NotFound' }
   /api/claude-accounts/{accountId}/limit-state:
     parameters: [{ name: accountId, in: path, required: true, schema: { type: string } }]
@@ -1290,7 +1290,7 @@ paths:
         '200': { description: Account created or updated, content: { application/json: { schema: { $ref: '#/components/schemas/ClaudeAccountSaveResult' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: "Token not printed yet (code TOKEN_NOT_READY) or the session could not be read (CAPTURE_FAILED)", content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: "Token not printed yet (code TOKEN_NOT_READY), the session could not be read (CAPTURE_FAILED), or the captured token is under 100 chars — clipped by the pane width — and was refused rather than stored; the session stays open for a retry or the paste fallback (TOKEN_TRUNCATED, remote-dev-307w)", content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /api/profiles/select:
     get:
       tags: [ClaudeLimits]
@@ -2745,8 +2745,10 @@ components:
       type: object
       properties:
         account: { $ref: '#/components/schemas/ClaudeAccount' }
-        loggedIn: { type: boolean, description: Whether the identity probe recognized the token }
+        loggedIn: { type: boolean, description: Whether the CLI identity probe recognized the token }
         updated: { type: boolean, description: True when an existing account was updated in place rather than created }
+        tokenValid: { type: boolean, nullable: true, description: "Remote validity of the stored token (remote-dev-307w): false when Anthropic 401'd it at save time, true when Anthropic accepted it, null when the network probe was indeterminate (offline/timeout)" }
+        tokenError: { type: string, description: Human-readable invalid-token diagnosis. Present exactly when tokenValid is false — the account row was still stored (unhealthy), but the UI should show this instead of "Signed in" }
     LimitState:
       type: object
       description: >-
