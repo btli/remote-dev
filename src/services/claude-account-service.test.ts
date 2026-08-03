@@ -400,7 +400,10 @@ describe("saveAccountToken", () => {
     expect(rows.size).toBe(2);
   });
 
-  it("still stores the token when identity cannot be probed (marked unhealthy)", async () => {
+  it("still stores the token when NEITHER probe learns anything (marked unhealthy)", async () => {
+    // Fully offline: the CLI probe fails AND the network probe is
+    // indeterminate — nothing vouches for the token, so it stores unhealthy.
+    validityProbeMock.mockResolvedValue("indeterminate");
     const { account } = await saveAccountToken(
       { userId: USER, token: TOKEN },
       runnerWith("claude: command not found")
@@ -511,6 +514,50 @@ describe("saveAccountToken", () => {
     expect(account.authHealthy).toBe(true);
     expect(account.hasToken).toBe(true);
   });
+
+  it("marks the account HEALTHY when Anthropic confirms the token, even though the CLI probe failed", async () => {
+    // Network verdict is ground truth for credential liveness; a missing
+    // binary / CLI crash / --json shape change says nothing about the token.
+    const { account, tokenValid } = await saveAccountToken(
+      { userId: USER, token: TOKEN },
+      runnerWith("claude: command not found")
+    );
+    expect(tokenValid).toBe(true);
+    expect(account.authHealthy).toBe(true);
+  });
+
+  it("stays unhealthy when the CLI probe failed AND the network probe is indeterminate", async () => {
+    validityProbeMock.mockResolvedValue("indeterminate");
+    const { account, tokenValid } = await saveAccountToken(
+      { userId: USER, token: TOKEN },
+      runnerWith("claude: command not found")
+    );
+    expect(tokenValid).toBeNull();
+    expect(account.authHealthy).toBe(false);
+  });
+
+  it("runs the CLI and network probes concurrently, not sequentially", async () => {
+    // The CLI runner only resolves once the validity probe has STARTED — a
+    // sequential await-chain (CLI first) would deadlock and time the test out.
+    let validityStarted: () => void;
+    const validityGate = new Promise<void>((resolve) => {
+      validityStarted = resolve;
+    });
+    validityProbeMock.mockImplementation(async () => {
+      validityStarted();
+      return "valid";
+    });
+    const runner: ClaudeCliRunner = async () => {
+      await validityGate;
+      return { stdout: LOGGED_IN_JSON, stderr: "", exitCode: 0 };
+    };
+
+    const { account } = await saveAccountToken(
+      { userId: USER, token: TOKEN },
+      runner
+    );
+    expect(account.authHealthy).toBe(true);
+  });
 });
 
 describe("verifyAccount", () => {
@@ -535,18 +582,37 @@ describe("verifyAccount", () => {
     expect(result!.account.lastVerifiedAt).not.toBeNull();
   });
 
-  it("keeps the last-known fields when a probe comes back blank (offline)", async () => {
+  it("keeps the last-known fields when BOTH probes come back blank (offline)", async () => {
     const { account } = await saveAccountToken(
       { userId: USER, token: TOKEN },
       runnerWith(LOGGED_IN_JSON)
     );
 
+    // Fully offline: neither the CLI nor the network vouches for the token.
+    validityProbeMock.mockResolvedValue("indeterminate");
     const result = await verifyAccount(account.id, USER, runnerWith(""));
 
     expect(result!.account.authHealthy).toBe(false);
     // Display fields survive so the row doesn't blank out on a transient failure.
     expect(result!.account.emailAddress).toBe("person@example.com");
     expect(result!.account.rateLimitTier).toBe("max");
+  });
+
+  it("marks the account healthy on a network-confirmed token even when the CLI probe fails", async () => {
+    const { account } = await saveAccountToken(
+      { userId: USER, token: TOKEN },
+      runnerWith(LOGGED_IN_JSON)
+    );
+
+    // CLI env broke (binary gone) but Anthropic still accepts the credential.
+    const result = await verifyAccount(
+      account.id,
+      USER,
+      runnerWith("claude: command not found")
+    );
+
+    expect(result!.tokenValid).toBe(true);
+    expect(result!.account.authHealthy).toBe(true);
   });
 
   it("marks a token-less account unhealthy without running the CLI", async () => {

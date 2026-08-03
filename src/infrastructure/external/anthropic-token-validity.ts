@@ -88,7 +88,10 @@ export async function probeTokenValidity(
 
     // Auth ran before request validation, so ANY non-401 (400 invalid_request,
     // 429 rate-limited, even an unexpected 5xx) means the credential itself
-    // was accepted.
+    // was accepted. That includes 403: Anthropic's `permission_error` means
+    // authenticated-but-forbidden — the CREDENTIAL is live, which is exactly
+    // what this probe measures, so "valid" is the intended answer (not yet
+    // live-verified for this endpoint, unlike the 401 case).
     log.debug("Anthropic accepted the OAuth token", {
       status: response.status,
     });

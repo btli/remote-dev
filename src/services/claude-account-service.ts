@@ -204,7 +204,7 @@ export function isLikelyTruncatedToken(token: string): boolean {
  * capture and paste routes so both paths give the same explanation.
  */
 export const TRUNCATED_TOKEN_MESSAGE =
-  "That token looks truncated — a full setup-token is over 100 characters. " +
+  "That token looks truncated — a full setup-token is at least 100 characters (typically ~108). " +
   "The terminal likely clipped it: widen the terminal and re-run `claude setup-token`, " +
   "or copy the full token from where you ran it and use the paste flow.";
 
@@ -424,11 +424,13 @@ function toTokenValid(validity: TokenValidity): boolean | null {
  *
  * Health rule [remote-dev-307w]: the CLI identity probe does not network-check
  * the token (it says `loggedIn: true` for a dead one), so a second, remote
- * probe ({@link probeTokenValidity}) runs too. An Anthropic 401 forces
- * `authHealthy: false` and `tokenValid: false` — but the token is STILL stored
- * (the user may be mid-diagnosis and the row keeps its identity fields); an
- * indeterminate probe (offline) keeps the pre-existing behavior, with health
- * decided by the CLI probe alone. The save itself never fails on the network.
+ * probe ({@link probeTokenValidity}) runs too and its verdict WINS whenever it
+ * has one: an Anthropic 401 forces `authHealthy: false` and
+ * `tokenValid: false` — but the token is STILL stored (the user may be
+ * mid-diagnosis and the row keeps its identity fields) — while an Anthropic
+ * accept marks the account healthy even if the CLI probe failed. Only an
+ * indeterminate probe (offline) defers to the CLI's answer. The save itself
+ * never fails on the network.
  *
  * @throws Error when the token is empty.
  */
@@ -443,8 +445,12 @@ export async function saveAccountToken(
     throw new Error("Token is required");
   }
 
-  const identity = await probeIdentity(token, runner);
-  const validity = await validityProbe(token);
+  // Independent probes (CLI identity vs. network validity) — run concurrently
+  // so the worst case is max(30s CLI, 10s network), not their sum.
+  const [identity, validity] = await Promise.all([
+    probeIdentity(token, runner),
+    validityProbe(token),
+  ]);
   const fingerprint = tokenFingerprint(token);
 
   // Dedupe, in priority order:
@@ -472,10 +478,14 @@ export async function saveAccountToken(
   const columns = {
     alias: input.alias ?? existing?.alias ?? null,
     ...identityDisplayColumns(identity, existing),
-    // A remote 401 overrides the CLI probe — `claude auth status` reports
-    // loggedIn:true for a token Anthropic rejects. Indeterminate leaves the
-    // CLI's answer in charge (offline must not mark a working account bad).
-    authHealthy: identity.loggedIn && tokenValid !== false,
+    // Network verdict first, CLI as the fallback: Anthropic accepting or
+    // rejecting the Bearer token is ground truth for credential liveness,
+    // while the CLI probe can fail for environmental reasons (missing binary,
+    // crash, --json shape change) that say nothing about the token. So a
+    // confirmed-valid token is healthy even when the CLI probe failed, a
+    // confirmed-invalid one is unhealthy even when the CLI claims loggedIn,
+    // and only an indeterminate probe (offline) defers to the CLI's answer.
+    authHealthy: tokenValid ?? identity.loggedIn,
     lastVerifiedAt: now,
     oauthTokenEncrypted: encrypt(token),
     tokenFingerprint: fingerprint,
@@ -577,9 +587,11 @@ export interface VerifyAccountResult {
  *
  * An account with no stored token is marked unhealthy (there is nothing to
  * probe with) rather than left showing a stale "logged in". Like
- * {@link saveAccountToken}, health folds in the remote validity probe: a token
- * Anthropic 401's is unhealthy even though the CLI claims `loggedIn: true`.
- * [remote-dev-307w]
+ * {@link saveAccountToken}, health takes the remote validity probe's verdict
+ * when it has one (a 401'd token is unhealthy even though the CLI claims
+ * `loggedIn: true`; a network-confirmed token is healthy even when the CLI
+ * probe failed) and defers to the CLI only when the network probe is
+ * indeterminate. [remote-dev-307w]
  */
 export async function verifyAccount(
   accountId: string,
@@ -600,15 +612,22 @@ export async function verifyAccount(
     return markAccountUnhealthy(accountId, userId, now);
   }
 
-  const identity = await probeIdentity(token, runner);
-  const tokenValid = toTokenValid(await validityProbe(token));
+  // Independent probes, run concurrently (same seam as saveAccountToken).
+  const [identity, validity] = await Promise.all([
+    probeIdentity(token, runner),
+    validityProbe(token),
+  ]);
+  const tokenValid = toTokenValid(validity);
   await db
     .update(claudeAccounts)
     .set({
       // Keep the last-known display fields when a probe comes back blank
       // (offline / CLI missing) instead of wiping a working account's UI.
       ...identityDisplayColumns(identity, row),
-      authHealthy: identity.loggedIn && tokenValid !== false,
+      // Network verdict first, CLI as fallback — see saveAccountToken: the
+      // network answer is ground truth for credential liveness; the CLI probe
+      // can fail environmentally without saying anything about the token.
+      authHealthy: tokenValid ?? identity.loggedIn,
       lastVerifiedAt: now,
       updatedAt: now,
     })

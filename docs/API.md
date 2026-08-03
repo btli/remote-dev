@@ -938,9 +938,20 @@ One action, two paths — there is no "Sync" step:
    `POST /api/claude-accounts { token, alias? }`. A value that isn't shaped like
    `sk-ant-oat…` is rejected with `400 INVALID_TOKEN_FORMAT`.
 
+Both paths reject a pattern-valid token **under 100 characters** (a real
+setup-token is ~108; anything shorter is a terminal-clipped fragment or partial
+copy that could only ever 401) with code `TOKEN_TRUNCATED` — `409` on capture
+(the setup session stays open for a retry), `400` on paste (remote-dev-307w).
+
 Both paths dedupe on the probed email: re-adding a known account **updates it in
 place** rather than creating a duplicate. Response is `201` on create, `200` on
-update, shaped `{ account, loggedIn, updated }`.
+update, shaped `{ account, loggedIn, updated, tokenValid, tokenError? }` —
+`tokenValid` is the remote validity of the stored token (`false` = Anthropic
+401'd it at save time, `true` = accepted, `null` = indeterminate/offline), and
+`tokenError` is the human-readable diagnosis, present exactly when `tokenValid`
+is `false` (the row is still stored, unhealthy, so the UI shows the diagnosis
+instead of "Signed in"). `POST /api/claude-accounts/:accountId/verify` returns
+the same `tokenValid`/`tokenError` pair.
 
 ### Identity
 

@@ -168,7 +168,20 @@ export function ClaudeAccountRow({
         { method: "POST" }
       );
       if (!response.ok) throw new Error(`Verify failed (${response.status})`);
+      const outcome = (await response.json()) as {
+        /** False = Anthropic 401'd the stored token [remote-dev-307w]. */
+        tokenValid?: boolean | null;
+        /** Human-readable diagnosis, present exactly when tokenValid is false. */
+        tokenError?: string;
+      };
+      // Still refresh (the badge flips to unhealthy), but ALSO surface the
+      // diagnosis so a dead account explains itself instead of just dimming.
       onChanged();
+      if (outcome.tokenValid === false) {
+        setError(
+          outcome.tokenError ?? "Anthropic rejected this account's stored token."
+        );
+      }
     } catch (err) {
       console.error("Failed to verify Claude account", err);
       setError(err instanceof Error ? err.message : "Verify failed");
