@@ -729,6 +729,129 @@ export async function deleteAccount(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Usage OAuth credential boundary
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The minimal decrypted credential refresh needs. Keeping this type here makes
+ * the account service the sole owner of persistence and encryption details;
+ * infrastructure callers never import Drizzle or receive session credentials.
+ */
+export interface OwnedUsageCredential {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: Date;
+}
+
+/**
+ * Read a complete usage credential by account id AND owner. Foreign, missing,
+ * partial, invalid-expiry, and undecryptable rows all collapse to null. This
+ * intentionally never falls back to `oauthTokenEncrypted`: setup-tokens lack
+ * the `user:profile` scope required by the usage endpoint.
+ */
+export async function readOwnedUsageCredential(
+  accountId: string,
+  userId: string
+): Promise<OwnedUsageCredential | null> {
+  const row = await db.query.claudeAccounts.findFirst({
+    where: ownedBy(accountId, userId),
+    columns: {
+      usageOauthAccessEncrypted: true,
+      usageOauthRefreshEncrypted: true,
+      usageOauthExpiresAt: true,
+    },
+  });
+  if (
+    !row?.usageOauthAccessEncrypted ||
+    !row.usageOauthRefreshEncrypted ||
+    !(row.usageOauthExpiresAt instanceof Date) ||
+    !Number.isFinite(row.usageOauthExpiresAt.getTime())
+  ) {
+    return null;
+  }
+
+  const accessToken = decryptUsageToken(
+    row.usageOauthAccessEncrypted,
+    accountId,
+    "access"
+  );
+  const refreshToken = decryptUsageToken(
+    row.usageOauthRefreshEncrypted,
+    accountId,
+    "refresh"
+  );
+  if (!accessToken || !refreshToken) return null;
+  return { accessToken, refreshToken, expiresAt: row.usageOauthExpiresAt };
+}
+
+export interface RefreshedUsageCredential {
+  accessToken: string;
+  expiresAt: Date;
+  /** Omitted when Anthropic did not rotate the current refresh token. */
+  refreshToken?: string;
+}
+
+/**
+ * Store a successful OAuth refresh under one ownership-scoped mutation.
+ * Omitting `refreshToken` deliberately omits that column from the SET clause,
+ * preserving its existing encrypted value byte-for-byte.
+ */
+export async function storeRefreshedUsageCredential(
+  accountId: string,
+  userId: string,
+  credential: RefreshedUsageCredential
+): Promise<void> {
+  await db
+    .update(claudeAccounts)
+    .set({
+      usageOauthAccessEncrypted: encrypt(credential.accessToken),
+      usageOauthExpiresAt: credential.expiresAt,
+      ...(credential.refreshToken !== undefined
+        ? { usageOauthRefreshEncrypted: encrypt(credential.refreshToken) }
+        : {}),
+    })
+    .where(ownedBy(accountId, userId));
+}
+
+/**
+ * Quarantine a rejected usage refresh token by nulling ONLY the four usage
+ * columns. Session health and `oauthTokenEncrypted` are a separate credential
+ * class and must remain untouched.
+ */
+export async function quarantineUsageCredential(
+  accountId: string,
+  userId: string
+): Promise<void> {
+  await db
+    .update(claudeAccounts)
+    .set({
+      usageOauthAccessEncrypted: null,
+      usageOauthRefreshEncrypted: null,
+      usageOauthExpiresAt: null,
+      usageOauthScopes: null,
+    })
+    .where(ownedBy(accountId, userId));
+}
+
+/** Decrypt a usage token without ever placing token material in a log line. */
+function decryptUsageToken(
+  encrypted: string,
+  accountId: string,
+  credentialPart: "access" | "refresh"
+): string | null {
+  try {
+    return decrypt(encrypted);
+  } catch (error) {
+    log.error("Failed to decrypt stored Claude usage OAuth credential", {
+      accountId,
+      credentialPart,
+      error: error instanceof Error ? error.name : "UnknownError",
+    });
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Session env injection
 // ─────────────────────────────────────────────────────────────────────────────
 

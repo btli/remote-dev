@@ -129,12 +129,15 @@ import {
   AccountNotFoundError,
   describeAccountEnvFailure,
   findAccountIdForProfile,
+  readOwnedUsageCredential,
+  storeRefreshedUsageCredential,
+  quarantineUsageCredential,
   UNKNOWN_IDENTITY,
   CLAUDE_OAUTH_TOKEN_ENV,
   toAccountView,
   type ClaudeCliRunner,
 } from "./claude-account-service";
-import { decrypt } from "@/lib/encryption";
+import { decrypt, encrypt } from "@/lib/encryption";
 
 const USER = "user-1";
 // Full-length (108-char) tokens matching what `claude setup-token` really
@@ -912,5 +915,133 @@ describe("tokenFingerprint", () => {
     );
     expect(Object.keys(account)).not.toContain("tokenFingerprint");
     expect(JSON.stringify(account)).not.toContain(tokenFingerprint(TOKEN));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Usage OAuth credential ownership boundary
+// ─────────────────────────────────────────────────────────────────────────────
+
+function seedUsageCredentialRow(overrides: Row = {}): Row {
+  const row: Row = {
+    id: "acct-usage",
+    userId: USER,
+    accountKind: "subscription",
+    authHealthy: true,
+    oauthTokenEncrypted: encrypt(TOKEN),
+    usageOauthAccessEncrypted: encrypt("usage-access-old"),
+    usageOauthRefreshEncrypted: encrypt("usage-refresh-old"),
+    usageOauthExpiresAt: new Date(10_000),
+    usageOauthScopes: '["user:profile","future:scope"]',
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    ...overrides,
+  };
+  rows.set(row.id as string, row);
+  return row;
+}
+
+describe("readOwnedUsageCredential", () => {
+  it("returns only decrypted refresh inputs for an owned, complete credential", async () => {
+    seedUsageCredentialRow();
+
+    await expect(readOwnedUsageCredential("acct-usage", USER)).resolves.toEqual({
+      accessToken: "usage-access-old",
+      refreshToken: "usage-refresh-old",
+      expiresAt: new Date(10_000),
+    });
+  });
+
+  it("returns null for missing, foreign, incomplete, or malformed credentials", async () => {
+    seedUsageCredentialRow();
+    expect(await readOwnedUsageCredential("missing", USER)).toBeNull();
+    expect(
+      await readOwnedUsageCredential("acct-usage", "someone-else")
+    ).toBeNull();
+
+    seedUsageCredentialRow({ usageOauthRefreshEncrypted: null });
+    expect(await readOwnedUsageCredential("acct-usage", USER)).toBeNull();
+
+    seedUsageCredentialRow({
+      usageOauthAccessEncrypted: "malformed-ciphertext",
+    });
+    expect(await readOwnedUsageCredential("acct-usage", USER)).toBeNull();
+  });
+});
+
+describe("storeRefreshedUsageCredential", () => {
+  it("encrypts refreshed access and rotated refresh tokens with the new expiry", async () => {
+    const row = seedUsageCredentialRow();
+    const expiresAt = new Date(90_000);
+
+    await storeRefreshedUsageCredential("acct-usage", USER, {
+      accessToken: "usage-access-new",
+      refreshToken: "usage-refresh-rotated",
+      expiresAt,
+    });
+
+    expect(decrypt(row.usageOauthAccessEncrypted as string)).toBe(
+      "usage-access-new"
+    );
+    expect(decrypt(row.usageOauthRefreshEncrypted as string)).toBe(
+      "usage-refresh-rotated"
+    );
+    expect(row.usageOauthExpiresAt).toBe(expiresAt);
+  });
+
+  it("preserves the stored refresh token when the server does not rotate it", async () => {
+    const row = seedUsageCredentialRow();
+    const priorRefreshCiphertext = row.usageOauthRefreshEncrypted;
+
+    await storeRefreshedUsageCredential("acct-usage", USER, {
+      accessToken: "usage-access-new",
+      expiresAt: new Date(90_000),
+    });
+
+    expect(row.usageOauthRefreshEncrypted).toBe(priorRefreshCiphertext);
+    expect(decrypt(row.usageOauthRefreshEncrypted as string)).toBe(
+      "usage-refresh-old"
+    );
+  });
+
+  it("includes owner and account id in the mutation predicate", async () => {
+    const row = seedUsageCredentialRow();
+
+    await storeRefreshedUsageCredential("acct-usage", "someone-else", {
+      accessToken: "must-not-store",
+      refreshToken: "must-not-store",
+      expiresAt: new Date(90_000),
+    });
+
+    expect(decrypt(row.usageOauthAccessEncrypted as string)).toBe(
+      "usage-access-old"
+    );
+  });
+});
+
+describe("quarantineUsageCredential", () => {
+  it("nulls only the four usage columns for the owned account", async () => {
+    const row = seedUsageCredentialRow();
+    const sessionCiphertext = row.oauthTokenEncrypted;
+
+    await quarantineUsageCredential("acct-usage", USER);
+
+    expect(row).toMatchObject({
+      usageOauthAccessEncrypted: null,
+      usageOauthRefreshEncrypted: null,
+      usageOauthExpiresAt: null,
+      usageOauthScopes: null,
+      authHealthy: true,
+      oauthTokenEncrypted: sessionCiphertext,
+    });
+  });
+
+  it("does not quarantine a foreign account", async () => {
+    const row = seedUsageCredentialRow();
+    const priorAccessCiphertext = row.usageOauthAccessEncrypted;
+
+    await quarantineUsageCredential("acct-usage", "someone-else");
+
+    expect(row.usageOauthAccessEncrypted).toBe(priorAccessCiphertext);
   });
 });
