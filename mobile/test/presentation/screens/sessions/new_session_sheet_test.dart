@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -27,16 +29,42 @@ class _StubProjectTree implements ProjectTreePort {
 }
 
 class _StubAgentCli implements AgentCliPort {
+  const _StubAgentCli({
+    this.installed = const [
+      InstalledAgent(provider: 'claude', label: 'Claude Code'),
+    ],
+  });
+
+  final List<InstalledAgent> installed;
+
   @override
-  Future<List<InstalledAgent>> listInstalled() async => const [
-        InstalledAgent(provider: 'claude', label: 'Claude Code'),
-      ];
+  Future<List<InstalledAgent>> listInstalled() async => installed;
 }
 
-List<Override> _overrides(SessionsApi api) => [
+class _PendingRefreshAgentCli implements AgentCliPort {
+  final refresh = Completer<List<InstalledAgent>>();
+  var calls = 0;
+
+  @override
+  Future<List<InstalledAgent>> listInstalled() {
+    calls += 1;
+    return refresh.future;
+  }
+}
+
+List<Override> _overrides(
+  SessionsApi api, {
+  List<InstalledAgent>? installedAgents,
+  AgentCliPort? agentCli,
+}) => [
       sessionsApiProvider.overrideWithValue(api),
       projectTreeApiProvider.overrideWithValue(_StubProjectTree()),
-      agentCliApiProvider.overrideWithValue(_StubAgentCli()),
+      agentCliApiProvider.overrideWithValue(
+        agentCli ??
+            _StubAgentCli(installed: installedAgents ?? const [
+              InstalledAgent(provider: 'claude', label: 'Claude Code'),
+            ]),
+      ),
     ];
 
 /// Helper: drives the project picker so the Create button enables.
@@ -46,6 +74,12 @@ Future<void> _pickProject(WidgetTester tester) async {
   await tester.tap(find.text('remote-dev'));
   await tester.pumpAndSettle();
 }
+
+Finder _dropdownWithLabel(String label) => find.byWidgetPredicate(
+      (widget) =>
+          widget is DropdownButtonFormField<String> &&
+          widget.decoration.labelText == label,
+    );
 
 void main() {
   setUpAll(() {
@@ -63,7 +97,193 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('New session'), findsOneWidget);
     expect(find.text('Name'), findsOneWidget);
+    expect(find.text('New Cursor Agent'), findsOneWidget);
     expect(find.text('Create'), findsOneWidget);
+  });
+
+  testWidgets('Cursor quick start creates an auto-launched agent session',
+      (tester) async {
+    final api = _MockApi();
+    when(
+      () => api.create(
+        name: any(named: 'name'),
+        terminalType: any(named: 'terminalType'),
+        projectId: any(named: 'projectId'),
+        initialCommand: any(named: 'initialCommand'),
+        agentProvider: any(named: 'agentProvider'),
+        autoLaunchAgent: any(named: 'autoLaunchAgent'),
+      ),
+    ).thenAnswer(
+      (_) async => const SessionSummary(
+        id: 'cursor-1',
+        name: 'cursor-mobile',
+        tmuxSessionName: 'rdv-cursor-1',
+        status: SessionStatus.active,
+      ),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _overrides(
+          api,
+          installedAgents: const [
+            InstalledAgent(provider: 'claude', label: 'Claude Code'),
+            InstalledAgent(provider: 'cursor', label: 'Cursor'),
+          ],
+        ),
+        child: const MaterialApp(home: Scaffold(body: NewSessionSheet())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('New Cursor Agent'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.state<FormFieldState<String>>(_dropdownWithLabel('Agent')).value,
+      'cursor',
+    );
+
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Name'),
+      'cursor-mobile',
+    );
+    await _pickProject(tester);
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+
+    verify(
+      () => api.create(
+        name: 'cursor-mobile',
+        terminalType: 'agent',
+        projectId: 'p1',
+        initialCommand: null,
+        agentProvider: 'cursor',
+        autoLaunchAgent: true,
+      ),
+    ).called(1);
+  });
+
+  testWidgets('Cursor shortcut replaces an existing Claude selection',
+      (tester) async {
+    final api = _MockApi();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _overrides(
+          api,
+          installedAgents: const [
+            InstalledAgent(provider: 'claude', label: 'Claude Code'),
+            InstalledAgent(provider: 'cursor', label: 'Cursor'),
+          ],
+        ),
+        child: const MaterialApp(home: Scaffold(body: NewSessionSheet())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(_dropdownWithLabel('Type'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Agent').last);
+    await tester.pumpAndSettle();
+    expect(
+      tester.state<FormFieldState<String>>(_dropdownWithLabel('Agent')).value,
+      'claude',
+    );
+
+    await tester.tap(find.text('New Cursor Agent'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.state<FormFieldState<String>>(_dropdownWithLabel('Agent')).value,
+      'cursor',
+    );
+  });
+
+  testWidgets('Cursor shortcut reports when the agent CLI is not installed',
+      (tester) async {
+    final api = _MockApi();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _overrides(api, installedAgents: const []),
+        child: const MaterialApp(home: Scaffold(body: NewSessionSheet())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('New Cursor Agent'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Cursor Agent CLI is not installed on this server'),
+      findsOneWidget,
+    );
+    expect(find.text('No agents installed'), findsOneWidget);
+  });
+
+  testWidgets('stale Cursor refresh cannot replace a newer agent choice',
+      (tester) async {
+    final api = _MockApi();
+    final agentCli = _PendingRefreshAgentCli();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _overrides(api, agentCli: agentCli),
+        child: const MaterialApp(home: Scaffold(body: NewSessionSheet())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('New Cursor Agent'));
+    await tester.pump();
+    expect(agentCli.calls, 1);
+    await tester.tap(_dropdownWithLabel('Type'));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.tap(find.text('Shell').last);
+    await tester.pump();
+    await tester.tap(_dropdownWithLabel('Type'));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.tap(find.text('Agent').last);
+    await tester.pump();
+
+    agentCli.refresh.complete(const [
+      InstalledAgent(provider: 'claude', label: 'Claude Code'),
+      InstalledAgent(provider: 'cursor', label: 'Cursor'),
+    ]);
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.state<FormFieldState<String>>(_dropdownWithLabel('Agent')).value,
+      'claude',
+    );
+  });
+
+  testWidgets('Cursor quick start is scrollable on a compact phone viewport',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 480);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final api = _MockApi();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _overrides(
+          api,
+          installedAgents: const [
+            InstalledAgent(provider: 'cursor', label: 'Cursor'),
+          ],
+        ),
+        child: const MaterialApp(home: Scaffold(body: NewSessionSheet())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('New Cursor Agent'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    await tester.ensureVisible(find.text('Create'));
+    await tester.pumpAndSettle();
+    expect(find.text('Create').hitTestable(), findsOneWidget);
   });
 
   testWidgets('Create button is disabled until a project is picked',

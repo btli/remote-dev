@@ -49,7 +49,52 @@ class _NewSessionSheetState extends ConsumerState<NewSessionSheet> {
   String? _projectLabel;
   String? _agentProvider;
   bool _saving = false;
+  bool _checkingCursor = false;
+  int _agentSelectionGeneration = 0;
   String? _error;
+
+  Future<void> _selectCursorAgent() async {
+    // Refresh the status list when the explicit shortcut is used. The
+    // FutureProvider survives sheet closes, so without this a mobile app kept
+    // open across a deploy could retain a pre-Cursor provider list.
+    final selectionGeneration = ++_agentSelectionGeneration;
+    setState(() {
+      _terminalType = 'agent';
+      _agentProvider = null;
+      _checkingCursor = true;
+      _error = null;
+    });
+    try {
+      ref.invalidate(installedAgentsProvider);
+      final agents = await ref.read(installedAgentsProvider.future);
+      if (!mounted ||
+          selectionGeneration != _agentSelectionGeneration) {
+        return;
+      }
+      if (_terminalType != 'agent') {
+        setState(() => _checkingCursor = false);
+        return;
+      }
+      final cursorInstalled =
+          agents.any((agent) => agent.provider == 'cursor');
+      setState(() {
+        _checkingCursor = false;
+        _agentProvider = cursorInstalled ? 'cursor' : null;
+        _error = cursorInstalled
+            ? null
+            : 'Cursor Agent CLI is not installed on this server';
+      });
+    } catch (error) {
+      if (!mounted ||
+          selectionGeneration != _agentSelectionGeneration) {
+        return;
+      }
+      setState(() {
+        _checkingCursor = false;
+        _error = 'Failed to check Cursor Agent: $error';
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -73,10 +118,16 @@ class _NewSessionSheetState extends ConsumerState<NewSessionSheet> {
   /// build) so the side effect is tied to a deterministic event and has
   /// a single mounted-guard at the end.
   Future<void> _resolveDefaultAgentProvider() async {
+    final selectionGeneration = _agentSelectionGeneration;
     try {
       final agents = await ref.read(installedAgentsProvider.future);
       if (!mounted) return;
-      if (_agentProvider != null || _terminalType != 'agent') return;
+      if (_checkingCursor ||
+          selectionGeneration != _agentSelectionGeneration ||
+          _agentProvider != null ||
+          _terminalType != 'agent') {
+        return;
+      }
       if (agents.isEmpty) return;
       final preferred = agents.firstWhere(
         (a) => a.provider == 'claude',
@@ -130,7 +181,7 @@ class _NewSessionSheetState extends ConsumerState<NewSessionSheet> {
     return SafeArea(
       child: Form(
         key: _formKey,
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -152,6 +203,23 @@ class _NewSessionSheetState extends ConsumerState<NewSessionSheet> {
                 style: TextStyle(color: Colors.white, fontSize: 18),
                 textAlign: TextAlign.center,
               ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed:
+                    _checkingCursor ||
+                        (_terminalType == 'agent' &&
+                            _agentProvider == 'cursor')
+                        ? null
+                        : _selectCursorAgent,
+                icon: const Icon(Icons.mouse_outlined),
+                label: const Text('New Cursor Agent'),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(44),
+                  foregroundColor: Colors.white,
+                  disabledForegroundColor: Colors.white54,
+                  side: const BorderSide(color: Colors.white24),
+                ),
+              ),
               const SizedBox(height: 16),
               TextFormField(
                 controller: _nameCtrl,
@@ -165,6 +233,7 @@ class _NewSessionSheetState extends ConsumerState<NewSessionSheet> {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
+                key: ValueKey(_terminalType),
                 initialValue: _terminalType,
                 dropdownColor: const Color(0xFF24283B),
                 style: const TextStyle(color: Colors.white),
@@ -179,8 +248,13 @@ class _NewSessionSheetState extends ConsumerState<NewSessionSheet> {
                 onChanged: (v) {
                   if (v != null) {
                     setState(() {
+                      _agentSelectionGeneration += 1;
                       _terminalType = v;
-                      if (v != 'agent') _agentProvider = null;
+                      _checkingCursor = false;
+                      _error = null;
+                      if (v != 'agent') {
+                        _agentProvider = null;
+                      }
                     });
                     if (v == 'agent') _resolveDefaultAgentProvider();
                   }
@@ -189,9 +263,16 @@ class _NewSessionSheetState extends ConsumerState<NewSessionSheet> {
               if (_terminalType == 'agent') ...[
                 const SizedBox(height: 12),
                 _AgentProviderField(
+                  key: ValueKey(_agentProvider),
                   selected: _agentProvider,
-                  onChanged: (provider) =>
-                      setState(() => _agentProvider = provider),
+                  onChanged: (provider) {
+                    setState(() {
+                      _agentSelectionGeneration += 1;
+                      _checkingCursor = false;
+                      _agentProvider = provider;
+                      _error = null;
+                    });
+                  },
                 ),
               ],
               const SizedBox(height: 12),
@@ -223,7 +304,9 @@ class _NewSessionSheetState extends ConsumerState<NewSessionSheet> {
               ],
               const SizedBox(height: 20),
               ElevatedButton(
-                onPressed: (_saving || _projectId == null) ? null : _save,
+                onPressed: (_saving || _checkingCursor || _projectId == null)
+                    ? null
+                    : _save,
                 child: _saving
                     ? const SizedBox(
                         width: 16,
@@ -251,6 +334,7 @@ class _NewSessionSheetState extends ConsumerState<NewSessionSheet> {
 ///   so build stays pure — no post-frame callbacks here.
 class _AgentProviderField extends ConsumerWidget {
   const _AgentProviderField({
+    super.key,
     required this.selected,
     required this.onChanged,
   });

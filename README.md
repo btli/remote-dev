@@ -49,7 +49,7 @@ Each capability below is tagged with its maturity so you know exactly what to ex
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Six agents, one workspace | Shipped | First-class Claude Code, OpenAI Codex, Gemini CLI, Antigravity, OpenCode, and Cursor (`agent`). Antigravity has no public installer and no session resume. |
+| Six agents, one workspace | Shipped | First-class Claude Code, OpenAI Codex, Gemini CLI, Antigravity, OpenCode, and Cursor (`agent`), with dedicated Cursor quick starts on desktop, the mobile PWA, and Flutter. Antigravity has no public installer and no session resume. |
 | Agent profiles & isolation | Shipped | Profiles overlay provider config, git identity, SSH, and theming without replacing `HOME`; Claude config and Cursor conversation history intentionally remain shared. |
 | Live status & exit handling | Shipped | Agent sessions report running/idle/waiting state and show a restart screen on exit. |
 | Session resume | Shipped | Automatic resume for Claude, Codex, Gemini, OpenCode, and Cursor. Cursor discovers matching conversations in its project-scoped chat index and relaunches with `agent --resume <id>`; Antigravity relaunches fresh. |

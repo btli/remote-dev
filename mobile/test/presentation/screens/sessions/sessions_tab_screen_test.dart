@@ -222,6 +222,7 @@ void main() {
     await tester.pumpAndSettle();
     // The sheet renders its Create button.
     expect(find.text('Create'), findsOneWidget);
+    expect(find.text('New Cursor Agent'), findsOneWidget);
   });
 
   testWidgets('pull-to-refresh refetches sessions', (tester) async {
