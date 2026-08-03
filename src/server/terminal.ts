@@ -20,6 +20,7 @@ import { validateWsToken, getAuthSecret, CONTROL_SESSION_SENTINEL } from "../lib
 import { createLogger } from "../lib/logger.js";
 import { WS_PATH_PREFIX } from "../lib/base-path.js";
 import { TmuxSizeController, type TmuxExec } from "./tmux-size-controller.js";
+import { TmuxAttachArgumentResolver } from "./tmux-hyperlinks.js";
 import {
   PROXY_WS_PATH_PATTERN,
   handleProxyWsUpgrade,
@@ -43,6 +44,10 @@ const execTmux: TmuxExec = (args, callback) => {
   execFile("tmux", args, { cwd: STABLE_SPAWN_CWD }, (error) => callback(error));
 };
 const tmuxSize = new TmuxSizeController(execTmux, log);
+const tmuxAttachArguments = new TmuxAttachArgumentResolver(
+  () => execFileSync("tmux", ["-V"], { cwd: STABLE_SPAWN_CWD }).toString(),
+  log,
+);
 
 /** Retry an async operation up to maxRetries times with exponential backoff (for SQLITE_BUSY) */
 async function retryOnBusy<T>(fn: () => Promise<T>, maxRetries = 2): Promise<T> {
@@ -1740,7 +1745,7 @@ function attachToTmuxSession(
 
   // SECURITY: Spawn tmux directly with array arguments - no shell interpolation
   // Use clean environment to prevent framework internal vars from leaking
-  const ptyProcess = pty.spawn("tmux", ["attach-session", "-t", sessionName], {
+  const ptyProcess = pty.spawn("tmux", tmuxAttachArguments.forSession(sessionName), {
     name: "xterm-256color",
     cols,
     rows,
