@@ -162,6 +162,28 @@ describe("ClaudeAccountsDashboard usage setup ownership", () => {
     expect(screen.getByText("Usage target fresh-account")).toBeInTheDocument();
   });
 
+  it("preserves a later reactive limit update without a usage credential", async () => {
+    const reactiveLimitState: LimitStateBlock = {
+      limitStatus: "limited",
+      window5hPct: 100,
+      window7dPct: null,
+      resetAt5h: 2_000_000_000_000,
+      resetAt7d: null,
+      effectiveResetAt: 2_000_000_000_000,
+    };
+    const view = render(<ClaudeAccountsDashboard />);
+
+    expect(await screen.findByText("Usage tracking off")).toBeInTheDocument();
+    mocks.limitStates = new Map([[account.id, reactiveLimitState]]);
+    view.rerender(<ClaudeAccountsDashboard />);
+
+    expect(
+      await screen.findByRole("button", { name: "Mark available" })
+    ).toBeInTheDocument();
+    expect(screen.getByText("Usage tracking off")).toBeInTheDocument();
+    expect(screen.queryAllByRole("progressbar")).toHaveLength(0);
+  });
+
   it("renders fresh usage bars after reload when the context cache is stale", async () => {
     const staleLimitState = account.limitState;
     const freshLimitState: LimitStateBlock = {
