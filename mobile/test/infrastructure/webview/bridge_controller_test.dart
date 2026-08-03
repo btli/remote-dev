@@ -11,8 +11,9 @@ void main() {
 
   setUp(() {
     ctl = _MockController();
-    when(() => ctl.evaluateJavascript(source: any(named: 'source')))
-        .thenAnswer((_) async => null);
+    when(
+      () => ctl.evaluateJavascript(source: any(named: 'source')),
+    ).thenAnswer((_) async => null);
     bridge = BridgeController(controller: ctl);
   });
 
@@ -26,9 +27,10 @@ void main() {
     bridge.input('first');
     bridge.input('second');
     bridge.markReady();
-    final captured = verify(
-      () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
-    ).captured;
+    final captured =
+        verify(
+          () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
+        ).captured;
     expect(captured, hasLength(2));
     expect(captured[0], contains("window.rdvBridge.input('first')"));
     expect(captured[1], contains("window.rdvBridge.input('second')"));
@@ -38,18 +40,19 @@ void main() {
     bridge.markReady();
     bridge.input('immediate');
     verify(
-      () => ctl.evaluateJavascript(
-        source: "window.rdvBridge.input('immediate')",
-      ),
+      () =>
+          ctl.evaluateJavascript(source: "window.rdvBridge.input('immediate')"),
     ).called(1);
   });
 
   test('escapes special characters in input', () {
     bridge.markReady();
     bridge.input("don't \\ \n");
-    final captured = verify(
-      () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
-    ).captured.single as String;
+    final captured =
+        verify(
+              () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
+            ).captured.single
+            as String;
     expect(captured, contains(r"don\'t \\"));
     expect(captured, contains(r'\n'));
   });
@@ -71,14 +74,17 @@ void main() {
   });
 
   test('back returns true when PWA reports it consumed the gesture', () async {
-    when(() => ctl.evaluateJavascript(source: any(named: 'source')))
-        .thenAnswer((_) async => true);
+    when(
+      () => ctl.evaluateJavascript(source: any(named: 'source')),
+    ).thenAnswer((_) async => true);
     bridge.markReady();
     final result = await bridge.back();
     expect(result, isTrue);
-    final captured = verify(
-      () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
-    ).captured.single as String;
+    final captured =
+        verify(
+              () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
+            ).captured.single
+            as String;
     // Eval is an async IIFE so Promise returns from the PWA bridge
     // resolve cleanly — see bridge_controller.dart.
     expect(captured, contains('window.rdvBridge'));
@@ -87,8 +93,9 @@ void main() {
   });
 
   test('back returns false when JS bridge returns false', () async {
-    when(() => ctl.evaluateJavascript(source: any(named: 'source')))
-        .thenAnswer((_) async => false);
+    when(
+      () => ctl.evaluateJavascript(source: any(named: 'source')),
+    ).thenAnswer((_) async => false);
     bridge.markReady();
     expect(await bridge.back(), isFalse);
   });
@@ -100,10 +107,10 @@ void main() {
   // boolean contract, the previous `!!undefined === false` path
   // unconditionally popped the route even when the PWA had just
   // consumed the gesture by closing a thread.
-  test('back returns false when PWA returns undefined (regression)',
-      () async {
-    when(() => ctl.evaluateJavascript(source: any(named: 'source')))
-        .thenAnswer((_) async => false);
+  test('back returns false when PWA returns undefined (regression)', () async {
+    when(
+      () => ctl.evaluateJavascript(source: any(named: 'source')),
+    ).thenAnswer((_) async => false);
     bridge.markReady();
     expect(await bridge.back(), isFalse);
   });
@@ -111,8 +118,9 @@ void main() {
   test('back returns false when only "true"-string (defensive)', () async {
     // flutter_inappwebview can serialize JS booleans as Dart booleans
     // on iOS but as strings on some Android API levels — accept both.
-    when(() => ctl.evaluateJavascript(source: any(named: 'source')))
-        .thenAnswer((_) async => 'true');
+    when(
+      () => ctl.evaluateJavascript(source: any(named: 'source')),
+    ).thenAnswer((_) async => 'true');
     bridge.markReady();
     expect(await bridge.back(), isTrue);
   });
@@ -123,15 +131,17 @@ void main() {
   // boolean to Dart — so a Promise<true> from the PWA still ends up
   // as `true` here, not `!!Promise === true` racing the handler.
   test('back resolves Promise<true> from PWA before returning', () async {
-    when(() => ctl.evaluateJavascript(source: any(named: 'source')))
-        .thenAnswer((_) async => true);
+    when(
+      () => ctl.evaluateJavascript(source: any(named: 'source')),
+    ).thenAnswer((_) async => true);
     bridge.markReady();
     expect(await bridge.back(), isTrue);
   });
 
   test('back swallows evaluation errors and returns false', () async {
-    when(() => ctl.evaluateJavascript(source: any(named: 'source')))
-        .thenThrow(Exception('webview crashed'));
+    when(
+      () => ctl.evaluateJavascript(source: any(named: 'source')),
+    ).thenThrow(Exception('webview crashed'));
     bridge.markReady();
     expect(await bridge.back(), isFalse);
   });
@@ -140,9 +150,8 @@ void main() {
     bridge.markReady();
     bridge.setFontScale(1.15);
     verify(
-      () => ctl.evaluateJavascript(
-        source: 'window.rdvBridge.setFontScale(1.15)',
-      ),
+      () =>
+          ctl.evaluateJavascript(source: 'window.rdvBridge.setFontScale(1.15)'),
     ).called(1);
   });
 
@@ -150,9 +159,10 @@ void main() {
     bridge.markReady();
     bridge.setCursorBlink(true);
     bridge.setCursorBlink(false);
-    final captured = verify(
-      () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
-    ).captured;
+    final captured =
+        verify(
+          () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
+        ).captured;
     expect(captured, hasLength(2));
     expect(captured[0], 'window.rdvBridge.setCursorBlink(true)');
     expect(captured[1], 'window.rdvBridge.setCursorBlink(false)');
@@ -163,9 +173,10 @@ void main() {
     bridge.setCursorBlink(false);
     verifyNever(() => ctl.evaluateJavascript(source: any(named: 'source')));
     bridge.markReady();
-    final captured = verify(
-      () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
-    ).captured;
+    final captured =
+        verify(
+          () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
+        ).captured;
     expect(captured, hasLength(2));
     expect(captured[0], 'window.rdvBridge.setFontScale(1.2)');
     expect(captured[1], 'window.rdvBridge.setCursorBlink(false)');
@@ -176,9 +187,11 @@ void main() {
     // where window.rdvBridge.refit is undefined (remote-dev-u5q5.2).
     bridge.markReady();
     bridge.refit();
-    final captured = verify(
-      () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
-    ).captured.single as String;
+    final captured =
+        verify(
+              () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
+            ).captured.single
+            as String;
     expect(captured, contains('window.rdvBridge && window.rdvBridge.refit'));
     expect(captured, contains('window.rdvBridge.refit()'));
   });
@@ -192,13 +205,46 @@ void main() {
     ).called(1);
   });
 
+  test('setClipboardSync emits a guarded literal boolean call (v5)', () {
+    bridge.markReady();
+    bridge.setClipboardSync(true);
+    final captured =
+        verify(
+              () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
+            ).captured.single
+            as String;
+    expect(
+      captured,
+      contains('window.rdvBridge && window.rdvBridge.setClipboardSync'),
+    );
+    expect(captured, contains('window.rdvBridge.setClipboardSync(true)'));
+  });
+
+  test('clipboard calls queue in order and safely escape text', () {
+    bridge.setClipboardSync(true);
+    bridge.syncClipboard("don't \\ sync\nnext\u2028line");
+    verifyNever(() => ctl.evaluateJavascript(source: any(named: 'source')));
+
+    bridge.markReady();
+
+    final captured =
+        verify(
+          () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
+        ).captured.cast<String>();
+    expect(captured, hasLength(2));
+    expect(captured.first, contains('setClipboardSync(true)'));
+    expect(
+      captured.last,
+      contains('window.rdvBridge && window.rdvBridge.syncClipboard'),
+    );
+    expect(captured.last, contains(r"don\'t \\ sync\nnext\u2028line"));
+  });
+
   test('setFontSize emits window.rdvBridge.setFontSize(<px>)', () {
     bridge.markReady();
     bridge.setFontSize(14);
     verify(
-      () => ctl.evaluateJavascript(
-        source: 'window.rdvBridge.setFontSize(14)',
-      ),
+      () => ctl.evaluateJavascript(source: 'window.rdvBridge.setFontSize(14)'),
     ).called(1);
   });
 }

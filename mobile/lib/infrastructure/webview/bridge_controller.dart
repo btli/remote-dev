@@ -32,7 +32,8 @@ class BridgeController {
 
   /// Equivalent to `window.rdvBridge.key(name, mods)`.
   void key(String name, Map<String, bool> mods) {
-    final modsJson = '{${mods.entries.map((e) => '"${e.key}":${e.value}').join(',')}}';
+    final modsJson =
+        '{${mods.entries.map((e) => '"${e.key}":${e.value}').join(',')}}';
     _exec('window.rdvBridge.key(${_q(name)},$modsJson)');
   }
 
@@ -55,6 +56,28 @@ class BridgeController {
     _exec(
       'window.rdvBridge && window.rdvBridge.refit'
       ' && window.rdvBridge.refit()',
+    );
+  }
+
+  /// Enables or disables the bridge v5 session clipboard channel.
+  ///
+  /// Guarded so a deployed pre-v5 PWA silently no-ops while native and web
+  /// releases roll out independently.
+  void setClipboardSync(bool enabled) {
+    _exec(
+      'window.rdvBridge && window.rdvBridge.setClipboardSync'
+      ' && window.rdvBridge.setClipboardSync(${enabled ? 'true' : 'false'})',
+    );
+  }
+
+  /// Publishes native clipboard text to the bridge v5 session clipboard.
+  ///
+  /// Guarded for compatibility with pre-v5 PWA builds and queued until the
+  /// terminal announces readiness like every other native-to-web call.
+  void syncClipboard(String text) {
+    _exec(
+      'window.rdvBridge && window.rdvBridge.syncClipboard'
+      ' && window.rdvBridge.syncClipboard(${_q(text)})',
     );
   }
 
@@ -148,8 +171,13 @@ class BridgeController {
     final escaped = value
         .replaceAll(r'\', r'\\')
         .replaceAll("'", r"\'")
+        .replaceAll('\b', r'\b')
+        .replaceAll('\f', r'\f')
+        .replaceAll('\t', r'\t')
         .replaceAll('\n', r'\n')
-        .replaceAll('\r', r'\r');
+        .replaceAll('\r', r'\r')
+        .replaceAll('\u2028', r'\u2028')
+        .replaceAll('\u2029', r'\u2029');
     return "'$escaped'";
   }
 }

@@ -10,6 +10,7 @@ import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../application/state/appearance_provider.dart';
+import '../../../application/state/clipboard_sync_provider.dart';
 import '../../../domain/appearance_settings.dart';
 import '../../../domain/session_summary.dart';
 import '../../../infrastructure/url/workspace_urls.dart';
@@ -29,6 +30,7 @@ import '../webview_host/session_route_host.dart'
         webViewCookieSeederProvider;
 import 'activity_pip.dart';
 import 'mobile_input_bar.dart';
+import 'session_clipboard_sync.dart';
 import 'session_status_bar.dart';
 import 'session_switcher_sheet.dart';
 import 'smart_key_strip.dart';
@@ -47,8 +49,9 @@ import 'smart_key_strip.dart';
 ///   WebView reserves so the two stay flush. See the `bottomReserve` rationale
 ///   in `build`.
 ///
-/// All six outbound bridge handlers (onTerminalReady, onSelectionChange,
-/// onWantsPaste, onActivity, onLinkOpen, onFontSizeChanged) are registered in
+/// All seven outbound bridge handlers (onTerminalReady, onSelectionChange,
+/// onWantsPaste, onClipboardWrite, onActivity, onLinkOpen, onFontSizeChanged)
+/// are registered in
 /// `onWebViewCreated` (Spec §2.2 rule 1). All native→WebView calls go through
 /// `BridgeController` (Spec §2.2 rule 2). The WebView shrinks to track the
 /// keyboard inset so xterm.js sees a viewport resize and tmux reflows its grid;
@@ -84,6 +87,7 @@ class SessionViewScreen extends ConsumerStatefulWidget {
 class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
     with WidgetsBindingObserver, RouteAware {
   BridgeController? _bridge;
+  SessionClipboardSync? _clipboardSync;
 
   /// The live in-session activity status driving the status-bar pip. Seeded in
   /// [initState] from the route-supplied summary's last-known activity (so a
@@ -161,8 +165,21 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
     if (state == AppLifecycleState.resumed &&
         mounted &&
         (ModalRoute.of(context)?.isCurrent ?? false)) {
-      _bridge?.refit();
+      final clipboardSync = _clipboardSync;
+      if (clipboardSync == null) {
+        _bridge?.refit();
+      } else {
+        unawaited(clipboardSync.onAppResumed());
+      }
     }
+  }
+
+  @override
+  void didPushNext() {
+    // This route remains mounted while another screen covers it. Unsubscribe
+    // its WebView immediately so only the visible session can receive native
+    // clipboard writes.
+    _clipboardSync?.onRouteCovered();
   }
 
   @override
@@ -171,7 +188,12 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
     // so the session view is visible again. Refit the terminal in case the
     // grid went stale (or another tmux client resized it) while it was
     // covered (remote-dev-u5q5.2).
-    _bridge?.refit();
+    final clipboardSync = _clipboardSync;
+    if (clipboardSync == null) {
+      _bridge?.refit();
+    } else {
+      unawaited(clipboardSync.onRouteRevealed());
+    }
   }
 
   /// Resolves the session's display name for the header.
@@ -220,7 +242,8 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
       currentWorkspaceId: conn.workspace.id,
     );
     if (target == null || !mounted) return;
-    final isSame = target.session.id == widget.sessionId &&
+    final isSame =
+        target.session.id == widget.sessionId &&
         target.workspace.id == conn.workspace.id;
     if (isSame) return;
     if (target.workspace.id != conn.workspace.id) {
@@ -239,11 +262,26 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
 
   void _registerBridgeHandlers(InAppWebViewController controller) {
     final bridge = BridgeController(controller: controller);
-    setState(() => _bridge = bridge);
+    final clipboardSync = SessionClipboardSync(
+      isEnabled: () => mounted && ref.read(clipboardSyncProvider),
+      isCurrent: () => mounted && (ModalRoute.of(context)?.isCurrent ?? false),
+      setBridgeEnabled: bridge.setClipboardSync,
+      syncBridgeText: bridge.syncClipboard,
+      pasteToTerminal: bridge.paste,
+      refitTerminal: bridge.refit,
+      readClipboardText:
+          () async => (await Clipboard.getData(Clipboard.kTextPlain))?.text,
+      writeClipboardText:
+          (text) => Clipboard.setData(ClipboardData(text: text)),
+    );
+    setState(() {
+      _bridge = bridge;
+      _clipboardSync = clipboardSync;
+    });
 
     controller.addJavaScriptHandler(
       handlerName: 'onTerminalReady',
-      callback: (_) {
+      callback: (_) async {
         debugPrint('[SessionView] onTerminalReady fired');
         bridge.markReady();
         // Push the current appearance state on first ready so the PWA
@@ -258,23 +296,22 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
         // old behavior where the only terminal-size signal was setFontScale,
         // which the embed multiplied into the stored px every ready event.
         bridge.setFontSize(settings.terminalFontSize);
+        await clipboardSync.onTerminalReady();
         return null;
       },
     );
 
     controller.addJavaScriptHandler(
       handlerName: 'onSelectionChange',
-      callback: (args) {
+      callback: (args) async {
         // PWA parity (bd remote-dev-e1b9): the desktop/PWA shell auto-copies
         // selections to the system clipboard via xterm's native
         // copy-on-selection. Mirror that here — write the selection
         // directly to the clipboard with no SnackBar prompt. A SnackBar
         // would conflict with the keyboard chrome and adds a UX step that
         // the rest of the app deliberately avoids.
-        final selection = args.isNotEmpty ? args.first?.toString() : null;
-        if (selection != null && selection.isNotEmpty) {
-          Clipboard.setData(ClipboardData(text: selection));
-        }
+        final selection = parseSelectionChangePayload(args);
+        await clipboardSync.onSelectionChange(selection);
         return null;
       },
     );
@@ -282,9 +319,15 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
     controller.addJavaScriptHandler(
       handlerName: 'onWantsPaste',
       callback: (_) async {
-        final data = await Clipboard.getData(Clipboard.kTextPlain);
-        final text = data?.text;
-        if (text != null && text.isNotEmpty) bridge.paste(text);
+        await clipboardSync.onWantsPaste();
+        return null;
+      },
+    );
+
+    controller.addJavaScriptHandler(
+      handlerName: 'onClipboardWrite',
+      callback: (args) async {
+        await clipboardSync.onClipboardWrite(args);
         return null;
       },
     );
@@ -343,9 +386,7 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
     _bridge?.input('\r');
   }
 
-  Future<void> _handlePasteWithoutExecute(
-    void Function(String) setText,
-  ) async {
+  Future<void> _handlePasteWithoutExecute(void Function(String) setText) async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text;
     if (text != null && text.isNotEmpty) setText(text);
@@ -391,9 +432,9 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
       Navigator.of(context).maybePop();
     } catch (err) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to suspend: $err')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to suspend: $err')));
     }
   }
 
@@ -411,30 +452,31 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
   Future<void> _deleteSession() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF24283B),
-        title: const Text(
-          'Delete session?',
-          style: TextStyle(color: Colors.white),
-        ),
-        content: const Text(
-          'This will kill the tmux session and remove it from the list.',
-          style: TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFFF7768E),
+      builder:
+          (ctx) => AlertDialog(
+            backgroundColor: const Color(0xFF24283B),
+            title: const Text(
+              'Delete session?',
+              style: TextStyle(color: Colors.white),
             ),
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Delete'),
+            content: const Text(
+              'This will kill the tmux session and remove it from the list.',
+              style: TextStyle(color: Colors.white70),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFFF7768E),
+                ),
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Delete'),
+              ),
+            ],
           ),
-        ],
-      ),
     );
     if (confirmed != true) return;
     final api = ref.read(sessionsApiProvider);
@@ -444,9 +486,9 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
       Navigator.of(context).maybePop();
     } catch (err) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to delete: $err')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to delete: $err')));
     }
   }
 
@@ -483,6 +525,12 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
         if (_fontSizeEchoGuard.shouldPush(next.terminalFontSize)) {
           _bridge?.setFontSize(next.terminalFontSize);
         }
+      }
+    });
+    ref.listen<bool>(clipboardSyncProvider, (prev, next) {
+      final clipboardSync = _clipboardSync;
+      if (clipboardSync != null) {
+        unawaited(clipboardSync.onSettingChanged(next));
       }
     });
     // Header title: resolved name, else the route-supplied summary name,
@@ -529,7 +577,8 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
             // contraction or chrome pop (the discontinuity the old branchy
             // `keyboardInset == 0 ? padding : inset` + conditional SafeArea had).
             final bottomReserve = math.max(keyboardInset, bottomSafePadding);
-            final webViewHeight = constraints.maxHeight -
+            final webViewHeight =
+                constraints.maxHeight -
                 statusBarHeight -
                 chromeHeight -
                 bottomReserve;
@@ -715,11 +764,12 @@ class _WebviewState extends ConsumerState<_Webview> {
             );
             unawaited(_harvestEdgeCookie(target));
           },
-          onProgressChanged: (progress) =>
-              debugPrint('[SessionView] progress $progress'),
-          onConsoleMessage: (msg) => debugPrint(
-            '[SessionView][console] ${msg.messageLevel}: ${msg.message}',
-          ),
+          onProgressChanged:
+              (progress) => debugPrint('[SessionView] progress $progress'),
+          onConsoleMessage:
+              (msg) => debugPrint(
+                '[SessionView][console] ${msg.messageLevel}: ${msg.message}',
+              ),
         );
       },
     );
