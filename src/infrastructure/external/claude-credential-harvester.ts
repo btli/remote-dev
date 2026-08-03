@@ -10,7 +10,8 @@
 
 import { createHash } from "node:crypto";
 import { execFile as nodeExecFile } from "node:child_process";
-import { readFile as nodeReadFile, unlink as nodeUnlink } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { open as nodeOpen, unlink as nodeUnlink } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -68,10 +69,16 @@ export type CredentialExecFile = (
   args: string[]
 ) => Promise<{ stdout: string; stderr: string }>;
 
-export type CredentialFileReader = (
+export interface CredentialFileHandle {
+  stat(): Promise<{ isFile(): boolean }>;
+  readFile(options: { encoding: "utf8" }): Promise<string>;
+  close(): Promise<void>;
+}
+
+export type CredentialFileOpener = (
   path: string,
-  encoding: "utf8"
-) => Promise<string>;
+  flags: number
+) => Promise<CredentialFileHandle>;
 
 export type CredentialFileDeleter = (path: string) => Promise<void>;
 
@@ -79,7 +86,7 @@ export interface CredentialHarvesterDependencies {
   platform: NodeJS.Platform | string;
   username: string;
   execFile: CredentialExecFile;
-  readFile: CredentialFileReader;
+  openFile: CredentialFileOpener;
   deleteFile: CredentialFileDeleter;
 }
 
@@ -90,8 +97,14 @@ const defaultExecFile: CredentialExecFile = async (executable, args) => {
   return { stdout: result.stdout, stderr: result.stderr };
 };
 
-const defaultReadFile: CredentialFileReader = (path, encoding) =>
-  nodeReadFile(path, encoding);
+const defaultOpenFile: CredentialFileOpener = async (path, flags) => {
+  const handle = await nodeOpen(path, flags);
+  return {
+    stat: () => handle.stat(),
+    readFile: (options) => handle.readFile(options),
+    close: () => handle.close(),
+  };
+};
 
 const defaultDeleteFile: CredentialFileDeleter = (path) => nodeUnlink(path);
 
@@ -110,7 +123,7 @@ export class CredentialHarvester {
       platform: dependencies.platform ?? process.platform,
       username: dependencies.username ?? userInfo().username,
       execFile: dependencies.execFile ?? defaultExecFile,
-      readFile: dependencies.readFile ?? defaultReadFile,
+      openFile: dependencies.openFile ?? defaultOpenFile,
       deleteFile: dependencies.deleteFile ?? defaultDeleteFile,
     };
   }
@@ -131,10 +144,7 @@ export class CredentialHarvester {
         ]);
         raw = result.stdout;
       } else if (this.dependencies.platform === "linux") {
-        raw = await this.dependencies.readFile(
-          this.credentialFilePath(configDir),
-          "utf8"
-        );
+        raw = await this.readLinuxCredential(configDir);
       } else {
         throw this.unsupportedPlatform();
       }
@@ -190,6 +200,31 @@ export class CredentialHarvester {
       );
     }
     return join(configDir, ".credentials.json");
+  }
+
+  /**
+   * Open the Linux credential without following a final-component symlink,
+   * prove the opened inode is a regular file, and read through that same file
+   * descriptor. This avoids the lstat-then-read race that would otherwise let
+   * `.credentials.json` be rebound to a default/outside credential.
+   */
+  private async readLinuxCredential(configDir?: string): Promise<string> {
+    const handle = await this.dependencies.openFile(
+      this.credentialFilePath(configDir),
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
+    );
+    try {
+      const info = await handle.stat();
+      if (!info.isFile()) {
+        throw new CredentialHarvesterError(
+          "READ_FAILED",
+          "Claude usage credential path is not a regular file"
+        );
+      }
+      return await handle.readFile({ encoding: "utf8" });
+    } finally {
+      await handle.close();
+    }
   }
 
   private unsupportedPlatform(): CredentialHarvesterError {

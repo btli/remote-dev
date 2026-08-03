@@ -102,6 +102,7 @@ export interface UsageCredentialFileSystem {
   stat(path: string): Promise<{ mtimeMs: number }>;
   lstat(path: string): Promise<{
     isDirectory(): boolean;
+    isFile(): boolean;
     isSymbolicLink(): boolean;
   }>;
   realpath(path: string): Promise<string>;
@@ -135,6 +136,7 @@ export type UsageSnapshotTracker = (
 
 export interface UsageCredentialServiceDependencies {
   getDataDir(): string;
+  platform: NodeJS.Platform | string;
   now(): Date;
   fileSystem: UsageCredentialFileSystem;
   harvester: UsageCredentialHarvester;
@@ -194,6 +196,7 @@ const defaultTrackUsage: UsageSnapshotTracker = async (input) => {
 
 const defaultDependencies: UsageCredentialServiceDependencies = {
   getDataDir,
+  platform: process.platform,
   now: () => new Date(),
   fileSystem: defaultFileSystem,
   harvester: new ClaudeCredentialHarvester(),
@@ -311,6 +314,7 @@ export class ClaudeUsageCredentialService {
   ): Promise<UsageCredentialCaptureResult> {
     this.assertExactCaptureScratchPath(input);
     await this.assertExistingSafeScratchDirectory(input.scratchDir);
+    await this.assertSafeCredentialFile(input.scratchDir, false);
 
     const credential = await this.dependencies.harvester.harvest(
       input.scratchDir
@@ -320,6 +324,9 @@ export class ClaudeUsageCredentialService {
         "CREDENTIALS_NOT_READY",
         "Claude usage credentials are not ready"
       );
+    }
+    if (this.dependencies.platform === "linux") {
+      await this.assertSafeCredentialFile(input.scratchDir, true);
     }
     if (!credential.scopes.includes("user:profile")) {
       throw new UsageCredentialCaptureError(
@@ -354,6 +361,10 @@ export class ClaudeUsageCredentialService {
     // access under CLAUDE_CONFIG_DIR.
     this.assertExactCaptureScratchPath(input);
     await this.assertExistingSafeScratchDirectory(input.scratchDir);
+    await this.assertSafeCredentialFile(
+      input.scratchDir,
+      this.dependencies.platform === "linux"
+    );
     const identity = await this.dependencies.probeIdentity(input.scratchDir);
     const targetEmail = normalizedEmail(input.targetEmail);
     const scratchEmail = normalizedEmail(identity.email);
@@ -508,6 +519,38 @@ export class ClaudeUsageCredentialService {
     ) {
       throw new Error(
         "Usage credential directory is outside the canonical scratch root"
+      );
+    }
+  }
+
+  /**
+   * Reject a linked or non-regular credential before either reader can follow
+   * it. macOS normally has no file here, while a successful Linux harvest must
+   * leave the exact regular file in place for the later identity probe.
+   */
+  private async assertSafeCredentialFile(
+    scratchDir: string,
+    required: boolean
+  ): Promise<void> {
+    const credentialPath = join(scratchDir, ".credentials.json");
+    let info: Awaited<ReturnType<UsageCredentialFileSystem["lstat"]>>;
+    try {
+      info = await this.dependencies.fileSystem.lstat(credentialPath);
+    } catch (error) {
+      if (hasCode(error, "ENOENT")) {
+        if (required) {
+          throw new Error(
+            "Linux credential file is missing after a successful harvest"
+          );
+        }
+        return;
+      }
+      throw error;
+    }
+
+    if (info.isSymbolicLink() || !info.isFile()) {
+      throw new Error(
+        "Claude usage credential file is not a regular non-symlink file"
       );
     }
   }

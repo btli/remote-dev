@@ -73,6 +73,7 @@ function makeDependencies(
 ): UsageCredentialServiceDependencies {
   return {
     getDataDir: () => DATA_DIR,
+    platform: "darwin",
     now: () => NOW,
     fileSystem: {
       mkdir: vi.fn(async () => undefined),
@@ -80,10 +81,16 @@ function makeDependencies(
       rm: vi.fn(async () => undefined),
       readdir: vi.fn(async () => []),
       stat: vi.fn(async () => ({ mtimeMs: NOW.getTime() })),
-      lstat: vi.fn(async () => ({
-        isDirectory: () => true,
-        isSymbolicLink: () => false,
-      })),
+      lstat: vi.fn(async (path: string) => {
+        if (path.endsWith("/.credentials.json")) {
+          throw Object.assign(new Error("absent"), { code: "ENOENT" });
+        }
+        return {
+          isDirectory: () => true,
+          isFile: () => false,
+          isSymbolicLink: () => false,
+        };
+      }),
       realpath: vi.fn(async (path: string) => path),
     },
     harvester: {
@@ -235,6 +242,7 @@ describe("capture validation and storage", () => {
     const deps = makeDependencies();
     vi.mocked(deps.fileSystem.lstat).mockResolvedValue({
       isDirectory: () => false,
+      isFile: () => false,
       isSymbolicLink: () => true,
     });
     const service = new ClaudeUsageCredentialService(deps);
@@ -266,18 +274,100 @@ describe("capture validation and storage", () => {
     expect(deps.harvester.delete).not.toHaveBeenCalled();
   });
 
-  it("revalidates after network validation and rejects a rebound before identity access", async () => {
+  it("rejects a symlinked credential file inside an otherwise safe scratch directory before harvest", async () => {
     const deps = makeDependencies();
-    let inspections = 0;
-    vi.mocked(deps.fileSystem.lstat).mockImplementation(async () => {
-      inspections += 1;
-      return inspections === 1
+    vi.mocked(deps.fileSystem.lstat).mockImplementation(async (path) =>
+      path.endsWith("/.credentials.json")
         ? {
+            isDirectory: () => false,
+            isFile: () => false,
+            isSymbolicLink: () => true,
+          }
+        : {
             isDirectory: () => true,
+            isFile: () => false,
+            isSymbolicLink: () => false,
+          }
+    );
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.capture(captureInput)).rejects.toThrow(
+      /credential file.*regular/i
+    );
+    expect(deps.harvester.harvest).not.toHaveBeenCalled();
+    expect(deps.fetchUsage).not.toHaveBeenCalled();
+    expect(deps.probeIdentity).not.toHaveBeenCalled();
+    expect(deps.storeCredential).not.toHaveBeenCalled();
+    expect(deps.harvester.delete).not.toHaveBeenCalled();
+  });
+
+  it("revalidates a present credential file before identity and rejects a symlink rebound", async () => {
+    const deps = makeDependencies();
+    let credentialInspections = 0;
+    vi.mocked(deps.fileSystem.lstat).mockImplementation(async (path) => {
+      if (!path.endsWith("/.credentials.json")) {
+        return {
+          isDirectory: () => true,
+          isFile: () => false,
+          isSymbolicLink: () => false,
+        };
+      }
+      credentialInspections += 1;
+      return credentialInspections === 1
+        ? {
+            isDirectory: () => false,
+            isFile: () => true,
             isSymbolicLink: () => false,
           }
         : {
             isDirectory: () => false,
+            isFile: () => false,
+            isSymbolicLink: () => true,
+          };
+    });
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.capture(captureInput)).rejects.toThrow(
+      /credential file.*regular/i
+    );
+    expect(deps.harvester.harvest).toHaveBeenCalledWith(SCRATCH);
+    expect(deps.fetchUsage).toHaveBeenCalledOnce();
+    expect(deps.probeIdentity).not.toHaveBeenCalled();
+    expect(deps.storeCredential).not.toHaveBeenCalled();
+    expect(deps.harvester.delete).not.toHaveBeenCalled();
+  });
+
+  it("requires the credential file to exist after a successful Linux harvest", async () => {
+    const deps = makeDependencies({ platform: "linux" });
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.capture(captureInput)).rejects.toThrow(
+      /Linux credential file.*missing/i
+    );
+    expect(deps.harvester.harvest).toHaveBeenCalledWith(SCRATCH);
+    expect(deps.fetchUsage).not.toHaveBeenCalled();
+    expect(deps.probeIdentity).not.toHaveBeenCalled();
+    expect(deps.storeCredential).not.toHaveBeenCalled();
+    expect(deps.harvester.delete).not.toHaveBeenCalled();
+  });
+
+  it("revalidates after network validation and rejects a rebound before identity access", async () => {
+    const deps = makeDependencies();
+    let directoryInspections = 0;
+    vi.mocked(deps.fileSystem.lstat).mockImplementation(async (path) => {
+      if (path.endsWith("/.credentials.json")) {
+        throw Object.assign(new Error("absent"), { code: "ENOENT" });
+      }
+      directoryInspections += 1;
+      return directoryInspections === 1
+        ? {
+            isDirectory: () => true,
+            isFile: () => false,
+            isSymbolicLink: () => false,
+          }
+        : {
+            isDirectory: () => false,
+            isFile: () => false,
             isSymbolicLink: () => true,
           };
     });
@@ -594,16 +684,21 @@ describe("successful capture cleanup", () => {
 
   it("revalidates immediately before deletion and skips credential/rm after a symlink rebound", async () => {
     const deps = makeDependencies();
-    let inspections = 0;
-    vi.mocked(deps.fileSystem.lstat).mockImplementation(async () => {
-      inspections += 1;
-      return inspections <= 2
+    let directoryInspections = 0;
+    vi.mocked(deps.fileSystem.lstat).mockImplementation(async (path) => {
+      if (path.endsWith("/.credentials.json")) {
+        throw Object.assign(new Error("absent"), { code: "ENOENT" });
+      }
+      directoryInspections += 1;
+      return directoryInspections <= 2
         ? {
             isDirectory: () => true,
+            isFile: () => false,
             isSymbolicLink: () => false,
           }
         : {
             isDirectory: () => false,
+            isFile: () => false,
             isSymbolicLink: () => true,
           };
     });
@@ -701,6 +796,7 @@ describe("orphan cleanup", () => {
       if (unsafeKind === "symlink") {
         vi.mocked(deps.fileSystem.lstat).mockResolvedValue({
           isDirectory: () => false,
+          isFile: () => false,
           isSymbolicLink: () => true,
         });
       } else {
