@@ -162,6 +162,13 @@ function installMocks() {
   vi.doMock("@/services/api-key-service", () => ({
     createApiKey: vi.fn().mockResolvedValue({ key: "rdv_test_key" }),
   }));
+  vi.doMock("@/services/clipboard-shims", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/services/clipboard-shims")>();
+    return {
+      ...actual,
+      ensureClipboardShims: vi.fn(() => "/test/rdv/clipboard-bin"),
+    };
+  });
 
   // --- DI container: git-credential + github-account env. No bound account →
   // the GitHubAccountEnvironment.create branch is never reached. ---

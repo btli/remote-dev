@@ -33,6 +33,10 @@ import { GitHubAccountEnvironment } from "@/domain/value-objects/GitHubAccountEn
 import { requestedModelFromAgentFlags } from "@/domain/value-objects/ClaudeModelIdentity";
 import { createApiKey } from "@/services/api-key-service";
 import { createLogger } from "@/lib/logger";
+import {
+  buildClipboardSessionEnv,
+  ensureClipboardShims,
+} from "@/services/clipboard-shims";
 
 const log = createLogger("SessionService");
 
@@ -852,25 +856,33 @@ export async function createSessionWithDedupFlag(
     }
   }
 
-  // RDV_* env vars only matter to local agent hook scripts that call back
-  // into the terminal/API server. SSH sessions don't run those hooks (the
-  // remote shell wouldn't see the vars anyway), so skip injecting them.
-  const rdvEnv: Record<string, string> = isAgentRuntime
-    ? {
-        RDV_SESSION_ID: sessionId,
-        ...(terminalSocket
-          ? { RDV_TERMINAL_SOCKET: terminalSocket }
-          : { RDV_TERMINAL_PORT: process.env.TERMINAL_PORT ?? "6002" }),
-        ...(process.env.SOCKET_PATH
-          ? { RDV_API_SOCKET: process.env.SOCKET_PATH }
-          : { RDV_API_PORT: process.env.PORT ?? "6001" }),
-        ...(agentApiKey ? { RDV_API_KEY: agentApiKey } : {}),
-        // [remote-dev-3b3l] Expose the active profile id so future hooks / the
-        // usage poller can attribute agent output back to a profile. Rides
-        // `rdvEnv` (highest precedence) like the other RDV_* vars.
-        ...(effectiveProfileId ? { RDV_PROFILE_ID: effectiveProfileId } : {}),
-      }
-    : {};
+  // Every local tmux session needs the session + terminal callback address for
+  // rdv clipboard copy/paste. Agent-only API credentials remain gated on
+  // isAgentRuntime, and SSH receives none of these host-local values.
+  const localTerminalEnv: Record<string, string> =
+    plugin.useTmux && terminalType !== "ssh"
+      ? {
+          RDV_SESSION_ID: sessionId,
+          ...(terminalSocket
+            ? { RDV_TERMINAL_SOCKET: terminalSocket }
+            : { RDV_TERMINAL_PORT: process.env.TERMINAL_PORT ?? "6002" }),
+        }
+      : {};
+  const rdvEnv: Record<string, string> = {
+    ...localTerminalEnv,
+    ...(isAgentRuntime
+      ? {
+          ...(process.env.SOCKET_PATH
+            ? { RDV_API_SOCKET: process.env.SOCKET_PATH }
+            : { RDV_API_PORT: process.env.PORT ?? "6001" }),
+          ...(agentApiKey ? { RDV_API_KEY: agentApiKey } : {}),
+          // [remote-dev-3b3l] Expose the active profile id so future hooks / the
+          // usage poller can attribute agent output back to a profile. Rides
+          // `rdvEnv` (highest precedence) like the other RDV_* vars.
+          ...(effectiveProfileId ? { RDV_PROFILE_ID: effectiveProfileId } : {}),
+        }
+      : {}),
+  };
 
   // Install agent hooks and MCP config BEFORE tmux session creation so the
   // agent picks them up at startup (Claude Code reads settings once on launch).
@@ -965,6 +977,30 @@ export async function createSessionWithDedupFlag(
       claudeAccount: isAgentRuntime ? claudeAccountEnv : {},
       rdv: rdvEnv,
     });
+    if (terminalType !== "ssh") {
+      try {
+        const shimDir = ensureClipboardShims();
+        Object.assign(
+          initialEnv,
+          buildClipboardSessionEnv({
+            sessionId,
+            terminalType,
+            shimDir,
+            // Preserve the PATH selected by profile/folder layers; fall back to
+            // the server's PATH only when no session layer supplied one.
+            currentPath: initialEnv.PATH ?? process.env.PATH,
+            terminalSocket,
+            terminalPort: process.env.TERMINAL_PORT ?? "6002",
+          }),
+        );
+      } catch (error) {
+        log.warn("Failed to prepare clipboard shims for session", {
+          sessionId,
+          terminalType,
+          error: String(error),
+        });
+      }
+    }
     log.debug("Session initial env keys", { sessionId, keys: Object.keys(initialEnv) });
 
     // Prefer the plugin-provided shell command when set — e.g. the agent
@@ -1810,12 +1846,37 @@ export async function resumeSession(
         }
       }
 
+      let clipboardResumeEnv: Record<string, string> = {};
+      if (session.terminalType !== "ssh") {
+        try {
+          const currentSessionEnv = await TmuxService.getSessionEnvironment(
+            session.tmuxSessionName,
+          );
+          const shimDir = ensureClipboardShims();
+          clipboardResumeEnv = buildClipboardSessionEnv({
+            sessionId,
+            terminalType: session.terminalType,
+            shimDir,
+            currentPath: currentSessionEnv.PATH ?? process.env.PATH,
+            terminalSocket,
+            terminalPort: process.env.TERMINAL_PORT ?? "6002",
+          });
+        } catch (error) {
+          log.warn("Failed to refresh clipboard shims on resume", {
+            sessionId,
+            terminalType: session.terminalType,
+            error: String(error),
+          });
+        }
+      }
+
       await TmuxService.setSessionEnvironment(session.tmuxSessionName, {
         ...proxyEnv,
         ...modelProxyEnv, // [aehq] proxy token + base URL win over LiteLLM (proxyEnv)
         ...folderGitIdentityEnv,
         ...gitCredentialEnv,
         ...ghAccountEnv,
+        ...clipboardResumeEnv,
         ...rdvEnv,
       });
     } catch (error) {

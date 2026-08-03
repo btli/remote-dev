@@ -107,6 +107,26 @@ impl Client {
         }
     }
 
+    pub async fn get_text_with_query<Q>(
+        &self,
+        path: &str,
+        query: &Q,
+    ) -> Result<String, Box<dyn std::error::Error>>
+    where
+        Q: Serialize + ?Sized,
+    {
+        let resp = self
+            .request(reqwest::Method::GET, path)
+            .query(query)
+            .send()
+            .await?;
+        if resp.status().is_success() {
+            Ok(resp.text().await?)
+        } else {
+            Err(format_http_error(resp).await.into())
+        }
+    }
+
     pub async fn post_empty(
         &self,
         path: &str,

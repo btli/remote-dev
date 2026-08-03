@@ -25,6 +25,17 @@ import {
   PROXY_WS_PATH_PATTERN,
   handleProxyWsUpgrade,
 } from "./proxy-ws-bridge.js";
+import { ClipboardBroker } from "./clipboard-broker.js";
+import { resolveClipboardHttpOperation } from "./clipboard-http.js";
+import {
+  attemptRemoteClipboardWrite,
+  handleClientClipboardWrite,
+  type ClipboardConnectionState,
+} from "./clipboard-protocol.js";
+import {
+  buildClipboardSessionEnv,
+  ensureClipboardShims,
+} from "../services/clipboard-shims.js";
 // [hgwo] provider type for the durable agent-session-id capture endpoint.
 import type { AgentProviderType } from "../types/session.js";
 
@@ -39,6 +50,7 @@ const internalLog = createLogger("InternalAPI");
 const ptyLog = createLogger("PtyControl");
 const peerLog = createLogger("PeerAPI");
 const usageLog = createLogger("UsageLimit");
+const clipboardBroker = new ClipboardBroker();
 
 const execTmux: TmuxExec = (args, callback) => {
   execFile("tmux", args, { cwd: STABLE_SPAWN_CWD }, (error) => callback(error));
@@ -357,6 +369,8 @@ interface TerminalConnection {
   // Last input timestamp copied to the stable-instance map (writes are throttled).
   lastInputRecencyWriteAt: number;
   isVisible: boolean;
+  // Clipboard messages are opt-in for every WebSocket generation.
+  clipboardSubscribed: boolean;
   // [remote-dev-d5ci] Lightweight control connection: registered in the
   // `connections` map only so broadcasts reach it (sidebar live updates without
   // an attached terminal). It has NO PTY, is NOT in sessionConnections /
@@ -990,6 +1004,38 @@ function getAnyConnectionForSession(sessionId: string): TerminalConnection | und
   return connections.get(firstId);
 }
 
+function clipboardConnectionState(
+  connection: TerminalConnection,
+): ClipboardConnectionState {
+  return {
+    connectionId: connection.connectionId,
+    sessionId: connection.sessionId,
+    clipboardSubscribed: connection.clipboardSubscribed,
+    isVisible: connection.isVisible,
+    isSocketOpen: connection.ws.readyState === WebSocket.OPEN,
+  };
+}
+
+/** Store a CLI-originated write and best-effort deliver it to one primary. */
+function writeRemoteClipboard(
+  sessionId: string,
+  data: string,
+): { revision: number; delivered: boolean } {
+  const primaryId = sessionPrimaryConnection.get(sessionId);
+  const primary = primaryId ? connections.get(primaryId) : undefined;
+  return attemptRemoteClipboardWrite(
+    clipboardBroker,
+    sessionId,
+    data,
+    primary
+      ? {
+          connection: clipboardConnectionState(primary),
+          send: (message) => primary.ws.send(JSON.stringify(message)),
+        }
+      : undefined,
+  );
+}
+
 // Per-session status indicators (key -> StatusIndicator)
 type StatusIndicator = { value: string; icon?: string; color?: string; updatedAt: string };
 const sessionStatusIndicators = new Map<string, Map<string, StatusIndicator>>();
@@ -1586,6 +1632,7 @@ function cleanupConnection(connectionId: string): void {
       clientInstanceFocusRecency.clearSession(conn.sessionId);
       sessionStatusIndicators.delete(conn.sessionId);
       sessionProgressBars.delete(conn.sessionId);
+      clipboardBroker.clearSession(conn.sessionId);
     }
     for (const [claudeId, rdvId] of claudeSessionMap) {
       if (rdvId === conn.sessionId) {
@@ -1700,10 +1747,34 @@ function createTmuxSession(
   cols: number,
   rows: number,
   cwd: string,
-  historyLimit: number = 50000
+  historyLimit: number = 50000,
+  sessionId?: string,
+  terminalType = "shell",
 ): void {
   const args = ["new-session", "-d", "-s", sessionName, "-x", String(cols), "-y", String(rows)];
   args.push("-c", cwd);
+  if (sessionId && terminalType !== "ssh") {
+    try {
+      const shimDir = ensureClipboardShims();
+      const clipboardEnv = buildClipboardSessionEnv({
+        sessionId,
+        terminalType,
+        shimDir,
+        currentPath: process.env.PATH,
+        terminalSocket: process.env.TERMINAL_SOCKET,
+        terminalPort: process.env.TERMINAL_PORT ?? "6002",
+      });
+      for (const [key, value] of Object.entries(clipboardEnv)) {
+        args.push("-e", `${key}=${value}`);
+      }
+    } catch (error) {
+      log.warn("Failed to prepare clipboard shims for tmux session", {
+        sessionId,
+        terminalType,
+        error: String(error),
+      });
+    }
+  }
   execFileSync("tmux", args, { stdio: "pipe", cwd: STABLE_SPAWN_CWD });
 
   // Enable mouse mode for scrolling in alternate screen apps (vim, less, claude code, etc.)
@@ -1933,6 +2004,39 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       sendJson(res, 403, { error: "Forbidden: localhost only" });
       return true;
     }
+  }
+
+  if (pathname === "/internal/clipboard") {
+    const payload = req.method === "POST" ? await parseRequestJson(req, res) : undefined;
+    if (req.method === "POST" && payload === null) return true;
+
+    try {
+      const result = resolveClipboardHttpOperation(
+        {
+          method: req.method,
+          querySessionId: query.sessionId,
+          body: payload,
+        },
+        {
+          read: (sessionId) => clipboardBroker.read(sessionId),
+          write: writeRemoteClipboard,
+        },
+      );
+      if (result.contentType === "application/json") {
+        sendJson(res, result.status, result.body);
+      } else {
+        res.writeHead(result.status, { "Content-Type": result.contentType });
+        res.end(result.body);
+      }
+    } catch (error) {
+      // Never attach clipboard text (or a derived hash) to structured logs.
+      internalLog.error("Clipboard request failed", {
+        method: req.method,
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+      sendJson(res, 500, { error: "Clipboard request failed" });
+    }
+    return true;
   }
 
   // Session drain notification for auto-update system
@@ -3893,6 +3997,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         lastInputAt: 0,
         lastInputRecencyWriteAt: 0,
         isVisible: false,
+        clipboardSubscribed: false,
         isControl: true,
       };
       connections.set(controlConnectionId, controlConnection);
@@ -4040,6 +4145,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       // The tmux lifecycle, not a transient socket gap, owns stable-instance
       // engagement history. A confirmed-missing session starts fresh.
       clientInstanceFocusRecency.clearSession(sessionId);
+      clipboardBroker.clearSession(sessionId);
     }
 
     if (resolved.tier !== "query") {
@@ -4101,7 +4207,15 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
           cwdTier: resolved.tier,
           historyLimit: tmuxHistoryLimit,
         });
-        createTmuxSession(tmuxSessionName, cols, rows, cwd, tmuxHistoryLimit);
+        createTmuxSession(
+          tmuxSessionName,
+          cols,
+          rows,
+          cwd,
+          tmuxHistoryLimit,
+          sessionId,
+          terminalType,
+        );
 
         ptyProcess = attachToTmuxSession(tmuxSessionName, cols, rows);
 
@@ -4206,6 +4320,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       // socket refreshes stable inheritance immediately.
       lastInputRecencyWriteAt: 0,
       isVisible: true,
+      clipboardSubscribed: false,
     };
 
     // Register connection in both maps
@@ -4346,6 +4461,27 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             // Bookkeeping only — do not change primary on blur.
             break;
           }
+          case "clipboard_subscribe": {
+            if (typeof msg.enabled === "boolean") {
+              connection.clipboardSubscribed = msg.enabled;
+            }
+            break;
+          }
+          case "clipboard_write": {
+            // Clipboard data must never fall through to the PTY/scrollback,
+            // including validation failures from an oversized write.
+            try {
+              handleClientClipboardWrite(
+                clipboardBroker,
+                clipboardConnectionState(connection),
+                sessionPrimaryConnection.get(sessionId),
+                { data: msg.data, updateId: msg.updateId },
+              );
+            } catch {
+              // The fixed protocol has no error echo; reject silently.
+            }
+            break;
+          }
           case "detach":
             log.debug("Detaching from tmux session", { connectionId, sessionId, tmuxSessionName });
             cleanupConnection(connectionId);
@@ -4400,6 +4536,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
                   primaryPromotions,
                 );
                 clientInstanceFocusRecency.clearSession(sessionId);
+                clipboardBroker.clearSession(sessionId);
               }
               // Re-validate the connect-time cwd — the directory may have been
               // deleted (e.g. a worktree removed) since this WS attached.
@@ -4410,6 +4547,8 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
                 connection.lastRows,
                 recreatedCwd,
                 tmuxHistoryLimit,
+                sessionId,
+                terminalType,
               );
 
               const newPty = attachToTmuxSession(tmuxSessionName, connection.lastCols, connection.lastRows);
@@ -4612,4 +4751,5 @@ export function shutdownTerminalConnections(): void {
   // full teardown must clear them explicitly.
   sessionStatusIndicators.clear();
   sessionProgressBars.clear();
+  clipboardBroker.clear();
 }
