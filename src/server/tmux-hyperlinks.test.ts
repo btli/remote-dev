@@ -89,4 +89,22 @@ describe("tmux hyperlink client capability", () => {
       expect(warn).toHaveBeenCalledTimes(1);
     },
   );
+
+  it("falls back and warns once when reading the version throws", () => {
+    const readVersion = vi.fn((): string | null => {
+      throw new Error("spawn tmux ENOENT");
+    });
+    const warn = vi.fn();
+    const resolver = new TmuxAttachArgumentResolver(readVersion, { warn });
+
+    expect(resolver.forSession("rdv-probe-error")).toEqual([
+      "attach-session",
+      "-t",
+      "rdv-probe-error",
+    ]);
+    expect(resolver.forSession("rdv-again")).toEqual(["attach-session", "-t", "rdv-again"]);
+
+    expect(readVersion).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
 });
