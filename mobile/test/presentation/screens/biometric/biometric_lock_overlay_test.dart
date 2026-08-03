@@ -35,10 +35,26 @@ class _DeferredSettingsStore implements BiometricSettingsStore {
   Future<void> save(BiometricSettings settings) async {}
 }
 
+class _QueuedDeferredSettingsStore implements BiometricSettingsStore {
+  final List<Completer<BiometricSettings>> requests =
+      <Completer<BiometricSettings>>[];
+
+  @override
+  Future<BiometricSettings> load() {
+    final request = Completer<BiometricSettings>();
+    requests.add(request);
+    return request.future;
+  }
+
+  @override
+  Future<void> save(BiometricSettings settings) async {}
+}
+
 /// Configurable [BiometricPort] fake. [authenticate] returns [authResult].
 class _FakeBiometricPort implements BiometricPort {
-  _FakeBiometricPort({this.authResult = true});
+  _FakeBiometricPort({this.authResult = true, this.onAuthenticate});
   final bool authResult;
+  final VoidCallback? onAuthenticate;
   int authCalls = 0;
 
   @override
@@ -47,6 +63,7 @@ class _FakeBiometricPort implements BiometricPort {
   @override
   Future<bool> authenticate({String reason = 'Unlock Remote Dev'}) async {
     authCalls += 1;
+    onAuthenticate?.call();
     return authResult;
   }
 }
@@ -112,6 +129,58 @@ void main() {
       expect(find.text('clipboard-ready'), findsOneWidget);
     });
 
+    for (final staleCase in <(String, BiometricSettings)>[
+      ('disabled', const BiometricSettings()),
+      (
+        'enabled without cold-start lock',
+        const BiometricSettings(enabled: true, requireOnColdStart: false),
+      ),
+    ]) {
+      testWidgets(
+        'stale cold-start policy (${staleCase.$1}) cannot authorize a newer '
+        'resume epoch',
+        (tester) async {
+          final port = _FakeBiometricPort();
+          final store = _QueuedDeferredSettingsStore();
+          await tester.pumpWidget(
+            _wrap(initial: const BiometricSettings(), port: port, store: store),
+          );
+          await tester.pump();
+          expect(store.requests, hasLength(1));
+          expect(find.text('clipboard-blocked'), findsOneWidget);
+
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.inactive,
+          );
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.hidden,
+          );
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.paused,
+          );
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.hidden,
+          );
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.inactive,
+          );
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.resumed,
+          );
+          await tester.pump();
+          expect(store.requests, hasLength(2));
+
+          store.requests.first.complete(staleCase.$2);
+          await tester.pumpAndSettle();
+          expect(find.text('clipboard-blocked'), findsOneWidget);
+
+          store.requests.last.complete(const BiometricSettings());
+          await tester.pumpAndSettle();
+          expect(find.text('clipboard-ready'), findsOneWidget);
+        },
+      );
+    }
+
     testWidgets('does not lock when biometrics are disabled', (tester) async {
       final port = _FakeBiometricPort();
       await tester.pumpWidget(
@@ -147,6 +216,36 @@ void main() {
       expect(find.text('child-content'), findsOneWidget);
       expect(find.text('clipboard-ready'), findsOneWidget);
     });
+
+    testWidgets(
+      'successful auth survives lifecycle churn from the OS biometric prompt',
+      (tester) async {
+        final port = _FakeBiometricPort(
+          onAuthenticate: () {
+            tester.binding.handleAppLifecycleStateChanged(
+              AppLifecycleState.inactive,
+            );
+            tester.binding.handleAppLifecycleStateChanged(
+              AppLifecycleState.resumed,
+            );
+          },
+        );
+        await tester.pumpWidget(
+          _wrap(
+            initial: const BiometricSettings(
+              enabled: true,
+              requireOnColdStart: true,
+            ),
+            port: port,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(port.authCalls, 1);
+        expect(find.byType(BiometricLockScreen), findsNothing);
+        expect(find.text('clipboard-ready'), findsOneWidget);
+      },
+    );
 
     testWidgets('cold-start auto-prompt failure keeps lock visible with error', (
       tester,

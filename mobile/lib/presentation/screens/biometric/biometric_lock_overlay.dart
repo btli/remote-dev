@@ -73,6 +73,11 @@ class _BiometricLockOverlayState extends ConsumerState<BiometricLockOverlay>
   // cancel/failure the user retries via the button — auto-looping would
   // re-present the sheet the instant they cancel and trap them.
   bool _autoPrompted = false;
+  // Invalidates asynchronous settings decisions whenever lifecycle state
+  // changes. Authentication itself is deliberately not bound to this epoch:
+  // the OS biometric sheet causes its own inactive/resumed churn while the
+  // same valid prompt remains in flight.
+  int _policyGeneration = 0;
   late final ClipboardAccessReadinessNotifier _clipboardReadiness;
 
   @override
@@ -93,6 +98,7 @@ class _BiometricLockOverlayState extends ConsumerState<BiometricLockOverlay>
   }
 
   Future<void> _checkColdStart() async {
+    final expectedGeneration = _policyGeneration;
     BiometricSettings settings;
     try {
       settings = await ref.read(biometricSettingsStoreProvider).load();
@@ -100,17 +106,20 @@ class _BiometricLockOverlayState extends ConsumerState<BiometricLockOverlay>
       // Secure settings failures remain fail-closed for clipboard access.
       return;
     }
-    if (!mounted) return;
+    if (!_isCurrentPolicyGeneration(expectedGeneration)) return;
     if (settings.enabled && settings.requireOnColdStart) {
-      await _lock();
+      await _lock(expectedGeneration);
     } else {
-      _markClipboardReadyIfForeground();
+      _markClipboardReadyIfForeground(
+        expectedPolicyGeneration: expectedGeneration,
+      );
     }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Revoke synchronously before any asynchronous grace/settings/auth work.
+    _policyGeneration += 1;
     _clipboardReadiness.markUnavailable();
     if (state != AppLifecycleState.resumed) {
       return;
@@ -119,6 +128,7 @@ class _BiometricLockOverlayState extends ConsumerState<BiometricLockOverlay>
   }
 
   Future<void> _maybeLockOnResume() async {
+    final expectedGeneration = _policyGeneration;
     // Ignore the resume the biometric sheet itself triggers while a prompt is
     // up, and don't re-present over a lock the user is already retrying.
     if (_authInProgress || _locked) return;
@@ -128,24 +138,29 @@ class _BiometricLockOverlayState extends ConsumerState<BiometricLockOverlay>
     } catch (_) {
       return;
     }
-    if (!mounted) return;
+    if (!_isCurrentPolicyGeneration(expectedGeneration)) return;
     if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
       return;
     }
     if (!settings.enabled) {
-      _markClipboardReadyIfForeground();
+      _markClipboardReadyIfForeground(
+        expectedPolicyGeneration: expectedGeneration,
+      );
       return;
     }
     final elapsed = DateTime.now().difference(_lastUnlock);
     if (elapsed.inSeconds >= settings.gracePeriodSeconds) {
-      await _lock();
+      await _lock(expectedGeneration);
     } else {
-      _markClipboardReadyIfForeground();
+      _markClipboardReadyIfForeground(
+        expectedPolicyGeneration: expectedGeneration,
+      );
     }
   }
 
   /// Engage the lock and immediately present the OS prompt (once per episode).
-  Future<void> _lock() async {
+  Future<void> _lock(int expectedPolicyGeneration) async {
+    if (!_isCurrentPolicyGeneration(expectedPolicyGeneration)) return;
     _clipboardReadiness.markUnavailable();
     if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
       return;
@@ -196,7 +211,15 @@ class _BiometricLockOverlayState extends ConsumerState<BiometricLockOverlay>
     }
   }
 
-  void _markClipboardReadyIfForeground() {
+  bool _isCurrentPolicyGeneration(int expected) {
+    return mounted && expected == _policyGeneration;
+  }
+
+  void _markClipboardReadyIfForeground({int? expectedPolicyGeneration}) {
+    if (expectedPolicyGeneration != null &&
+        !_isCurrentPolicyGeneration(expectedPolicyGeneration)) {
+      return;
+    }
     if (mounted &&
         !_locked &&
         !_authInProgress &&

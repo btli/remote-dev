@@ -90,6 +90,7 @@ class SessionClipboardSync {
   int? _lastRemoteRevision;
   String? _lastRemoteText;
   String? _pendingRemoteEcho;
+  int _presentationGeneration = 0;
 
   bool get _isPresented => _isCurrent() && _isPresentationReady();
 
@@ -138,7 +139,8 @@ class SessionClipboardSync {
   /// Synchronously revokes the WebView subscription when the app backgrounds,
   /// locks, becomes covered, or is being disposed.
   void onPresentationUnavailable() {
-    _lastRemoteText = null;
+    _presentationGeneration += 1;
+    _forgetRemoteDuplicate();
     _pendingRemoteEcho = null;
     _setBridgeEnabled(false);
   }
@@ -164,8 +166,10 @@ class SessionClipboardSync {
     if (selection == null || selection.isEmpty || !_canAccessClipboard) {
       return;
     }
-    await _safeWriteClipboard(selection);
-    if (!_canAccessClipboard) return;
+    final expectedGeneration = _presentationGeneration;
+    final wrote = await _safeWriteClipboard(selection);
+    if (!_isCurrentPresentationGeneration(expectedGeneration)) return;
+    if (wrote) _forgetRemoteDuplicate();
     _publishText(selection, requireCurrent: true);
   }
 
@@ -173,9 +177,15 @@ class SessionClipboardSync {
   /// text to this session when synchronization is enabled.
   Future<void> onWantsPaste() async {
     if (!_canAccessClipboard) return;
+    final expectedGeneration = _presentationGeneration;
     final text = await _safeReadClipboard();
-    if (text == null || text.isEmpty || !_canAccessClipboard) return;
+    if (text == null ||
+        text.isEmpty ||
+        !_isCurrentPresentationGeneration(expectedGeneration)) {
+      return;
+    }
     _pasteToTerminal(text);
+    _forgetRemoteDuplicate();
     _publishText(text, requireCurrent: true);
   }
 
@@ -190,8 +200,11 @@ class SessionClipboardSync {
         _lastRemoteText == payload.text) {
       return;
     }
+    final expectedGeneration = _presentationGeneration;
     final wrote = await _safeWriteClipboard(payload.text);
-    if (wrote && _isEnabled() && _canAccessClipboard) {
+    if (wrote &&
+        _isEnabled() &&
+        _isCurrentPresentationGeneration(expectedGeneration)) {
       _lastRemoteRevision = payload.revision;
       _lastRemoteText = payload.text;
       _pendingRemoteEcho = payload.text;
@@ -200,8 +213,9 @@ class SessionClipboardSync {
 
   Future<void> _publishNativeClipboard() async {
     if (!_canAccessClipboard) return;
+    final expectedGeneration = _presentationGeneration;
     final text = await _safeReadClipboard();
-    if (text != null && _canAccessClipboard) {
+    if (text != null && _isCurrentPresentationGeneration(expectedGeneration)) {
       _publishText(text, requireCurrent: true);
     }
   }
@@ -233,6 +247,16 @@ class SessionClipboardSync {
     _pendingRemoteEcho = null;
     if (echo == text) return;
     _syncBridgeText(text);
+    _forgetRemoteDuplicate();
+  }
+
+  bool _isCurrentPresentationGeneration(int expected) {
+    return expected == _presentationGeneration && _canAccessClipboard;
+  }
+
+  void _forgetRemoteDuplicate() {
+    _lastRemoteRevision = null;
+    _lastRemoteText = null;
   }
 
   Future<String?> _safeReadClipboard() async {

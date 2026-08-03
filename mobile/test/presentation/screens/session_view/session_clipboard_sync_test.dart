@@ -118,6 +118,7 @@ void main() {
     late bool bridgeReady;
     late String? nativeText;
     late Completer<String?>? pendingRead;
+    late Completer<void>? pendingWrite;
     late int writeFailuresRemaining;
     late List<String> events;
     late SessionClipboardSync sync;
@@ -129,6 +130,7 @@ void main() {
       bridgeReady = true;
       nativeText = 'local clipboard';
       pendingRead = null;
+      pendingWrite = null;
       writeFailuresRemaining = 0;
       events = <String>[];
       sync = SessionClipboardSync(
@@ -148,6 +150,9 @@ void main() {
         },
         writeClipboardText: (text) async {
           events.add('write:$text');
+          final pending = pendingWrite;
+          pendingWrite = null;
+          if (pending != null) await pending.future;
           if (writeFailuresRemaining > 0) {
             writeFailuresRemaining -= 1;
             throw StateError('transient clipboard failure');
@@ -477,6 +482,109 @@ void main() {
     });
 
     test(
+      'remote write completion from an old presentation cannot seed metadata',
+      () async {
+        enabled = true;
+        final write = Completer<void>();
+        pendingWrite = write;
+        final update = <dynamic>[
+          <String, Object>{'text': 'remote', 'revision': 4},
+        ];
+
+        final first = sync.onClipboardWrite(update);
+        await Future<void>.delayed(Duration.zero);
+        expect(events, <String>['write:remote']);
+
+        presentationReady = false;
+        sync.onPresentationUnavailable();
+        presentationReady = true;
+        write.complete();
+        await first;
+
+        await sync.onAppResumed();
+        await sync.onClipboardWrite(update);
+
+        expect(events, <String>[
+          'write:remote',
+          'enabled:false',
+          'refit',
+          'enabled:true',
+          'read',
+          'sync:remote',
+          'write:remote',
+        ]);
+      },
+    );
+
+    test(
+      'successful local selection invalidates the remote duplicate pair',
+      () async {
+        enabled = true;
+        final remote = <dynamic>[
+          <String, Object>{'text': 'remote A', 'revision': 2},
+        ];
+
+        await sync.onClipboardWrite(remote);
+        await sync.onSelectionChange('local B');
+        await sync.onClipboardWrite(remote);
+
+        expect(events, <String>[
+          'write:remote A',
+          'write:local B',
+          'sync:local B',
+          'write:remote A',
+        ]);
+      },
+    );
+
+    test(
+      'successful local publication invalidates the remote duplicate pair',
+      () async {
+        enabled = true;
+        final remote = <dynamic>[
+          <String, Object>{'text': 'remote A', 'revision': 2},
+        ];
+
+        await sync.onClipboardWrite(remote);
+        nativeText = 'local B';
+        await sync.onAppResumed();
+        await sync.onClipboardWrite(remote);
+
+        expect(events, <String>[
+          'write:remote A',
+          'refit',
+          'enabled:true',
+          'read',
+          'sync:local B',
+          'write:remote A',
+        ]);
+      },
+    );
+
+    test(
+      'successful local paste invalidates the remote duplicate pair',
+      () async {
+        enabled = true;
+        final remote = <dynamic>[
+          <String, Object>{'text': 'remote A', 'revision': 2},
+        ];
+
+        await sync.onClipboardWrite(remote);
+        nativeText = 'local B';
+        await sync.onWantsPaste();
+        await sync.onClipboardWrite(remote);
+
+        expect(events, <String>[
+          'write:remote A',
+          'read',
+          'paste:local B',
+          'sync:local B',
+          'write:remote A',
+        ]);
+      },
+    );
+
+    test(
       'selection still copies natively and also syncs when enabled',
       () async {
         enabled = true;
@@ -579,5 +687,68 @@ void main() {
 
       expect(events, <String>['read']);
     });
+
+    test(
+      'paste completion from an old presentation is dropped after an ABA',
+      () async {
+        enabled = true;
+        final read = Completer<String?>();
+        pendingRead = read;
+
+        final paste = sync.onWantsPaste();
+        await Future<void>.delayed(Duration.zero);
+        expect(events, <String>['read']);
+
+        presentationReady = false;
+        sync.onPresentationUnavailable();
+        presentationReady = true;
+        read.complete('late secret');
+        await paste;
+
+        expect(events, <String>['read', 'enabled:false']);
+      },
+    );
+
+    test(
+      'selection completion from an old presentation cannot publish after ABA',
+      () async {
+        enabled = true;
+        final write = Completer<void>();
+        pendingWrite = write;
+
+        final selection = sync.onSelectionChange('late selection');
+        await Future<void>.delayed(Duration.zero);
+        expect(events, <String>['write:late selection']);
+
+        presentationReady = false;
+        sync.onPresentationUnavailable();
+        presentationReady = true;
+        write.complete();
+        await selection;
+
+        expect(events, <String>['write:late selection', 'enabled:false']);
+      },
+    );
+
+    test(
+      'publish completion from an old presentation is dropped after an ABA',
+      () async {
+        enabled = true;
+        final read = Completer<String?>();
+        pendingRead = read;
+
+        final publish = sync.onTerminalReady();
+        await Future<void>.delayed(Duration.zero);
+        expect(events, <String>['enabled:true', 'read']);
+
+        presentationReady = false;
+        sync.onPresentationUnavailable();
+        presentationReady = true;
+        read.complete('late secret');
+        await publish;
+
+        expect(events, <String>['enabled:true', 'read', 'enabled:false']);
+      },
+    );
   });
 }
