@@ -24,6 +24,8 @@ import { useState, useEffect } from "react";
 const xtermInstances: Array<{
   options: { fontSize: number; fontFamily: string; [k: string]: unknown };
 }> = [];
+const linkRegistrationOrder: string[] = [];
+const webLinkHandlers: Array<(event: MouseEvent, uri: string) => void> = [];
 
 vi.mock("@xterm/xterm", () => {
   class FakeTerminal {
@@ -48,7 +50,13 @@ vi.mock("@xterm/xterm", () => {
       this.textarea = document.createElement("textarea");
       xtermInstances.push(this);
     }
-    loadAddon() {}
+    loadAddon(addon: { activate?: (terminal: FakeTerminal) => void }) {
+      addon.activate?.(this);
+    }
+    registerLinkProvider() {
+      linkRegistrationOrder.push("custom-provider");
+      return { dispose: () => {} };
+    }
     open() {}
     onData() {
       return { dispose: () => {} };
@@ -79,7 +87,12 @@ vi.mock("@xterm/addon-fit", () => ({
 
 vi.mock("@xterm/addon-web-links", () => ({
   WebLinksAddon: class {
-    activate() {}
+    constructor(private handler: (event: MouseEvent, uri: string) => void) {
+      webLinkHandlers.push(handler);
+    }
+    activate() {
+      linkRegistrationOrder.push("web-links-addon");
+    }
     dispose() {}
   },
 }));
@@ -202,6 +215,8 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = originalFetch;
   xtermInstances.length = 0;
+  linkRegistrationOrder.length = 0;
+  webLinkHandlers.length = 0;
   cleanup();
 });
 
@@ -232,6 +247,7 @@ let TerminalUnderTest: (props: { fontSize: number }) => React.ReactElement;
 
 describe("Terminal fontSize race (remote-dev-3gtr)", () => {
   it("applies latest fontSize even when prefs resolve during async init", async () => {
+    const openWindow = vi.spyOn(window, "open").mockReturnValue({} as Window);
     const Terminal = await getTerminal();
 
     function TerminalWrapper({ fontSize }: { fontSize: number }) {
@@ -280,5 +296,36 @@ describe("Terminal fontSize race (remote-dev-3gtr)", () => {
     });
 
     expect(xterm.options.fontSize).toBe(20);
+
+    expect(linkRegistrationOrder).toEqual([
+      "custom-provider",
+      "web-links-addon",
+    ]);
+
+    const osc8Handler = xterm.options.linkHandler as {
+      allowNonHttpProtocols: boolean;
+      activate(event: MouseEvent, text: string): void;
+    };
+    const event = new MouseEvent("click");
+    osc8Handler.activate(event, "javascript:alert(1)");
+    webLinkHandlers[0]!(event, "file:///tmp/unsafe");
+    expect(openWindow).not.toHaveBeenCalled();
+
+    osc8Handler.activate(event, "https://osc.test/path");
+    webLinkHandlers[0]!(event, "http://web.test/path");
+    expect(osc8Handler.allowNonHttpProtocols).toBe(false);
+    expect(openWindow).toHaveBeenNthCalledWith(
+      1,
+      "https://osc.test/path",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    expect(openWindow).toHaveBeenNthCalledWith(
+      2,
+      "http://web.test/path",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    openWindow.mockRestore();
   });
 });

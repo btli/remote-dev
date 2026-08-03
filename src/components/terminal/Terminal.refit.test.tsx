@@ -164,6 +164,9 @@ vi.mock("@xterm/xterm", () => {
     loadAddon(addon: { activate?: (terminal: FakeTerminal) => void }) {
       addon.activate?.(this);
     }
+    registerLinkProvider() {
+      return { dispose: () => {} };
+    }
     open() {}
     onData() {
       return { dispose: () => {} };

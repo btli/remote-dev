@@ -15,6 +15,10 @@ import { AuthErrorOverlay } from "./AuthErrorOverlay";
 import { createTouchScrollHandlers } from "./touch-scroll";
 import { createTouchInteractions, createTouchModeRef } from "./useTouchInteractions";
 import {
+  createHttpLinkOpener,
+  createTerminalLinkProvider,
+} from "./terminal-links";
+import {
   MIN_COLS,
   MIN_ROWS,
   ResizeReconciler,
@@ -473,6 +477,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         brightWhite: theme.brightWhite,
       };
 
+      // OSC 8, inferred TUI links, and WebLinksAddon all cross the same
+      // HTTP(S)-only opener boundary.
+      const openTerminalHttpLink = createHttpLinkOpener();
+
       terminal = new XTerm({
         cursorBlink: true,
         cursorStyle: theme.cursorStyle,
@@ -489,14 +497,30 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         macOptionClickForcesSelection: true,
         // Right-click selects word under cursor (macOS-style behavior)
         rightClickSelectsWord: true,
+        linkHandler: {
+          allowNonHttpProtocols: false,
+          activate: (_event, text) => {
+            openTerminalHttpLink(text);
+          },
+        },
       });
 
       fitAddon = new FitAddon();
-      const webLinksAddon = new WebLinksAddon();
+      const webLinksAddon = new WebLinksAddon((_event, uri) => {
+        openTerminalHttpLink(uri);
+      });
       const imageAddon = new ImageAddon();
       const searchAddon = new SearchAddon();
 
       terminal.loadAddon(fitAddon);
+      // xterm gives earlier providers priority and removes overlapping ranges
+      // from later providers. Register before WebLinksAddon so its truncated
+      // first-row match cannot win over a reconstructed multi-row candidate.
+      terminalDisposablesRef.current.push(
+        terminal.registerLinkProvider(
+          createTerminalLinkProvider(terminal, { open: openTerminalHttpLink }),
+        ),
+      );
       terminal.loadAddon(webLinksAddon);
       terminal.loadAddon(imageAddon);
       terminal.loadAddon(searchAddon);
