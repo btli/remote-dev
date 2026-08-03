@@ -33,6 +33,7 @@ import {
 } from "react";
 
 import type { TerminalRef } from "./Terminal";
+import { MobileInputBar } from "./MobileInputBar";
 import { CLIPBOARD_SYNC_STORAGE_KEY } from "@/hooks/useClipboardSyncPreference";
 
 const toastSpies = vi.hoisted(() => ({
@@ -530,6 +531,171 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
       data: "focused clipboard",
       updateId: expect.any(String),
     });
+  });
+
+  it("syncs only while the registered mobile browser terminal input is focused", async () => {
+    localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+    clipboardReadText.mockResolvedValue("mobile clipboard seed");
+    const Terminal = await getTerminal();
+    const terminalRef = createRef<TerminalRef>();
+
+    function MobileBrowserTerminal() {
+      const [mobileInputElement, setMobileInputElement] =
+        useState<HTMLTextAreaElement | null>(null);
+      return (
+        <>
+          <Terminal
+            ref={terminalRef}
+            sessionId="clipboard-mobile-browser"
+            tmuxSessionName="rdv-clipboard-mobile-browser"
+            wsUrl="ws://localhost:0"
+            terminalType="shell"
+            mobileMode
+            mobileInputElement={mobileInputElement}
+            isActive
+            visible
+          />
+          <MobileInputBar
+            ref={setMobileInputElement}
+            onSubmit={() => {}}
+            placeholder="PWA terminal input"
+          />
+          <button type="button">Metadata</button>
+          <input aria-label="Settings" />
+        </>
+      );
+    }
+
+    render(<MobileBrowserTerminal />);
+    await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+    const socket = wsInstances.at(-1)!;
+    const mobileInput = document.querySelector<HTMLTextAreaElement>(
+      'textarea[placeholder="PWA terminal input"]',
+    )!;
+
+    act(() => {
+      dispatchSocketMessage(socket, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+    });
+    expect(clipboardReadText).not.toHaveBeenCalled();
+    expect(
+      socket.sent
+        .map((frame) => JSON.parse(frame))
+        .filter((frame) => frame.type.startsWith("clipboard_")),
+    ).toEqual([]);
+
+    act(() => mobileInput.focus());
+    await waitFor(() => {
+      expect(clipboardReadText).toHaveBeenCalledTimes(1);
+      expect(
+        socket.sent.map((frame) => JSON.parse(frame)),
+      ).toEqual(
+        expect.arrayContaining([
+          { type: "clipboard_subscribe", enabled: true },
+          {
+            type: "clipboard_write",
+            data: "mobile clipboard seed",
+            updateId: expect.any(String),
+          },
+        ]),
+      );
+    });
+
+    act(() => dispatchPaste(mobileInput, "mobile paste"));
+    expect(
+      socket.sent.map((frame) => JSON.parse(frame)),
+    ).toEqual(
+      expect.arrayContaining([
+        {
+          type: "clipboard_write",
+          data: "mobile paste",
+          updateId: expect.any(String),
+        },
+      ]),
+    );
+
+    act(() => {
+      dispatchSocketMessage(socket, {
+        type: "clipboard_update",
+        data: "remote mobile clipboard",
+        revision: 1,
+      });
+    });
+    await waitFor(() => {
+      expect(clipboardWriteText).toHaveBeenCalledWith(
+        "remote mobile clipboard",
+      );
+    });
+
+    const metadataButton = Array.from(
+      document.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent === "Metadata")!;
+    act(() => metadataButton.focus());
+    expect(socket.sent.map((frame) => JSON.parse(frame))).toContainEqual({
+      type: "clipboard_subscribe",
+      enabled: false,
+    });
+    const writesBeforeCoveredUpdate = clipboardWriteText.mock.calls.length;
+    act(() => {
+      dispatchSocketMessage(socket, {
+        type: "clipboard_update",
+        data: "metadata-covered update",
+        revision: 2,
+      });
+    });
+    await act(async () => Promise.resolve());
+    expect(clipboardWriteText).toHaveBeenCalledTimes(writesBeforeCoveredUpdate);
+
+    act(() => mobileInput.focus());
+    await waitFor(() => {
+      const subscriptions = socket.sent
+        .map((frame) => JSON.parse(frame))
+        .filter((frame) => frame.type === "clipboard_subscribe");
+      expect(subscriptions.at(-1)).toEqual({
+        type: "clipboard_subscribe",
+        enabled: true,
+      });
+    });
+    act(() => terminalRef.current?.openSearch());
+    const searchInput = await waitFor(() => {
+      const input = document.querySelector<HTMLInputElement>(
+        'input[aria-label="Search terminal output"]',
+      );
+      expect(document.activeElement).toBe(input);
+      return input!;
+    });
+    expect(searchInput).not.toBe(mobileInput);
+    expect(
+      socket.sent
+        .map((frame) => JSON.parse(frame))
+        .filter((frame) => frame.type === "clipboard_subscribe")
+        .at(-1),
+    ).toEqual({ type: "clipboard_subscribe", enabled: false });
+
+    act(() => {
+      terminalRef.current?.closeSearch();
+      mobileInput.focus();
+    });
+    await waitFor(() => {
+      expect(
+        socket.sent
+          .map((frame) => JSON.parse(frame))
+          .filter((frame) => frame.type === "clipboard_subscribe")
+          .at(-1),
+      ).toEqual({ type: "clipboard_subscribe", enabled: true });
+    });
+    const settingsInput = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Settings"]',
+    )!;
+    act(() => settingsInput.focus());
+    expect(
+      socket.sent
+        .map((frame) => JSON.parse(frame))
+        .filter((frame) => frame.type === "clipboard_subscribe")
+        .at(-1),
+    ).toEqual({ type: "clipboard_subscribe", enabled: false });
   });
 
   it("does not sync paste from terminal search or unrelated dialog inputs", async () => {

@@ -91,6 +91,11 @@ interface TerminalWithKeyboardProps {
   /** Environment variables to inject into new terminal sessions */
   environmentVars?: Record<string, string> | null;
   /**
+   * Parent-owned mobile terminal textarea. In external mobile chrome mode,
+   * browser clipboard sync is scoped to this exact element's focus.
+   */
+  mobileInputElement?: HTMLTextAreaElement | null;
+  /**
    * Mobile chrome mode. Default `"builtin"` preserves existing call
    * sites; pass `"external"` when the parent renders its own
    * MobileInputBar / smart-key strip around this component.
@@ -147,6 +152,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   isActive,
   visible = true,
   environmentVars,
+  mobileInputElement = null,
   mobileChrome = "builtin",
   onStatusChange,
   onSessionExit,
@@ -172,7 +178,8 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
 }, ref) {
   const wsRef = useRef<WebSocket | null>(null);
   const terminalRef = useRef<TerminalRef>(null);
-  const mobileInputRef = useRef<HTMLTextAreaElement>(null);
+  const [builtinMobileInputElement, setBuiltinMobileInputElement] =
+    useState<HTMLTextAreaElement | null>(null);
   const [sessionEnded, setSessionEnded] = useState(false);
   const [exitCode, setExitCode] = useState(0);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("disconnected");
@@ -189,7 +196,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   useImperativeHandle(ref, () => ({
     focus: () => {
       if (useBuiltinMobileChrome) {
-        mobileInputRef.current?.focus();
+        builtinMobileInputElement?.focus();
       } else {
         terminalRef.current?.focus();
       }
@@ -227,7 +234,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
     syncClipboard: (text: string) => {
       terminalRef.current?.syncClipboard(text);
     },
-  }), [useBuiltinMobileChrome]);
+  }), [builtinMobileInputElement, useBuiltinMobileChrome]);
 
   const handleWebSocketReady = useCallback((ws: WebSocket | null) => {
     wsRef.current = ws;
@@ -292,6 +299,13 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
         environmentVars={environmentVars}
         terminalType={session?.terminalType}
         mobileMode={isMobile}
+        mobileInputElement={
+          isMobile
+            ? useBuiltinMobileChrome
+              ? builtinMobileInputElement
+              : mobileInputElement
+            : null
+        }
         onStatusChange={handleStatusChange}
         onWebSocketReady={handleWebSocketReady}
         onSessionExit={handleSessionExit}
@@ -349,7 +363,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
         )}
 
         <MobileInputBar
-          ref={mobileInputRef}
+          ref={setBuiltinMobileInputElement}
           onSubmit={sendToTerminal}
           onModifiedKeyPress={sendToTerminal}
           modifierActive={modifiers.anyActive}

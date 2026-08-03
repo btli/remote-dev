@@ -106,6 +106,12 @@ export interface TerminalProps {
   terminalType?: "shell" | "agent" | "file" | string;
   /** When true, disables xterm.js internal textarea so external input can be used */
   mobileMode?: boolean;
+  /**
+   * Exact browser-mobile textarea that owns terminal input. Clipboard sync
+   * listens to this element directly when mobileMode disables xterm stdin;
+   * unrelated document inputs never become eligible.
+   */
+  mobileInputElement?: HTMLTextAreaElement | null;
   onStatusChange?: (status: ConnectionStatus) => void;
   onWebSocketReady?: (ws: WebSocket | null) => void;
   onSessionExit?: (exitCode: number) => void;
@@ -169,6 +175,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   environmentVars,
   terminalType = "shell",
   mobileMode = false,
+  mobileInputElement = null,
   onStatusChange,
   onWebSocketReady,
   onSessionExit,
@@ -315,6 +322,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const visibleRef = useRef(visible);
   const isActiveRef = useRef(isActive);
   const textareaFocusedRef = useRef(false);
+  const mobileInputElementRef = useRef<HTMLTextAreaElement | null>(null);
+  const mobileInputFocusedRef = useRef(false);
   const lastSentFocusStateRef = useRef<"focus" | "blur" | null>(null);
   const lastDesiredFocusStateRef = useRef<"focus" | "blur" | null>(null);
   const pendingGenuineFocusRef = useRef(false);
@@ -461,6 +470,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   useEffect(() => {
     const reconcileFallbackFocus = (refocus: boolean) => {
       const terminal = xtermRef.current;
+      const mobileInput = mobileInputElementRef.current;
+      const clipboardInput = mobileModeRef.current
+        ? mobileInput
+        : terminal?.textarea;
       const canRefocus =
         refocus &&
         clipboardModeRef.current === "browser" &&
@@ -468,14 +481,20 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         visibleRef.current &&
         !document.hidden &&
         document.hasFocus() &&
-        terminal?.textarea;
+        clipboardInput;
       if (canRefocus) {
-        terminal.focus();
-        const refocused = document.activeElement === terminal.textarea;
-        textareaFocusedRef.current = refocused;
+        if (mobileModeRef.current) {
+          mobileInput?.focus();
+        } else {
+          terminal?.focus();
+        }
+        const refocused = document.activeElement === clipboardInput;
+        mobileInputFocusedRef.current = mobileModeRef.current && refocused;
+        textareaFocusedRef.current = !mobileModeRef.current && refocused;
         clipboardSync.setPresented({ focused: refocused });
       } else {
         textareaFocusedRef.current = false;
+        mobileInputFocusedRef.current = false;
         clipboardSync.setPresented({ focused: false });
       }
       syncFocusToServerRef.current?.();
@@ -1501,7 +1520,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       if (xtermTextarea) {
         const onXtermFocus = () => {
           textareaFocusedRef.current = true;
-          if (clipboardModeRef.current === "browser") {
+          if (
+            clipboardModeRef.current === "browser" &&
+            !mobileModeRef.current
+          ) {
             clipboardSync.setPresented({
               focused: !document.hidden && document.hasFocus(),
             });
@@ -1512,6 +1534,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         const onXtermBlur = (event: FocusEvent) => {
           if (
             clipboardModeRef.current === "browser" &&
+            !mobileModeRef.current &&
             isClipboardFallbackActionTarget(event.relatedTarget)
           ) {
             // The fallback button is an explicit clipboard surface. Keep the
@@ -1532,17 +1555,30 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
             return;
           }
           textareaFocusedRef.current = false;
-          if (clipboardModeRef.current === "browser") {
+          if (
+            clipboardModeRef.current === "browser" &&
+            !mobileModeRef.current
+          ) {
             clipboardSync.setPresented({ focused: false });
           }
           syncFocusToServer();
         };
         const onXtermCopy = () => {
-          if (clipboardModeRef.current !== "browser") return;
+          if (
+            clipboardModeRef.current !== "browser" ||
+            mobileModeRef.current
+          ) {
+            return;
+          }
           queueMicrotask(() => readBrowserClipboardRef.current());
         };
         const onXtermPaste = (event: ClipboardEvent) => {
-          if (clipboardModeRef.current !== "browser") return;
+          if (
+            clipboardModeRef.current !== "browser" ||
+            mobileModeRef.current
+          ) {
+            return;
+          }
           const text = event.clipboardData?.getData("text/plain");
           if (typeof text === "string" && text.length > 0) {
             clipboardSync.writeLocalText(text);
@@ -1572,7 +1608,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
               ? true
               : !document.hidden &&
                 document.hasFocus() &&
-                textareaFocusedRef.current,
+                (mobileModeRef.current
+                  ? mobileInputFocusedRef.current
+                  : textareaFocusedRef.current),
         });
         syncFocusToServer();
         if (!document.hidden) {
@@ -1585,7 +1623,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       const handleWindowFocus = () => {
         if (clipboardModeRef.current === "browser") {
           clipboardSync.setPresented({
-            focused: textareaFocusedRef.current,
+            focused: mobileModeRef.current
+              ? mobileInputFocusedRef.current
+              : textareaFocusedRef.current,
           });
           readBrowserClipboardRef.current();
         }
@@ -1693,18 +1733,97 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       focused:
         clipboardMode === "native"
           ? true
-          : document.hasFocus() && textareaFocusedRef.current,
+          : document.hasFocus() &&
+            (mobileMode
+              ? mobileInputFocusedRef.current
+              : textareaFocusedRef.current),
     });
-  }, [visible, isActive, clipboardMode, clipboardSync]);
+  }, [visible, isActive, clipboardMode, clipboardSync, mobileMode]);
 
   useEffect(() => {
     syncFocusToServerRef.current?.();
     reconcilerRef.current?.notifyPanelVisibility(visible);
   }, [visible]);
 
-  // Browser clipboard adapter. DOM copy/paste listeners live on xterm's own
-  // textarea (installed with the terminal above), never on document, so text
-  // pasted into search, dialogs, Settings, or unrelated inputs is excluded.
+  // Browser clipboard surfaces are exact elements, never document-wide:
+  // mobile uses the registered MobileInputBar below; desktop listeners live
+  // on xterm's textarea (installed with the terminal above). Search, dialogs,
+  // Settings, and unrelated inputs are therefore excluded.
+  useEffect(() => {
+    const element =
+      mobileMode && clipboardMode === "browser" ? mobileInputElement : null;
+    mobileInputElementRef.current = element;
+    if (!element) {
+      if (mobileInputFocusedRef.current) {
+        mobileInputFocusedRef.current = false;
+        clipboardSync.setPresented({ focused: false });
+      }
+      return;
+    }
+
+    const onFocus = () => {
+      mobileInputFocusedRef.current = true;
+      clipboardSync.setPresented({
+        focused: !document.hidden && document.hasFocus(),
+      });
+      readBrowserClipboardRef.current();
+      syncFocusToServerRef.current?.();
+    };
+    const onBlur = (event: FocusEvent) => {
+      if (isClipboardFallbackActionTarget(event.relatedTarget)) {
+        // The toast action is the only non-input surface allowed to retain
+        // the current clipboard lease for its user gesture.
+        clipboardSync.setPresented({ focused: true });
+        if (event.relatedTarget instanceof HTMLElement) {
+          event.relatedTarget.addEventListener(
+            "blur",
+            () => {
+              if (!clipboardFallbackActionRunningRef.current) {
+                reconcileClipboardFallbackFocusRef.current(false);
+              }
+            },
+            { once: true },
+          );
+        }
+        return;
+      }
+      mobileInputFocusedRef.current = false;
+      clipboardSync.setPresented({ focused: false });
+      syncFocusToServerRef.current?.();
+    };
+    const onCopy = () => {
+      queueMicrotask(() => readBrowserClipboardRef.current());
+    };
+    const onPaste = (event: ClipboardEvent) => {
+      const text = event.clipboardData?.getData("text/plain");
+      if (typeof text === "string" && text.length > 0) {
+        clipboardSync.writeLocalText(text);
+      } else {
+        readBrowserClipboardRef.current();
+      }
+    };
+
+    element.addEventListener("focus", onFocus);
+    element.addEventListener("blur", onBlur);
+    element.addEventListener("copy", onCopy);
+    element.addEventListener("paste", onPaste);
+    if (document.activeElement === element) onFocus();
+
+    return () => {
+      element.removeEventListener("focus", onFocus);
+      element.removeEventListener("blur", onBlur);
+      element.removeEventListener("copy", onCopy);
+      element.removeEventListener("paste", onPaste);
+      if (mobileInputElementRef.current === element) {
+        mobileInputElementRef.current = null;
+      }
+      if (mobileInputFocusedRef.current) {
+        mobileInputFocusedRef.current = false;
+        clipboardSync.setPresented({ focused: false });
+      }
+    };
+  }, [clipboardMode, clipboardSync, mobileInputElement, mobileMode]);
+
   useEffect(() => {
     if (
       clipboardMode !== "browser" ||

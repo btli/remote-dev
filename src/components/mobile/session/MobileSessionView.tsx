@@ -143,7 +143,8 @@ export function MobileSessionView({
 
   // ── Refs ────────────────────────────────────────────────────────────────
   const terminalRef = useRef<TerminalWithKeyboardRef>(null);
-  const inputBarRef = useRef<HTMLTextAreaElement>(null);
+  const [inputBarElement, setInputBarElement] =
+    useState<HTMLTextAreaElement | null>(null);
 
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
   const [agentExitInfo, setAgentExitInfo] = useState<{
@@ -422,6 +423,7 @@ export function MobileSessionView({
           isRecording={isRecording}
           environmentVars={environmentVars}
           mobileChrome="external"
+          mobileInputElement={inputBarElement}
           isActive
           visible
           onStatusChange={handleStatusChange}
@@ -442,7 +444,7 @@ export function MobileSessionView({
       />
 
       <MobileInputBar
-        ref={inputBarRef}
+        ref={setInputBarElement}
         onSubmit={handleInputSubmit}
         onModifiedKeyPress={handleInputSubmit}
         modifierActive={latch.anyActive}
