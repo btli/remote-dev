@@ -75,6 +75,8 @@ interface ClaudeAccountRowProps {
   /** All of the user's pools, to resolve membership ids → names. */
   pools: ClaudePoolSummary[];
   onMarkAvailable: (accountId: string) => Promise<void>;
+  /** Starts usage credential setup for this token-free account projection. */
+  onEnableUsage: (account: ClaudeUsageAccount) => void;
   /** Called after verify / rename / remove so the parent can refetch. */
   onChanged: () => void;
 }
@@ -131,6 +133,7 @@ export function ClaudeAccountRow({
   now,
   pools,
   onMarkAvailable,
+  onEnableUsage,
   onChanged,
 }: ClaudeAccountRowProps) {
   const [marking, setMarking] = useState(false);
@@ -143,6 +146,7 @@ export function ClaudeAccountRow({
   const [error, setError] = useState<string | null>(null);
 
   const limited = isLimitedNow(limitState);
+  const usageTrackingOff = account.authHealthy && !account.usageCredential;
   const countdown = formatResetCountdown(limitState.effectiveResetAt, now);
   const verifiedAge = formatRelativeAge(account.lastVerifiedAt, now);
 
@@ -338,21 +342,40 @@ export function ClaudeAccountRow({
         )}
       </div>
 
-      {/* Usage bars */}
-      <div className="grid grid-cols-2 gap-3">
-        <UsageBar label="5h" pct={limitState.window5hPct} />
-        <UsageBar label="7d" pct={limitState.window7dPct} />
-      </div>
-
-      {/* Status + countdown */}
-      <div className="flex flex-col gap-1 min-w-0">
-        <LimitStatusBadge state={limitState} now={now} />
-        {limited && countdown && (
-          <span className="text-[11px] text-muted-foreground tabular-nums">
-            resets in {countdown}
+      {/* Usage/status, or the honest missing-credential state. */}
+      {usageTrackingOff ? (
+        <div className="col-span-2 flex items-center justify-between gap-3">
+          <span className="text-xs text-muted-foreground">
+            Usage tracking off
           </span>
-        )}
-      </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => onEnableUsage(account)}
+            className="h-7 shrink-0 text-xs"
+          >
+            Enable usage tracking
+          </Button>
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <UsageBar label="5h" pct={limitState.window5hPct} />
+            <UsageBar label="7d" pct={limitState.window7dPct} />
+          </div>
+
+          {/* Status + countdown */}
+          <div className="flex flex-col gap-1 min-w-0">
+            <LimitStatusBadge state={limitState} now={now} />
+            {limited && countdown && (
+              <span className="text-[11px] text-muted-foreground tabular-nums">
+                resets in {countdown}
+              </span>
+            )}
+          </div>
+        </>
+      )}
 
       {/* Actions */}
       <div className="flex flex-col items-end gap-1">

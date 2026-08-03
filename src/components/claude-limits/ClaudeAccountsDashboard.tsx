@@ -27,11 +27,13 @@ import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api-fetch";
 import { useProfileContext } from "@/contexts/ProfileContext";
 import type {
+  ClaudeAccountSummary,
   ClaudeUsageAccount,
   LimitStateBlock,
 } from "@/types/claude-limits";
 import { ClaudeAccountRow } from "./ClaudeAccountRow";
 import { AddAccountDialog } from "./AddAccountDialog";
+import { UsageTrackingDialog } from "./UsageTrackingDialog";
 
 /** Re-tick the reset countdowns this often (ms). */
 const CLOCK_INTERVAL_MS = 30_000;
@@ -50,6 +52,9 @@ export function ClaudeAccountsDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [addOpen, setAddOpen] = useState(false);
+  const [usageTarget, setUsageTarget] =
+    useState<ClaudeAccountSummary | null>(null);
+  const [usageOpen, setUsageOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -86,6 +91,25 @@ export function ClaudeAccountsDashboard() {
     void load();
     void refreshAccounts();
   }, [load, refreshAccounts]);
+
+  const openUsageTracking = useCallback((account: ClaudeAccountSummary) => {
+    setAddOpen(false);
+    setUsageTarget(account);
+    setUsageOpen(true);
+  }, []);
+
+  const handleAddOpenChange = useCallback((open: boolean) => {
+    setAddOpen(open);
+    if (open) {
+      setUsageOpen(false);
+      setUsageTarget(null);
+    }
+  }, []);
+
+  const handleUsageOpenChange = useCallback((open: boolean) => {
+    setUsageOpen(open);
+    if (!open) setUsageTarget(null);
+  }, []);
 
   // Resolve the effective limit state for an account: prefer the live cache
   // (updated by the WS event) over the snapshot fetched here, so a
@@ -152,6 +176,7 @@ export function ClaudeAccountsDashboard() {
               now={now}
               pools={pools}
               onMarkAvailable={markAccountAvailable}
+              onEnableUsage={openUsageTracking}
               onChanged={reload}
             />
           ))}
@@ -174,9 +199,18 @@ export function ClaudeAccountsDashboard() {
 
       <AddAccountDialog
         open={addOpen}
-        onOpenChange={setAddOpen}
+        onOpenChange={handleAddOpenChange}
         onAdded={reload}
+        onEnableUsage={openUsageTracking}
       />
+      {usageTarget && (
+        <UsageTrackingDialog
+          account={usageTarget}
+          open={usageOpen}
+          onOpenChange={handleUsageOpenChange}
+          onCompleted={reload}
+        />
+      )}
     </div>
   );
 }
