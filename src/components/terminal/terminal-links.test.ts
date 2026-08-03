@@ -946,6 +946,64 @@ describe("terminal link provider", () => {
     expect(open).not.toHaveBeenCalled();
   });
 
+  it("bounds growing hard-row assignment context and fails closed", () => {
+    const rowText = "https://[?next=";
+    const cols = rowText.length;
+    const rowCount = 1_000;
+    const inputCodeUnits = cols * rowCount;
+    const rows = Array.from({ length: rowCount }, (_, index) =>
+      row(index, rowText, cols),
+    );
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const controller = terminalLinkController(terminalBuffer(rows), {
+      confirm,
+      open,
+    });
+    const nativeLastIndexOf = String.prototype.lastIndexOf;
+    let scannedCodeUnits = 0;
+    const lastIndexOf = vi
+      .spyOn(String.prototype, "lastIndexOf")
+      .mockImplementation(function (this: string, searchString, position) {
+        if (
+          searchString === "?" ||
+          searchString === "&" ||
+          searchString === "#"
+        ) {
+          scannedCodeUnits += this.length;
+        }
+        return nativeLastIndexOf.call(this, searchString, position);
+      });
+
+    let reconstructedWork: number;
+    let providerWork: number;
+    let links: ILink[];
+    try {
+      expect(computeTerminalLinks(rows, 499)).toEqual([]);
+      reconstructedWork = scannedCodeUnits;
+      scannedCodeUnits = 0;
+      links = provide(controller.linkProvider, 500);
+      providerWork = scannedCodeUnits;
+    } finally {
+      lastIndexOf.mockRestore();
+    }
+
+    const maxLinearWork = inputCodeUnits * 32;
+    expect(reconstructedWork).toBeLessThanOrEqual(maxLinearWork);
+    expect(providerWork).toBeLessThanOrEqual(maxLinearWork);
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({
+      range: {
+        start: { x: 1, y: 500 },
+        end: { x: cols, y: 500 },
+      },
+      decorations: { pointerCursor: false, underline: false },
+    });
+    links[0].activate(new MouseEvent("click"), links[0].text);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it("expands structurally beyond seventeen rows when the complete target is under budget", () => {
     const cols = 12;
     const url = `https://example.test/${"a".repeat(240)}`;

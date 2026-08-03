@@ -118,6 +118,9 @@ const LINK_SCAN_WORK_PER_CODE_UNIT = 32;
 // Reserve the worst-case passes before touching a candidate: raw slicing,
 // trimming, parsing, raw mapping, and parsed mapping.
 const LINK_CANDIDATE_WORK_PER_CODE_UNIT = 5;
+// Scheme/query classification searches and slices the same connection context
+// several times, so reserve its worst-case passes before scanning it.
+const LINK_CONTEXT_WORK_PER_CODE_UNIT = 10;
 const HARD_BOUNDARY_STARTS = [
   /^(?:[-*#$%+>]\s|(?:\d+|[a-z])[.)]\s|[\w.-]+@[\w.-]+:\S*[$#%]\s|[•◦‣⁃∙·▪▫●○◆◇▶▸])/iu,
   /^PS [a-z]:\\[^>\r\n]*>\s/iu,
@@ -259,8 +262,18 @@ function isHardBoundaryStart(text: string): boolean {
 function hasUrlValueAssignmentSuffix(
   text: string,
   requireScheme: boolean,
+  work?: TerminalLinkScanWork,
 ): boolean {
   if (!text.endsWith("=")) return false;
+  if (
+    work &&
+    !reserveLinkScanWork(
+      work,
+      text.length * LINK_CONTEXT_WORK_PER_CODE_UNIT,
+    )
+  ) {
+    return false;
+  }
   const schemeIndex = text.search(/https?:\/\//iu);
   if (requireScheme && schemeIndex < 0) return false;
   const token = schemeIndex >= 0 ? text.slice(schemeIndex) : text;
@@ -279,8 +292,11 @@ function hasUrlValueAssignmentSuffix(
   return delimiterIndex >= 0 && key.length > 0 && !key.includes("=");
 }
 
-function expectsUrlValue(text: string): boolean {
-  return hasUrlValueAssignmentSuffix(text, true);
+function expectsUrlValue(
+  text: string,
+  work?: TerminalLinkScanWork,
+): boolean {
+  return hasUrlValueAssignmentSuffix(text, true, work);
 }
 
 function connectionBetween(
@@ -288,6 +304,7 @@ function connectionBetween(
   next: TerminalLinkRowSnapshot,
   previousContext?: string,
   allowPartialUrlContext = false,
+  work?: TerminalLinkScanWork,
 ): RowConnection | null {
   if (next.index !== previous.index + 1) return null;
 
@@ -320,12 +337,14 @@ function connectionBetween(
     !expectsUrlValue(
       previousContext ??
         cellsText(previous, previousBounds.start, previousBounds.end),
+      work,
     ) &&
     !(
       allowPartialUrlContext &&
       hasUrlValueAssignmentSuffix(
         cellsText(previous, previousBounds.start, previousBounds.end),
         false,
+        work,
       )
     )
   ) {
@@ -379,6 +398,7 @@ function appendRowCells(
 
 function connectionsForRows(
   rows: readonly TerminalLinkRowSnapshot[],
+  work: TerminalLinkScanWork,
 ): Array<RowConnection | null> {
   const connections: Array<RowConnection | null> = [];
   let context = "";
@@ -393,16 +413,21 @@ function connectionsForRows(
       bounds.end,
     );
     connections.push(
-      connectionBetween(previous, rows[index + 1], context),
+      connectionBetween(previous, rows[index + 1], context, false, work),
     );
+    if (work.exhausted) break;
   }
   return connections;
 }
 
-function assembleGroups(rows: readonly TerminalLinkRowSnapshot[]): AssembledGroup[] {
+function assembleGroups(
+  rows: readonly TerminalLinkRowSnapshot[],
+  work: TerminalLinkScanWork,
+): AssembledGroup[] {
   if (rows.length === 0) return [];
   const sortedRows = [...rows].sort((a, b) => a.index - b.index);
-  const connections = connectionsForRows(sortedRows);
+  const connections = connectionsForRows(sortedRows, work);
+  if (work.exhausted) return [];
   const groups: AssembledGroup[] = [];
 
   let rowIndex = 0;
@@ -612,18 +637,28 @@ function linkScanWork(codeUnitBudget: number): TerminalLinkScanWork {
   };
 }
 
+function codeUnitsInRows(rows: readonly TerminalLinkRowSnapshot[]): number {
+  let result = 0;
+  for (const row of rows) {
+    for (const cell of row.cells) {
+      if (cell.width === 0) continue;
+      result += Math.max(1, cell.chars.length);
+    }
+  }
+  return result;
+}
+
 function analyzeTerminalLinks(
   rows: readonly TerminalLinkRowSnapshot[],
   requestedWork?: TerminalLinkScanWork,
 ): TerminalLinkAnalysis {
-  const groups = assembleGroups(rows);
-  const assembledCodeUnits = groups.reduce(
-    (total, group) => total + group.text.length,
-    0,
-  );
-  const work = requestedWork ?? linkScanWork(assembledCodeUnits);
+  const work = requestedWork ?? linkScanWork(codeUnitsInRows(rows));
+  const groups = assembleGroups(rows, work);
   const links: FullTerminalLinkCandidate[] = [];
   const lexical: LexicalTerminalLinkCandidate[] = [];
+  if (work.exhausted) {
+    return { links, lexical, exhausted: true };
+  }
   for (const group of groups) {
     const groupLexical = lexicalLinksInGroup(group, work);
     lexical.push(...groupLexical);
@@ -811,6 +846,7 @@ function collectStructuralSnapshot(
   requestedRow: number,
   cellBudget: number,
   codeUnitBudget: number,
+  work: TerminalLinkScanWork,
 ): StructuralSnapshot {
   const buffer = source.buffer.active;
   const cols = source.cols;
@@ -919,8 +955,8 @@ function collectStructuralSnapshot(
     const adjacent = adjacentSnapshot?.row;
     const connection = adjacent
       ? expandTop
-        ? connectionBetween(adjacent, edge, undefined, true)
-        : connectionBetween(edge, adjacent, connectionContext)
+        ? connectionBetween(adjacent, edge, undefined, true, work)
+        : connectionBetween(edge, adjacent, connectionContext, false, work)
       : null;
     if (!adjacent || !connection) {
       if (
@@ -1266,13 +1302,17 @@ function computeCurrentTerminalLinks(
   cellBudget: number,
   codeUnitBudget: number,
 ): ProviderTerminalLinkCandidate[] {
+  const work = linkScanWork(codeUnitBudget);
   const snapshot = collectStructuralSnapshot(
     source,
     requestedRow,
     cellBudget,
     codeUnitBudget,
+    work,
   );
-  const work = linkScanWork(codeUnitBudget);
+  if (work.exhausted) {
+    return exhaustedLinkScanGuard(source, requestedRow);
+  }
   const analysis = analyzeTerminalLinks(snapshot.rows, work);
   if (analysis.exhausted) {
     return exhaustedLinkScanGuard(source, requestedRow);
