@@ -16,8 +16,15 @@
  *   - 401                  → the token is INVALID ("OAuth access token is
  *                            invalid"). Verified live 2026-08-03 against the
  *                            user's three truncated 79-char tokens.
- *   - 400 / 429 / anything → auth PASSED (the request then failed validation
- *                            or rate limiting) → the token is VALID.
+ *   - 400 / 403 / other    → auth PASSED (the request then failed validation
+ *                            or authorization) → the token is VALID.
+ *   - 429                  → INDETERMINATE. Rate limiting is AMBIGUOUS about
+ *                            the credential: our only live observations of
+ *                            Anthropic 429s were for INVALID (truncated)
+ *                            setup-tokens [remote-dev-u7df] — an
+ *                            anti-brute-force layer that may fire BEFORE
+ *                            credential evaluation — so a 429 must not
+ *                            confirm health.
  *   - network error /      → INDETERMINATE. Offline must never block a save,
  *     timeout                so callers fall back to the CLI probe's answer.
  *
@@ -86,9 +93,21 @@ export async function probeTokenValidity(
       return "invalid";
     }
 
-    // Auth ran before request validation, so ANY non-401 (400 invalid_request,
-    // 429 rate-limited, even an unexpected 5xx) means the credential itself
-    // was accepted. That includes 403: Anthropic's `permission_error` means
+    if (response.status === 429) {
+      // Rate limiting is AMBIGUOUS about the credential: our only live
+      // observations of 429s on Anthropic endpoints were for INVALID
+      // (truncated) setup-tokens [remote-dev-u7df] — an anti-brute-force layer
+      // that may fire before credential evaluation — so a 429 must neither
+      // confirm nor deny; the caller falls back to the CLI probe's answer.
+      log.warn("Anthropic rate-limited the validity probe; token validity unknown", {
+        status: response.status,
+      });
+      return "indeterminate";
+    }
+
+    // Auth ran before request validation, so any other non-401 (400
+    // invalid_request, even an unexpected 5xx) means the credential itself was
+    // accepted. That includes 403: Anthropic's `permission_error` means
     // authenticated-but-forbidden — the CREDENTIAL is live, which is exactly
     // what this probe measures, so "valid" is the intended answer (not yet
     // live-verified for this endpoint, unlike the 401 case).

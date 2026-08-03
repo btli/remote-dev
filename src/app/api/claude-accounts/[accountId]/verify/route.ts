@@ -3,7 +3,11 @@
  * [remote-dev-n4x4.8]
  *
  * Runs `claude auth status --json` UNDER the account's env (its decrypted
- * OAuth token) and refreshes email / org / tier / auth-method / health.
+ * OAuth token) — concurrently with a network validity probe of that token
+ * [remote-dev-307w] — and refreshes email / org / tier / auth-method / health.
+ * The response carries `tokenValid` (tri-state; the network probe's verdict
+ * wins for health) and, exactly when it is false, a human-readable
+ * `tokenError` so the UI can explain a dead credential.
  *
  * This REPLACES the old "Sync" button, which read
  * `<profileConfigDir>/.claude/.credentials.json` — a file that never exists on

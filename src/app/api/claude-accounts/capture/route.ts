@@ -14,6 +14,13 @@
  * cleartext through the scrollback API, `rdv session scrollback`, and a plain
  * `tmux attach` for as long as that session lives. [remote-dev-n4x4.7]
  *
+ * Deliberate carve-out [remote-dev-307w]: on a `TOKEN_TRUNCATED` rejection the
+ * session stays OPEN and its scrollback is NOT wiped, so the user can widen
+ * the terminal and retry. That is acceptable because what sits in scrollback
+ * at that point is a clipped fragment Anthropic 401s — not a usable
+ * credential; the wipe-and-close contract above applies to every path that
+ * actually stored a token.
+ *
  * Only sessions created by `POST /api/claude-accounts/setup-session` (which
  * stamps `CLAUDE_SETUP_SESSION_MARKER` into `typeMetadata`) can be captured
  * from, so this endpoint can never be aimed at an unrelated terminal.

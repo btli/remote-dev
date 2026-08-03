@@ -14,7 +14,10 @@
  *      POST /api/claude-accounts/setup-session launches a real terminal
  *      session running `claude setup-token`. The user completes the browser
  *      sign-in, then presses Finish, which POSTs /api/claude-accounts/capture.
- *      A 409 `TOKEN_NOT_READY` keeps the dialog open with a retry.
+ *      A 409 `TOKEN_NOT_READY` keeps the dialog open with a retry; a 409
+ *      `TOKEN_TRUNCATED` (the pane clipped the printed token) surfaces the
+ *      truncation diagnosis — the setup session stays open server-side so the
+ *      user can widen the terminal, re-run, or fall back to the paste flow.
  *   2. "Paste a token" (always available; the remote / PWA fallback) —
  *      POST /api/claude-accounts with `{ token, alias? }`. A 400
  *      `INVALID_TOKEN_FORMAT` or `TOKEN_TRUNCATED` is surfaced verbatim.

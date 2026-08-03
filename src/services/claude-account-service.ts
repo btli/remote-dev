@@ -16,6 +16,12 @@
  * `<configDir>/.claude/.credentials.json` simply does not exist and the old
  * file-reading sync could never succeed. [remote-dev-n4x4.8]
  *
+ * The CLI probe alone cannot judge token LIVENESS (it reports `loggedIn: true`
+ * for a dead env token), so save/verify also run a concurrent network validity
+ * probe ({@link probeTokenValidity}) — and its verdict wins for `authHealthy`
+ * whenever it has one; the CLI answer decides only when the network probe is
+ * indeterminate. [remote-dev-307w]
+ *
  * SECURITY
  *   - The OAuth token is encrypted at rest (AES-256-GCM via `@/lib/encryption`,
  *     the same helper `profile_secrets_config` uses).

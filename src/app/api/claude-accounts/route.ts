@@ -10,8 +10,14 @@
  * GET  -> the user's accounts with alias / email / org / tier / auth health.
  *         NEVER includes the OAuth token — only `hasToken: boolean`.
  * POST -> the paste-a-token onboarding fallback: `{ token, alias? }`. Stores the
- *         token encrypted and reads identity via `claude auth status --json`.
+ *         token encrypted and reads identity via `claude auth status --json`
+ *         plus a concurrent network validity probe [remote-dev-307w].
  *         Re-posting a token for a known email UPDATES that account in place.
+ *         A pattern-valid token under 100 chars is rejected as
+ *         `400 TOKEN_TRUNCATED` (a partial copy can only ever 401); the save
+ *         response carries `tokenValid` (tri-state) and — exactly when it is
+ *         false — a human-readable `tokenError`, so the UI can show the
+ *         diagnosis instead of "Signed in".
  */
 
 import { NextResponse } from "next/server";

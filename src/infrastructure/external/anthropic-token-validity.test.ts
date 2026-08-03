@@ -4,9 +4,12 @@
  *
  * The contract under test is the status → validity mapping: Anthropic checks
  * AUTH before request validation on `POST /v1/messages`, so 401 is the only
- * "invalid" answer; 400/429/anything else prove the credential was accepted;
- * a network failure or timeout is "indeterminate" (never "invalid" — offline
- * must not poison a save). No live network calls anywhere here.
+ * "invalid" answer; 400/403/anything else prove the credential was accepted;
+ * 429 is "indeterminate" (rate limiting has only ever been observed for
+ * INVALID credentials [remote-dev-u7df] and may fire before credential
+ * evaluation, so it must not confirm health); a network failure or timeout is
+ * "indeterminate" too (never "invalid" — offline must not poison a save). No
+ * live network calls anywhere here.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { probeTokenValidity } from "./anthropic-token-validity";
@@ -39,12 +42,20 @@ describe("probeTokenValidity", () => {
 
   it.each([
     ["400 (request validation, auth already passed)", 400],
-    ["429 (rate limited, auth already passed)", 429],
+    ["403 (permission_error: authenticated-but-forbidden, credential live)", 403],
     ["200 (unreachable in practice, still authed)", 200],
     ["529 (overloaded)", 529],
   ])("maps %s to valid", async (_label, status) => {
     const { fetch } = fakeFetch(status);
     expect(await probeTokenValidity(TOKEN, fetch)).toBe("valid");
+  });
+
+  it("maps a 429 to indeterminate — rate limiting must not confirm health", async () => {
+    // Live 429s were only ever observed for INVALID (truncated) credentials
+    // [remote-dev-u7df]; the anti-brute-force layer may fire before credential
+    // evaluation, so the caller falls back to the CLI signal instead.
+    const { fetch } = fakeFetch(429);
+    expect(await probeTokenValidity(TOKEN, fetch)).toBe("indeterminate");
   });
 
   it("maps a network failure to indeterminate, never invalid", async () => {

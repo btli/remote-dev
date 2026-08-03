@@ -9,8 +9,11 @@
  * 5h / 7d utilization bars, a live reset countdown, a status badge, and pool
  * memberships.
  *
- * Actions: Verify (re-read identity via `claude auth status --json`), Rename
- * (PATCH the alias), Remove (DELETE, behind a confirm), plus the "Mark
+ * Actions: Verify (re-read identity via `claude auth status --json` plus the
+ * server's network validity probe — when the response reports
+ * `tokenValid: false` the row surfaces the `tokenError` diagnosis through its
+ * error display instead of only flipping the health badge [remote-dev-307w]),
+ * Rename (PATCH the alias), Remove (DELETE, behind a confirm), plus the "Mark
  * available" manual limit override for a limited account. Tokens are never
  * displayed or requested here — the account is token-free on the wire
  * (`hasToken` only).

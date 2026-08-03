@@ -180,6 +180,52 @@ describe("backfillClaudeAccounts", () => {
     expect(accounts.filter((a) => a.userId === "u2")).toHaveLength(1);
   });
 
+  it("still creates the placeholder for a PINNED profile of a user with accounts, and fills the link", async () => {
+    // The carve-out: without it, the per-user skip would leave this profile
+    // with no origin account, so the link fill would have nothing to write and
+    // project_profile_link.account_id would stay NULL forever — no rotation,
+    // no limit attribution for that project.
+    profiles.push({ id: "p-pinned", userId: "u1", name: "Pinned", provider: "claude" });
+    accounts.push({
+      id: "acct-added",
+      userId: "u1",
+      profileId: null, // "Add account" row — triggers the per-user skip.
+      authHealthy: true,
+    });
+    links.push({ projectId: "proj-1", profileId: "p-pinned", accountId: null });
+
+    const result = await backfillClaudeAccounts();
+
+    expect(result.accountsCreated).toBe(1);
+    expect(result.profilesSkippedUserHasAccounts).toBe(0);
+    expect(result.projectLinksLinked).toBe(1);
+    const placeholder = accounts.find((a) => a.profileId === "p-pinned")!;
+    expect(placeholder).toBeDefined();
+    expect(placeholder.authHealthy).toBe(false);
+    expect(links[0].accountId).toBe(placeholder.id);
+  });
+
+  it("keeps skipping a NON-pinned profile of that same user (no placeholder churn)", async () => {
+    profiles.push(
+      { id: "p-pinned", userId: "u1", name: "Pinned", provider: "claude" },
+      { id: "p-loose", userId: "u1", name: "Loose", provider: "claude" }
+    );
+    accounts.push({
+      id: "acct-added",
+      userId: "u1",
+      profileId: null,
+      authHealthy: true,
+    });
+    links.push({ projectId: "proj-1", profileId: "p-pinned", accountId: null });
+
+    const result = await backfillClaudeAccounts();
+
+    // Only the pinned profile escapes the skip; the loose one stays skipped.
+    expect(result.accountsCreated).toBe(1);
+    expect(result.profilesSkippedUserHasAccounts).toBe(1);
+    expect(accounts.find((a) => a.profileId === "p-loose")).toBeUndefined();
+  });
+
   it("stays idempotent under the skip rule: a re-run after migration creates nothing", async () => {
     profiles.push({ id: "p1", userId: "u1", name: "Claude A", provider: "claude" });
 

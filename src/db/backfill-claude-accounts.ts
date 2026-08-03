@@ -27,6 +27,13 @@
  *      post-n4x4.6 account-first world and gains nothing from placeholders;
  *      the pass still covers the true migration case (users with
  *      claude-capable profiles and ZERO accounts).
+ *
+ *      One carve-out narrows the skip: a profile that is the pinned PRIMARY of
+ *      at least one `project_profile_link` row with `account_id` NULL still
+ *      gets its placeholder even when its user has accounts — otherwise step 2
+ *      would have nothing to fill and the link's `account_id` would stay NULL
+ *      forever, leaving that project with nothing to rotate or attribute
+ *      limits to (the exact invariant step 1 exists to protect).
  *   2. Project links pinned to a primary PROFILE get their new `account_id`
  *      filled from that profile's origin account, so primary→pool selection
  *      keeps working without the compatibility bridge.
@@ -69,7 +76,9 @@ export interface ClaudeAccountBackfillResult {
   /**
    * Profiles skipped because their USER already has account rows
    * (remote-dev-ifcl): the user is past the migration, so no token-less
-   * placeholder is created for their profiles.
+   * placeholder is created for their profiles — unless the profile is the
+   * pinned primary of an unlinked project link (see the module docblock's
+   * carve-out), in which case it is created and counted in `accountsCreated`.
    */
   profilesSkippedUserHasAccounts: number;
   /** `project_profile_link.account_id` values filled in from the primary profile. */
@@ -100,6 +109,19 @@ export async function backfillClaudeAccounts(): Promise<ClaudeAccountBackfillRes
     }
   }
 
+  // Unlinked project links, read UP FRONT for two reasons: the profiles they
+  // pin must escape the per-user skip below (or step 2 could never fill them
+  // and `account_id` would stay NULL forever), and the same rows feed the
+  // link-fill pass at the end.
+  const links = await db.query.projectProfileLinks.findMany({
+    where: isNull(projectProfileLinks.accountId),
+    columns: { projectId: true, profileId: true },
+  });
+  const profilesPinnedByUnlinkedLinks = new Set<string>();
+  for (const link of links) {
+    if (link.profileId) profilesPinnedByUnlinkedLinks.add(link.profileId);
+  }
+
   let accountsCreated = 0;
   let accountsAlreadyPresent = 0;
   let profilesSkippedUserHasAccounts = 0;
@@ -109,7 +131,13 @@ export async function backfillClaudeAccounts(): Promise<ClaudeAccountBackfillRes
       accountsAlreadyPresent++;
       continue;
     }
-    if (usersWithAccounts.has(profile.userId)) {
+    if (
+      usersWithAccounts.has(profile.userId) &&
+      // Carve-out (see module docblock): a profile pinned as the primary of an
+      // unlinked project link still needs its origin account, so the link fill
+      // below has something to attribute limits / rotation to.
+      !profilesPinnedByUnlinkedLinks.has(profile.id)
+    ) {
       profilesSkippedUserHasAccounts++;
       continue;
     }
@@ -131,11 +159,6 @@ export async function backfillClaudeAccounts(): Promise<ClaudeAccountBackfillRes
   }
 
   // Fill `project_profile_link.account_id` from the primary profile's account.
-  const links = await db.query.projectProfileLinks.findMany({
-    where: isNull(projectProfileLinks.accountId),
-    columns: { projectId: true, profileId: true },
-  });
-
   let projectLinksLinked = 0;
   for (const link of links) {
     if (!link.profileId) continue;
