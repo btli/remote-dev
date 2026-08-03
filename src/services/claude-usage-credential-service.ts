@@ -23,7 +23,9 @@
 
 import {
   mkdir as nodeMkdir,
+  lstat as nodeLstat,
   readdir as nodeReaddir,
+  realpath as nodeRealpath,
   rm as nodeRm,
   stat as nodeStat,
   writeFile as nodeWriteFile,
@@ -98,6 +100,11 @@ export interface UsageCredentialFileSystem {
   ): Promise<void>;
   readdir(path: string): Promise<UsageScratchDirEntry[]>;
   stat(path: string): Promise<{ mtimeMs: number }>;
+  lstat(path: string): Promise<{
+    isDirectory(): boolean;
+    isSymbolicLink(): boolean;
+  }>;
+  realpath(path: string): Promise<string>;
 }
 
 export interface UsageCredentialHarvester {
@@ -173,6 +180,8 @@ const defaultFileSystem: UsageCredentialFileSystem = {
   },
   readdir: async (path) => nodeReaddir(path, { withFileTypes: true }),
   stat: async (path) => nodeStat(path),
+  lstat: async (path) => nodeLstat(path),
+  realpath: async (path) => nodeRealpath(path),
 };
 
 const defaultTrackUsage: UsageSnapshotTracker = async (input) => {
@@ -265,7 +274,7 @@ export class ClaudeUsageCredentialService {
   }
 
   get scratchRoot(): string {
-    return join(
+    return resolve(
       this.dependencies.getDataDir(),
       USAGE_OAUTH_SCRATCH_DIRECTORY
     );
@@ -300,7 +309,8 @@ export class ClaudeUsageCredentialService {
   async capture(
     input: UsageCredentialCaptureInput
   ): Promise<UsageCredentialCaptureResult> {
-    this.assertSafeScratchPath(input.scratchDir);
+    this.assertExactCaptureScratchPath(input);
+    await this.assertExistingSafeScratchDirectory(input.scratchDir);
 
     const credential = await this.dependencies.harvester.harvest(
       input.scratchDir
@@ -338,6 +348,12 @@ export class ClaudeUsageCredentialService {
       });
     }
 
+    // The usage fetch is an awaited network window during which the literal
+    // directory could be rebound. Revalidate provenance + canonical location
+    // immediately before the identity probe performs its next credential
+    // access under CLAUDE_CONFIG_DIR.
+    this.assertExactCaptureScratchPath(input);
+    await this.assertExistingSafeScratchDirectory(input.scratchDir);
     const identity = await this.dependencies.probeIdentity(input.scratchDir);
     const targetEmail = normalizedEmail(input.targetEmail);
     const scratchEmail = normalizedEmail(identity.email);
@@ -371,7 +387,7 @@ export class ClaudeUsageCredentialService {
 
   /** Filesystem removal boundary shared by successful and orphan cleanup. */
   async removeScratchDirectory(scratchDir: string): Promise<void> {
-    this.assertSafeScratchPath(scratchDir);
+    await this.assertExistingSafeScratchDirectory(scratchDir);
     await this.dependencies.fileSystem.rm(scratchDir, {
       recursive: true,
       force: true,
@@ -417,6 +433,18 @@ export class ClaudeUsageCredentialService {
       if (this.dependencies.now().getTime() - mtimeMs <= maxAgeMs) continue;
 
       try {
+        // Re-resolve immediately before credential deletion. Keep childPath
+        // literal for the harvester because Claude Code's Keychain suffix is
+        // derived from that exact string, not its canonical target.
+        await this.assertExistingSafeScratchDirectory(childPath);
+      } catch (error) {
+        log.error("Refused unsafe orphaned usage scratch directory", {
+          scratchDir: childPath,
+          error: String(error),
+        });
+        continue;
+      }
+      try {
         await this.dependencies.harvester.delete(childPath);
       } catch (error) {
         log.error("Could not delete orphaned scratch credential", {
@@ -426,6 +454,10 @@ export class ClaudeUsageCredentialService {
       }
       try {
         await this.removeScratchDirectory(childPath);
+        log.info(
+          "Removed orphaned Claude usage credential scratch directory",
+          { scratchDir: childPath }
+        );
       } catch (error) {
         log.error("Could not remove orphaned usage scratch directory", {
           scratchDir: childPath,
@@ -438,6 +470,45 @@ export class ClaudeUsageCredentialService {
   private assertSafeScratchPath(scratchDir: string): void {
     if (!isStrictlyWithinUsageScratchRoot(this.scratchRoot, scratchDir)) {
       throw new Error("Usage credential path is not beneath the scratch root");
+    }
+  }
+
+  private assertExactCaptureScratchPath(
+    input: UsageCredentialCaptureInput
+  ): void {
+    const expected = join(this.scratchRoot, input.sessionId);
+    if (input.scratchDir !== expected) {
+      throw new Error(
+        "Usage credential metadata does not name the exact scratch directory for this session"
+      );
+    }
+    this.assertSafeScratchPath(input.scratchDir);
+  }
+
+  /**
+   * Reject symlinks and ancestor-symlink escapes. The literal path remains the
+   * credential identity, while canonical paths are used only to prove that the
+   * existing directory still resides beneath the canonical scratch root.
+   */
+  private async assertExistingSafeScratchDirectory(
+    scratchDir: string
+  ): Promise<void> {
+    this.assertSafeScratchPath(scratchDir);
+    const info = await this.dependencies.fileSystem.lstat(scratchDir);
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new Error("Usage credential scratch path is not a real directory");
+    }
+
+    const [canonicalRoot, canonicalScratch] = await Promise.all([
+      this.dependencies.fileSystem.realpath(this.scratchRoot),
+      this.dependencies.fileSystem.realpath(scratchDir),
+    ]);
+    if (
+      !isStrictlyWithinUsageScratchRoot(canonicalRoot, canonicalScratch)
+    ) {
+      throw new Error(
+        "Usage credential directory is outside the canonical scratch root"
+      );
     }
   }
 
@@ -476,6 +547,10 @@ export class ClaudeUsageCredentialService {
     input: UsageCredentialCaptureInput
   ): Promise<void> {
     try {
+      this.assertExactCaptureScratchPath(input);
+      // Revalidate immediately before deleting the exact derived credential;
+      // the directory may have been rebound after the initial capture check.
+      await this.assertExistingSafeScratchDirectory(input.scratchDir);
       await this.dependencies.harvester.delete(input.scratchDir);
     } catch (error) {
       log.error("Could not delete captured scratch credential", {

@@ -42,6 +42,9 @@ const captureMessages = {
 export const POST = withApiAuth(async (request, { userId }) => {
   const result = await parseJsonBody<{ sessionId?: unknown }>(request);
   if ("error" in result) return result.error;
+  if (!isRecord(result.data)) {
+    return errorResponse("Request body must be a JSON object", 400);
+  }
 
   const { sessionId } = result.data;
   if (
@@ -119,3 +122,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
     usageValidated: captured.usageValidated,
   });
 });
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

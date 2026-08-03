@@ -5,10 +5,20 @@
  * never reaches a real user credential or external process.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { resolve } from "node:path";
 import type {
   ClaudeUsageFetchResult,
   ClaudeUsageSnapshot,
 } from "@/infrastructure/external/anthropic-usage-adapter";
+
+const logMocks = vi.hoisted(() => ({
+  error: vi.fn(),
+  warn: vi.fn(),
+  info: vi.fn(),
+  debug: vi.fn(),
+}));
+vi.mock("@/lib/logger", () => ({ createLogger: () => logMocks }));
+
 import {
   ClaudeUsageCredentialService,
   UsageCredentialCaptureError,
@@ -70,6 +80,11 @@ function makeDependencies(
       rm: vi.fn(async () => undefined),
       readdir: vi.fn(async () => []),
       stat: vi.fn(async () => ({ mtimeMs: NOW.getTime() })),
+      lstat: vi.fn(async () => ({
+        isDirectory: () => true,
+        isSymbolicLink: () => false,
+      })),
+      realpath: vi.fn(async (path: string) => path),
     },
     harvester: {
       harvest: vi.fn(async () => credential),
@@ -109,6 +124,10 @@ const captureInput = {
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  logMocks.error.mockReset();
+  logMocks.warn.mockReset();
+  logMocks.info.mockReset();
+  logMocks.debug.mockReset();
 });
 
 describe("scratch preparation and command", () => {
@@ -159,6 +178,15 @@ describe("scratch preparation and command", () => {
     );
     expect(deps.fileSystem.mkdir).not.toHaveBeenCalled();
   });
+
+  it("makes the scratch root absolute when RDV_DATA_DIR is relative", () => {
+    const deps = makeDependencies({ getDataDir: () => "relative-rdv-data" });
+    const service = new ClaudeUsageCredentialService(deps);
+
+    expect(service.scratchRoot).toBe(
+      resolve("relative-rdv-data", "claude-oauth")
+    );
+  });
 });
 
 describe("capture validation and storage", () => {
@@ -174,7 +202,7 @@ describe("capture validation and storage", () => {
 
       await expect(
         service.capture({ ...captureInput, scratchDir })
-      ).rejects.toThrow(/scratch root/i);
+      ).rejects.toThrow(/exact scratch directory|scratch root/i);
       expect(deps.harvester.harvest).not.toHaveBeenCalled();
       expect(deps.fetchUsage).not.toHaveBeenCalled();
       expect(deps.probeIdentity).not.toHaveBeenCalled();
@@ -182,6 +210,89 @@ describe("capture validation and storage", () => {
       expect(deps.harvester.delete).not.toHaveBeenCalled();
     }
   );
+
+  it.each([
+    `${ROOT}/session-2`,
+    `${ROOT}/session-1/nested`,
+    `${ROOT}/temporary/../session-1`,
+  ])(
+    "requires the exact prepared literal for session.id, rejecting rebound path %s",
+    async (scratchDir) => {
+      const deps = makeDependencies();
+      const service = new ClaudeUsageCredentialService(deps);
+
+      await expect(
+        service.capture({ ...captureInput, scratchDir })
+      ).rejects.toThrow(/exact scratch directory/i);
+      expect(deps.fileSystem.lstat).not.toHaveBeenCalled();
+      expect(deps.harvester.harvest).not.toHaveBeenCalled();
+      expect(deps.probeIdentity).not.toHaveBeenCalled();
+      expect(deps.storeCredential).not.toHaveBeenCalled();
+    }
+  );
+
+  it("rejects a scratch symlink before harvest or any downstream effect", async () => {
+    const deps = makeDependencies();
+    vi.mocked(deps.fileSystem.lstat).mockResolvedValue({
+      isDirectory: () => false,
+      isSymbolicLink: () => true,
+    });
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.capture(captureInput)).rejects.toThrow(
+      /real directory/i
+    );
+    expect(deps.harvester.harvest).not.toHaveBeenCalled();
+    expect(deps.fetchUsage).not.toHaveBeenCalled();
+    expect(deps.probeIdentity).not.toHaveBeenCalled();
+    expect(deps.storeCredential).not.toHaveBeenCalled();
+    expect(deps.harvester.delete).not.toHaveBeenCalled();
+  });
+
+  it("rejects a canonical target outside the canonical scratch root before harvest", async () => {
+    const deps = makeDependencies();
+    vi.mocked(deps.fileSystem.realpath).mockImplementation(async (path) =>
+      path === ROOT ? "/canonical/rdv/claude-oauth" : "/outside/session-1"
+    );
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.capture(captureInput)).rejects.toThrow(
+      /canonical scratch root/i
+    );
+    expect(deps.harvester.harvest).not.toHaveBeenCalled();
+    expect(deps.fetchUsage).not.toHaveBeenCalled();
+    expect(deps.probeIdentity).not.toHaveBeenCalled();
+    expect(deps.storeCredential).not.toHaveBeenCalled();
+    expect(deps.harvester.delete).not.toHaveBeenCalled();
+  });
+
+  it("revalidates after network validation and rejects a rebound before identity access", async () => {
+    const deps = makeDependencies();
+    let inspections = 0;
+    vi.mocked(deps.fileSystem.lstat).mockImplementation(async () => {
+      inspections += 1;
+      return inspections === 1
+        ? {
+            isDirectory: () => true,
+            isSymbolicLink: () => false,
+          }
+        : {
+            isDirectory: () => false,
+            isSymbolicLink: () => true,
+          };
+    });
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.capture(captureInput)).rejects.toThrow(
+      /real directory/i
+    );
+    expect(deps.harvester.harvest).toHaveBeenCalledWith(SCRATCH);
+    expect(deps.fetchUsage).toHaveBeenCalledOnce();
+    expect(deps.probeIdentity).not.toHaveBeenCalled();
+    expect(deps.storeCredential).not.toHaveBeenCalled();
+    expect(deps.harvester.delete).not.toHaveBeenCalled();
+    expect(deps.fileSystem.rm).not.toHaveBeenCalled();
+  });
 
   it("surfaces CREDENTIALS_NOT_READY without any later effect", async () => {
     const deps = makeDependencies({
@@ -480,6 +591,34 @@ describe("successful capture cleanup", () => {
     });
     expect(order).toEqual(["credential", "directory", "history", "close"]);
   });
+
+  it("revalidates immediately before deletion and skips credential/rm after a symlink rebound", async () => {
+    const deps = makeDependencies();
+    let inspections = 0;
+    vi.mocked(deps.fileSystem.lstat).mockImplementation(async () => {
+      inspections += 1;
+      return inspections <= 2
+        ? {
+            isDirectory: () => true,
+            isSymbolicLink: () => false,
+          }
+        : {
+            isDirectory: () => false,
+            isSymbolicLink: () => true,
+          };
+    });
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.capture(captureInput)).resolves.toMatchObject({
+      account,
+    });
+    expect(deps.harvester.harvest).toHaveBeenCalledWith(SCRATCH);
+    expect(deps.storeCredential).toHaveBeenCalledOnce();
+    expect(deps.harvester.delete).not.toHaveBeenCalled();
+    expect(deps.fileSystem.rm).not.toHaveBeenCalled();
+    expect(deps.clearHistory).toHaveBeenCalled();
+    expect(deps.closeSession).toHaveBeenCalled();
+  });
 });
 
 describe("recursive deletion guard", () => {
@@ -543,7 +682,40 @@ describe("orphan cleanup", () => {
       `credential:${ROOT}/old`,
       `directory:${ROOT}/old`,
     ]);
+    expect(logMocks.info).toHaveBeenCalledWith(
+      "Removed orphaned Claude usage credential scratch directory",
+      { scratchDir: `${ROOT}/old` }
+    );
   });
+
+  it.each(["symlink", "canonical-outside"] as const)(
+    "does not delete an old direct child that resolves as %s",
+    async (unsafeKind) => {
+      const deps = makeDependencies();
+      vi.mocked(deps.fileSystem.readdir).mockResolvedValue([
+        { name: "unsafe", isDirectory: () => true },
+      ]);
+      vi.mocked(deps.fileSystem.stat).mockResolvedValue({
+        mtimeMs: NOW.getTime() - 25 * 60 * 60 * 1000,
+      });
+      if (unsafeKind === "symlink") {
+        vi.mocked(deps.fileSystem.lstat).mockResolvedValue({
+          isDirectory: () => false,
+          isSymbolicLink: () => true,
+        });
+      } else {
+        vi.mocked(deps.fileSystem.realpath).mockImplementation(async (path) =>
+          path === ROOT ? "/canonical/root" : "/outside/unsafe"
+        );
+      }
+      const service = new ClaudeUsageCredentialService(deps);
+
+      await expect(service.cleanupOrphans()).resolves.toBeUndefined();
+      expect(deps.harvester.delete).not.toHaveBeenCalled();
+      expect(deps.fileSystem.rm).not.toHaveBeenCalled();
+      expect(logMocks.info).not.toHaveBeenCalled();
+    }
+  );
 
   it("continues across credential deletion, rm, and stat failures", async () => {
     const order: string[] = [];

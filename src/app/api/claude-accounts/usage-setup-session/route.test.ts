@@ -43,7 +43,7 @@ const command =
   `CLAUDE_CONFIG_DIR='${scratchDir}' CLAUDE_CODE_OAUTH_TOKEN='' ` +
   "ANTHROPIC_API_KEY='' ANTHROPIC_AUTH_TOKEN='' claude auth login";
 
-function request(body: Record<string, unknown>) {
+function request(body: unknown) {
   return new Request(
     "http://localhost/api/claude-accounts/usage-setup-session",
     {
@@ -80,6 +80,8 @@ beforeEach(() => {
 
 describe("POST /api/claude-accounts/usage-setup-session", () => {
   it.each([
+    [null, /JSON object/i],
+    [[], /JSON object/i],
     [{ accountId: "account-1" }, /projectId/i],
     [{ projectId: "", accountId: "account-1" }, /projectId/i],
     [{ projectId: 42, accountId: "account-1" }, /projectId/i],

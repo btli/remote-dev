@@ -6,6 +6,7 @@ import type { CreateSessionInput, SessionStatus } from "@/types/session";
 import { WORKTREE_TYPES } from "@/types/session";
 import { broadcastSidebarChanged } from "@/lib/broadcast";
 import { createLogger } from "@/lib/logger";
+import { CLAUDE_USAGE_SETUP_SESSION_MARKER } from "@/services/claude-account-service";
 
 const log = createLogger("api/sessions");
 
@@ -79,6 +80,21 @@ export const POST = withApiAuth(async (request, { userId }) => {
     }>(request);
     if ("error" in result) return result.error;
     const body = result.data;
+
+    // The usage OAuth marker creates a privileged binding: the capture route
+    // trusts its stored accountId/scratchDir after owner-scoped session lookup.
+    // Generic session creation must never let an authenticated caller mint
+    // that provenance, regardless of the marker value supplied.
+    if (
+      isRecord(body.typeMetadata) &&
+      Object.hasOwn(body.typeMetadata, CLAUDE_USAGE_SETUP_SESSION_MARKER)
+    ) {
+      return errorResponse(
+        "Claude usage setup metadata is server-managed",
+        400,
+        "PROTECTED_SESSION_METADATA"
+      );
+    }
 
     // Phase G0a: terminal_session.project_id is NOT NULL. Require a project.
     // Accept legacy `folderId` as an alias during the rename migration window.
@@ -172,3 +188,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
     return errorResponse("Failed to create session", 500);
   }
 });
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

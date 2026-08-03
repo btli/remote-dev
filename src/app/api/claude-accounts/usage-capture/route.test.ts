@@ -63,7 +63,7 @@ const account = {
 
 const savedAccount = { ...account, usageCredential: true };
 
-function request(body: Record<string, unknown>) {
+function request(body: unknown) {
   return new Request("http://localhost/api/claude-accounts/usage-capture", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -88,6 +88,8 @@ beforeEach(() => {
 
 describe("POST /api/claude-accounts/usage-capture", () => {
   it.each([
+    [null, /JSON object/i],
+    [[], /JSON object/i],
     [{}, /sessionId/i],
     [{ sessionId: "" }, /sessionId/i],
     [{ sessionId: "   " }, /sessionId/i],
