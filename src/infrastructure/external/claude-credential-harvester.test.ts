@@ -45,12 +45,6 @@ function openedCredential(raw: string = credentialJson()) {
 }
 
 describe("deriveClaudeCredentialServiceName", () => {
-  it("uses Claude Code's un-hashed service for the default config dir", () => {
-    expect(deriveClaudeCredentialServiceName()).toBe(
-      "Claude Code-credentials"
-    );
-  });
-
   it("pins the verified custom-config derivation vector", () => {
     expect(
       deriveClaudeCredentialServiceName(
@@ -278,6 +272,29 @@ describe("ClaudeCredentialHarvester.harvest", () => {
 });
 
 describe("ClaudeCredentialHarvester.delete", () => {
+  it.each([undefined, ""])(
+    "refuses the macOS default credential when configDir is %s",
+    async (configDir) => {
+      const execFile = vi.fn();
+      const harvester = new ClaudeCredentialHarvester({
+        platform: "darwin",
+        username: "test-user",
+        execFile,
+        openFile: vi.fn(),
+        deleteFile: vi.fn(),
+      });
+      const deleteWithInvalidConfig = harvester.delete as unknown as (
+        value: string | undefined
+      ) => Promise<unknown>;
+
+      await expect(deleteWithInvalidConfig(configDir)).rejects.toMatchObject({
+        name: "CredentialHarvesterError",
+        code: "CONFIG_DIR_REQUIRED",
+      });
+      expect(execFile).not.toHaveBeenCalled();
+    }
+  );
+
   it("deletes only the derived macOS Keychain item through execFile", async () => {
     const execFile = vi.fn(async () => ({ stdout: "", stderr: "" }));
     const harvester = new ClaudeCredentialHarvester({

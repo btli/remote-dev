@@ -18,13 +18,11 @@ import { promisify } from "node:util";
 
 const DEFAULT_CREDENTIAL_SERVICE = "Claude Code-credentials";
 
-/** Derive Claude Code's Keychain service for a default or custom config dir. */
-export function deriveClaudeCredentialServiceName(
-  configDir?: string
-): string {
-  if (configDir === undefined) return DEFAULT_CREDENTIAL_SERVICE;
+/** Derive Claude Code's Keychain service for one explicit custom config dir. */
+export function deriveClaudeCredentialServiceName(configDir: string): string {
+  const requiredConfigDir = requireConfigDir(configDir);
   const suffix = createHash("sha256")
-    .update(configDir)
+    .update(requiredConfigDir)
     .digest("hex")
     .slice(0, 8);
   return `${DEFAULT_CREDENTIAL_SERVICE}-${suffix}`;
@@ -129,11 +127,12 @@ export class CredentialHarvester {
   }
 
   /** Return a usable credential, or null while login is absent/incomplete. */
-  async harvest(configDir?: string): Promise<ClaudeUsageOAuthCredential | null> {
+  async harvest(configDir: string): Promise<ClaudeUsageOAuthCredential | null> {
+    const requiredConfigDir = requireConfigDir(configDir);
     let raw: string;
     try {
       if (this.dependencies.platform === "darwin") {
-        const service = deriveClaudeCredentialServiceName(configDir);
+        const service = deriveClaudeCredentialServiceName(requiredConfigDir);
         const result = await this.dependencies.execFile("security", [
           "find-generic-password",
           "-s",
@@ -144,7 +143,7 @@ export class CredentialHarvester {
         ]);
         raw = result.stdout;
       } else if (this.dependencies.platform === "linux") {
-        raw = await this.readLinuxCredential(configDir);
+        raw = await this.readLinuxCredential(requiredConfigDir);
       } else {
         throw this.unsupportedPlatform();
       }
@@ -165,18 +164,21 @@ export class CredentialHarvester {
    * Best-effort targeted deletion. Missing items are reported as `absent`;
    * unexpected failures are surfaced so callers can log them loudly.
    */
-  async delete(configDir?: string): Promise<"deleted" | "absent"> {
+  async delete(configDir: string): Promise<"deleted" | "absent"> {
+    const requiredConfigDir = requireConfigDir(configDir);
     try {
       if (this.dependencies.platform === "darwin") {
         await this.dependencies.execFile("security", [
           "delete-generic-password",
           "-s",
-          deriveClaudeCredentialServiceName(configDir),
+          deriveClaudeCredentialServiceName(requiredConfigDir),
           "-a",
           this.dependencies.username,
         ]);
       } else if (this.dependencies.platform === "linux") {
-        await this.dependencies.deleteFile(this.credentialFilePath(configDir));
+        await this.dependencies.deleteFile(
+          this.credentialFilePath(requiredConfigDir)
+        );
       } else {
         throw this.unsupportedPlatform();
       }
@@ -192,13 +194,7 @@ export class CredentialHarvester {
     }
   }
 
-  private credentialFilePath(configDir?: string): string {
-    if (configDir === undefined) {
-      throw new CredentialHarvesterError(
-        "CONFIG_DIR_REQUIRED",
-        "A Claude config directory is required for file credentials"
-      );
-    }
+  private credentialFilePath(configDir: string): string {
     return join(configDir, ".credentials.json");
   }
 
@@ -208,7 +204,7 @@ export class CredentialHarvester {
    * descriptor. This avoids the lstat-then-read race that would otherwise let
    * `.credentials.json` be rebound to a default/outside credential.
    */
-  private async readLinuxCredential(configDir?: string): Promise<string> {
+  private async readLinuxCredential(configDir: string): Promise<string> {
     const handle = await this.dependencies.openFile(
       this.credentialFilePath(configDir),
       fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
@@ -233,6 +229,17 @@ export class CredentialHarvester {
       `Claude usage credential harvesting is unsupported on ${this.dependencies.platform}`
     );
   }
+}
+
+/** Refuse the default Claude Code credential service on every platform. */
+function requireConfigDir(configDir: string | undefined): string {
+  if (typeof configDir !== "string" || configDir.trim().length === 0) {
+    throw new CredentialHarvesterError(
+      "CONFIG_DIR_REQUIRED",
+      "A Claude config directory is required for usage credentials"
+    );
+  }
+  return configDir;
 }
 
 /** Descriptive compatibility name for callers that prefer provider context. */

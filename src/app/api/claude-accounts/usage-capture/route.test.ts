@@ -6,6 +6,14 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const logMocks = vi.hoisted(() => ({
+  error: vi.fn(),
+  warn: vi.fn(),
+  info: vi.fn(),
+  debug: vi.fn(),
+}));
+const pollEnabled = vi.hoisted(() => ({ value: false }));
+
 const usageMocks = vi.hoisted(() => {
   class CaptureError extends Error {
     readonly name = "UsageCredentialCaptureError";
@@ -23,6 +31,10 @@ const usageMocks = vi.hoisted(() => {
 });
 
 vi.mock("@/lib/auth-utils", () => ({ getAuthSession: vi.fn() }));
+vi.mock("@/lib/logger", () => ({ createLogger: () => logMocks }));
+vi.mock("@/infrastructure/usage-limit/poll-config", () => ({
+  isUsagePollEnabled: () => pollEnabled.value,
+}));
 vi.mock("@/services/api-key-service", () => ({
   validateApiKey: vi.fn(),
   touchApiKey: vi.fn().mockResolvedValue(undefined),
@@ -38,6 +50,7 @@ vi.mock("@/services/claude-usage-credential-service", () => ({
 }));
 
 import { getAuthSession } from "@/lib/auth-utils";
+import { CredentialHarvesterError } from "@/infrastructure/external/claude-credential-harvester";
 import * as SessionService from "@/services/session-service";
 import {
   CLAUDE_USAGE_SETUP_SESSION_MARKER,
@@ -83,7 +96,10 @@ beforeEach(() => {
   usageMocks.capture.mockResolvedValue({
     account: savedAccount,
     usageValidated: true,
+    cleanupComplete: true,
   });
+  pollEnabled.value = false;
+  logMocks.error.mockReset();
 });
 
 describe("POST /api/claude-accounts/usage-capture", () => {
@@ -225,12 +241,45 @@ describe("POST /api/claude-accounts/usage-capture", () => {
     expect(response.status).toBe(409);
     expect(body).toMatchObject({ code: "CAPTURE_FAILED" });
     expect(JSON.stringify(body)).not.toContain(secret);
+    expect(logMocks.error).toHaveBeenCalledWith(
+      "Claude usage credential capture failed",
+      {
+        sessionId: "session-1",
+        accountId: "metadata-account",
+        classification: "Error",
+        error: `Error: failure ${secret}`,
+      }
+    );
+  });
+
+  it("classifies credential harvester failures in the error log", async () => {
+    usageMocks.capture.mockRejectedValue(
+      new CredentialHarvesterError(
+        "READ_FAILED",
+        "Claude usage credential could not be read"
+      )
+    );
+
+    const response = await POST(request({ sessionId: "session-1" }));
+
+    expect(response.status).toBe(409);
+    expect(logMocks.error).toHaveBeenCalledWith(
+      "Claude usage credential capture failed",
+      {
+        sessionId: "session-1",
+        accountId: "metadata-account",
+        classification: "READ_FAILED",
+        error:
+          "CredentialHarvesterError: Claude usage credential could not be read",
+      }
+    );
   });
 
   it("404s when account ownership vanishes during the owner-scoped store", async () => {
     usageMocks.capture.mockResolvedValue({
       account: null,
       usageValidated: false,
+      cleanupComplete: true,
     });
 
     const response = await POST(request({ sessionId: "session-1" }));
@@ -238,12 +287,22 @@ describe("POST /api/claude-accounts/usage-capture", () => {
     expect(response.status).toBe(404);
   });
 
-  it("returns exactly the token-free account projection and validation flag", async () => {
-    const response = await POST(request({ sessionId: "session-1" }));
-    const body = await response.json();
+  it.each([false, true])(
+    "returns token-free validation, cleanup, and poll-enabled flags when polling is %s",
+    async (enabled) => {
+      pollEnabled.value = enabled;
 
-    expect(response.status).toBe(200);
-    expect(body).toEqual({ account: savedAccount, usageValidated: true });
-    expect(JSON.stringify(body)).not.toMatch(/accessToken|refreshToken|scopes/i);
-  });
+      const response = await POST(request({ sessionId: "session-1" }));
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toEqual({
+        account: savedAccount,
+        usageValidated: true,
+        cleanupComplete: true,
+        pollEnabled: enabled,
+      });
+      expect(JSON.stringify(body)).not.toMatch(/accessToken|refreshToken|scopes/i);
+    }
+  );
 });

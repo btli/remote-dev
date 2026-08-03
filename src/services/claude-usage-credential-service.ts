@@ -112,7 +112,7 @@ export interface UsageCredentialFileSystem {
 
 export interface UsageCredentialHarvester {
   harvest(scratchDir: string): Promise<ClaudeUsageOAuthCredential | null>;
-  delete(scratchDir: string): Promise<unknown>;
+  delete(scratchDir: string): Promise<"deleted" | "absent">;
 }
 
 export type UsageFetch = (
@@ -170,6 +170,8 @@ export interface UsageCredentialCaptureResult {
   account: ClaudeAccountView | null;
   /** True only when the validation snapshot was successfully persisted. */
   usageValidated: boolean;
+  /** False when any post-store credential, disk, scrollback, or session cleanup failed. */
+  cleanupComplete: boolean;
 }
 
 interface ScratchRootProof {
@@ -274,6 +276,12 @@ function normalizedEmail(value: string | null): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed ? trimmed.toLocaleLowerCase("en-US") : null;
+}
+
+function isCredentialDeleteComplete(
+  outcome: unknown
+): outcome is "deleted" | "absent" {
+  return outcome === "deleted" || outcome === "absent";
 }
 
 /** Orchestrates preparation, safe capture, persistence, and teardown. */
@@ -417,8 +425,11 @@ export class ClaudeUsageCredentialService {
       this.dependencies.now()
     );
     if (!stored) {
-      await this.cleanupSuccessfulCapture(input, rootProof);
-      return { account: null, usageValidated: false };
+      const cleanupComplete = await this.cleanupSuccessfulCapture(
+        input,
+        rootProof
+      );
+      return { account: null, usageValidated: false, cleanupComplete };
     }
 
     const usageValidated =
@@ -429,8 +440,11 @@ export class ClaudeUsageCredentialService {
           )
         : false;
 
-    await this.cleanupSuccessfulCapture(input, rootProof);
-    return { account: stored, usageValidated };
+    const cleanupComplete = await this.cleanupSuccessfulCapture(
+      input,
+      rootProof
+    );
+    return { account: stored, usageValidated, cleanupComplete };
   }
 
   /** Filesystem removal boundary shared by successful and orphan cleanup. */
@@ -453,6 +467,10 @@ export class ClaudeUsageCredentialService {
    * Remove only direct child directories older than 24 hours. Credential
    * deletion always receives the exact child path before recursive removal;
    * each failure is isolated so later children are still processed.
+   *
+   * The default caller runs this sweep once at server boot. An abandoned or
+   * ACCOUNT_MISMATCH-rejected login therefore remains until a later restart
+   * after crossing the age threshold; the 24-hour constant is not a timer.
    */
   async cleanupOrphans(
     maxAgeMs: number = USAGE_OAUTH_ORPHAN_MAX_AGE_MS
@@ -515,12 +533,22 @@ export class ClaudeUsageCredentialService {
         continue;
       }
       try {
-        await this.dependencies.harvester.delete(childPath);
+        const deleteOutcome = await this.dependencies.harvester.delete(
+          childPath
+        );
+        if (!isCredentialDeleteComplete(deleteOutcome)) {
+          throw new Error("Credential deletion returned an unknown outcome");
+        }
       } catch (error) {
         log.error("Could not delete orphaned scratch credential", {
           scratchDir: childPath,
           error: String(error),
         });
+        log.warn(
+          "Retained orphaned usage scratch directory for credential deletion retry",
+          { scratchDir: childPath }
+        );
+        continue;
       }
       try {
         await this.removeScratchDirectoryUnderRoot(childPath, rootProof);
@@ -710,7 +738,9 @@ export class ClaudeUsageCredentialService {
   private async cleanupSuccessfulCapture(
     input: UsageCredentialCaptureInput,
     expectedRoot: ScratchRootProof
-  ): Promise<void> {
+  ): Promise<boolean> {
+    let cleanupComplete = true;
+    let credentialDeleteComplete = false;
     try {
       this.assertExactCaptureScratchPath(input);
       // Revalidate immediately before deleting the exact derived credential;
@@ -719,27 +749,42 @@ export class ClaudeUsageCredentialService {
         input.scratchDir,
         expectedRoot
       );
-      await this.dependencies.harvester.delete(input.scratchDir);
+      const deleteOutcome = await this.dependencies.harvester.delete(
+        input.scratchDir
+      );
+      if (!isCredentialDeleteComplete(deleteOutcome)) {
+        throw new Error("Credential deletion returned an unknown outcome");
+      }
+      credentialDeleteComplete = true;
     } catch (error) {
+      cleanupComplete = false;
       log.error("Could not delete captured scratch credential", {
         sessionId: input.sessionId,
         error: String(error),
       });
-    }
-    try {
-      await this.removeScratchDirectoryUnderRoot(
-        input.scratchDir,
-        expectedRoot
+      log.warn(
+        "Retained captured usage scratch directory for credential deletion retry",
+        { sessionId: input.sessionId, scratchDir: input.scratchDir }
       );
-    } catch (error) {
-      log.error("Could not remove captured usage scratch directory", {
-        sessionId: input.sessionId,
-        error: String(error),
-      });
+    }
+    if (credentialDeleteComplete) {
+      try {
+        await this.removeScratchDirectoryUnderRoot(
+          input.scratchDir,
+          expectedRoot
+        );
+      } catch (error) {
+        cleanupComplete = false;
+        log.error("Could not remove captured usage scratch directory", {
+          sessionId: input.sessionId,
+          error: String(error),
+        });
+      }
     }
     try {
       await this.dependencies.clearHistory(input.tmuxSessionName);
     } catch (error) {
+      cleanupComplete = false;
       log.error("Could not clear usage setup-session scrollback", {
         sessionId: input.sessionId,
         error: String(error),
@@ -748,11 +793,13 @@ export class ClaudeUsageCredentialService {
     try {
       await this.dependencies.closeSession(input.sessionId, input.userId);
     } catch (error) {
+      cleanupComplete = false;
       log.error("Could not close usage setup session", {
         sessionId: input.sessionId,
         error: String(error),
       });
     }
+    return cleanupComplete;
   }
 }
 
@@ -763,6 +810,13 @@ export function prepareUsageCredentialScratch(
   sessionId: string
 ): Promise<PreparedUsageScratch> {
   return defaultService.prepareScratch(sessionId);
+}
+
+/** Guarded default scratch removal used when setup metadata cannot be stored. */
+export function removeUsageCredentialScratch(
+  scratchDir: string
+): Promise<void> {
+  return defaultService.removeScratchDirectory(scratchDir);
 }
 
 /** Default capture boundary used by the capture route. */

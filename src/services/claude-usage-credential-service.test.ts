@@ -630,6 +630,7 @@ describe("capture validation and storage", () => {
       await expect(service.capture(captureInput)).resolves.toEqual({
         account,
         usageValidated: false,
+        cleanupComplete: true,
       });
       expect(deps.storeCredential).toHaveBeenCalledOnce();
       expect(deps.trackUsage).not.toHaveBeenCalled();
@@ -691,6 +692,7 @@ describe("capture validation and storage", () => {
     await expect(service.capture(captureInput)).resolves.toEqual({
       account,
       usageValidated: true,
+      cleanupComplete: true,
     });
 
     expect(deps.fetchUsage).toHaveBeenCalledOnce();
@@ -740,6 +742,7 @@ describe("capture validation and storage", () => {
     await expect(service.capture(captureInput)).resolves.toEqual({
       account: null,
       usageValidated: false,
+      cleanupComplete: true,
     });
     expect(deps.trackUsage).not.toHaveBeenCalled();
     expect(deps.harvester.delete).toHaveBeenCalledWith(SCRATCH);
@@ -760,6 +763,7 @@ describe("capture validation and storage", () => {
     await expect(service.capture(captureInput)).resolves.toEqual({
       account,
       usageValidated: false,
+      cleanupComplete: true,
     });
   });
 
@@ -774,6 +778,7 @@ describe("capture validation and storage", () => {
     await expect(service.capture(captureInput)).resolves.toEqual({
       account,
       usageValidated: false,
+      cleanupComplete: true,
     });
     expect(deps.harvester.delete).toHaveBeenCalledWith(SCRATCH);
     expect(deps.closeSession).toHaveBeenCalled();
@@ -830,7 +835,7 @@ describe("successful capture cleanup", () => {
     });
   });
 
-  it("continues through every cleanup step after each individual failure", async () => {
+  it("retains the scratch directory when credential deletion fails and reports incomplete cleanup", async () => {
     const order: string[] = [];
     const deps = makeDependencies({
       harvester: {
@@ -840,6 +845,67 @@ describe("successful capture cleanup", () => {
           throw new Error("delete failed");
         }),
       },
+      clearHistory: vi.fn(async () => {
+        order.push("history");
+      }),
+      closeSession: vi.fn(async () => {
+        order.push("close");
+      }),
+    });
+    vi.mocked(deps.fileSystem.rm).mockImplementation(async () => {
+      order.push("directory");
+    });
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.capture(captureInput)).resolves.toEqual({
+      account,
+      usageValidated: true,
+      cleanupComplete: false,
+    });
+    expect(order).toEqual(["credential", "history", "close"]);
+    expect(deps.fileSystem.rm).not.toHaveBeenCalled();
+    expect(logMocks.warn).toHaveBeenCalledWith(
+      "Retained captured usage scratch directory for credential deletion retry",
+      { sessionId: "session-1", scratchDir: SCRATCH }
+    );
+  });
+
+  it("removes the scratch directory when credential deletion reports absent", async () => {
+    const deps = makeDependencies({
+      harvester: {
+        harvest: vi.fn(async () => credential),
+        delete: vi.fn(async () => "absent" as const),
+      },
+    });
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.capture(captureInput)).resolves.toMatchObject({
+      cleanupComplete: true,
+    });
+    expect(deps.fileSystem.rm).toHaveBeenCalledWith(SCRATCH, {
+      recursive: true,
+      force: true,
+    });
+  });
+
+  it("retains the scratch directory when credential deletion returns an unknown outcome", async () => {
+    const deps = makeDependencies({
+      harvester: {
+        harvest: vi.fn(async () => credential),
+        delete: vi.fn(async () => "unexpected" as never),
+      },
+    });
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.capture(captureInput)).resolves.toMatchObject({
+      cleanupComplete: false,
+    });
+    expect(deps.fileSystem.rm).not.toHaveBeenCalled();
+  });
+
+  it("continues through directory, history, and session failures and reports incomplete cleanup", async () => {
+    const order: string[] = [];
+    const deps = makeDependencies({
       clearHistory: vi.fn(async () => {
         order.push("history");
         throw new Error("clear failed");
@@ -857,8 +923,9 @@ describe("successful capture cleanup", () => {
 
     await expect(service.capture(captureInput)).resolves.toMatchObject({
       account,
+      cleanupComplete: false,
     });
-    expect(order).toEqual(["credential", "directory", "history", "close"]);
+    expect(order).toEqual(["directory", "history", "close"]);
   });
 
   it("revalidates immediately before deletion and skips credential/rm after a symlink rebound", async () => {
@@ -878,6 +945,7 @@ describe("successful capture cleanup", () => {
 
     await expect(service.capture(captureInput)).resolves.toMatchObject({
       account,
+      cleanupComplete: false,
     });
     expect(deps.harvester.harvest).toHaveBeenCalledWith(SCRATCH);
     expect(deps.storeCredential).toHaveBeenCalledOnce();
@@ -1030,6 +1098,47 @@ describe("orphan cleanup", () => {
     );
   });
 
+  it("removes an old orphan directory when credential deletion reports absent", async () => {
+    const deps = makeDependencies();
+    vi.mocked(deps.fileSystem.readdir).mockResolvedValue([
+      { name: "old", isDirectory: () => true },
+    ]);
+    vi.mocked(deps.fileSystem.stat).mockResolvedValue({
+      mtimeMs: NOW.getTime() - 25 * 60 * 60 * 1000,
+    });
+    vi.mocked(deps.harvester.delete).mockResolvedValue("absent");
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await service.cleanupOrphans();
+
+    expect(deps.fileSystem.rm).toHaveBeenCalledWith(`${ROOT}/old`, {
+      recursive: true,
+      force: true,
+    });
+  });
+
+  it("retains an old orphan directory when credential deletion fails", async () => {
+    const deps = makeDependencies();
+    vi.mocked(deps.fileSystem.readdir).mockResolvedValue([
+      { name: "old", isDirectory: () => true },
+    ]);
+    vi.mocked(deps.fileSystem.stat).mockResolvedValue({
+      mtimeMs: NOW.getTime() - 25 * 60 * 60 * 1000,
+    });
+    vi.mocked(deps.harvester.delete).mockRejectedValue(
+      new Error("keychain locked")
+    );
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await service.cleanupOrphans();
+
+    expect(deps.fileSystem.rm).not.toHaveBeenCalled();
+    expect(logMocks.warn).toHaveBeenCalledWith(
+      "Retained orphaned usage scratch directory for credential deletion retry",
+      { scratchDir: `${ROOT}/old` }
+    );
+  });
+
   it.each(["symlink", "canonical-outside"] as const)(
     "does not delete an old direct child that resolves as %s",
     async (unsafeKind) => {
@@ -1085,7 +1194,6 @@ describe("orphan cleanup", () => {
     await expect(service.cleanupOrphans()).resolves.toBeUndefined();
     expect(order).toEqual([
       `credential:${ROOT}/delete-fails`,
-      `directory:${ROOT}/delete-fails`,
       `credential:${ROOT}/rm-fails`,
       `directory:${ROOT}/rm-fails`,
       `credential:${ROOT}/last`,

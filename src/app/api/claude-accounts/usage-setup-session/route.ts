@@ -20,7 +20,10 @@ import {
   CLAUDE_USAGE_SETUP_SESSION_MARKER,
   getAccount,
 } from "@/services/claude-account-service";
-import { prepareUsageCredentialScratch } from "@/services/claude-usage-credential-service";
+import {
+  prepareUsageCredentialScratch,
+  removeUsageCredentialScratch,
+} from "@/services/claude-usage-credential-service";
 import * as SessionService from "@/services/session-service";
 import * as TmuxService from "@/services/tmux-service";
 
@@ -68,7 +71,9 @@ export const POST = withApiAuth(async (request, { userId }) => {
     },
   });
 
-  let prepared: Awaited<ReturnType<typeof prepareUsageCredentialScratch>>;
+  let prepared: Awaited<
+    ReturnType<typeof prepareUsageCredentialScratch>
+  > | null = null;
   try {
     prepared = await prepareUsageCredentialScratch(session.id);
     await SessionService.updateSession(session.id, userId, {
@@ -79,6 +84,16 @@ export const POST = withApiAuth(async (request, { userId }) => {
       sessionId: session.id,
       error: String(error),
     });
+    if (prepared) {
+      try {
+        await removeUsageCredentialScratch(prepared.scratchDir);
+      } catch (removeError) {
+        log.error("Could not remove failed Claude usage scratch directory", {
+          sessionId: session.id,
+          error: String(removeError),
+        });
+      }
+    }
     try {
       await SessionService.closeSession(session.id, userId);
     } catch (closeError) {
@@ -88,6 +103,10 @@ export const POST = withApiAuth(async (request, { userId }) => {
       });
     }
     throw error;
+  }
+
+  if (!prepared) {
+    throw new Error("Claude usage scratch preparation did not return a result");
   }
 
   let commandSent = true;

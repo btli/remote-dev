@@ -22,6 +22,7 @@ vi.mock("@/services/claude-account-service", () => ({
 }));
 vi.mock("@/services/claude-usage-credential-service", () => ({
   prepareUsageCredentialScratch: vi.fn(),
+  removeUsageCredentialScratch: vi.fn(),
 }));
 
 import { getAuthSession } from "@/lib/auth-utils";
@@ -31,7 +32,10 @@ import {
   CLAUDE_USAGE_SETUP_SESSION_MARKER,
   getAccount,
 } from "@/services/claude-account-service";
-import { prepareUsageCredentialScratch } from "@/services/claude-usage-credential-service";
+import {
+  prepareUsageCredentialScratch,
+  removeUsageCredentialScratch,
+} from "@/services/claude-usage-credential-service";
 import { POST } from "./route";
 
 const session = {
@@ -74,6 +78,8 @@ beforeEach(() => {
     scratchDir,
     command,
   });
+  vi.mocked(removeUsageCredentialScratch).mockReset();
+  vi.mocked(removeUsageCredentialScratch).mockResolvedValue(undefined);
   vi.mocked(TmuxService.sendKeys).mockReset();
   vi.mocked(TmuxService.sendKeys).mockResolvedValue(undefined);
 });
@@ -178,31 +184,65 @@ describe("POST /api/claude-accounts/usage-setup-session", () => {
     expect(SessionService.closeSession).not.toHaveBeenCalled();
   });
 
-  it.each(["prepare", "metadata"] as const)(
-    "best-effort closes the created session when %s fails",
-    async (failure) => {
-      if (failure === "prepare") {
-        vi.mocked(prepareUsageCredentialScratch).mockRejectedValue(
-          new Error("mkdir failed")
-        );
-      } else {
-        vi.mocked(SessionService.updateSession).mockRejectedValue(
-          new Error("DB failed")
-        );
-      }
+  it("best-effort closes the created session when scratch preparation fails", async () => {
+    vi.mocked(prepareUsageCredentialScratch).mockRejectedValue(
+      new Error("mkdir failed")
+    );
 
-      const response = await POST(
-        request({ projectId: "project-1", accountId: "account-1" })
-      );
+    const response = await POST(
+      request({ projectId: "project-1", accountId: "account-1" })
+    );
 
-      expect(response.status).toBe(500);
-      expect(SessionService.closeSession).toHaveBeenCalledWith(
-        "actual-session-id",
-        "user-1"
-      );
-      expect(TmuxService.sendKeys).not.toHaveBeenCalled();
-    }
-  );
+    expect(response.status).toBe(500);
+    expect(removeUsageCredentialScratch).not.toHaveBeenCalled();
+    expect(SessionService.closeSession).toHaveBeenCalledWith(
+      "actual-session-id",
+      "user-1"
+    );
+    expect(TmuxService.sendKeys).not.toHaveBeenCalled();
+  });
+
+  it("removes the prepared scratch directory before closing after metadata update failure", async () => {
+    vi.mocked(SessionService.updateSession).mockRejectedValue(
+      new Error("DB failed")
+    );
+
+    const response = await POST(
+      request({ projectId: "project-1", accountId: "account-1" })
+    );
+
+    expect(response.status).toBe(500);
+    expect(removeUsageCredentialScratch).toHaveBeenCalledWith(scratchDir);
+    expect(
+      vi.mocked(removeUsageCredentialScratch).mock.invocationCallOrder[0]
+    ).toBeLessThan(
+      vi.mocked(SessionService.closeSession).mock.invocationCallOrder[0]
+    );
+    expect(SessionService.closeSession).toHaveBeenCalledWith(
+      "actual-session-id",
+      "user-1"
+    );
+    expect(TmuxService.sendKeys).not.toHaveBeenCalled();
+  });
+
+  it("still closes the session when metadata-failure scratch removal also fails", async () => {
+    vi.mocked(SessionService.updateSession).mockRejectedValue(
+      new Error("DB failed")
+    );
+    vi.mocked(removeUsageCredentialScratch).mockRejectedValue(
+      new Error("rm failed")
+    );
+
+    const response = await POST(
+      request({ projectId: "project-1", accountId: "account-1" })
+    );
+
+    expect(response.status).toBe(500);
+    expect(SessionService.closeSession).toHaveBeenCalledWith(
+      "actual-session-id",
+      "user-1"
+    );
+  });
 
   it("still surfaces preparation failure when best-effort session close also fails", async () => {
     vi.mocked(prepareUsageCredentialScratch).mockRejectedValue(

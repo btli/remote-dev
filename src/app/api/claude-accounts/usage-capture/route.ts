@@ -9,11 +9,12 @@
  * Responses expose only the token-free account view and whether the already
  * validated usage snapshot was recorded. Expected retry/action failures are
  * stable 409 codes; environmental errors are collapsed to a generic response
- * and logged only by classification, never by potentially secret-bearing
- * message text.
+ * and logged at error level with a typed classification when one is available.
  */
 
 import { NextResponse } from "next/server";
+import { CredentialHarvesterError } from "@/infrastructure/external/claude-credential-harvester";
+import { isUsagePollEnabled } from "@/infrastructure/usage-limit/poll-config";
 import { errorResponse, parseJsonBody, withApiAuth } from "@/lib/api";
 import { createLogger } from "@/lib/logger";
 import {
@@ -102,11 +103,16 @@ export const POST = withApiAuth(async (request, { userId }) => {
         error.code
       );
     }
-    log.warn("Claude usage credential capture failed", {
+    log.error("Claude usage credential capture failed", {
       sessionId,
       accountId,
-      error:
-        error instanceof Error ? error.name : "UnknownCaptureFailure",
+      classification:
+        error instanceof CredentialHarvesterError
+          ? error.code
+          : error instanceof Error
+            ? error.name
+            : "UnknownCaptureFailure",
+      error: String(error),
     });
     return errorResponse(
       "Could not capture Claude usage credentials. Try again from the sign-in session.",
@@ -120,6 +126,8 @@ export const POST = withApiAuth(async (request, { userId }) => {
   return NextResponse.json({
     account: captured.account,
     usageValidated: captured.usageValidated,
+    cleanupComplete: captured.cleanupComplete,
+    pollEnabled: isUsagePollEnabled(),
   });
 });
 
