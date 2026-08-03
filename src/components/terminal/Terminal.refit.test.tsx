@@ -769,6 +769,59 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
     ).toEqual({ type: "client_focus", reassert: true });
   });
 
+  it("flushes genuine focus when returning from chat during the restart import gap", async () => {
+    const Terminal = await getTerminal();
+    const view = render(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:1"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.sentTypes()).toContain("client_focus");
+    });
+    const firstSocket = wsInstances.at(-1)!;
+
+    view.rerender(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:1"
+        terminalType="shell"
+        visible={false}
+      />,
+    );
+    await waitFor(() => {
+      expect(firstSocket.sentTypes()).toContain("client_blur");
+    });
+
+    autoOpenSockets = false;
+    view.rerender(
+      <Terminal
+        sessionId="s1"
+        tmuxSessionName="rdv-s1"
+        wsUrl="ws://localhost:2"
+        terminalType="shell"
+        visible
+      />,
+    );
+    await waitFor(() => {
+      expect(wsInstances.at(-1)).not.toBe(firstSocket);
+      expect(wsInstances.at(-1)?.readyState).toBe(MockWebSocket.CONNECTING);
+    });
+
+    const replacement = wsInstances.at(-1)!;
+    act(() => replacement.open());
+    expect(
+      replacement.sent
+        .map((frame) => JSON.parse(frame) as { type: string; reassert?: boolean })
+        .find((frame) => frame.type === "client_focus"),
+    ).toEqual({ type: "client_focus" });
+  });
+
   it("preserves a pending genuine focus across a same-session effect restart", async () => {
     const Terminal = await getTerminal();
     const view = render(

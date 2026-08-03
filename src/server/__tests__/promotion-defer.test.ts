@@ -459,6 +459,21 @@ describe("PrimaryPromotionCoordinator", () => {
     expect(host.broadcasts).toHaveLength(0);
   });
 
+  it("ignores older-generation same-instance genuine focus against its newer primary", () => {
+    const candidate = host.connections.get("B")!;
+    candidate.clientInstanceId = "stable-instance";
+    candidate.connectionSeq = 10;
+    const primary = host.connections.get("C")!;
+    primary.clientInstanceId = "stable-instance";
+    primary.connectionSeq = 11;
+    host.primaries.set("s1", "C");
+    host.lastPromotionAt.set("s1", Date.now() - 1000);
+
+    expect(coordinator.requestPromotion("s1", "B", false)).toBe("ignored");
+    expect(host.primaries.get("s1")).toBe("C");
+    expect(host.broadcasts).toHaveLength(0);
+  });
+
   it("defers genuine focus from the primary's newer same-instance socket until cooldown expiry", () => {
     host.connections.get("A")!.clientInstanceId = "stable-instance";
     host.connections.get("B")!.clientInstanceId = "stable-instance";

@@ -21,6 +21,7 @@ class FakeHost implements ReconcilerHost {
   panelVisible = true;
   pageVisible = true;
   fitNoopMode = false;
+  fitResultOverride: { cols: number; rows: number } | null = null;
   grid = { cols: 80, rows: 24 };
   fitCalls = 0;
   ws = new FakeWebSocket();
@@ -36,6 +37,10 @@ class FakeHost implements ReconcilerHost {
   fitVerified() {
     this.fitCalls++;
     if (this.fitNoopMode) return null;
+    if (this.fitResultOverride) {
+      this.grid = { ...this.fitResultOverride };
+      return { ...this.grid };
+    }
 
     const proposal = {
       cols: Math.floor(this.rect.width / 8),
@@ -178,7 +183,8 @@ describe("ResizeReconciler", () => {
     expect(reconciler.getDesiredDims()).toBeNull();
 
     host.fitNoopMode = false;
-    reconciler.request("window-focus");
+    reconciler.observeRect(800, 480);
+    await vi.advanceTimersByTimeAsync(20);
     await host.pumpUntilIdle();
     expect(host.sentResizes.at(-1)).toEqual({
       type: "resize",
@@ -246,6 +252,15 @@ describe("ResizeReconciler", () => {
     reconciler.request("window-resize");
     await host.pumpUntilIdle();
 
+    expect(host.sentResizes).toHaveLength(0);
+    expect(reconciler.getDesiredDims()).toBeNull();
+
+    host.rect = { width: 800, height: 480 };
+    host.fitResultOverride = { cols: MIN_COLS - 1, rows: MIN_ROWS - 1 };
+    reconciler.request("window-resize");
+    await host.pumpUntilIdle();
+
+    expect(host.fitCalls).toBe(1);
     expect(host.sentResizes).toHaveLength(0);
     expect(reconciler.getDesiredDims()).toBeNull();
   });

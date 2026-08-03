@@ -916,9 +916,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           lastSentFocusStateRef.current = null;
           onWebSocketReadyRef.current?.(ws);
           const pendingGenuineFocus = pendingGenuineFocusRef.current;
+          const currentDesiredFocusState = getDesiredFocus() ? "focus" : "blur";
+          const flushAsGenuineFocus =
+            pendingGenuineFocus ||
+            (lastDesiredFocusStateRef.current === "blur" &&
+              currentDesiredFocusState === "focus");
           const focusFlushed = syncFocusToServer(
             true,
-            hasConnectedBeforeRef.current && !pendingGenuineFocus,
+            hasConnectedBeforeRef.current && !flushAsGenuineFocus,
           );
           if (pendingGenuineFocus && focusFlushed) {
             pendingGenuineFocusRef.current = false;
