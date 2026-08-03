@@ -58,6 +58,20 @@
  * - `percent` is a 0-100 integer and the `utilization` fields are 0-100 floats.
  *   (The *response headers* use a 0-1 fraction; do not conflate the scales.)
  *
+ * ## Throttling (verified live 2026-08-03) [remote-dev-u7df]
+ *
+ * The read is free of QUOTA but not of RATE LIMIT: Anthropic throttles
+ * long-lived `claude setup-token` credentials on this endpoint to roughly one
+ * request per hour per token. Excess reads get HTTP 429 with a `retry-after`
+ * header (observed: `retry-after: 3578` seconds, counting down toward a fixed
+ * reset). Short-lived Keychain access tokens are NOT throttled this way
+ * (proven: simultaneous 200 vs 429 from the same IP) — but the app stores
+ * setup-tokens, so under any cadence faster than hourly most polls 429.
+ * {@link fetchClaudeUsage} therefore surfaces a 429 as a first-class
+ * "rate-limited" outcome carrying the reset time, so the sweep can align its
+ * next attempt to the quota window instead of discarding the header and
+ * backing off blind.
+ *
  * ## api_key accounts
  *
  * This endpoint is subscription-only: it describes claude.ai rolling windows
@@ -164,23 +178,41 @@ export interface ClaudeUsageSnapshot {
 }
 
 /**
+ * The outcome of one usage read, discriminated so a caller can tell "here is
+ * a snapshot" from "the endpoint refused with retry-after" from "no data".
+ * [remote-dev-u7df] The 429 case used to collapse into a bare null and the
+ * `retry-after` header — the only signal that names the quota reset — was
+ * discarded.
+ */
+export type ClaudeUsageFetchResult =
+  | { outcome: "snapshot"; snapshot: ClaudeUsageSnapshot }
+  | { outcome: "rate-limited"; retryAt: Date }
+  | { outcome: "no-data" };
+
+/** The dataless outcome (shared: it carries nothing case-specific). */
+const NO_DATA: ClaudeUsageFetchResult = { outcome: "no-data" };
+
+/**
  * Fetch a usage snapshot for the account behind `token`.
  *
  * @param token  The OAuth access token for a subscription account. Used only as
  *   the request credential — never logged.
  * @param kind   The account kind. Only "subscription" is fetchable here; see
- *   the module docblock for why api_key returns null.
+ *   the module docblock for why api_key yields no data.
  * @param fetchImpl  Injected fetch (defaults to the global). Tests pass a fake.
- * @returns A normalized snapshot, or null when usage cannot be determined
- *   (unsupported kind, network/abort error, non-200, malformed body, or a body
- *   carrying no recognizable usage).
+ * @returns A "snapshot" outcome carrying the normalized snapshot; a
+ *   "rate-limited" outcome carrying the reset time when the endpoint 429'd
+ *   with a usable `retry-after` (see the Throttling section of the module
+ *   docblock); or "no-data" when usage cannot be determined (unsupported kind,
+ *   network/abort error, other non-200, a 429 without a usable retry-after,
+ *   malformed body, or a body carrying no recognizable usage).
  */
 export async function fetchClaudeUsage(
   token: string,
   kind: ClaudeAccountKind = "subscription",
   fetchImpl: FetchLike = defaultFetch
-): Promise<ClaudeUsageSnapshot | null> {
-  if (!token) return null;
+): Promise<ClaudeUsageFetchResult> {
+  if (!token) return NO_DATA;
 
   if (kind !== "subscription") {
     // The OAuth usage endpoint has no api_key equivalent, and a raw key's
@@ -188,7 +220,7 @@ export async function fetchClaudeUsage(
     // not send — that would burn quota). A caller holding such a response can
     // normalize it via apiKeyUsageFromHeaders().
     log.debug("No free usage read for this account kind; skipping", { kind });
-    return null;
+    return NO_DATA;
   }
 
   const controller = new AbortController();
@@ -200,31 +232,56 @@ export async function fetchClaudeUsage(
       signal: controller.signal,
     });
 
+    if (response.status === 429) {
+      // See the module docblock's Throttling section: setup-token credentials
+      // get ~1 read/hour, so this is the EXPECTED steady-state response under
+      // a sub-hourly cadence — surface the reset instead of eating it.
+      const retryAfterSeconds = parseRetryAfter(
+        response.headers.get("retry-after")
+      );
+      if (retryAfterSeconds === null) {
+        // Nothing to align to; the caller falls back to plain failure backoff.
+        log.warn("Usage endpoint rate-limited without a usable retry-after", {
+          status: response.status,
+        });
+        return NO_DATA;
+      }
+      const retryAt = new Date(Date.now() + retryAfterSeconds * 1000);
+      log.warn("Usage endpoint rate-limited the credential", {
+        status: response.status,
+        retryAfterSeconds,
+        retryAt: retryAt.toISOString(),
+      });
+      return { outcome: "rate-limited", retryAt };
+    }
+
     if (response.status !== 200) {
-      log.debug("Usage endpoint returned a non-200", { status: response.status });
-      return null;
+      log.warn("Usage endpoint returned a non-200", {
+        status: response.status,
+      });
+      return NO_DATA;
     }
 
     const body = await parseBody(response);
-    if (!body) return null;
+    if (!body) return NO_DATA;
 
     const snapshot = snapshotFromUsageBody(body);
     if (!isInformative(snapshot)) {
       log.debug("Usage endpoint returned no usable windows", {
         status: response.status,
       });
-      return null;
+      return NO_DATA;
     }
 
     log.trace("Usage read produced a snapshot", {
       status: response.status,
       limits: snapshot.limits.length,
     });
-    return snapshot;
+    return { outcome: "snapshot", snapshot };
   } catch (error) {
     // Best-effort: a read failure (timeout/abort/network) is never fatal.
     log.warn("Usage read failed", { kind, error: String(error) });
-    return null;
+    return NO_DATA;
   } finally {
     clearTimeout(timer);
   }
@@ -452,11 +509,28 @@ function parseResetHeader(raw: string | null): Date | null {
   return Number.isNaN(ms) ? null : new Date(ms);
 }
 
-/** Parse `retry-after` (seconds). Null when absent or non-positive. */
+/**
+ * Parse a `retry-after` header into whole seconds. Accepts BOTH documented
+ * forms: an integer delta ("3578") and an HTTP-date, converted to a delta from
+ * now (rounded up so a retry never lands early). Null when absent,
+ * unparseable, or not in the future — callers treat that as a plain failure.
+ */
 function parseRetryAfter(raw: string | null): number | null {
   if (!raw) return null;
-  const seconds = Number.parseInt(raw.trim(), 10);
-  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+
+  // Integer delta-seconds form. Checked before Date.parse, which would read
+  // pure digits as a year.
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number.parseInt(trimmed, 10);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+  }
+
+  const ms = Date.parse(trimmed);
+  if (Number.isNaN(ms)) return null;
+  const deltaSeconds = Math.ceil((ms - Date.now()) / 1000);
+  return deltaSeconds > 0 ? deltaSeconds : null;
 }
 
 /** Parse a non-negative integer header value, or null. */

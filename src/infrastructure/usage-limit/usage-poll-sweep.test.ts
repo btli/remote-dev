@@ -6,7 +6,15 @@
  * accounts" to "polls every account", so the concurrency cap and the
  * per-account backoff are load-bearing, not decoration.
  */
-import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  type Mock,
+} from "vitest";
 
 const accounts: { id: string; userId: string; profileId: string | null }[] = [];
 
@@ -61,6 +69,11 @@ function makeResult(accountId: string) {
     source: "poller" as const,
     windows: [],
   };
+}
+
+/** The gateway's typed 429 signal. [remote-dev-u7df] */
+function rateLimitedResult(accountId: string, retryAt: Date) {
+  return { rateLimited: true as const, accountId, retryAt };
 }
 
 beforeEach(() => {
@@ -183,5 +196,106 @@ describe("runUsagePollSweep", () => {
     findMany.mockRejectedValueOnce(new Error("db down"));
 
     await expect(runUsagePollSweep()).resolves.toBeUndefined();
+  });
+
+  describe("rate-limited scheduling [remote-dev-u7df]", () => {
+    // Anthropic throttles setup-token usage reads to ~1/hour: under a
+    // 10-minute cadence nearly every poll 429s. The retry-after names the
+    // reset, so the sweep must schedule the next attempt just past it
+    // (+30-90s jitter) instead of walking the exponential backoff ladder.
+    const T0 = new Date("2026-08-03T10:00:00Z").getTime();
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(T0);
+      // Deterministic jitter: 30s + 0.5 * 60s = exactly 60s past the reset.
+      vi.spyOn(Math, "random").mockReturnValue(0.5);
+      seedAccounts(1);
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.mocked(Math.random).mockRestore();
+    });
+
+    it("schedules the next attempt at retryAt + jitter, not exponential backoff", async () => {
+      const retryAt = new Date(T0 + 3_578_000); // observed retry-after: 3578s
+      fetchLimitState.mockResolvedValue(rateLimitedResult("acct-0", retryAt));
+
+      await runUsagePollSweep();
+      expect(fetchLimitState).toHaveBeenCalledTimes(1);
+      expect(trackExecute).not.toHaveBeenCalled(); // no observation to record
+
+      // Inside the hold (reset + 59s < reset + 60s jitter): skipped.
+      vi.setSystemTime(retryAt.getTime() + 59_000);
+      fetchLimitState.mockClear();
+      await runUsagePollSweep();
+      expect(fetchLimitState).not.toHaveBeenCalled();
+
+      // Just past the hold: polled again.
+      vi.setSystemTime(retryAt.getTime() + 61_000);
+      await runUsagePollSweep();
+      expect(fetchLimitState).toHaveBeenCalledTimes(1);
+    });
+
+    it("repeated 429s stay aligned to each reset instead of escalating", async () => {
+      // Exponential backoff would be at 20m/40m by round three; retry-after
+      // alignment keeps every wait at reset + jitter.
+      for (let round = 0; round < 3; round += 1) {
+        const retryAt = new Date(Date.now() + 100_000);
+        fetchLimitState.mockClear();
+        fetchLimitState.mockResolvedValue(
+          rateLimitedResult("acct-0", retryAt)
+        );
+
+        await runUsagePollSweep();
+        expect(fetchLimitState).toHaveBeenCalledTimes(1);
+
+        vi.setSystemTime(retryAt.getTime() + 61_000);
+      }
+    });
+
+    it("does not escalate consecutiveFailures on a 429", async () => {
+      // 429 first…
+      const retryAt = new Date(T0 + 100_000);
+      fetchLimitState.mockResolvedValue(rateLimitedResult("acct-0", retryAt));
+      await runUsagePollSweep();
+
+      // …then a genuine failure once the hold expires. If the 429 had counted
+      // as a failure this would be the SECOND consecutive failure (20m); it
+      // must be the first (10m).
+      vi.setSystemTime(retryAt.getTime() + 61_000);
+      fetchLimitState.mockClear();
+      fetchLimitState.mockResolvedValue(null);
+      await runUsagePollSweep();
+      expect(fetchLimitState).toHaveBeenCalledTimes(1);
+      const failedAt = Date.now();
+
+      // 10m + 1s later the account is due again (a second-failure 20m backoff
+      // would still be holding it).
+      vi.setSystemTime(failedAt + 10 * 60 * 1000 + 1_000);
+      fetchLimitState.mockClear();
+      fetchLimitState.mockImplementation(async (t) =>
+        makeResult(t.accountId)
+      );
+      await runUsagePollSweep();
+      expect(fetchLimitState).toHaveBeenCalledTimes(1);
+    });
+
+    it("clamps a stale retryAt in the past to now + jitter", async () => {
+      const retryAt = new Date(T0 - 60_000); // already elapsed
+      fetchLimitState.mockResolvedValue(rateLimitedResult("acct-0", retryAt));
+      await runUsagePollSweep();
+
+      // Hold is now + 60s jitter, not instantly retryable and not in the past.
+      vi.setSystemTime(T0 + 59_000);
+      fetchLimitState.mockClear();
+      await runUsagePollSweep();
+      expect(fetchLimitState).not.toHaveBeenCalled();
+
+      vi.setSystemTime(T0 + 61_000);
+      await runUsagePollSweep();
+      expect(fetchLimitState).toHaveBeenCalledTimes(1);
+    });
   });
 });

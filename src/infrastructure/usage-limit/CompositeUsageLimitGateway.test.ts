@@ -29,6 +29,7 @@ import { ReactiveOutputDetector } from "./ReactiveOutputDetector";
 import type {
   UsageLimitGateway,
   LimitDetectionResult,
+  UsageLimitRateLimited,
   UsageLimitTarget,
 } from "@/application/ports/UsageLimitGateway";
 import type { ClaudeAccountKind } from "@/types/claude-limits";
@@ -65,6 +66,20 @@ class AnsweringAdapter implements UsageLimitGateway {
     target: UsageLimitTarget
   ): Promise<LimitDetectionResult | null> {
     return this.fetch(target);
+  }
+}
+
+/** An adapter whose upstream is rate-limited (429 + retry-after). */
+class RateLimitedAdapter implements UsageLimitGateway {
+  readonly signal: UsageLimitRateLimited;
+  constructor(retryAt: Date) {
+    this.signal = { rateLimited: true, accountId: "acct-1", retryAt };
+  }
+  supports(): boolean {
+    return true;
+  }
+  async fetchLimitState(): Promise<UsageLimitRateLimited> {
+    return this.signal;
   }
 }
 
@@ -114,6 +129,35 @@ describe("CompositeUsageLimitGateway dispatch", () => {
     ]);
 
     await expect(composite.fetchLimitState(TARGET)).resolves.toBeNull();
+  });
+
+  it("a rate-limited signal does not veto a later adapter's real observation", async () => {
+    // [remote-dev-u7df] Rate-limited is weaker than an observation: keep
+    // trying, and only fall back to the signal when nothing answers.
+    const rateLimited = new RateLimitedAdapter(new Date(Date.now() + 60_000));
+    const poller = new AnsweringAdapter();
+    const composite = new CompositeUsageLimitGateway([rateLimited, poller]);
+
+    const result = await composite.fetchLimitState(TARGET);
+
+    expect(poller.fetch).toHaveBeenCalledTimes(1);
+    expect(result).toEqual(makeResult());
+  });
+
+  it("returns the rate-limited signal when no adapter produces an observation", async () => {
+    const retryAt = new Date(Date.now() + 3_578_000);
+    const composite = new CompositeUsageLimitGateway([
+      new ReactiveOutputDetector(),
+      new RateLimitedAdapter(retryAt),
+    ]);
+
+    const result = await composite.fetchLimitState(TARGET);
+
+    expect(result).toEqual({
+      rateLimited: true,
+      accountId: "acct-1",
+      retryAt,
+    });
   });
 
   it("skips adapters that do not support the kind", async () => {

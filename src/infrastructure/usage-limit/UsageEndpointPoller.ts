@@ -3,11 +3,17 @@
  * ACCOUNT's usage headroom from the structured OAuth usage endpoint via the
  * isolated adapter (`anthropic-usage-adapter.fetchClaudeUsage`).
  *
- * The read is FREE — a GET against `/api/oauth/usage`, no message send, no
- * quota burn. Because of that it is now enabled BY DEFAULT;
- * `RDV_CLAUDE_USAGE_POLL_ENABLED=0` remains the kill switch (see
- * `poll-config.ts`). When disabled, `supports()` returns false and
- * `fetchLimitState()` returns null, so the poller never touches the network.
+ * The read burns no quota — a GET against `/api/oauth/usage`, no message send
+ * — but it is NOT unthrottled: Anthropic rate-limits long-lived setup-token
+ * credentials on that endpoint to ~1 request/hour (see the adapter docblock's
+ * Throttling section). [remote-dev-u7df] A 429 there surfaces here as a typed
+ * `UsageLimitRateLimited` signal carrying the reset time, which the sweep uses
+ * to schedule the next attempt instead of blind backoff.
+ *
+ * The poller is OPT-IN: it runs only with an explicit positive
+ * `RDV_CLAUDE_USAGE_POLL_ENABLED` (see `poll-config.ts` for why default-off).
+ * When disabled, `supports()` returns false and `fetchLimitState()` returns
+ * null, so the poller never touches the network.
  *
  * ## Credential [remote-dev-n4x4.4]
  *
@@ -34,7 +40,8 @@
  * credential. It is never logged, returned, or persisted here.
  *
  * Best-effort throughout: any failure (no token, read error, adapter error)
- * logs and returns null — it must never throw.
+ * logs and returns null — it must never throw. A rate-limited read is NOT a
+ * failure: it returns the typed signal instead of null.
  */
 
 import { db } from "@/db";
@@ -43,6 +50,7 @@ import { eq } from "drizzle-orm";
 import type {
   UsageLimitGateway,
   LimitDetectionResult,
+  UsageLimitRateLimited,
   UsageLimitTarget,
 } from "@/application/ports/UsageLimitGateway";
 import type { UsageLimitWindow } from "@/application/ports/UsageLimitWindowRepository";
@@ -98,7 +106,7 @@ export class UsageEndpointPoller implements UsageLimitGateway {
 
   async fetchLimitState(
     target: UsageLimitTarget
-  ): Promise<LimitDetectionResult | null> {
+  ): Promise<LimitDetectionResult | UsageLimitRateLimited | null> {
     if (!isUsagePollEnabled()) return null;
 
     const { accountId, userId } = target;
@@ -115,11 +123,16 @@ export class UsageEndpointPoller implements UsageLimitGateway {
       const token = await this.readAccountToken(accountId, userId);
       if (!token) return null;
 
-      const snapshot = await fetchClaudeUsage(token, kind);
-      if (!snapshot) return null;
+      const result = await fetchClaudeUsage(token, kind);
+      if (result.outcome === "rate-limited") {
+        // No observation exists, but the refusal names the reset — pass it
+        // through typed so the sweep can align to it. [remote-dev-u7df]
+        return { rateLimited: true, accountId, retryAt: result.retryAt };
+      }
+      if (result.outcome !== "snapshot") return null;
 
-      logScopedLimits(accountId, snapshot);
-      return snapshotToResult(accountId, snapshot);
+      logScopedLimits(accountId, result.snapshot);
+      return snapshotToResult(accountId, result.snapshot);
     } catch (error) {
       log.warn("Usage poll failed (best-effort)", {
         accountId,

@@ -15,7 +15,13 @@
  * is pollable and a profile is no longer an identity. `profileId` survives on
  * the target only as an optional breadcrumb for adapters that still want it.
  *
- * Pure interface — no implementation here.
+ * [remote-dev-u7df] `fetchLimitState` can also yield a typed
+ * {@link UsageLimitRateLimited} signal: the upstream read was refused (HTTP
+ * 429 + retry-after), so no observation exists, but the refusal names the
+ * earliest useful retry time. Distinct from a plain null failure so the sweep
+ * can align its next attempt to the reset instead of blind backoff.
+ *
+ * Pure types — no implementation here beyond the trivial narrowing guard.
  */
 
 import type {
@@ -58,16 +64,37 @@ export interface LimitDetectionResult {
   windows: UsageLimitWindow[];
 }
 
+/**
+ * The upstream refused the read with a rate limit (HTTP 429 + retry-after).
+ * Carries no usage data — it is NOT an observation — but names the earliest
+ * time a retry can be expected to succeed. [remote-dev-u7df]
+ */
+export interface UsageLimitRateLimited {
+  rateLimited: true;
+  accountId: string;
+  /** Earliest time the upstream is expected to serve the read again. */
+  retryAt: Date;
+}
+
+/** Narrow a non-null fetch result to the rate-limited signal. */
+export function isUsageLimitRateLimited(
+  result: LimitDetectionResult | UsageLimitRateLimited
+): result is UsageLimitRateLimited {
+  return "rateLimited" in result && result.rateLimited === true;
+}
+
 export interface UsageLimitGateway {
   /** Whether this gateway can observe accounts of the given kind. */
   supports(kind: ClaudeAccountKind): boolean;
 
   /**
-   * Fetch the current limit observation for an account, or null when this
-   * gateway cannot produce one (unsupported kind, disabled, or best-effort
-   * failure). Implementations must be best-effort: never throw.
+   * Fetch the current limit observation for an account; a typed
+   * {@link UsageLimitRateLimited} signal when the upstream refused the read
+   * with a retry-after; or null when this gateway cannot produce either
+   * (unsupported kind, disabled, or best-effort failure). Implementations
+   * must be best-effort: never throw.
    */
   fetchLimitState(
     target: UsageLimitTarget
-  ): Promise<LimitDetectionResult | null>;
+  ): Promise<LimitDetectionResult | UsageLimitRateLimited | null>;
 }

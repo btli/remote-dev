@@ -3,28 +3,40 @@ import { describe, it, expect } from "vitest";
 import {
   apiKeyUsageFromHeaders,
   fetchClaudeUsage,
+  type ClaudeUsageFetchResult,
+  type ClaudeUsageSnapshot,
   type FetchLike,
 } from "./anthropic-usage-adapter";
 
 /**
- * Build a FetchLike returning the given status + raw body, recording the
- * request it was called with (so we can assert on credential headers without
- * ever exposing the token elsewhere). No live network calls anywhere here.
+ * Build a FetchLike returning the given status + raw body (+ optional response
+ * headers, e.g. `retry-after`), recording the request it was called with (so we
+ * can assert on credential headers without ever exposing the token elsewhere).
+ * No live network calls anywhere here.
  */
 function fakeFetch(
   status: number,
-  body: string
+  body: string,
+  headers: Record<string, string> = {}
 ): { fetch: FetchLike; calls: Array<Parameters<FetchLike>> } {
   const calls: Array<Parameters<FetchLike>> = [];
   const fetch: FetchLike = async (url, init) => {
     calls.push([url, init]);
-    return { status, headers: new Headers(), text: async () => body };
+    return { status, headers: new Headers(headers), text: async () => body };
   };
   return { fetch, calls };
 }
 
 function jsonFetch(payload: unknown, status = 200) {
   return fakeFetch(status, JSON.stringify(payload));
+}
+
+/** Unwrap a snapshot outcome; throws loudly when the outcome is anything else. */
+function snapshotOf(result: ClaudeUsageFetchResult): ClaudeUsageSnapshot {
+  if (result.outcome !== "snapshot") {
+    throw new Error(`expected a snapshot outcome, got "${result.outcome}"`);
+  }
+  return result.snapshot;
 }
 
 /** The live shape verified against a Max subscription (2026-07-28). */
@@ -120,25 +132,26 @@ describe("fetchClaudeUsage", () => {
   });
 
   describe("guards", () => {
-    it("returns null for an empty token without calling fetch", async () => {
+    it("returns no-data for an empty token without calling fetch", async () => {
       const { fetch, calls } = jsonFetch(LIVE_BODY);
-      expect(await fetchClaudeUsage("", "subscription", fetch)).toBeNull();
+      const result = await fetchClaudeUsage("", "subscription", fetch);
+      expect(result.outcome).toBe("no-data");
       expect(calls).toHaveLength(0);
     });
 
-    it("returns null for api_key without calling fetch (endpoint is subscription-only)", async () => {
+    it("returns no-data for api_key without calling fetch (endpoint is subscription-only)", async () => {
       const { fetch, calls } = jsonFetch(LIVE_BODY);
-      expect(await fetchClaudeUsage("sk-ant-key", "api_key", fetch)).toBeNull();
+      const result = await fetchClaudeUsage("sk-ant-key", "api_key", fetch);
+      expect(result.outcome).toBe("no-data");
       expect(calls).toHaveLength(0);
     });
 
-    it("returns null (best-effort) when fetch throws", async () => {
+    it("returns no-data (best-effort) when fetch throws", async () => {
       const throwing: FetchLike = async () => {
         throw new Error("network down");
       };
-      await expect(
-        fetchClaudeUsage("tok", "subscription", throwing)
-      ).resolves.toBeNull();
+      const result = await fetchClaudeUsage("tok", "subscription", throwing);
+      expect(result.outcome).toBe("no-data");
     });
   });
 
@@ -146,11 +159,12 @@ describe("fetchClaudeUsage", () => {
     it("maps every window, including the per-model weekly_scoped entry", async () => {
       const { fetch } = jsonFetch(LIVE_BODY);
 
-      const snap = await fetchClaudeUsage("tok", "subscription", fetch);
+      const snap = snapshotOf(
+        await fetchClaudeUsage("tok", "subscription", fetch)
+      );
 
-      expect(snap).not.toBeNull();
-      expect(snap!.limits).toHaveLength(3);
-      expect(snap!.limits[2]).toEqual({
+      expect(snap.limits).toHaveLength(3);
+      expect(snap.limits[2]).toEqual({
         kind: "weekly_scoped",
         group: "weekly",
         percent: 100,
@@ -166,14 +180,16 @@ describe("fetchClaudeUsage", () => {
     it("rolls up 5h from `session` and 7d from `weekly_all` (not the worst scoped window)", async () => {
       const { fetch } = jsonFetch(LIVE_BODY);
 
-      const snap = await fetchClaudeUsage("tok", "subscription", fetch);
+      const snap = snapshotOf(
+        await fetchClaudeUsage("tok", "subscription", fetch)
+      );
 
-      expect(snap!.window5hPct).toBe(61);
-      expect(snap!.window7dPct).toBe(98); // NOT 100 from the Fable scoped window
-      expect(snap!.resetAt5h?.toISOString()).toBe("2026-07-28T14:40:00.280Z");
-      expect(snap!.resetAt7d?.toISOString()).toBe("2026-07-30T22:59:59.280Z");
-      expect(snap!.orgPct).toBeNull();
-      expect(snap!.resetAtOrg).toBeNull();
+      expect(snap.window5hPct).toBe(61);
+      expect(snap.window7dPct).toBe(98); // NOT 100 from the Fable scoped window
+      expect(snap.resetAt5h?.toISOString()).toBe("2026-07-28T14:40:00.280Z");
+      expect(snap.resetAt7d?.toISOString()).toBe("2026-07-30T22:59:59.280Z");
+      expect(snap.orgPct).toBeNull();
+      expect(snap.resetAtOrg).toBeNull();
     });
 
     it("ignores the legacy flat per-model fields entirely", async () => {
@@ -184,10 +200,12 @@ describe("fetchClaudeUsage", () => {
         seven_day_sonnet: { utilization: 7.0, resets_at: null },
       });
 
-      const snap = await fetchClaudeUsage("tok", "subscription", fetch);
+      const snap = snapshotOf(
+        await fetchClaudeUsage("tok", "subscription", fetch)
+      );
 
-      expect(snap!.window7dPct).toBe(98);
-      expect(snap!.limits.map((l) => l.kind)).toEqual([
+      expect(snap.window7dPct).toBe(98);
+      expect(snap.limits.map((l) => l.kind)).toEqual([
         "session",
         "weekly_all",
         "weekly_scoped",
@@ -209,17 +227,18 @@ describe("fetchClaudeUsage", () => {
         ],
       });
 
-      const snap = await fetchClaudeUsage("tok", "subscription", fetch);
+      const snap = snapshotOf(
+        await fetchClaudeUsage("tok", "subscription", fetch)
+      );
 
-      expect(snap).not.toBeNull();
-      expect(snap!.limits[0].kind).toBe("monthly_experimental");
-      expect(snap!.limits[0].severity).toBe("elevated");
-      expect(snap!.limits[0].group).toBe("monthly");
-      expect(snap!.limits[0].scopeModel).toBe("Mythos");
-      expect(snap!.limits[0].scopeSurface).toBe("cli");
+      expect(snap.limits[0].kind).toBe("monthly_experimental");
+      expect(snap.limits[0].severity).toBe("elevated");
+      expect(snap.limits[0].group).toBe("monthly");
+      expect(snap.limits[0].scopeModel).toBe("Mythos");
+      expect(snap.limits[0].scopeSurface).toBe("cli");
       // No session / weekly_all entry and no five_hour / seven_day fallback.
-      expect(snap!.window5hPct).toBeNull();
-      expect(snap!.window7dPct).toBeNull();
+      expect(snap.window5hPct).toBeNull();
+      expect(snap.window7dPct).toBeNull();
     });
 
     it("drops malformed entries (no usable kind) and defaults a missing percent to 0", async () => {
@@ -232,10 +251,12 @@ describe("fetchClaudeUsage", () => {
         ],
       });
 
-      const snap = await fetchClaudeUsage("tok", "subscription", fetch);
+      const snap = snapshotOf(
+        await fetchClaudeUsage("tok", "subscription", fetch)
+      );
 
-      expect(snap!.limits).toHaveLength(1);
-      expect(snap!.limits[0]).toEqual({
+      expect(snap.limits).toHaveLength(1);
+      expect(snap.limits[0]).toEqual({
         kind: "session",
         group: null,
         percent: 0,
@@ -245,7 +266,7 @@ describe("fetchClaudeUsage", () => {
         scopeSurface: null,
         isActive: true,
       });
-      expect(snap!.window5hPct).toBe(0);
+      expect(snap.window5hPct).toBe(0);
     });
 
     it("clamps and rounds percent into 0-100", async () => {
@@ -257,9 +278,11 @@ describe("fetchClaudeUsage", () => {
         ],
       });
 
-      const snap = await fetchClaudeUsage("tok", "subscription", fetch);
+      const snap = snapshotOf(
+        await fetchClaudeUsage("tok", "subscription", fetch)
+      );
 
-      expect(snap!.limits.map((l) => l.percent)).toEqual([61, 100, 0]);
+      expect(snap.limits.map((l) => l.percent)).toEqual([61, 100, 0]);
     });
   });
 
@@ -270,14 +293,15 @@ describe("fetchClaudeUsage", () => {
         seven_day: { utilization: 77.5, resets_at: "2026-07-30T23:00:00Z" },
       });
 
-      const snap = await fetchClaudeUsage("tok", "subscription", fetch);
+      const snap = snapshotOf(
+        await fetchClaudeUsage("tok", "subscription", fetch)
+      );
 
-      expect(snap).not.toBeNull();
-      expect(snap!.limits).toEqual([]);
-      expect(snap!.window5hPct).toBe(12);
-      expect(snap!.window7dPct).toBe(78);
-      expect(snap!.resetAt5h?.toISOString()).toBe("2026-07-28T14:40:00.000Z");
-      expect(snap!.resetAt7d?.toISOString()).toBe("2026-07-30T23:00:00.000Z");
+      expect(snap.limits).toEqual([]);
+      expect(snap.window5hPct).toBe(12);
+      expect(snap.window7dPct).toBe(78);
+      expect(snap.resetAt5h?.toISOString()).toBe("2026-07-28T14:40:00.000Z");
+      expect(snap.resetAt7d?.toISOString()).toBe("2026-07-30T23:00:00.000Z");
     });
 
     it("falls back when limits[] is an empty array", async () => {
@@ -287,10 +311,12 @@ describe("fetchClaudeUsage", () => {
         seven_day: null,
       });
 
-      const snap = await fetchClaudeUsage("tok", "subscription", fetch);
+      const snap = snapshotOf(
+        await fetchClaudeUsage("tok", "subscription", fetch)
+      );
 
-      expect(snap!.window5hPct).toBe(5);
-      expect(snap!.window7dPct).toBeNull();
+      expect(snap.window5hPct).toBe(5);
+      expect(snap.window7dPct).toBeNull();
     });
 
     it("fills only the dimensions limits[] did not supply", async () => {
@@ -302,13 +328,15 @@ describe("fetchClaudeUsage", () => {
         seven_day: { utilization: 88.0, resets_at: "2026-07-30T23:00:00Z" },
       });
 
-      const snap = await fetchClaudeUsage("tok", "subscription", fetch);
+      const snap = snapshotOf(
+        await fetchClaudeUsage("tok", "subscription", fetch)
+      );
 
-      expect(snap!.window5hPct).toBe(30);
-      expect(snap!.window7dPct).toBe(88);
+      expect(snap.window5hPct).toBe(30);
+      expect(snap.window7dPct).toBe(88);
     });
 
-    it("returns null when nothing usable is reported", async () => {
+    it("returns no-data when nothing usable is reported", async () => {
       const { fetch } = jsonFetch({
         limits: [],
         five_hour: null,
@@ -316,27 +344,86 @@ describe("fetchClaudeUsage", () => {
         extra_usage: { is_enabled: false },
       });
 
-      expect(await fetchClaudeUsage("tok", "subscription", fetch)).toBeNull();
+      const result = await fetchClaudeUsage("tok", "subscription", fetch);
+      expect(result.outcome).toBe("no-data");
+    });
+  });
+
+  describe("HTTP 429 (rate limited)", () => {
+    // [remote-dev-u7df] Anthropic throttles long-lived setup-token credentials
+    // on this endpoint to ~1 request/hour; the 429's retry-after names the
+    // reset and MUST survive to the caller instead of collapsing into no-data.
+    it("surfaces rate-limited-until from an integer-seconds retry-after", async () => {
+      const before = Date.now();
+      const { fetch } = fakeFetch(429, "{}", { "retry-after": "3578" });
+
+      const result = await fetchClaudeUsage("tok", "subscription", fetch);
+
+      expect(result.outcome).toBe("rate-limited");
+      if (result.outcome !== "rate-limited") throw new Error("unreachable");
+      const at = result.retryAt.getTime();
+      expect(at).toBeGreaterThanOrEqual(before + 3_577_000);
+      expect(at).toBeLessThanOrEqual(Date.now() + 3_579_000);
+    });
+
+    it("surfaces rate-limited-until from an HTTP-date retry-after", async () => {
+      const future = new Date(Date.now() + 30 * 60 * 1000);
+      const { fetch } = fakeFetch(429, "{}", {
+        "retry-after": future.toUTCString(),
+      });
+
+      const result = await fetchClaudeUsage("tok", "subscription", fetch);
+
+      expect(result.outcome).toBe("rate-limited");
+      if (result.outcome !== "rate-limited") throw new Error("unreachable");
+      // toUTCString drops sub-second precision; allow the rounding.
+      expect(
+        Math.abs(result.retryAt.getTime() - future.getTime())
+      ).toBeLessThanOrEqual(2_000);
+    });
+
+    it("falls back to no-data when retry-after is missing", async () => {
+      const { fetch } = fakeFetch(429, "{}");
+      const result = await fetchClaudeUsage("tok", "subscription", fetch);
+      expect(result.outcome).toBe("no-data");
+    });
+
+    it("falls back to no-data when retry-after is garbage", async () => {
+      const { fetch } = fakeFetch(429, "{}", { "retry-after": "soon-ish" });
+      const result = await fetchClaudeUsage("tok", "subscription", fetch);
+      expect(result.outcome).toBe("no-data");
+    });
+
+    it("falls back to no-data when the retry-after HTTP-date is in the past", async () => {
+      const past = new Date(Date.now() - 60_000);
+      const { fetch } = fakeFetch(429, "{}", {
+        "retry-after": past.toUTCString(),
+      });
+      const result = await fetchClaudeUsage("tok", "subscription", fetch);
+      expect(result.outcome).toBe("no-data");
     });
   });
 
   describe("failure paths", () => {
-    it.each([401, 403, 429, 500])("returns null on HTTP %i", async (status) => {
+    it.each([401, 403, 500])("returns no-data on HTTP %i", async (status) => {
       const { fetch } = jsonFetch(LIVE_BODY, status);
-      expect(await fetchClaudeUsage("tok", "subscription", fetch)).toBeNull();
+      const result = await fetchClaudeUsage("tok", "subscription", fetch);
+      expect(result.outcome).toBe("no-data");
     });
 
-    it("returns null on malformed JSON", async () => {
+    it("returns no-data on malformed JSON", async () => {
       const { fetch } = fakeFetch(200, "{not json");
-      expect(await fetchClaudeUsage("tok", "subscription", fetch)).toBeNull();
+      const result = await fetchClaudeUsage("tok", "subscription", fetch);
+      expect(result.outcome).toBe("no-data");
     });
 
-    it("returns null on a non-object JSON body", async () => {
+    it("returns no-data on a non-object JSON body", async () => {
       const { fetch } = fakeFetch(200, "[1, 2, 3]");
-      expect(await fetchClaudeUsage("tok", "subscription", fetch)).toBeNull();
+      const result = await fetchClaudeUsage("tok", "subscription", fetch);
+      expect(result.outcome).toBe("no-data");
     });
 
-    it("returns null when reading the body throws", async () => {
+    it("returns no-data when reading the body throws", async () => {
       const fetch: FetchLike = async () => ({
         status: 200,
         headers: new Headers(),
@@ -344,7 +431,8 @@ describe("fetchClaudeUsage", () => {
           throw new Error("stream aborted");
         },
       });
-      expect(await fetchClaudeUsage("tok", "subscription", fetch)).toBeNull();
+      const result = await fetchClaudeUsage("tok", "subscription", fetch);
+      expect(result.outcome).toBe("no-data");
     });
   });
 });
