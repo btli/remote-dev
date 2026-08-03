@@ -126,7 +126,7 @@ const defaultDeleteFile: CredentialFileDeleter = (path) => nodeUnlink(path);
  * routes. Every side effect is injectable so unit tests never touch a real
  * Keychain, credential file, or shell.
  */
-export class CredentialHarvester {
+export class ClaudeCredentialHarvester {
   private readonly dependencies: CredentialHarvesterDependencies;
 
   constructor(
@@ -256,9 +256,6 @@ function requireConfigDir(configDir: string | undefined): string {
   }
   return configDir;
 }
-
-/** Descriptive compatibility name for callers that prefer provider context. */
-export { CredentialHarvester as ClaudeCredentialHarvester };
 
 /** Parse external JSON defensively; partial/in-progress writes are not ready. */
 function parseClaudeUsageCredential(
