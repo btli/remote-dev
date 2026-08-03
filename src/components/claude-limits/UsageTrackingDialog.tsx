@@ -1,6 +1,31 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+/**
+ * Reusable "Enable usage tracking" dialog for one token-free Claude account.
+ *
+ * The dialog loads the user's projects, then POSTs `{ projectId, accountId }`
+ * to the usage setup route. That route creates an isolated shell session and
+ * returns only the safe terminal handoff: session id, command, send status,
+ * and instructions. `useSessionContext()` refreshes and activates that session;
+ * the dialog never copies a filesystem path or usage OAuth credential into its
+ * own state.
+ *
+ * Recovery is part of the start gate. Each open first refreshes sessions and
+ * keeps Start disabled until SessionContext reconciles the resulting array.
+ * An open, account-matched `rdvClaudeUsageSetupSession` is restored instead of
+ * creating a duplicate. Because SessionContext currently logs and swallows
+ * refresh failures, a short reconciliation fallback lets a user with no
+ * recoverable session proceed rather than leaving setup disabled forever.
+ *
+ * Finish POSTs exactly `{ sessionId }`. `CREDENTIALS_NOT_READY` remains a
+ * retryable notice; missing scope and account mismatch stay hard, actionable
+ * errors. Successful capture refreshes sessions after server-side cleanup,
+ * calls the dashboard completion path, and closes with all local handoff state
+ * reset. Client-side failures use console.error where diagnostic logging helps;
+ * the structured server logger is intentionally not imported.
+ */
+
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Terminal as TerminalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,6 +49,7 @@ import { apiFetch } from "@/lib/api-fetch";
 import type { ClaudeAccountSummary } from "@/types/claude-limits";
 
 const USAGE_SETUP_MARKER = "rdvClaudeUsageSetupSession";
+const RECOVERY_RECONCILE_FALLBACK_MS = 100;
 
 interface ProjectOption {
   id: string;
@@ -98,6 +124,12 @@ export function UsageTrackingDialog({
   );
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [recoveryPhase, setRecoveryPhase] = useState<
+    "refreshing" | "reconciling" | "ready"
+  >("refreshing");
+  const currentSessionsRef = useRef(sessions);
+  const recoveryBaselineRef = useRef(sessions);
+  currentSessionsRef.current = sessions;
 
   const reset = useCallback(() => {
     setProjects([]);
@@ -107,6 +139,7 @@ export function UsageTrackingDialog({
     setBusy(null);
     setError(null);
     setNotice(null);
+    setRecoveryPhase("refreshing");
   }, []);
 
   const handleOpenChange = useCallback(
@@ -148,9 +181,31 @@ export function UsageTrackingDialog({
 
   useEffect(() => {
     if (!open) return;
-    void refreshSessions().catch((caught) => {
-      console.error("Failed to refresh usage setup sessions", caught);
-    });
+    let cancelled = false;
+    let fallbackId: ReturnType<typeof setTimeout> | null = null;
+    recoveryBaselineRef.current = currentSessionsRef.current;
+    setRecoveryPhase("refreshing");
+    void (async () => {
+      try {
+        await refreshSessions();
+      } catch (caught) {
+        // SessionContext currently handles and swallows its fetch failures.
+        // Keep this guard for injected callers and future API changes.
+        console.error("Failed to refresh usage setup sessions", caught);
+      }
+      if (cancelled) return;
+      setRecoveryPhase("reconciling");
+      // A successful refresh dispatches a new sessions array. If the context
+      // swallowed a fetch failure, there is no reconciliation signal, so allow
+      // a new setup after a short grace period instead of blocking forever.
+      fallbackId = setTimeout(() => {
+        if (!cancelled) setRecoveryPhase("ready");
+      }, RECOVERY_RECONCILE_FALLBACK_MS);
+    })();
+    return () => {
+      cancelled = true;
+      if (fallbackId !== null) clearTimeout(fallbackId);
+    };
   }, [account.id, open, refreshSessions]);
 
   useEffect(() => {
@@ -162,21 +217,30 @@ export function UsageTrackingDialog({
         session.typeMetadata?.[USAGE_SETUP_MARKER] === true &&
         session.typeMetadata.accountId === account.id
     );
-    if (!existing) return;
-    setSetupSession({
-      sessionId: existing.id,
-      command: null,
-      commandSent: null,
-      instructions: [
-        "Complete the Claude sign-in in the terminal.",
-        "Return here after sign-in and choose Finish.",
-      ],
-      recovered: true,
-    });
-  }, [account.id, open, sessions, setupSession]);
+    if (existing) {
+      setSetupSession({
+        sessionId: existing.id,
+        command: null,
+        commandSent: null,
+        instructions: [
+          "Complete the Claude sign-in in the terminal.",
+          "Return here after sign-in and choose Finish.",
+        ],
+        recovered: true,
+      });
+      setRecoveryPhase("ready");
+      return;
+    }
+    if (
+      recoveryPhase === "reconciling" &&
+      sessions !== recoveryBaselineRef.current
+    ) {
+      setRecoveryPhase("ready");
+    }
+  }, [account.id, open, recoveryPhase, sessions, setupSession]);
 
   async function startSetupSession() {
-    if (!projectId) return;
+    if (!projectId || recoveryPhase !== "ready") return;
     setBusy("start");
     setError(null);
     setNotice(null);
@@ -402,9 +466,11 @@ export function UsageTrackingDialog({
             <Button
               type="button"
               onClick={() => void startSetupSession()}
-              disabled={busy !== null || !projectId}
+              disabled={
+                busy !== null || !projectId || recoveryPhase !== "ready"
+              }
             >
-              {busy === "start" && (
+              {(busy === "start" || recoveryPhase !== "ready") && (
                 <Loader2 className="h-4 w-4 animate-spin" />
               )}
               Start usage sign-in

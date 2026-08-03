@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClaudeAccountSummary } from "@/types/claude-limits";
 
@@ -81,7 +87,7 @@ function renderDialog(
 ) {
   const onOpenChange = vi.fn();
   const onCompleted = vi.fn();
-  render(
+  const view = render(
     <UsageTrackingDialog
       account={account}
       open
@@ -90,13 +96,32 @@ function renderDialog(
       {...props}
     />
   );
-  return { onOpenChange, onCompleted };
+  return {
+    onOpenChange,
+    onCompleted,
+    rerenderDialog: () =>
+      view.rerender(
+        <UsageTrackingDialog
+          account={account}
+          open
+          onOpenChange={onOpenChange}
+          onCompleted={onCompleted}
+          {...props}
+        />
+      ),
+  };
 }
 
-async function startSession() {
+async function readyStartButton() {
   const startButton = await screen.findByRole("button", {
     name: "Start usage sign-in",
   });
+  await waitFor(() => expect(startButton).toBeEnabled());
+  return startButton;
+}
+
+async function startSession() {
+  const startButton = await readyStartButton();
   fireEvent.click(startButton);
   await screen.findByText("claude auth login");
 }
@@ -104,12 +129,69 @@ async function startSession() {
 beforeEach(() => {
   apiFetch.mockReset();
   refreshSessions.mockReset();
-  refreshSessions.mockResolvedValue(undefined);
+  refreshSessions.mockImplementation(async () => {
+    // Successful SessionContext refreshes dispatch a newly parsed array.
+    sessions = [...sessions];
+  });
   setActiveSession.mockReset();
   sessions = [];
 });
 
 describe("UsageTrackingDialog", () => {
+  it("allows Start after a swallowed refresh failure yields no reconciliation", async () => {
+    refreshSessions.mockResolvedValue(undefined);
+    mockProjects();
+    renderDialog();
+
+    const startButton = await screen.findByRole("button", {
+      name: "Start usage sign-in",
+    });
+    expect(startButton).toBeDisabled();
+    await waitFor(() => expect(startButton).toBeEnabled());
+  });
+
+  it("keeps Start unavailable until delayed session reconciliation recovers an existing flow", async () => {
+    let resolveRefresh: (() => void) | null = null;
+    refreshSessions.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRefresh = resolve;
+        })
+    );
+    mockProjects();
+    const { rerenderDialog } = renderDialog();
+
+    const startButton = await screen.findByRole("button", {
+      name: "Start usage sign-in",
+    });
+    expect(startButton).toBeDisabled();
+
+    await act(async () => {
+      resolveRefresh?.();
+      await Promise.resolve();
+    });
+    expect(startButton).toBeDisabled();
+
+    sessions = [
+      {
+        id: "delayed-existing-session",
+        status: "active",
+        typeMetadata: {
+          rdvClaudeUsageSetupSession: true,
+          accountId: "account-1",
+        },
+      },
+    ];
+    rerenderDialog();
+
+    expect(
+      await screen.findByText(/existing usage sign-in session/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Start usage sign-in" })
+    ).not.toBeInTheDocument();
+  });
+
   it("loads a project and starts setup with the selected account", async () => {
     apiFetch.mockImplementation((url: string) => {
       if (url === "/api/projects") {
@@ -310,9 +392,7 @@ describe("UsageTrackingDialog", () => {
     });
     renderDialog();
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Start usage sign-in" })
-    );
+    fireEvent.click(await readyStartButton());
 
     expect(await screen.findByText("Network unavailable")).toBeInTheDocument();
   });

@@ -3,20 +3,24 @@
 /**
  * One row of the Claude Accounts dashboard. [remote-dev-0yix / remote-dev-n4x4.6]
  *
- * Renders an ACCOUNT (a Claude subscription), not an agent profile: label
- * (alias → email → "Unnamed account"), email, organization, rate-limit tier,
- * auth health (`authHealthy` + `authMethod` + a relative `lastVerifiedAt`),
- * 5h / 7d utilization bars, a live reset countdown, a status badge, and pool
- * memberships.
+ * Renders an ACCOUNT (a Claude subscription or API key), not an agent profile:
+ * label (alias → email → "Unnamed account"), email, organization, rate-limit
+ * tier, auth health (`authHealthy` + `authMethod` + a relative
+ * `lastVerifiedAt`), 5h / 7d utilization bars, a live reset countdown, a
+ * status badge, and pool memberships.
  *
  * Actions: Verify (re-read identity via `claude auth status --json` plus the
  * server's network validity probe — when the response reports
  * `tokenValid: false` the row surfaces the `tokenError` diagnosis through its
  * error display instead of only flipping the health badge [remote-dev-307w]),
  * Rename (PATCH the alias), Remove (DELETE, behind a confirm), plus the "Mark
- * available" manual limit override for a limited account. Tokens are never
- * displayed or requested here — the account is token-free on the wire
- * (`hasToken` only).
+ * available" manual limit override for a limited account. A healthy
+ * subscription without a separate usage credential replaces both usage and
+ * status columns with the honest "Usage tracking off" state and hands the
+ * token-free account projection to the reusable setup flow. API-key accounts,
+ * credentialed subscriptions, and auth-unhealthy accounts preserve the prior
+ * bars/status display. Tokens are never displayed or requested here — the
+ * account is token-free on the wire (`hasToken` and `usageCredential` only).
  *
  * Presentational-ish — the parent owns the usage fetch, the live clock, and
  * the limit-state overlay; this row owns only its own action requests.
@@ -146,7 +150,10 @@ export function ClaudeAccountRow({
   const [error, setError] = useState<string | null>(null);
 
   const limited = isLimitedNow(limitState);
-  const usageTrackingOff = account.authHealthy && !account.usageCredential;
+  const usageTrackingOff =
+    account.accountKind === "subscription" &&
+    account.authHealthy &&
+    !account.usageCredential;
   const countdown = formatResetCountdown(limitState.effectiveResetAt, now);
   const verifiedAge = formatRelativeAge(account.lastVerifiedAt, now);
 

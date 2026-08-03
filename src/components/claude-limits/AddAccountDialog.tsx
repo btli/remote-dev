@@ -32,6 +32,15 @@
  * soon as the request resolves: it is never logged, never placed in a URL, and
  * never written to persisted state.
  *
+ * Both successful save routes also return the token-free account projection.
+ * A healthy account without usage tracking remains in this dialog for one
+ * optional second step: offer the separate usage sign-in that powers the 5h /
+ * 7d bars. "Not now" completes onboarding immediately. "Enable now" closes and
+ * resets Add Account before handing the selected account to the dashboard, so
+ * the reusable UsageTrackingDialog is never nested inside this modal. Invalid
+ * or unhealthy saves retain their existing diagnosis, and an account that
+ * already has usage tracking skips the offer.
+ *
  * Client component — uses console.error per the logging convention (the
  * structured logger is server-only).
  */

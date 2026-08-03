@@ -92,4 +92,15 @@ describe("ClaudeAccountRow usage credential states", () => {
       screen.queryByRole("button", { name: "Enable usage tracking" })
     ).not.toBeInTheDocument();
   });
+
+  it("preserves bars and status for a healthy API-key account without a usage credential", () => {
+    renderRow({ accountKind: "api_key", usageCredential: false });
+
+    expect(screen.getAllByRole("progressbar")).toHaveLength(2);
+    expect(screen.getByText("Unknown")).toBeInTheDocument();
+    expect(screen.queryByText("Usage tracking off")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Enable usage tracking" })
+    ).not.toBeInTheDocument();
+  });
 });
