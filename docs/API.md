@@ -893,8 +893,18 @@ auto-rotates to an available account when the primary is limited. All
 **[session | key]** (`withApiAuth`), ownership-checked against the caller (an
 account/pool that is not yours returns `404`).
 
-The stored OAuth token is encrypted at rest (AES-256-GCM) and is **never**
-returned by any endpoint — account payloads carry only `hasToken: boolean`.
+Each subscription account can hold two independent credentials:
+
+- the existing long-lived `claude setup-token`, encrypted at rest and injected
+  into sessions as `CLAUDE_CODE_OAUTH_TOKEN`; and
+- a separate OAuth access/refresh set carrying `user:profile`, encrypted at
+  rest and used only for proactive usage polling. The server refreshes its
+  short-lived access token as needed.
+
+Neither credential is returned by any endpoint. Account payloads expose only
+`hasToken: boolean` for the session credential and `usageCredential: boolean`
+for the presence of a usage refresh credential. The latter says nothing about
+token contents or the most recent poll result.
 
 ```http
 GET    /api/claude-accounts                       # the caller's accounts (token-free)
@@ -908,6 +918,8 @@ PATCH  /api/claude-accounts/:accountId/limit-state # manual override { status: "
 
 POST   /api/claude-accounts/setup-session         # launch a session running `claude setup-token`
 POST   /api/claude-accounts/capture               # capture the printed token from that session
+POST   /api/claude-accounts/usage-setup-session   # launch isolated usage OAuth for an account
+POST   /api/claude-accounts/usage-capture         # attach the usage credential from that session
 
 GET    /api/profiles/select?projectId=   # recommended profile + account for a project (wizard pre-fill)
 GET    /api/claude/usage                 # dashboard payload: all accounts + state + pool membership
@@ -953,15 +965,95 @@ is `false` (the row is still stored, unhealthy, so the UI shows the diagnosis
 instead of "Signed in"). `POST /api/claude-accounts/:accountId/verify` returns
 the same `tokenValid`/`tokenError` pair.
 
+### Enabling usage tracking
+
+Usage tracking is an optional second sign-in attached to an existing account.
+It does not replace or modify the setup-token used by Claude sessions. Both
+endpoints are **[session | key]**, and ownership is checked again at each step.
+
+```http
+POST /api/claude-accounts/usage-setup-session
+Content-Type: application/json
+
+{ "projectId": "project-id", "accountId": "account-id" }
+```
+
+The account must belong to the caller or the route returns `404`. On success it
+creates an isolated shell session and returns `201`:
+
+```json
+{
+  "sessionId": "session-id",
+  "command": "<safely quoted Claude usage sign-in command>",
+  "commandSent": true,
+  "instructions": ["..."]
+}
+```
+
+The terminal runs Claude's login flow under a private scratch config. Complete
+the browser sign-in there. If the server cannot open a local browser, copy the
+URL printed in the terminal into a browser and paste the authorization code
+back into the terminal. `commandSent: false` means the prepared terminal is
+still available, but the returned `command` must be run manually. Invalid JSON
+or missing/non-string ids return `400`; a missing or foreign account returns
+`404`.
+
+After sign-in, finish with only the returned session id:
+
+```http
+POST /api/claude-accounts/usage-capture
+Content-Type: application/json
+
+{ "sessionId": "session-id" }
+```
+
+The server trusts the owner-scoped session metadata, not caller-supplied
+account ids or paths. It refuses sessions that were not created by the usage
+flow, requires the captured scopes to include `user:profile`, and rejects a
+login whose discovered email differs from the target account's email. A
+successful `200` response is token-free:
+
+```json
+{
+  "account": { "...": "ClaudeAccount", "usageCredential": true },
+  "usageValidated": true
+}
+```
+
+`usageValidated: true` means the capture's usage response was successfully
+written as the account's current usage snapshot. `false` means no immediate
+snapshot was stored, for example because validation was rate-limited or
+otherwise indeterminate, or because the snapshot write was declined/failed;
+the usage credential was still accepted and saved.
+After a successful save the server best-effort deletes the scratch credential
+and config directory, clears terminal scrollback, and closes the setup session.
+
+Expected conflicts keep the session available where a retry can help:
+
+| Status/code | Meaning |
+|---|---|
+| `409 CREDENTIALS_NOT_READY` | Sign-in has not produced credentials yet. Finish it and retry. |
+| `409 MISSING_SCOPE` | The login lacks `user:profile`, or Anthropic rejected that scope. Sign in again and grant the requested permission. |
+| `409 ACCOUNT_MISMATCH` | The scratch login identifies a different Claude account. Sign in with the account matching the target row. |
+| `409 CAPTURE_FAILED` | An environmental capture step failed without exposing credential-bearing details. Retry from the sign-in session. |
+
+A missing or foreign session/account returns `404`. A missing/non-string
+`sessionId`, a session without usage-flow provenance
+(`NOT_A_USAGE_SETUP_SESSION`), or incomplete trusted session metadata
+(`INVALID_USAGE_SETUP_SESSION`) returns `400`.
+
 ### Identity
 
 Account identity (`emailAddress`, `organizationId`, `organizationName`,
 `rateLimitTier`, `authMethod`) comes from `claude auth status --json` executed
-under the account's own env. Credential **files are never parsed**: on macOS the
-CLI stores credentials in the Keychain under a service name derived from
-`CLAUDE_CONFIG_DIR`, so `<configDir>/.claude/.credentials.json` does not exist —
-which is why the old profile-scoped `POST /api/profiles/:id/claude-login` +
-"Sync" flow could never succeed (remote-dev-n4x4.8). Both of those routes, and
+under the account's own env. The user's normal credential files are never
+parsed to recover the session setup-token: on macOS the CLI stores credentials
+in the Keychain under a service name derived from `CLAUDE_CONFIG_DIR`, so
+`<configDir>/.claude/.credentials.json` does not exist. The isolated usage
+tracking flow reads only the credential produced under its private scratch
+config and then removes it best-effort. The old profile-scoped
+`POST /api/profiles/:id/claude-login` + "Sync" flow could therefore never
+succeed (remote-dev-n4x4.8); both of those routes, and
 `/api/profiles/:id/limit-state`, are **removed**. `authMethod` is an open set
 (`"none"`, `"claude.ai"`, `"oauth_token"`, …) and is stored verbatim.
 
@@ -1001,11 +1093,22 @@ where `name` is the account's alias or email; members that resolve to an account
 not owned by the caller are omitted.
 
 The proactive Anthropic usage poller that populates this state on a ~10-minute
-timer is **opt-in**: set `RDV_CLAUDE_USAGE_POLL_ENABLED=1` — see
-[SETUP.md](./SETUP.md). Reactive detection (session-output scan + a `Stop` hook)
-is always on. When enabled the poller additionally records per-model
-`weekly_scoped` windows in `claude_usage_limit_window`, which is what makes
-account rotation model-aware (see [AGENTS.md](./AGENTS.md)).
+timer is **opt-in**: set `RDV_CLAUDE_USAGE_POLL_ENABLED=1` and enable usage
+tracking on the account in Settings → Claude Accounts; see
+[SETUP.md](./SETUP.md). It never falls back to the session setup-token, which
+does not carry the usage endpoint's required `user:profile` scope. Accounts
+without the separate usage credential are skipped without a request or failure
+backoff. For enabled accounts the server refreshes the short-lived access token
+from its encrypted refresh token before polling. A rejected refresh (`400` or
+`401`) disables only usage tracking, leaving session authentication untouched.
+
+Reactive session-output detection is always on. A usage endpoint `403` is
+treated as forbidden/no observation. A `429` honors the
+server's `retry-after` value plus jitter without increasing the ordinary
+failure counter; other failures use bounded per-account backoff. When a poll
+succeeds it additionally records per-model `weekly_scoped` windows in
+`claude_usage_limit_window`, which is what makes account rotation model-aware
+(see [AGENTS.md](./AGENTS.md)).
 
 ---
 
