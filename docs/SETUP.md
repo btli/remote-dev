@@ -598,23 +598,34 @@ To confirm that tmux has hyperlink-capable terminfo support, inspect `Hls`:
 tmux info | grep -F 'Hls'
 ```
 
-For a client with the `hyperlinks` feature, expect an `Hls` capability line
-similar to `Hls: (string) \033]8;...`; it is the sequence tmux uses to set or
-clear a hyperlink annotation. If it is `[missing]` or absent, first check that
-the affected attached client reports `hyperlinks` with the command above. To
-examine metadata already stored for a pane after an application emits an OSC 8
-link, use:
+On a build with applicable extended-terminfo support, expect an `Hls`
+capability line similar to `Hls: (string) \033]8;...`; it is the sequence tmux
+uses to set or clear a hyperlink annotation. `client_termfeatures` reporting
+`hyperlinks` does not by itself guarantee that the build can supply `Hls`. If
+the client reports `hyperlinks` but `Hls` is `[missing]` or absent, install a
+current packaged tmux build with extended-terminfo support, or rebuild tmux 3.4+
+against a supported terminfo library.
+
+To examine metadata already stored for a pane after an application emits an
+OSC 8 link, capture the pane with escape sequences included and make control
+characters visible:
 
 ```bash
-tmux capture-pane -p -H -t <pane>
+tmux capture-pane -p -e -t <pane> | cat -v
 ```
 
-The `-H` output lists hyperlink annotations for the selected pane; an empty
-result means tmux has no stored OSC 8 metadata for those lines. It does not
-rule out a working plain-text, confirmed multi-row link.
+The `-e` flag is available in tmux 3.4 and emits stored attributes, including
+OSC 8. Look for an opening sequence resembling
+`^[]8;;https://example.com/...^[\` before the visible link text and a closing
+`^[]8;;^[\` after it (`^[` is how `cat -v` displays ESC). If the URI is absent,
+tmux has no stored OSC 8 metadata for those captured cells. That does not rule
+out a working plain-text, confirmed multi-row link.
 
 See the tmux [`terminal-features`](https://man.openbsd.org/tmux.1#terminal-features)
-and [`capture-pane`](https://man.openbsd.org/tmux.1#capture-pane) documentation
+documentation, the
+[`hyperlinks` feature implementation in tmux 3.4](https://github.com/tmux/tmux/blob/3.4/tty-features.c),
+and the
+[`capture-pane` implementation in tmux 3.4](https://github.com/tmux/tmux/blob/3.4/cmd-capture-pane.c)
 for the feature and inspection semantics.
 
 ### "Unauthorized" after login
