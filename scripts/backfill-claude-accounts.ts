@@ -4,7 +4,8 @@
  *
  * Run AFTER `bun run db:push` applies the profile→account decoupling. Creates a
  * standalone `claude_account` row for every claude-capable profile that lacks
- * one and links project primaries to their account. Idempotent — safe to run on
+ * one — skipping users who already have any account rows (remote-dev-ifcl) —
+ * and links project primaries to their account. Idempotent — safe to run on
  * every deploy. See `src/db/backfill-claude-accounts.ts` for the logic and for
  * what is deliberately NOT backfilled.
  *
@@ -16,7 +17,8 @@ backfillClaudeAccounts()
   .then((result) => {
     console.log(
       `✅ claude_account backfill: ${result.accountsCreated} created, ` +
-        `${result.accountsAlreadyPresent} already present ` +
+        `${result.accountsAlreadyPresent} already present, ` +
+        `${result.profilesSkippedUserHasAccounts} skipped (user has accounts) ` +
         `(${result.profilesScanned} claude-capable profiles scanned), ` +
         `${result.projectLinksLinked} project link(s) linked`
     );

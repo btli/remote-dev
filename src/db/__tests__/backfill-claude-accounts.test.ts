@@ -2,9 +2,13 @@
 /**
  * Tests for the profile→account backfill [remote-dev-n4x4.6].
  *
- * Exercises the data-migration contract: no claude-capable profile is left
- * without an account, existing accounts are never duplicated or overwritten,
- * project primaries get linked to an account, and repeated runs are no-ops.
+ * Exercises the data-migration contract: no claude-capable profile of an
+ * account-less user is left without an account, existing accounts are never
+ * duplicated or overwritten, project primaries get linked to an account, and
+ * repeated runs are no-ops. Since remote-dev-ifcl the profile pass also SKIPS
+ * any user who already has account rows — the backfill runs on every deploy,
+ * and "Add account" rows carry `profile_id` NULL, so the old profile-keyed
+ * check re-created token-less duplicates the user had deleted.
  * The DB is a small in-memory fake — no real database is touched.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -123,6 +127,72 @@ describe("backfillClaudeAccounts", () => {
     expect(accounts).toHaveLength(1);
     expect(accounts[0].alias).toBe("My Max Account");
     expect(accounts[0].authHealthy).toBe(true);
+  });
+
+  // ── Per-user skip rule [remote-dev-ifcl] ───────────────────────────────────
+
+  it("does NOT re-create placeholders for a user who already has accounts", async () => {
+    // The live regression: the user added real accounts via "Add account"
+    // (profile_id NULL), deleted the auto-created "Not signed in" duplicates,
+    // and the next deploy's backfill re-created them because the check was
+    // keyed on profile_id alone.
+    profiles.push(
+      { id: "p1", userId: "u1", name: "Claude A", provider: "claude" },
+      { id: "p2", userId: "u1", name: "Claude B", provider: "claude" }
+    );
+    accounts.push({
+      id: "acct-added",
+      userId: "u1",
+      profileId: null, // "Add account" rows never carry a profile origin.
+      alias: "Personal Max",
+      authHealthy: true,
+    });
+
+    const result = await backfillClaudeAccounts();
+
+    expect(result.accountsCreated).toBe(0);
+    expect(result.profilesSkippedUserHasAccounts).toBe(2);
+    expect(accounts).toHaveLength(1);
+  });
+
+  it("still migrates a zero-account user while skipping an account-holding one", async () => {
+    profiles.push(
+      // u1: true migration case — every claude-capable profile gets an account.
+      { id: "p1", userId: "u1", name: "Claude A", provider: "claude" },
+      { id: "p2", userId: "u1", name: "Everything", provider: "all" },
+      // u2: already in the account-first world — no placeholder.
+      { id: "p3", userId: "u2", name: "Claude C", provider: "claude" }
+    );
+    accounts.push({
+      id: "acct-u2",
+      userId: "u2",
+      profileId: null,
+      authHealthy: true,
+    });
+
+    const result = await backfillClaudeAccounts();
+
+    expect(result.accountsCreated).toBe(2);
+    expect(result.profilesSkippedUserHasAccounts).toBe(1);
+    // u2's account never blocks u1's migration, and both u1 profiles land in
+    // the SAME run (the skip set is built from pre-existing rows only).
+    expect(accounts.filter((a) => a.userId === "u1")).toHaveLength(2);
+    expect(accounts.filter((a) => a.userId === "u2")).toHaveLength(1);
+  });
+
+  it("stays idempotent under the skip rule: a re-run after migration creates nothing", async () => {
+    profiles.push({ id: "p1", userId: "u1", name: "Claude A", provider: "claude" });
+
+    const first = await backfillClaudeAccounts();
+    expect(first.accountsCreated).toBe(1);
+
+    const second = await backfillClaudeAccounts();
+    // The migrated account is profile-linked, so it counts as "already
+    // present" (not as a user-level skip) — and nothing new appears.
+    expect(second.accountsCreated).toBe(0);
+    expect(second.accountsAlreadyPresent).toBe(1);
+    expect(second.profilesSkippedUserHasAccounts).toBe(0);
+    expect(accounts).toHaveLength(1);
   });
 
   it("links a project's primary profile to that profile's account", async () => {
