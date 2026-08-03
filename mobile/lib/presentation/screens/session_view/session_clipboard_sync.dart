@@ -57,6 +57,8 @@ class SessionClipboardSync {
   SessionClipboardSync({
     required bool Function() isEnabled,
     required bool Function() isCurrent,
+    required bool Function() isPresentationReady,
+    required bool Function() isBridgeReady,
     required void Function(bool enabled) setBridgeEnabled,
     required void Function(String text) syncBridgeText,
     required void Function(String text) pasteToTerminal,
@@ -65,6 +67,8 @@ class SessionClipboardSync {
     required ClipboardTextWriter writeClipboardText,
   }) : _isEnabled = isEnabled,
        _isCurrent = isCurrent,
+       _isPresentationReady = isPresentationReady,
+       _isBridgeReady = isBridgeReady,
        _setBridgeEnabled = setBridgeEnabled,
        _syncBridgeText = syncBridgeText,
        _pasteToTerminal = pasteToTerminal,
@@ -74,6 +78,8 @@ class SessionClipboardSync {
 
   final bool Function() _isEnabled;
   final bool Function() _isCurrent;
+  final bool Function() _isPresentationReady;
+  final bool Function() _isBridgeReady;
   final void Function(bool enabled) _setBridgeEnabled;
   final void Function(String text) _syncBridgeText;
   final void Function(String text) _pasteToTerminal;
@@ -82,18 +88,27 @@ class SessionClipboardSync {
   final ClipboardTextWriter _writeClipboardText;
 
   int? _lastRemoteRevision;
+  String? _lastRemoteText;
   String? _pendingRemoteEcho;
+
+  bool get _isPresented => _isCurrent() && _isPresentationReady();
+
+  bool get _canAccessClipboard => _isPresented && _isBridgeReady();
 
   /// Pushes the persisted opt-in and, when enabled, the native clipboard after
   /// the terminal marks its bridge ready.
   Future<void> onTerminalReady() async {
-    if (!_isCurrent()) {
-      _setBridgeEnabled(false);
+    if (!_isPresented) {
+      onPresentationUnavailable();
       return;
     }
     final enabled = _isEnabled();
-    _setBridgeEnabled(enabled);
-    if (enabled) await _publishNativeClipboard();
+    if (!enabled) {
+      onPresentationUnavailable();
+      return;
+    }
+    _setBridgeEnabled(true);
+    await _publishNativeClipboard();
   }
 
   /// Refits first, then refreshes clipboard state when the current route
@@ -105,16 +120,38 @@ class SessionClipboardSync {
   /// Mirrors an opt-in transition into the bridge. Turning sync on publishes
   /// the current native clipboard immediately.
   Future<void> onSettingChanged(bool enabled) async {
-    if (!_isCurrent()) {
-      _setBridgeEnabled(false);
+    if (!_isPresented) {
+      onPresentationUnavailable();
       return;
     }
-    _setBridgeEnabled(enabled);
-    if (enabled) await _publishNativeClipboard();
+    if (!enabled) {
+      onPresentationUnavailable();
+      return;
+    }
+    _setBridgeEnabled(true);
+    await _publishNativeClipboard();
   }
 
   /// Unsubscribes a still-mounted WebView as soon as another route covers it.
-  void onRouteCovered() => _setBridgeEnabled(false);
+  void onRouteCovered() => onPresentationUnavailable();
+
+  /// Synchronously revokes the WebView subscription when the app backgrounds,
+  /// locks, becomes covered, or is being disposed.
+  void onPresentationUnavailable() {
+    _lastRemoteText = null;
+    _pendingRemoteEcho = null;
+    _setBridgeEnabled(false);
+  }
+
+  /// Reconciles the current bridge state after the global foreground/unlocked
+  /// gate changes.
+  Future<void> onPresentationReadinessChanged(bool ready) async {
+    if (!ready || !_isPresented) {
+      onPresentationUnavailable();
+      return;
+    }
+    await _restoreCurrentRoute();
+  }
 
   /// Restores the current route after a covering route is popped.
   Future<void> onRouteRevealed() async {
@@ -124,48 +161,73 @@ class SessionClipboardSync {
   /// Preserves native copy-on-selection and additionally publishes the text
   /// to this session when synchronization is enabled.
   Future<void> onSelectionChange(String? selection) async {
-    if (selection == null || selection.isEmpty) return;
+    if (selection == null || selection.isEmpty || !_canAccessClipboard) {
+      return;
+    }
     await _safeWriteClipboard(selection);
+    if (!_canAccessClipboard) return;
     _publishText(selection, requireCurrent: true);
   }
 
   /// Preserves terminal paste and additionally publishes the pasted clipboard
   /// text to this session when synchronization is enabled.
   Future<void> onWantsPaste() async {
+    if (!_canAccessClipboard) return;
     final text = await _safeReadClipboard();
-    if (text == null || text.isEmpty) return;
+    if (text == null || text.isEmpty || !_canAccessClipboard) return;
     _pasteToTerminal(text);
     _publishText(text, requireCurrent: true);
   }
 
   /// Applies a validated remote update only for the opted-in current route.
-  /// Repeated/out-of-order revisions and the next matching local echo are
-  /// suppressed.
+  /// An exact repeated `(revision, text)` pair and the next matching local
+  /// echo are suppressed. Lower revisions remain valid after a remote epoch
+  /// reset.
   Future<void> onClipboardWrite(List<dynamic> args) async {
     final payload = parseClipboardWritePayload(args);
-    if (payload == null || !_isEnabled() || !_isCurrent()) return;
-    final lastRevision = _lastRemoteRevision;
-    if (lastRevision != null && payload.revision <= lastRevision) return;
-    _lastRemoteRevision = payload.revision;
+    if (payload == null || !_isEnabled() || !_canAccessClipboard) return;
+    if (_lastRemoteRevision == payload.revision &&
+        _lastRemoteText == payload.text) {
+      return;
+    }
     final wrote = await _safeWriteClipboard(payload.text);
-    if (wrote) _pendingRemoteEcho = payload.text;
+    if (wrote && _isEnabled() && _canAccessClipboard) {
+      _lastRemoteRevision = payload.revision;
+      _lastRemoteText = payload.text;
+      _pendingRemoteEcho = payload.text;
+    }
   }
 
   Future<void> _publishNativeClipboard() async {
+    if (!_canAccessClipboard) return;
     final text = await _safeReadClipboard();
-    if (text != null) _publishText(text, requireCurrent: true);
+    if (text != null && _canAccessClipboard) {
+      _publishText(text, requireCurrent: true);
+    }
   }
 
   Future<void> _restoreCurrentRoute() async {
-    if (!_isCurrent()) return;
+    if (!_isPresented) {
+      onPresentationUnavailable();
+      return;
+    }
     _refitTerminal();
     final enabled = _isEnabled();
-    _setBridgeEnabled(enabled);
-    if (enabled) await _publishNativeClipboard();
+    if (!enabled) {
+      onPresentationUnavailable();
+      return;
+    }
+    _setBridgeEnabled(true);
+    await _publishNativeClipboard();
   }
 
   void _publishText(String text, {bool requireCurrent = false}) {
-    if (!_isEnabled() || (requireCurrent && !_isCurrent())) return;
+    if (!_isEnabled() ||
+        !_isPresentationReady() ||
+        !_isBridgeReady() ||
+        (requireCurrent && !_isCurrent())) {
+      return;
+    }
     if (!_isSyncableText(text)) return;
     final echo = _pendingRemoteEcho;
     _pendingRemoteEcho = null;

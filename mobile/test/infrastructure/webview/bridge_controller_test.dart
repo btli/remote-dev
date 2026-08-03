@@ -220,8 +220,9 @@ void main() {
     expect(captured, contains('window.rdvBridge.setClipboardSync(true)'));
   });
 
-  test('clipboard calls queue in order and safely escape text', () {
+  test('clipboard calls coalesce latest text and safely escape it', () {
     bridge.setClipboardSync(true);
+    bridge.syncClipboard('stale secret');
     bridge.syncClipboard("don't \\ sync\nnext\u2028line");
     verifyNever(() => ctl.evaluateJavascript(source: any(named: 'source')));
 
@@ -238,6 +239,81 @@ void main() {
       contains('window.rdvBridge && window.rdvBridge.syncClipboard'),
     );
     expect(captured.last, contains(r"don\'t \\ sync\nnext\u2028line"));
+    expect(captured.join(), isNot(contains('stale secret')));
+  });
+
+  test('disable clears queued clipboard text before ready', () {
+    bridge.setClipboardSync(true);
+    bridge.syncClipboard('stale secret');
+    bridge.setClipboardSync(false);
+
+    bridge.markReady();
+
+    final captured =
+        verify(
+          () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
+        ).captured.cast<String>();
+    expect(captured, hasLength(1));
+    expect(captured.single, contains('setClipboardSync(false)'));
+    expect(captured.single, isNot(contains('stale secret')));
+  });
+
+  test('disable then re-enable never resurrects stale queued text', () {
+    bridge.setClipboardSync(true);
+    bridge.syncClipboard('stale secret');
+    bridge.setClipboardSync(false);
+    bridge.setClipboardSync(true);
+
+    bridge.markReady();
+
+    final captured =
+        verify(
+          () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
+        ).captured.cast<String>();
+    expect(captured, hasLength(1));
+    expect(captured.single, contains('setClipboardSync(true)'));
+    expect(captured.single, isNot(contains('stale secret')));
+  });
+
+  test('dispose clears sensitive queued state and prevents later drain', () {
+    bridge.setClipboardSync(true);
+    bridge.syncClipboard('stale secret');
+
+    bridge.dispose();
+    bridge.markReady();
+
+    verifyNever(() => ctl.evaluateJavascript(source: any(named: 'source')));
+  });
+
+  test('markUnready drops pending clipboard text before the next page', () {
+    bridge.setClipboardSync(true);
+    bridge.syncClipboard('stale secret');
+    bridge.markUnready();
+
+    bridge.markReady();
+
+    final captured =
+        verify(
+          () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
+        ).captured.cast<String>();
+    expect(captured, hasLength(1));
+    expect(captured.single, contains('setClipboardSync(true)'));
+    expect(captured.single, isNot(contains('stale secret')));
+  });
+
+  test('dispose unsubscribes an enabled ready bridge', () {
+    bridge.markReady();
+    bridge.setClipboardSync(true);
+    clearInteractions(ctl);
+
+    bridge.dispose();
+
+    final captured =
+        verify(
+              () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
+            ).captured.single
+            as String;
+    expect(captured, contains('setClipboardSync(false)'));
   });
 
   test('setFontSize emits window.rdvBridge.setFontSize(<px>)', () {

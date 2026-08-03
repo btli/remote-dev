@@ -12,19 +12,40 @@ class BridgeController {
   final InAppWebViewController controller;
   final List<String> _queue = [];
   bool _ready = false;
+  bool _disposed = false;
+
+  // Clipboard state is reconciled separately from the general JS queue. Raw
+  // clipboard JS must never accumulate as historical commands that can replay
+  // after a route is covered, the app locks, or the controller is disposed.
+  bool _clipboardStateKnown = false;
+  bool _clipboardEnabled = false;
+  String? _pendingClipboardText;
 
   bool get isReady => _ready;
 
   void markReady() {
+    if (_disposed) return;
     _ready = true;
     while (_queue.isNotEmpty) {
       final js = _queue.removeAt(0);
       controller.evaluateJavascript(source: js);
     }
+    if (_clipboardStateKnown) {
+      controller.evaluateJavascript(source: _clipboardEnabledJs);
+      final text = _pendingClipboardText;
+      _pendingClipboardText = null;
+      if (_clipboardEnabled && text != null) {
+        controller.evaluateJavascript(source: _syncClipboardJs(text));
+      }
+    } else {
+      _pendingClipboardText = null;
+    }
   }
 
   void markUnready() {
+    if (_disposed) return;
     _ready = false;
+    _pendingClipboardText = null;
   }
 
   /// Equivalent to `window.rdvBridge.input(text)`.
@@ -64,25 +85,50 @@ class BridgeController {
   /// Guarded so a deployed pre-v5 PWA silently no-ops while native and web
   /// releases roll out independently.
   void setClipboardSync(bool enabled) {
-    _exec(
-      'window.rdvBridge && window.rdvBridge.setClipboardSync'
-      ' && window.rdvBridge.setClipboardSync(${enabled ? 'true' : 'false'})',
-    );
+    if (_disposed) return;
+    _clipboardStateKnown = true;
+    _clipboardEnabled = enabled;
+    if (!enabled) _pendingClipboardText = null;
+    if (_ready) {
+      controller.evaluateJavascript(source: _clipboardEnabledJs);
+    }
   }
 
   /// Publishes native clipboard text to the bridge v5 session clipboard.
   ///
-  /// Guarded for compatibility with pre-v5 PWA builds and queued until the
-  /// terminal announces readiness like every other native-to-web call.
+  /// Guarded for compatibility with pre-v5 PWA builds. Before terminal
+  /// readiness only the latest value is retained, and it is cleared whenever
+  /// clipboard sync is disabled or the bridge becomes unavailable.
   void syncClipboard(String text) {
-    _exec(
-      'window.rdvBridge && window.rdvBridge.syncClipboard'
-      ' && window.rdvBridge.syncClipboard(${_q(text)})',
-    );
+    if (_disposed || !_clipboardEnabled) return;
+    if (_ready) {
+      controller.evaluateJavascript(source: _syncClipboardJs(text));
+    } else {
+      // Coalesce to the latest value. A later disable/cover/dispose clears it.
+      _pendingClipboardText = text;
+    }
   }
 
+  String get _clipboardEnabledJs =>
+      'window.rdvBridge && window.rdvBridge.setClipboardSync'
+      ' && window.rdvBridge.setClipboardSync('
+      '${_clipboardEnabled ? 'true' : 'false'})';
+
+  String _syncClipboardJs(String text) =>
+      'window.rdvBridge && window.rdvBridge.syncClipboard'
+      ' && window.rdvBridge.syncClipboard(${_q(text)})';
+
   /// Equivalent to `window.rdvBridge.paste(text)`.
-  void paste(String text) => _exec('window.rdvBridge.paste(${_q(text)})');
+  ///
+  /// Clipboard text is intentionally never queued as raw JavaScript. The
+  /// session coordinator waits for bridge readiness before reading the native
+  /// clipboard, and a stale direct call is dropped rather than replayed later.
+  void paste(String text) {
+    if (!_ready || _disposed) return;
+    controller.evaluateJavascript(
+      source: 'window.rdvBridge.paste(${_q(text)})',
+    );
+  }
 
   /// Equivalent to `window.rdvBridge.setFontSize(px)`.
   void setFontSize(int px) => _exec('window.rdvBridge.setFontSize($px)');
@@ -136,7 +182,7 @@ class BridgeController {
   /// racing the JS handler. `flutter_inappwebview`'s
   /// `evaluateJavascript` awaits returned promises automatically.
   Future<bool> back() async {
-    if (!_ready) return false;
+    if (!_ready || _disposed) return false;
     try {
       final result = await controller.evaluateJavascript(
         source: '''
@@ -159,11 +205,27 @@ class BridgeController {
   }
 
   void _exec(String js) {
+    if (_disposed) return;
     if (_ready) {
       controller.evaluateJavascript(source: js);
     } else {
       _queue.add(js);
     }
+  }
+
+  /// Clears queued work and best-effort unsubscribes a ready clipboard bridge.
+  void dispose() {
+    if (_disposed) return;
+    if (_ready && _clipboardStateKnown && _clipboardEnabled) {
+      _clipboardEnabled = false;
+      controller.evaluateJavascript(source: _clipboardEnabledJs);
+    }
+    _disposed = true;
+    _ready = false;
+    _queue.clear();
+    _pendingClipboardText = null;
+    _clipboardEnabled = false;
+    _clipboardStateKnown = false;
   }
 
   /// Quote a string for safe interpolation into JS source.

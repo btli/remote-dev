@@ -35,19 +35,17 @@ void main() {
     ).called(1);
   });
 
-  test('paste queues while not ready, drains on markReady', () {
+  test('paste is dropped while not ready instead of retaining clipboard text',
+      () {
     final ctl2 = _MockController();
     when(() => ctl2.evaluateJavascript(source: any(named: 'source')))
         .thenAnswer((_) async => null);
     final bridge2 = BridgeController(controller: ctl2);
     bridge2.paste('hello');
     verifyNever(() => ctl2.evaluateJavascript(source: any(named: 'source')));
+
     bridge2.markReady();
-    verify(
-      () => ctl2.evaluateJavascript(
-        source: "window.rdvBridge.paste('hello')",
-      ),
-    ).called(1);
+    verifyNever(() => ctl2.evaluateJavascript(source: any(named: 'source')));
   });
 
   test('markUnready re-locks the gate', () {

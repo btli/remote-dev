@@ -10,6 +10,7 @@ import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../application/state/appearance_provider.dart';
+import '../../../application/state/clipboard_access_readiness_provider.dart';
 import '../../../application/state/clipboard_sync_provider.dart';
 import '../../../domain/appearance_settings.dart';
 import '../../../domain/session_summary.dart';
@@ -135,14 +136,16 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
     // Subscribe to the app-wide RouteObserver so `didPopNext` fires when a
     // route pushed on top of the session (Recordings / Settings) is popped,
     // letting us refit the terminal that was covered while unfocused.
-    final route = ModalRoute.of(context);
-    if (route is ModalRoute<void>) {
+    final ModalRoute<dynamic>? route = ModalRoute.of(context);
+    if (route != null) {
       routeObserver.subscribe(this, route);
     }
   }
 
   @override
   void dispose() {
+    _clipboardSync?.onPresentationUnavailable();
+    _bridge?.dispose();
     routeObserver.unsubscribe(this);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -171,6 +174,11 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
       } else {
         unawaited(clipboardSync.onAppResumed());
       }
+    } else if (state != AppLifecycleState.resumed) {
+      // Clipboard access is fail-closed for every non-foreground state. This
+      // is synchronous and does not depend on observer ordering with the
+      // app-wide biometric overlay.
+      _clipboardSync?.onPresentationUnavailable();
     }
   }
 
@@ -265,6 +273,9 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
     final clipboardSync = SessionClipboardSync(
       isEnabled: () => mounted && ref.read(clipboardSyncProvider),
       isCurrent: () => mounted && (ModalRoute.of(context)?.isCurrent ?? false),
+      isPresentationReady:
+          () => mounted && ref.read(clipboardAccessReadyProvider),
+      isBridgeReady: () => bridge.isReady,
       setBridgeEnabled: bridge.setClipboardSync,
       syncBridgeText: bridge.syncClipboard,
       pasteToTerminal: bridge.paste,
@@ -282,7 +293,14 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
     controller.addJavaScriptHandler(
       handlerName: 'onTerminalReady',
       callback: (_) async {
+        if (!mounted) return null;
         debugPrint('[SessionView] onTerminalReady fired');
+        // Reconcile the effective clipboard subscription while the bridge is
+        // still closed. This clears any stale sensitive pending value before
+        // markReady drains controller state. Clipboard reads are deferred
+        // because SessionClipboardSync also gates them on bridge.isReady.
+        await clipboardSync.onSettingChanged(ref.read(clipboardSyncProvider));
+        if (!mounted) return null;
         bridge.markReady();
         // Push the current appearance state on first ready so the PWA
         // starts in sync without waiting for a user toggle. Reads are
@@ -531,6 +549,15 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen>
       final clipboardSync = _clipboardSync;
       if (clipboardSync != null) {
         unawaited(clipboardSync.onSettingChanged(next));
+      }
+    });
+    ref.listen<bool>(clipboardAccessReadyProvider, (prev, next) {
+      final clipboardSync = _clipboardSync;
+      if (clipboardSync == null) return;
+      if (!next) {
+        clipboardSync.onPresentationUnavailable();
+      } else {
+        unawaited(clipboardSync.onPresentationReadinessChanged(true));
       }
     });
     // Header title: resolved name, else the route-supplied summary name,

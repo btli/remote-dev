@@ -36,12 +36,12 @@ import 'app_route.dart';
 /// pop-back emits no page-level resize signal, so the grid would otherwise
 /// stay stale until the next pinch (remote-dev-u5q5.2).
 ///
-/// Typed `ModalRoute<void>` so it matches the `MaterialPage`-backed routes
-/// GoRouter builds (their result type is `void`), which is what lets a
-/// `RouteAware` widget subscribe via `routeObserver.subscribe(this,
-/// ModalRoute.of(context)!)`.
-final RouteObserver<ModalRoute<void>> routeObserver =
-    RouteObserver<ModalRoute<void>>();
+/// Uses a dynamic result type so typed popup routes (`DialogRoute<bool>`,
+/// `ModalBottomSheetRoute<int>`, and similar) still notify the covered route's
+/// [RouteAware.didPushNext]. Restricting this observer to `ModalRoute<void>`
+/// can exclude overlays whose futures return a value.
+final RouteObserver<ModalRoute<dynamic>> routeObserver =
+    RouteObserver<ModalRoute<dynamic>>();
 
 /// FCM token registrar wired against the app's PushPort + HostWorkspaceStore +
 /// MobileCredentialsStore + workspace API-client factory. Default impl throws —

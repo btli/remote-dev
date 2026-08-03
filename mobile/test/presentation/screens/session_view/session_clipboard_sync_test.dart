@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_dev/presentation/screens/session_view/session_clipboard_sync.dart';
@@ -113,28 +114,44 @@ void main() {
   group('SessionClipboardSync', () {
     late bool enabled;
     late bool current;
+    late bool presentationReady;
+    late bool bridgeReady;
     late String? nativeText;
+    late Completer<String?>? pendingRead;
+    late int writeFailuresRemaining;
     late List<String> events;
     late SessionClipboardSync sync;
 
     setUp(() {
       enabled = false;
       current = true;
+      presentationReady = true;
+      bridgeReady = true;
       nativeText = 'local clipboard';
+      pendingRead = null;
+      writeFailuresRemaining = 0;
       events = <String>[];
       sync = SessionClipboardSync(
         isEnabled: () => enabled,
         isCurrent: () => current,
+        isPresentationReady: () => presentationReady,
+        isBridgeReady: () => bridgeReady,
         setBridgeEnabled: (value) => events.add('enabled:$value'),
         syncBridgeText: (text) => events.add('sync:$text'),
         pasteToTerminal: (text) => events.add('paste:$text'),
         refitTerminal: () => events.add('refit'),
         readClipboardText: () async {
           events.add('read');
+          final pending = pendingRead;
+          if (pending != null) return pending.future;
           return nativeText;
         },
         writeClipboardText: (text) async {
           events.add('write:$text');
+          if (writeFailuresRemaining > 0) {
+            writeFailuresRemaining -= 1;
+            throw StateError('transient clipboard failure');
+          }
           nativeText = text;
         },
       );
@@ -177,6 +194,18 @@ void main() {
     );
 
     test(
+      'terminal ready subscribes false and does not read while locked',
+      () async {
+        enabled = true;
+        presentationReady = false;
+
+        await sync.onTerminalReady();
+
+        expect(events, <String>['enabled:false']);
+      },
+    );
+
+    test(
       'resume refits before refreshing enabled state and clipboard',
       () async {
         enabled = true;
@@ -192,13 +221,25 @@ void main() {
       },
     );
 
-    test('resume is ignored while this session route is not current', () async {
+    test(
+      'resume unsubscribes while this session route is not current',
+      () async {
+        enabled = true;
+        current = false;
+
+        await sync.onAppResumed();
+
+        expect(events, <String>['enabled:false']);
+      },
+    );
+
+    test('resume unsubscribes while foreground unlock is unresolved', () async {
       enabled = true;
-      current = false;
+      presentationReady = false;
 
       await sync.onAppResumed();
 
-      expect(events, isEmpty);
+      expect(events, <String>['enabled:false']);
     });
 
     test(
@@ -230,6 +271,59 @@ void main() {
     );
 
     test(
+      'setting changes leave a locked route unsubscribed without reading',
+      () async {
+        enabled = true;
+        presentationReady = false;
+
+        await sync.onSettingChanged(true);
+
+        expect(events, <String>['enabled:false']);
+      },
+    );
+
+    test(
+      'readiness revocation unsubscribes and restoration reconciles state',
+      () async {
+        enabled = true;
+        presentationReady = false;
+
+        await sync.onPresentationReadinessChanged(false);
+        presentationReady = true;
+        await sync.onPresentationReadinessChanged(true);
+
+        expect(events, <String>[
+          'enabled:false',
+          'refit',
+          'enabled:true',
+          'read',
+          'sync:local clipboard',
+        ]);
+      },
+    );
+
+    test(
+      'enabled setting does not read clipboard until bridge is ready',
+      () async {
+        enabled = true;
+        bridgeReady = false;
+
+        await sync.onSettingChanged(true);
+
+        expect(events, <String>['enabled:true']);
+
+        bridgeReady = true;
+        await sync.onTerminalReady();
+        expect(events, <String>[
+          'enabled:true',
+          'enabled:true',
+          'read',
+          'sync:local clipboard',
+        ]);
+      },
+    );
+
+    test(
       'cover disables bridge and reveal refits then restores sync',
       () async {
         enabled = true;
@@ -241,6 +335,7 @@ void main() {
         await sync.onRouteRevealed();
 
         expect(events, <String>[
+          'enabled:false',
           'enabled:false',
           'refit',
           'enabled:true',
@@ -265,6 +360,17 @@ void main() {
       current = true;
       await sync.onClipboardWrite(args);
       expect(events, <String>['write:remote']);
+    });
+
+    test('remote write is ignored while locked or backgrounded', () async {
+      enabled = true;
+      presentationReady = false;
+
+      await sync.onClipboardWrite(<dynamic>[
+        <String, Object>{'text': 'remote', 'revision': 1},
+      ]);
+
+      expect(events, isEmpty);
     });
 
     test(
@@ -313,6 +419,63 @@ void main() {
       },
     );
 
+    test('only exact duplicate revision and text is suppressed', () async {
+      enabled = true;
+
+      await sync.onClipboardWrite(<dynamic>[
+        <String, Object>{'text': 'epoch one', 'revision': 10},
+      ]);
+      await sync.onClipboardWrite(<dynamic>[
+        <String, Object>{'text': 'epoch two', 'revision': 1},
+      ]);
+      await sync.onClipboardWrite(<dynamic>[
+        <String, Object>{'text': 'same revision, new text', 'revision': 1},
+      ]);
+      await sync.onClipboardWrite(<dynamic>[
+        <String, Object>{'text': 'same revision, new text', 'revision': 1},
+      ]);
+
+      expect(events, <String>[
+        'write:epoch one',
+        'write:epoch two',
+        'write:same revision, new text',
+      ]);
+    });
+
+    test(
+      'ineligibility clears text metadata so the same pair can apply later',
+      () async {
+        enabled = true;
+        final update = <dynamic>[
+          <String, Object>{'text': 'remote', 'revision': 4},
+        ];
+
+        await sync.onClipboardWrite(update);
+        sync.onPresentationUnavailable();
+        await sync.onClipboardWrite(update);
+
+        expect(events, <String>[
+          'write:remote',
+          'enabled:false',
+          'write:remote',
+        ]);
+      },
+    );
+
+    test('failed native write does not suppress a legitimate retry', () async {
+      enabled = true;
+      writeFailuresRemaining = 1;
+      final update = <dynamic>[
+        <String, Object>{'text': 'remote', 'revision': 4},
+      ];
+
+      await sync.onClipboardWrite(update);
+      await sync.onClipboardWrite(update);
+
+      expect(events, <String>['write:remote', 'write:remote']);
+      expect(nativeText, 'remote');
+    });
+
     test(
       'selection still copies natively and also syncs when enabled',
       () async {
@@ -332,6 +495,19 @@ void main() {
       expect(nativeText, 'selected');
     });
 
+    test(
+      'selection does not touch native clipboard while unavailable',
+      () async {
+        enabled = true;
+        presentationReady = false;
+
+        await sync.onSelectionChange('selected');
+
+        expect(events, isEmpty);
+        expect(nativeText, 'local clipboard');
+      },
+    );
+
     test('paste still reaches terminal and also syncs when enabled', () async {
       enabled = true;
 
@@ -348,6 +524,60 @@ void main() {
       await sync.onWantsPaste();
 
       expect(events, <String>['read', 'paste:local clipboard']);
+    });
+
+    test('paste does not read native clipboard while unavailable', () async {
+      presentationReady = false;
+
+      await sync.onWantsPaste();
+
+      expect(events, isEmpty);
+    });
+
+    test(
+      'covered stale handlers cannot read or write native clipboard',
+      () async {
+        enabled = true;
+        current = false;
+
+        await sync.onSelectionChange('selected');
+        await sync.onWantsPaste();
+        await sync.onClipboardWrite(<dynamic>[
+          <String, Object>{'text': 'remote', 'revision': 1},
+        ]);
+
+        expect(events, isEmpty);
+        expect(nativeText, 'local clipboard');
+      },
+    );
+
+    test('pre-ready handlers cannot read or write native clipboard', () async {
+      enabled = true;
+      bridgeReady = false;
+
+      await sync.onSelectionChange('selected');
+      await sync.onWantsPaste();
+      await sync.onClipboardWrite(<dynamic>[
+        <String, Object>{'text': 'remote', 'revision': 1},
+      ]);
+
+      expect(events, isEmpty);
+      expect(nativeText, 'local clipboard');
+    });
+
+    test('paste rechecks readiness after awaited clipboard read', () async {
+      enabled = true;
+      pendingRead = Completer<String?>();
+
+      final paste = sync.onWantsPaste();
+      await Future<void>.delayed(Duration.zero);
+      expect(events, <String>['read']);
+
+      presentationReady = false;
+      pendingRead!.complete('late secret');
+      await paste;
+
+      expect(events, <String>['read']);
     });
   });
 }
