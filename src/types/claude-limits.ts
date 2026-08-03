@@ -72,8 +72,9 @@ export interface LimitStateBlock {
 /**
  * A Claude account as returned by `GET /api/claude-accounts` (and by
  * `claude-account-service` as `ClaudeAccountView`). Token-free by construction:
- * `hasToken` reports whether an encrypted OAuth token is stored, and the token
- * itself never crosses the wire.
+ * `hasToken` reports whether an encrypted session OAuth token is stored and
+ * `usageCredential` reports whether a usage refresh credential is stored; no
+ * token itself ever crosses the wire.
  */
 export interface ClaudeAccountSummary {
   id: string;
@@ -90,6 +91,8 @@ export interface ClaudeAccountSummary {
   /** Epoch-ms of the last identity probe, or null. */
   lastVerifiedAt: number | null;
   hasToken: boolean;
+  /** Whether an encrypted usage OAuth refresh credential is stored. */
+  usageCredential: boolean;
   /** Legacy origin profile, when this account was migrated from one. */
   profileId: string | null;
   createdAt: number;

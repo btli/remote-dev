@@ -1321,6 +1321,18 @@ export const schema: SchemaDefinition = [
       // the same AES-256-GCM helper `profile_secrets_config` uses
       // (`src/lib/encryption.ts`). Never logged, never returned over the API.
       { field: "oauthTokenEncrypted", dbName: "oauth_token_encrypted", kind: "text" },
+      // The short-lived OAuth access token used ONLY for usage polling,
+      // AES-256-GCM encrypted at rest. Never logged or returned over the API.
+      { field: "usageOauthAccessEncrypted", dbName: "usage_oauth_access_encrypted", kind: "text" },
+      // The long-lived OAuth refresh token for usage polling, AES-256-GCM
+      // encrypted at rest. Its presence enables usage tracking; never expose it.
+      { field: "usageOauthRefreshEncrypted", dbName: "usage_oauth_refresh_encrypted", kind: "text" },
+      // Epoch-ms expiry of the short-lived usage access token; null until usage
+      // tracking is enabled or an access token is refreshed.
+      { field: "usageOauthExpiresAt", dbName: "usage_oauth_expires_at", kind: "timestampMs" },
+      // JSON array of OAuth scopes stored verbatim as an open set; null until
+      // usage tracking is enabled. Never infer or constrain future scopes here.
+      { field: "usageOauthScopes", dbName: "usage_oauth_scopes", kind: "text" },
       // Non-reversible sha256 prefix of the stored token. ONLY used to dedupe
       // "same credential re-added" when the identity probe could not supply an
       // email (offline / no CLI); without it every retry of a failing probe

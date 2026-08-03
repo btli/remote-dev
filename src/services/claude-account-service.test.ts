@@ -79,6 +79,10 @@ vi.mock("@/db", () => ({
           authHealthy: false,
           lastVerifiedAt: null,
           oauthTokenEncrypted: null,
+          usageOauthAccessEncrypted: null,
+          usageOauthRefreshEncrypted: null,
+          usageOauthExpiresAt: null,
+          usageOauthScopes: null,
           apiKeyPrefix: null,
           ...vals,
         });
@@ -127,6 +131,7 @@ import {
   findAccountIdForProfile,
   UNKNOWN_IDENTITY,
   CLAUDE_OAUTH_TOKEN_ENV,
+  toAccountView,
   type ClaudeCliRunner,
 } from "./claude-account-service";
 import { decrypt } from "@/lib/encryption";
@@ -165,6 +170,53 @@ beforeEach(() => {
   linkUpdates.length = 0;
   validityProbeMock.mockReset();
   validityProbeMock.mockResolvedValue("valid");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Token-free account view
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("toAccountView", () => {
+  const baseRow = {
+    id: "acct-view",
+    userId: USER,
+    profileId: null,
+    alias: "Personal",
+    accountKind: "subscription",
+    emailAddress: "person@example.com",
+    organizationId: "org-123",
+    organizationName: "Example Org",
+    rateLimitTier: "max",
+    authMethod: "claude.ai",
+    authHealthy: true,
+    lastVerifiedAt: new Date(1_000),
+    oauthTokenEncrypted: "encrypted-session-token",
+    usageOauthAccessEncrypted: "encrypted-usage-access-token",
+    usageOauthRefreshEncrypted: "encrypted-usage-refresh-token",
+    usageOauthExpiresAt: new Date(2_000),
+    usageOauthScopes: '["user:profile"]',
+    tokenFingerprint: "fingerprint",
+    apiKeyPrefix: null,
+    createdAt: new Date(0),
+    updatedAt: new Date(3_000),
+  };
+
+  it("reports a stored usage refresh credential without projecting usage tokens", () => {
+    const account = toAccountView(baseRow as Parameters<typeof toAccountView>[0]);
+
+    expect(account.usageCredential).toBe(true);
+    expect(account).not.toHaveProperty("usageOauthAccessEncrypted");
+    expect(account).not.toHaveProperty("usageOauthRefreshEncrypted");
+  });
+
+  it("reports no usage credential when the encrypted refresh token is absent", () => {
+    const account = toAccountView({
+      ...baseRow,
+      usageOauthRefreshEncrypted: null,
+    } as Parameters<typeof toAccountView>[0]);
+
+    expect(account.usageCredential).toBe(false);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

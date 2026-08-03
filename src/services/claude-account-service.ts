@@ -55,6 +55,11 @@ const log = createLogger("ClaudeAccountService");
  */
 export const CLAUDE_SETUP_TOKEN_COMMAND = "claude setup-token";
 
+// Current CLI exposes `claude auth login`, which enters auth directly and
+// avoids general interactive onboarding; the usage route still pre-seeds
+// `.claude.json` defensively before invoking this command.
+export const CLAUDE_USAGE_OAUTH_LOGIN_COMMAND = "claude auth login";
+
 /** The env var that selects the account for a `claude` process. */
 export const CLAUDE_OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
 
@@ -338,6 +343,7 @@ export function toAccountView(row: AccountRow): ClaudeAccountView {
     authHealthy: row.authHealthy,
     lastVerifiedAt: row.lastVerifiedAt ? row.lastVerifiedAt.getTime() : null,
     hasToken: !!row.oauthTokenEncrypted,
+    usageCredential: !!row.usageOauthRefreshEncrypted,
     profileId: row.profileId ?? null,
     createdAt: row.createdAt.getTime(),
     updatedAt: row.updatedAt.getTime(),
