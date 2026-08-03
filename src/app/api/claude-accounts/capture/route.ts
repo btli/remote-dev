@@ -25,9 +25,12 @@ import * as SessionService from "@/services/session-service";
 import * as TmuxService from "@/services/tmux-service";
 import {
   extractSetupToken,
+  isLikelyTruncatedToken,
   saveAccountToken,
   AccountNotFoundError,
   CLAUDE_SETUP_SESSION_MARKER,
+  TRUNCATED_TOKEN_MESSAGE,
+  INVALID_TOKEN_MESSAGE,
 } from "@/services/claude-account-service";
 import { createLogger } from "@/lib/logger";
 
@@ -98,6 +101,20 @@ export const POST = withApiAuth(async (request, { userId }) => {
     );
   }
 
+  // [remote-dev-307w] A real setup-token is ~108 chars; the setup TUI clips its
+  // output at the pane width and `capture-pane -J` cannot rejoin TUI-authored
+  // breaks, so a narrow pane leaves a 79-char fragment that still matches the
+  // token pattern. Storing it produces a credential Anthropic will 401 forever
+  // — reject with a distinct code instead, and leave the session OPEN so the
+  // user can widen the terminal, re-run, or fall back to the paste flow.
+  if (isLikelyTruncatedToken(token)) {
+    log.warn("Captured setup-token looks truncated; refusing to store it", {
+      sessionId,
+      tokenLength: token.length,
+    });
+    return errorResponse(TRUNCATED_TOKEN_MESSAGE, 409, "TOKEN_TRUNCATED");
+  }
+
   const alias = result.data.alias?.trim() || null;
   let saved: Awaited<ReturnType<typeof saveAccountToken>>;
   try {
@@ -115,7 +132,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
     }
     throw error;
   }
-  const { account, identity, updated } = saved;
+  const { account, identity, updated, tokenValid } = saved;
 
   // The token is now encrypted at rest, so destroy the cleartext copy sitting
   // in the pane. Wipe the scrollback FIRST (so even a failed close leaves
@@ -146,13 +163,19 @@ export const POST = withApiAuth(async (request, { userId }) => {
     accountId: account.id,
     updated,
     loggedIn: identity.loggedIn,
+    tokenValid,
     sessionClosed,
   });
 
+  // `tokenValid: false` [remote-dev-307w] means Anthropic 401'd the token at
+  // save time: the account row exists (unhealthy) but the dialog must show
+  // `tokenError` instead of "Signed in". Null = indeterminate (offline probe).
   return NextResponse.json({
     account,
     loggedIn: identity.loggedIn,
     updated,
     sessionClosed,
+    tokenValid,
+    ...(tokenValid === false ? { tokenError: INVALID_TOKEN_MESSAGE } : {}),
   });
 });

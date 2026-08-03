@@ -30,6 +30,11 @@ import { claudeAccounts, projectProfileLinks } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { encrypt, decrypt } from "@/lib/encryption";
+import {
+  probeTokenValidity,
+  type TokenValidity,
+  type TokenValidityProbe,
+} from "@/infrastructure/external/anthropic-token-validity";
 import { createLogger } from "@/lib/logger";
 import type {
   ClaudeAccountKind,
@@ -165,12 +170,51 @@ export function extractSetupToken(text: string): string | null {
 /**
  * Whether a string is plausibly a Claude OAuth token. Used to reject obvious
  * paste mistakes (an API key, a URL, an empty string) before we spend a CLI
- * round-trip on it. Deliberately permissive — the identity probe is the real
- * validation.
+ * round-trip on it. Deliberately permissive on PATTERN — the identity + network
+ * probes are the real validation. Length is a separate check:
+ * {@link isLikelyTruncatedToken}.
  */
 export function looksLikeOAuthToken(token: string): boolean {
   return /^sk-ant-oat\d{2}-[A-Za-z0-9_-]{20,}$/.test(token.trim());
 }
+
+/**
+ * Real setup-tokens are ~108 characters. The `claude setup-token` TUI clips its
+ * output at the pane width, and tmux `capture-pane -J` can only rejoin breaks
+ * tmux itself wrapped — not ones the TUI authored — so an ~80-col setup pane
+ * yields a 79-char fragment that still matches {@link SETUP_TOKEN_PATTERN}.
+ * Verified live 2026-08-03: all three of a user's stored tokens were exactly
+ * 79 chars and Anthropic 401'd every one. Anything under this floor is treated
+ * as clipped rather than stored. [remote-dev-307w]
+ */
+export const MIN_SETUP_TOKEN_LENGTH = 100;
+
+/**
+ * Whether a pattern-matching token is too short to be a whole one — i.e. it was
+ * almost certainly clipped by a terminal (capture path) or a partial copy
+ * (paste path). Both API routes reject these with `TOKEN_TRUNCATED` instead of
+ * letting {@link saveAccountToken} store a credential that can never work.
+ */
+export function isLikelyTruncatedToken(token: string): boolean {
+  return token.trim().length < MIN_SETUP_TOKEN_LENGTH;
+}
+
+/**
+ * Human-readable diagnosis for a `TOKEN_TRUNCATED` rejection. Shared by the
+ * capture and paste routes so both paths give the same explanation.
+ */
+export const TRUNCATED_TOKEN_MESSAGE =
+  "That token looks truncated — a full setup-token is over 100 characters. " +
+  "The terminal likely clipped it: widen the terminal and re-run `claude setup-token`, " +
+  "or copy the full token from where you ran it and use the paste flow.";
+
+/**
+ * Human-readable diagnosis when Anthropic 401's a stored token. Surfaced by the
+ * capture/paste/verify routes alongside the machine-readable `tokenValid: false`.
+ */
+export const INVALID_TOKEN_MESSAGE =
+  "Anthropic rejected this token as invalid — it may be truncated or revoked. " +
+  "Re-run `claude setup-token` and add the full token again.";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CLI seam
@@ -351,6 +395,21 @@ export interface SaveAccountTokenResult {
   identity: ClaudeIdentity;
   /** True when an existing account was updated rather than a new one created. */
   updated: boolean;
+  /**
+   * Remote validity of the stored token [remote-dev-307w]: `false` when
+   * Anthropic 401'd it (the machine-readable "token invalid" signal API routes
+   * surface, paired with {@link INVALID_TOKEN_MESSAGE}); `true` when Anthropic
+   * accepted it; `null` when the network probe was indeterminate (offline /
+   * timeout) and only the CLI probe's answer is known.
+   */
+  tokenValid: boolean | null;
+}
+
+/** Project a probe outcome into the API-facing tri-state. */
+function toTokenValid(validity: TokenValidity): boolean | null {
+  if (validity === "invalid") return false;
+  if (validity === "valid") return true;
+  return null;
 }
 
 /**
@@ -363,12 +422,21 @@ export interface SaveAccountTokenResult {
  * still stored — with `authHealthy: false` — so the user isn't blocked; a later
  * {@link verifyAccount} fills the display fields in.
  *
+ * Health rule [remote-dev-307w]: the CLI identity probe does not network-check
+ * the token (it says `loggedIn: true` for a dead one), so a second, remote
+ * probe ({@link probeTokenValidity}) runs too. An Anthropic 401 forces
+ * `authHealthy: false` and `tokenValid: false` — but the token is STILL stored
+ * (the user may be mid-diagnosis and the row keeps its identity fields); an
+ * indeterminate probe (offline) keeps the pre-existing behavior, with health
+ * decided by the CLI probe alone. The save itself never fails on the network.
+ *
  * @throws Error when the token is empty.
  */
 export async function saveAccountToken(
   input: SaveAccountTokenInput,
   runner: ClaudeCliRunner = defaultCliRunner,
-  now: Date = new Date()
+  now: Date = new Date(),
+  validityProbe: TokenValidityProbe = probeTokenValidity
 ): Promise<SaveAccountTokenResult> {
   const token = input.token.trim();
   if (!token) {
@@ -376,6 +444,7 @@ export async function saveAccountToken(
   }
 
   const identity = await probeIdentity(token, runner);
+  const validity = await validityProbe(token);
   const fingerprint = tokenFingerprint(token);
 
   // Dedupe, in priority order:
@@ -399,10 +468,14 @@ export async function saveAccountToken(
     existing = await findRowByFingerprint(input.userId, fingerprint);
   }
 
+  const tokenValid = toTokenValid(validity);
   const columns = {
     alias: input.alias ?? existing?.alias ?? null,
     ...identityDisplayColumns(identity, existing),
-    authHealthy: identity.loggedIn,
+    // A remote 401 overrides the CLI probe — `claude auth status` reports
+    // loggedIn:true for a token Anthropic rejects. Indeterminate leaves the
+    // CLI's answer in charge (offline must not mark a working account bad).
+    authHealthy: identity.loggedIn && tokenValid !== false,
     lastVerifiedAt: now,
     oauthTokenEncrypted: encrypt(token),
     tokenFingerprint: fingerprint,
@@ -421,11 +494,13 @@ export async function saveAccountToken(
       accountId: existing.id,
       loggedIn: identity.loggedIn,
       hasEmail: identity.email !== null,
+      tokenValid,
     });
     return {
       account: toAccountView(row as AccountRow),
       identity,
       updated: true,
+      tokenValid,
     };
   }
 
@@ -441,8 +516,14 @@ export async function saveAccountToken(
     accountId: id,
     loggedIn: identity.loggedIn,
     hasEmail: identity.email !== null,
+    tokenValid,
   });
-  return { account: toAccountView(row as AccountRow), identity, updated: false };
+  return {
+    account: toAccountView(row as AccountRow),
+    identity,
+    updated: false,
+    tokenValid,
+  };
 }
 
 /** Thrown when a caller names an account that is not theirs (or absent). */
@@ -481,20 +562,32 @@ async function findRowByEmail(
   return row ?? null;
 }
 
+/** What a {@link verifyAccount} re-probe learned. */
+export interface VerifyAccountResult {
+  account: ClaudeAccountView;
+  identity: ClaudeIdentity;
+  /** Same tri-state as {@link SaveAccountTokenResult.tokenValid}. */
+  tokenValid: boolean | null;
+}
+
 /**
  * Re-probe an account's identity with its stored token and refresh the display
  * fields. This is the replacement for the dead file-reading "Sync" button
  * [remote-dev-n4x4.8]. Returns null when the account isn't the user's.
  *
  * An account with no stored token is marked unhealthy (there is nothing to
- * probe with) rather than left showing a stale "logged in".
+ * probe with) rather than left showing a stale "logged in". Like
+ * {@link saveAccountToken}, health folds in the remote validity probe: a token
+ * Anthropic 401's is unhealthy even though the CLI claims `loggedIn: true`.
+ * [remote-dev-307w]
  */
 export async function verifyAccount(
   accountId: string,
   userId: string,
   runner: ClaudeCliRunner = defaultCliRunner,
-  now: Date = new Date()
-): Promise<{ account: ClaudeAccountView; identity: ClaudeIdentity } | null> {
+  now: Date = new Date(),
+  validityProbe: TokenValidityProbe = probeTokenValidity
+): Promise<VerifyAccountResult | null> {
   const row = await findOwnedRow(accountId, userId);
   if (!row) return null;
 
@@ -508,20 +601,21 @@ export async function verifyAccount(
   }
 
   const identity = await probeIdentity(token, runner);
+  const tokenValid = toTokenValid(await validityProbe(token));
   await db
     .update(claudeAccounts)
     .set({
       // Keep the last-known display fields when a probe comes back blank
       // (offline / CLI missing) instead of wiping a working account's UI.
       ...identityDisplayColumns(identity, row),
-      authHealthy: identity.loggedIn,
+      authHealthy: identity.loggedIn && tokenValid !== false,
       lastVerifiedAt: now,
       updatedAt: now,
     })
     .where(ownedBy(accountId, userId));
 
   const refreshed = await findOwnedRow(accountId, userId);
-  return { account: toAccountView(refreshed as AccountRow), identity };
+  return { account: toAccountView(refreshed as AccountRow), identity, tokenValid };
 }
 
 /**
@@ -547,7 +641,7 @@ async function markAccountUnhealthy(
   accountId: string,
   userId: string,
   now: Date
-): Promise<{ account: ClaudeAccountView; identity: ClaudeIdentity }> {
+): Promise<VerifyAccountResult> {
   await db
     .update(claudeAccounts)
     .set({ authHealthy: false, lastVerifiedAt: now, updatedAt: now })
@@ -556,6 +650,8 @@ async function markAccountUnhealthy(
   return {
     account: toAccountView(refreshed as AccountRow),
     identity: { ...UNKNOWN_IDENTITY },
+    // No token was probed, so remote validity is unknown by construction.
+    tokenValid: null,
   };
 }
 

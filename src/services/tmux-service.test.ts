@@ -88,4 +88,49 @@ describe("createSession", () => {
     expect(args![cIndex + 1]).toBe("/projects/app");
     expect(args).toContain("FOO=bar");
   });
+
+  // [remote-dev-307w] The Claude setup-token flow needs a wide detached pane:
+  // without -x/-y, tmux defaults a detached session to 80×24 and the TUI clips
+  // the ~108-char token at the pane edge.
+  it("passes -x/-y when initial dimensions are given", async () => {
+    await createSession("rdv-test-session", "/projects/app", undefined, undefined, 50000, {
+      cols: 220,
+      rows: 50,
+    });
+
+    const newSessionCall = execFileMock.mock.calls.find(
+      ([, args]) => args?.[0] === "new-session",
+    );
+    const [, args] = newSessionCall!;
+    const xIndex = args!.indexOf("-x");
+    expect(xIndex).toBeGreaterThan(-1);
+    expect(args![xIndex + 1]).toBe("220");
+    const yIndex = args!.indexOf("-y");
+    expect(args![yIndex + 1]).toBe("50");
+  });
+
+  it("omits -x/-y when no dimensions are given, leaving tmux's default", async () => {
+    await createSession("rdv-test-session", "/projects/app");
+
+    const newSessionCall = execFileMock.mock.calls.find(
+      ([, args]) => args?.[0] === "new-session",
+    );
+    const [, args] = newSessionCall!;
+    expect(args).not.toContain("-x");
+    expect(args).not.toContain("-y");
+  });
+
+  it("ignores non-integer or non-positive dimensions instead of failing the create", async () => {
+    await createSession("rdv-test-session", "/projects/app", undefined, undefined, 50000, {
+      cols: 0,
+      rows: 24.5,
+    });
+
+    const newSessionCall = execFileMock.mock.calls.find(
+      ([, args]) => args?.[0] === "new-session",
+    );
+    const [, args] = newSessionCall!;
+    expect(args).not.toContain("-x");
+    expect(args).not.toContain("-y");
+  });
 });

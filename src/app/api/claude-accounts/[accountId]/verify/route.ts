@@ -15,7 +15,10 @@
 
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
-import { verifyAccount } from "@/services/claude-account-service";
+import {
+  verifyAccount,
+  INVALID_TOKEN_MESSAGE,
+} from "@/services/claude-account-service";
 import { requireAccountId } from "@/app/api/_lib/claude-account-params";
 
 export const dynamic = "force-dynamic";
@@ -27,9 +30,13 @@ export const POST = withApiAuth(async (_request, { userId, params }) => {
   const result = await verifyAccount(id.accountId, userId);
   if (!result) return errorResponse("Account not found", 404);
 
+  // `tokenValid: false` [remote-dev-307w] = Anthropic 401'd the stored token
+  // (the CLI probe alone cannot detect that); null = indeterminate/no token.
   return NextResponse.json({
     account: result.account,
     loggedIn: result.identity.loggedIn,
     authMethod: result.identity.authMethod,
+    tokenValid: result.tokenValid,
+    ...(result.tokenValid === false ? { tokenError: INVALID_TOKEN_MESSAGE } : {}),
   });
 });
