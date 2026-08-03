@@ -15,7 +15,8 @@ skill at [`skills/rdv/SKILL.md`](../skills/rdv/SKILL.md).
 ## Output, build, and discovery
 
 **Output format.** JSON by default; pass the global `--human` flag for tables /
-human-readable output. (A handful of write-only commands print nothing on success.)
+human-readable output. A handful of write-only commands print nothing on success,
+and `rdv clipboard paste` intentionally writes the stored raw text to stdout.
 
 **Build.** `cargo build` (or `cargo install --path crates/rdv`) inside
 `crates/rdv/`. The binary is also auto-installed during server startup and as a step
