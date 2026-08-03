@@ -16,7 +16,12 @@ import {
   type Mock,
 } from "vitest";
 
-const accounts: { id: string; userId: string; profileId: string | null }[] = [];
+const accounts: {
+  id: string;
+  userId: string;
+  profileId: string | null;
+  usageOauthRefreshEncrypted: string | null;
+}[] = [];
 
 vi.mock("@/db", () => ({
   db: { query: { claudeAccounts: { findMany: vi.fn(async () => accounts) } } },
@@ -31,6 +36,11 @@ interface PollTarget {
 const fetchLimitState = vi.fn<(target: PollTarget) => Promise<unknown>>();
 const trackExecute =
   vi.fn<(input: Record<string, unknown>) => Promise<unknown>>();
+const { logDebug, logWarn, logError } = vi.hoisted(() => ({
+  logDebug: vi.fn(),
+  logWarn: vi.fn(),
+  logError: vi.fn(),
+}));
 
 vi.mock("@/infrastructure/container", () => ({
   usageLimitGateway: {
@@ -39,6 +49,14 @@ vi.mock("@/infrastructure/container", () => ({
   trackUsageLimitUseCase: {
     execute: (input: Record<string, unknown>) => trackExecute(input),
   },
+}));
+
+vi.mock("@/lib/logger", () => ({
+  createLogger: () => ({
+    debug: logDebug,
+    warn: logWarn,
+    error: logError,
+  }),
 }));
 
 const pollEnabled = { value: true };
@@ -54,7 +72,12 @@ const findMany = db.query.claudeAccounts.findMany as Mock;
 function seedAccounts(n: number): void {
   accounts.length = 0;
   for (let i = 0; i < n; i += 1) {
-    accounts.push({ id: `acct-${i}`, userId: "u1", profileId: null });
+    accounts.push({
+      id: `acct-${i}`,
+      userId: "u1",
+      profileId: null,
+      usageOauthRefreshEncrypted: "encrypted-refresh-fixture",
+    });
   }
 }
 
@@ -100,6 +123,57 @@ describe("runUsagePollSweep", () => {
 
     expect(fetchLimitState).toHaveBeenCalledTimes(3);
     expect(trackExecute).toHaveBeenCalledTimes(3);
+  });
+
+  it("skips and separately counts accounts without a usage credential", async () => {
+    accounts[1].usageOauthRefreshEncrypted = null;
+
+    await runUsagePollSweep();
+
+    expect(findMany).toHaveBeenCalledWith({
+      columns: {
+        id: true,
+        userId: true,
+        profileId: true,
+        usageOauthRefreshEncrypted: true,
+      },
+    });
+    const polledIds = fetchLimitState.mock.calls.map((call) => call[0].accountId);
+    expect(polledIds).toEqual(["acct-0", "acct-2"]);
+    expect(logDebug).toHaveBeenCalledWith("Usage poll sweep complete", {
+      polled: 2,
+      recorded: 2,
+      rateLimited: 0,
+      skipped: 0,
+      noCredential: 1,
+    });
+  });
+
+  it("polls a previously credential-less account immediately once a credential appears", async () => {
+    seedAccounts(1);
+    accounts[0].usageOauthRefreshEncrypted = null;
+
+    await runUsagePollSweep();
+    expect(fetchLimitState).not.toHaveBeenCalled();
+
+    accounts[0].usageOauthRefreshEncrypted = "encrypted-refresh-fixture";
+    await runUsagePollSweep();
+
+    expect(fetchLimitState).toHaveBeenCalledTimes(1);
+    expect(fetchLimitState).toHaveBeenCalledWith({
+      accountId: "acct-0",
+      userId: "u1",
+      profileId: null,
+    });
+  });
+
+  it("uses strict non-null presence semantics for the usage refresh credential", async () => {
+    seedAccounts(1);
+    accounts[0].usageOauthRefreshEncrypted = "";
+
+    await runUsagePollSweep();
+
+    expect(fetchLimitState).toHaveBeenCalledTimes(1);
   });
 
   it("passes the per-window detail through to the use case", async () => {
@@ -199,10 +273,9 @@ describe("runUsagePollSweep", () => {
   });
 
   describe("rate-limited scheduling [remote-dev-u7df]", () => {
-    // Anthropic throttles setup-token usage reads to ~1/hour: under a
-    // 10-minute cadence nearly every poll 429s. The retry-after names the
-    // reset, so the sweep must schedule the next attempt just past it
-    // (+30-90s jitter) instead of walking the exponential backoff ladder.
+    // The endpoint can still return 429; retry-after names the reset, so the
+    // sweep must schedule the next attempt just past it (+30-90s jitter)
+    // instead of walking the exponential backoff ladder.
     const T0 = new Date("2026-08-03T10:00:00Z").getTime();
 
     beforeEach(() => {

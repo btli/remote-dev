@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   apiKeyUsageFromHeaders,
   fetchClaudeUsage,
@@ -350,8 +350,7 @@ describe("fetchClaudeUsage", () => {
   });
 
   describe("HTTP 429 (rate limited)", () => {
-    // [remote-dev-u7df] Anthropic throttles long-lived setup-token credentials
-    // on this endpoint to ~1 request/hour; the 429's retry-after names the
+    // [remote-dev-u7df] The endpoint can return 429; retry-after names the
     // reset and MUST survive to the caller instead of collapsing into no-data.
     it("surfaces rate-limited-until from an integer-seconds retry-after", async () => {
       const before = Date.now();
@@ -419,7 +418,21 @@ describe("fetchClaudeUsage", () => {
   });
 
   describe("failure paths", () => {
-    it.each([401, 403, 500])("returns no-data on HTTP %i", async (status) => {
+    it("classifies HTTP 403 as forbidden without reading the response body", async () => {
+      const text = vi.fn(async () => "sensitive upstream details");
+      const fetch: FetchLike = async () => ({
+        status: 403,
+        headers: new Headers(),
+        text,
+      });
+
+      const result = await fetchClaudeUsage("tok", "subscription", fetch);
+
+      expect(result).toEqual({ outcome: "forbidden" });
+      expect(text).not.toHaveBeenCalled();
+    });
+
+    it.each([401, 500])("returns no-data on HTTP %i", async (status) => {
       const { fetch } = jsonFetch(LIVE_BODY, status);
       const result = await fetchClaudeUsage("tok", "subscription", fetch);
       expect(result.outcome).toBe("no-data");

@@ -60,21 +60,14 @@
  *
  * ## Throttling (verified live 2026-08-03) [remote-dev-u7df]
  *
- * The read is free of QUOTA but not of RATE LIMIT: Anthropic throttled the
- * observed long-lived `claude setup-token` credentials on this endpoint to
- * roughly one request per hour per token. Excess reads get HTTP 429 with a
- * `retry-after` header (observed: `retry-after: 3578` seconds, counting down
- * toward a fixed reset). Short-lived Keychain access tokens are NOT throttled
- * this way (proven: simultaneous 200 vs 429 from the same IP). Caveat
- * [remote-dev-307w]: the three observed tokens later turned out to be
- * TRUNCATED, INVALID credentials, so the hourly figure is only confirmed for
- * rejected tokens — the cadence allowed a VALID setup-token is unverified.
- * The app stores setup-tokens either way, so a sub-hourly cadence must expect
- * 429s.
+ * The observed approximately-hourly limiter was anti-brute-force behavior on
+ * rejected or invalid credentials, not a quota imposed on a valid usage
+ * credential. The endpoint can still rate-limit valid requests, so HTTP 429
+ * remains a first-class outcome and its `retry-after` header must be honored.
  * {@link fetchClaudeUsage} therefore surfaces a 429 as a first-class
  * "rate-limited" outcome carrying the reset time, so the sweep can align its
- * next attempt to the quota window instead of discarding the header and
- * backing off blind.
+ * next attempt to the server-provided retry window instead of discarding the
+ * header and backing off blind.
  *
  * ## api_key accounts
  *
@@ -185,12 +178,13 @@ export interface ClaudeUsageSnapshot {
  * The outcome of one usage read, discriminated so a caller can tell "here is
  * a snapshot" from "the endpoint refused with retry-after" from "no data".
  * [remote-dev-u7df] The 429 case used to collapse into a bare null and the
- * `retry-after` header — the only signal that names the quota reset — was
+ * `retry-after` header — the only signal that names the retry instant — was
  * discarded.
  */
 export type ClaudeUsageFetchResult =
   | { outcome: "snapshot"; snapshot: ClaudeUsageSnapshot }
   | { outcome: "rate-limited"; retryAt: Date }
+  | { outcome: "forbidden" }
   | { outcome: "no-data" };
 
 /** The dataless outcome (shared: it carries nothing case-specific). */
@@ -209,7 +203,9 @@ const NO_DATA: ClaudeUsageFetchResult = { outcome: "no-data" };
  *   with a usable `retry-after` (see the Throttling section of the module
  *   docblock); or "no-data" when usage cannot be determined (unsupported kind,
  *   network/abort error, other non-200, a 429 without a usable retry-after,
- *   malformed body, or a body carrying no recognizable usage).
+ *   malformed body, or a body carrying no recognizable usage). A 403 is
+ *   surfaced separately as "forbidden" so callers can explicitly reject a
+ *   credential whose scopes regressed.
  */
 export async function fetchClaudeUsage(
   token: string,
@@ -237,9 +233,8 @@ export async function fetchClaudeUsage(
     });
 
     if (response.status === 429) {
-      // See the module docblock's Throttling section: setup-token credentials
-      // get ~1 read/hour, so this is the EXPECTED steady-state response under
-      // a sub-hourly cadence — surface the reset instead of eating it.
+      // The endpoint can rate-limit valid requests; surface the reset instead
+      // of eating it so callers can honor retry-after precisely.
       const retryAfterSeconds = parseRetryAfter(
         response.headers.get("retry-after")
       );
@@ -257,6 +252,10 @@ export async function fetchClaudeUsage(
         retryAt: retryAt.toISOString(),
       });
       return { outcome: "rate-limited", retryAt };
+    }
+
+    if (response.status === 403) {
+      return { outcome: "forbidden" };
     }
 
     if (response.status !== 200) {

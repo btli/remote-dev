@@ -24,14 +24,15 @@
  *     token, decrypt failure, endpoint error) is skipped for a growing interval
  *     instead of being retried every 10 minutes forever. Any success clears it.
  *   - **Retry-after alignment.** [remote-dev-u7df] Anthropic rate-limits
- *     long-lived setup-token credentials on the usage endpoint to ~1 request
- *     per hour, so under this cadence most polls 429. The 429's `retry-after`
- *     names the reset; the gateway surfaces it as a typed rate-limited result
- *     and the sweep schedules that account's next attempt just past the reset
- *     (plus 30-90s jitter) instead of exponential backoff — one successful
- *     poll per quota window by construction rather than by luck. Rate limiting
- *     is upstream pacing, not a failing account, so it never escalates
+ *     requests to the usage endpoint. The 429's `retry-after` names the reset;
+ *     the gateway surfaces it as a typed rate-limited result and the sweep
+ *     schedules that account's next attempt just past the reset (plus 30-90s
+ *     jitter) instead of exponential backoff. Rate limiting is upstream
+ *     pacing, not a failing account, so it never escalates
  *     `consecutiveFailures`; genuine failures keep the exponential path.
+ *   - **Credential gate.** Accounts without an independent usage refresh
+ *     credential are skipped before gateway/network work and never accumulate
+ *     failure backoff merely because usage tracking has not been enabled.
  *
  * Backoff state is deliberately in-memory: it is a pacing hint, not a fact
  * worth persisting, and a restart erring toward "try again" is the right
@@ -149,13 +150,23 @@ export async function runUsagePollSweep(): Promise<void> {
   let recorded = 0;
   let rateLimited = 0;
   let skipped = 0;
+  let noCredential = 0;
   try {
     const accounts = await db.query.claudeAccounts.findMany({
-      columns: { id: true, userId: true, profileId: true },
+      columns: {
+        id: true,
+        userId: true,
+        profileId: true,
+        usageOauthRefreshEncrypted: true,
+      },
     });
 
     const now = Date.now();
     const due = accounts.filter((a) => {
+      if (a.usageOauthRefreshEncrypted === null) {
+        noCredential += 1;
+        return false;
+      }
       if (isBackedOff(a.id, now)) {
         skipped += 1;
         return false;
@@ -188,9 +199,9 @@ export async function runUsagePollSweep(): Promise<void> {
           });
           if (!result) {
             // No observation available (poller disabled for this kind, no
-            // usable credential, or an upstream failure the gateway swallowed).
-            // Back off: retrying a credential-less account every sweep forever
-            // is exactly what this guard exists to stop.
+            // fresh access token, or an upstream failure the gateway swallowed).
+            // Accounts with no stored usage refresh credential were filtered
+            // before this worker and never reach failure backoff.
             recordFailure(account.id, Date.now());
             continue;
           }
@@ -238,6 +249,7 @@ export async function runUsagePollSweep(): Promise<void> {
       recorded,
       rateLimited,
       skipped,
+      noCredential,
     });
   } catch (error) {
     log.error("Usage poll sweep failed", { error: String(error) });
