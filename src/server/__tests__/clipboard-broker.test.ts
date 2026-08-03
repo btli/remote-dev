@@ -19,14 +19,14 @@ describe("ClipboardBroker", () => {
     const broker = new ClipboardBroker({ now: () => now });
 
     expect(broker.write("session-a", "first\n")).toEqual({ revision: 1 });
-    expect(broker.write("session-b", "other")).toEqual({ revision: 1 });
-    expect(broker.write("session-a", "second\0line")).toEqual({ revision: 2 });
+    expect(broker.write("session-b", "other")).toEqual({ revision: 2 });
+    expect(broker.write("session-a", "second\0line")).toEqual({ revision: 3 });
 
     expect(broker.read("session-a")).toEqual({
       data: "second\0line",
-      revision: 2,
+      revision: 3,
     });
-    expect(broker.read("session-b")).toEqual({ data: "other", revision: 1 });
+    expect(broker.read("session-b")).toEqual({ data: "other", revision: 2 });
 
     now += 1;
     expect(broker.read("session-a")?.data).toBe("second\0line");
@@ -51,8 +51,29 @@ describe("ClipboardBroker", () => {
 
     vi.advanceTimersByTime(CLIPBOARD_TTL_MS);
 
-    const entries = (broker as unknown as { entries: Map<string, unknown> }).entries;
-    expect(entries.size).toBe(0);
+    const state = broker as unknown as {
+      entries: Map<string, unknown>;
+      revision: number;
+      revisions?: Map<string, number>;
+    };
+    expect(state.entries.size).toBe(0);
+    expect(state.revisions).toBeUndefined();
+    expect(state.revision).toBe(1);
+  });
+
+  it("does not let an old expiry timer delete a rewritten clipboard", () => {
+    vi.useFakeTimers();
+    const broker = new ClipboardBroker({ ttlMs: 100 });
+
+    expect(broker.write("session-a", "first")).toEqual({ revision: 1 });
+    vi.advanceTimersByTime(60);
+    expect(broker.write("session-a", "second")).toEqual({ revision: 2 });
+    vi.advanceTimersByTime(40);
+
+    expect(broker.read("session-a")).toEqual({ data: "second", revision: 2 });
+    vi.advanceTimersByTime(60);
+    expect(broker.read("session-a")).toBeNull();
+    expect(broker.write("session-a", "third")).toEqual({ revision: 3 });
   });
 
   it("enforces the one-MiB UTF-8 limit", () => {
@@ -94,19 +115,31 @@ describe("ClipboardBroker", () => {
     );
     expect(broker.write("session-a", "valid")).toEqual({ revision: 1 });
 
-    const entries = (broker as unknown as { entries: Map<string, unknown> }).entries;
-    const revisions = (broker as unknown as { revisions: Map<string, unknown> }).revisions;
-    expect(entries.has(oversizedSessionId)).toBe(false);
-    expect(revisions.has(oversizedSessionId)).toBe(false);
+    const state = broker as unknown as {
+      entries: Map<string, unknown>;
+      revision: number;
+    };
+    expect(state.entries.has(oversizedSessionId)).toBe(false);
+    expect(state.revision).toBe(1);
   });
 
-  it("clears both clipboard data and its revision lifecycle on session cleanup", () => {
+  it("clears clipboard data without resetting the process-wide revision", () => {
     const broker = new ClipboardBroker();
-    broker.write("session-a", "secret");
+    expect(broker.write("session-a", "secret")).toEqual({ revision: 1 });
 
     broker.clearSession("session-a");
 
     expect(broker.read("session-a")).toBeNull();
-    expect(broker.write("session-a", "new lifecycle").revision).toBe(1);
+    expect(broker.write("session-a", "new lifecycle").revision).toBe(2);
+  });
+
+  it("fails closed instead of wrapping an exhausted revision counter", () => {
+    const broker = new ClipboardBroker();
+    (broker as unknown as { revision: number }).revision = Number.MAX_SAFE_INTEGER;
+
+    expect(() => broker.write("session-a", "must not store")).toThrowError(
+      "clipboard revision counter exhausted",
+    );
+    expect(broker.read("session-a")).toBeNull();
   });
 });

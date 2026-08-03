@@ -71,7 +71,10 @@ export function validateClipboardSessionId(
  */
 export class ClipboardBroker {
   private readonly entries = new Map<string, ClipboardEntry>();
-  private readonly revisions = new Map<string, number>();
+  // A single process-wide scalar keeps metadata bounded while ensuring every
+  // live client observes monotonically increasing revisions, even after a
+  // session's clipboard entry expires or is explicitly cleared.
+  private revision = 0;
   private readonly now: () => number;
   private readonly ttlMs: number;
   private readonly maxBytes: number;
@@ -86,8 +89,7 @@ export class ClipboardBroker {
     validateClipboardSessionId(sessionId);
     this.validateText(data);
 
-    const revision = (this.revisions.get(sessionId) ?? 0) + 1;
-    this.revisions.set(sessionId, revision);
+    const revision = this.nextRevision();
     this.deleteEntry(sessionId);
     const entry: ClipboardEntry = {
       data,
@@ -117,14 +119,26 @@ export class ClipboardBroker {
 
   clearSession(sessionId: string): void {
     this.deleteEntry(sessionId);
-    this.revisions.delete(sessionId);
   }
 
   clear(): void {
     for (const sessionId of this.entries.keys()) {
       this.deleteEntry(sessionId);
     }
-    this.revisions.clear();
+  }
+
+  private nextRevision(): number {
+    // Never wrap while a live browser may still apply a monotonic revision
+    // filter. Reaching this counter requires a process restart/new epoch.
+    if (
+      !Number.isSafeInteger(this.revision) ||
+      this.revision < 0 ||
+      this.revision >= Number.MAX_SAFE_INTEGER
+    ) {
+      throw new Error("clipboard revision counter exhausted");
+    }
+    this.revision += 1;
+    return this.revision;
   }
 
   private deleteEntry(sessionId: string): void {

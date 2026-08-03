@@ -6,18 +6,30 @@ import {
   CLIPBOARD_SESSION_ID_MAX_BYTES,
   ClipboardBroker,
 } from "../clipboard-broker";
-import { resolveClipboardHttpOperation } from "../clipboard-http";
+import {
+  CLIPBOARD_HTTP_MAX_BODY_BYTES,
+  resolveClipboardHttpOperation,
+  resolveClipboardHttpStreamRequest,
+} from "../clipboard-http";
 import { attemptRemoteClipboardWrite } from "../clipboard-protocol";
+
+function backend(broker: ClipboardBroker) {
+  return {
+    read: (sessionId: string) => broker.read(sessionId),
+    write: (sessionId: string, data: string) =>
+      attemptRemoteClipboardWrite(broker, sessionId, data),
+  };
+}
 
 function operation(
   broker: ClipboardBroker,
   request: Parameters<typeof resolveClipboardHttpOperation>[0],
 ) {
-  return resolveClipboardHttpOperation(request, {
-    read: (sessionId) => broker.read(sessionId),
-    write: (sessionId, data) =>
-      attemptRemoteClipboardWrite(broker, sessionId, data),
-  });
+  return resolveClipboardHttpOperation(request, backend(broker));
+}
+
+async function* chunks(...values: Uint8Array[]) {
+  for (const value of values) yield value;
 }
 
 describe("internal clipboard HTTP operation", () => {
@@ -79,6 +91,85 @@ describe("internal clipboard HTTP operation", () => {
         },
       }),
     ).toMatchObject({ status: 413 });
+  });
+
+  it("decodes split multibyte UTF-8 once at the HTTP endpoint", async () => {
+    const broker = new ClipboardBroker();
+    const data = "before 😀 after";
+    const encoded = Buffer.from(JSON.stringify({ sessionId: "session-a", data }));
+    const emoji = Buffer.from("😀");
+    const emojiStart = encoded.indexOf(emoji);
+    expect(emojiStart).toBeGreaterThan(0);
+
+    const result = await resolveClipboardHttpStreamRequest(
+      {
+        method: "POST",
+        bodyStream: chunks(
+          encoded.subarray(0, emojiStart + 2),
+          encoded.subarray(emojiStart + 2),
+        ),
+      },
+      backend(broker),
+    );
+
+    expect(result).toMatchObject({ status: 200 });
+    expect(broker.read("session-a")?.data).toBe(data);
+  });
+
+  it("rejects invalid UTF-8 at the HTTP endpoint without normalizing or storing it", async () => {
+    const broker = new ClipboardBroker();
+    const result = await resolveClipboardHttpStreamRequest(
+      {
+        method: "POST",
+        bodyStream: chunks(
+          Buffer.from('{"sessionId":"session-a","data":"'),
+          Buffer.from([0xff]),
+          Buffer.from('"}'),
+        ),
+      },
+      backend(broker),
+    );
+
+    expect(result).toMatchObject({ status: 400 });
+    expect(broker.read("session-a")).toBeNull();
+  });
+
+  it("bounds chunked HTTP bodies before JSON parsing", async () => {
+    const read = vi.fn(() => null);
+    const write = vi.fn(() => ({ revision: 1, delivered: false }));
+    let yieldedBytes = 0;
+    async function* oversizedBody() {
+      const chunk = Buffer.alloc(1024 * 1024, 0x20);
+      while (yieldedBytes <= CLIPBOARD_HTTP_MAX_BODY_BYTES) {
+        yieldedBytes += chunk.byteLength;
+        yield chunk;
+      }
+    }
+
+    const result = await resolveClipboardHttpStreamRequest(
+      { method: "POST", bodyStream: oversizedBody() },
+      { read, write },
+    );
+
+    expect(result).toMatchObject({ status: 413 });
+    expect(yieldedBytes).toBeGreaterThan(CLIPBOARD_HTTP_MAX_BODY_BYTES);
+    expect(read).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("allows worst-case JSON escaping for an exact one-MiB clipboard", async () => {
+    const broker = new ClipboardBroker();
+    const data = "\0".repeat(CLIPBOARD_MAX_BYTES);
+    const encoded = Buffer.from(JSON.stringify({ sessionId: "session-a", data }));
+    expect(encoded.byteLength).toBeLessThanOrEqual(CLIPBOARD_HTTP_MAX_BODY_BYTES);
+
+    const result = await resolveClipboardHttpStreamRequest(
+      { method: "POST", bodyStream: chunks(encoded) },
+      backend(broker),
+    );
+
+    expect(result).toMatchObject({ status: 200 });
+    expect(broker.read("session-a")?.data).toBe(data);
   });
 
   it("rejects oversized session ids before invoking the HTTP backend", () => {

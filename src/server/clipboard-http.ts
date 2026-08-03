@@ -1,8 +1,16 @@
 import {
+  CLIPBOARD_MAX_BYTES,
   ClipboardValidationError,
   type ClipboardSnapshot,
   validateClipboardSessionId,
 } from "./clipboard-broker";
+
+/**
+ * JSON can expand each one-byte control character to a six-byte `\\u00xx`
+ * escape. Six MiB plus a small envelope allowance therefore accepts every
+ * valid one-MiB clipboard string while bounding pre-parse request memory.
+ */
+export const CLIPBOARD_HTTP_MAX_BODY_BYTES = CLIPBOARD_MAX_BYTES * 6 + 1024;
 
 export interface ClipboardHttpOperation {
   method?: string;
@@ -24,6 +32,12 @@ export interface ClipboardHttpResult {
   body: Record<string, unknown> | string;
 }
 
+export interface ClipboardHttpStreamRequest {
+  method?: string;
+  querySessionId?: unknown;
+  bodyStream?: AsyncIterable<unknown>;
+}
+
 function errorResult(status: number, error: string): ClipboardHttpResult {
   return {
     status,
@@ -36,6 +50,92 @@ function validationError(error: ClipboardValidationError): ClipboardHttpResult {
   return errorResult(
     error.code === "too_large" ? 413 : 400,
     error.message,
+  );
+}
+
+async function readClipboardJsonBody(
+  bodyStream: AsyncIterable<unknown>,
+): Promise<
+  | { ok: true; body: unknown }
+  | { ok: false; status: 400 | 413; error: string }
+> {
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  let tooLarge = false;
+
+  try {
+    for await (const value of bodyStream) {
+      if (tooLarge) continue;
+      // IncomingMessage yields raw Buffer chunks. Reject pre-decoded strings:
+      // their original byte validity and chunk boundaries are already lost.
+      const chunk =
+        value instanceof Uint8Array
+          ? Buffer.from(value.buffer, value.byteOffset, value.byteLength)
+          : null;
+      if (!chunk) {
+        return { ok: false, status: 400, error: "Invalid request body" };
+      }
+      totalBytes += chunk.byteLength;
+      if (totalBytes > CLIPBOARD_HTTP_MAX_BODY_BYTES) {
+        // Keep draining the request so the connection remains usable, but drop
+        // every retained byte immediately and never accumulate further chunks.
+        chunks.length = 0;
+        tooLarge = true;
+        continue;
+      }
+      chunks.push(chunk);
+    }
+  } catch {
+    return { ok: false, status: 400, error: "Invalid request body" };
+  }
+
+  if (tooLarge) {
+    return {
+      ok: false,
+      status: 413,
+      error: `Clipboard request body exceeds ${CLIPBOARD_HTTP_MAX_BODY_BYTES} bytes`,
+    };
+  }
+
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(
+      Buffer.concat(chunks, totalBytes),
+    );
+  } catch {
+    return { ok: false, status: 400, error: "Request body must be valid UTF-8" };
+  }
+
+  try {
+    return { ok: true, body: JSON.parse(text) as unknown };
+  } catch {
+    return { ok: false, status: 400, error: "Invalid JSON" };
+  }
+}
+
+/** Resolve the streaming HTTP endpoint without decoding partial UTF-8 chunks. */
+export async function resolveClipboardHttpStreamRequest(
+  request: ClipboardHttpStreamRequest,
+  backend: ClipboardHttpBackend,
+): Promise<ClipboardHttpResult> {
+  if (request.method !== "POST") {
+    return resolveClipboardHttpOperation(
+      {
+        method: request.method,
+        querySessionId: request.querySessionId,
+      },
+      backend,
+    );
+  }
+  if (!request.bodyStream) {
+    return errorResult(400, "Missing request body");
+  }
+
+  const parsed = await readClipboardJsonBody(request.bodyStream);
+  if (!parsed.ok) return errorResult(parsed.status, parsed.error);
+  return resolveClipboardHttpOperation(
+    { method: request.method, body: parsed.body },
+    backend,
   );
 }
 

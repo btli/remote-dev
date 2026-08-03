@@ -26,7 +26,7 @@ import {
   handleProxyWsUpgrade,
 } from "./proxy-ws-bridge.js";
 import { ClipboardBroker } from "./clipboard-broker.js";
-import { resolveClipboardHttpOperation } from "./clipboard-http.js";
+import { resolveClipboardHttpStreamRequest } from "./clipboard-http.js";
 import {
   attemptRemoteClipboardWrite,
   handleClientClipboardWrite,
@@ -36,6 +36,7 @@ import {
   buildClipboardSessionEnv,
   ensureClipboardShims,
 } from "../services/clipboard-shims.js";
+import { routeTerminalClientFrame } from "./terminal-client-frame.js";
 // [hgwo] provider type for the durable agent-session-id capture endpoint.
 import type { AgentProviderType } from "../types/session.js";
 
@@ -2007,15 +2008,12 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
   }
 
   if (pathname === "/internal/clipboard") {
-    const payload = req.method === "POST" ? await parseRequestJson(req, res) : undefined;
-    if (req.method === "POST" && payload === null) return true;
-
     try {
-      const result = resolveClipboardHttpOperation(
+      const result = await resolveClipboardHttpStreamRequest(
         {
           method: req.method,
           querySessionId: query.sessionId,
-          body: payload,
+          bodyStream: req.method === "POST" ? req : undefined,
         },
         {
           read: (sessionId) => clipboardBroker.read(sessionId),
@@ -4375,11 +4373,11 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     });
 
     const handleMessage = (message: RawData): void => {
-      try {
-        const msg = JSON.parse(message.toString());
-
-        switch (msg.type) {
+      routeTerminalClientFrame(message.toString(), {
+        onProtocolMessage: (msg) => {
+          switch (msg.type) {
           case "input":
+            if (typeof msg.data !== "string") break;
             recordClientInput(
               connection,
               Date.now,
@@ -4667,13 +4665,12 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             }
             break;
           }
-        }
-      } catch {
-        // JSON parse error — forward raw text to PTY
-        if (connections.has(connectionId)) {
-          connection.pty?.write(message.toString());
-        }
-      }
+          }
+        },
+        onLegacyInput: (input) => {
+          if (connections.has(connectionId)) connection.pty?.write(input);
+        },
+      });
     };
     bufferedMessages.activate({
       message: handleMessage,
