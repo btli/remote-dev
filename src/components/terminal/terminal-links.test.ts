@@ -212,6 +212,57 @@ describe("terminal link reconstruction", () => {
     ]);
   });
 
+  it("bounds confirmation-boundary lookup across many soft-wrapped links", () => {
+    const nativeSome = Array.prototype.some;
+    let boundaryVisits = 0;
+    const some = vi
+      .spyOn(Array.prototype, "some")
+      .mockImplementation(function (this: unknown[], predicate, thisArg) {
+        const first = this[0] as
+          | { index?: unknown; kind?: unknown }
+          | undefined;
+        if (
+          typeof first?.index === "number" &&
+          (first.kind === "soft" || first.kind === "hard")
+        ) {
+          // Every boundary in this fixture is soft, so `some` visits the whole
+          // array. Counting its length avoids a machine-dependent timing test.
+          boundaryVisits += this.length;
+        }
+        return Reflect.apply(nativeSome, this, [predicate, thisArg]);
+      });
+    const scaling: Array<{ rowCount: number; visits: number }> = [];
+
+    try {
+      for (const rowCount of [250, 500, 1_000, 2_000]) {
+        const rowText = "https://a.co x";
+        const cols = rowText.length;
+        const rows = Array.from({ length: rowCount }, (_, index) =>
+          row(index, rowText, cols, index > 0),
+        );
+        boundaryVisits = 0;
+
+        expect(computeTerminalLinks(rows, rowCount - 1)).toEqual([
+          {
+            text: "https://a.co",
+            requiresConfirmation: false,
+            range: {
+              start: { x: 1, y: rowCount },
+              end: { x: 12, y: rowCount },
+            },
+          },
+        ]);
+        scaling.push({ rowCount, visits: boundaryVisits });
+      }
+    } finally {
+      some.mockRestore();
+    }
+
+    for (const { rowCount, visits } of scaling) {
+      expect(visits, `${rowCount} soft rows`).toBeLessThanOrEqual(rowCount * 2);
+    }
+  });
+
   it("follows matching indentation on cursor-positioned rows", () => {
     const url = "https://example.test/indented/path";
     const cols = 24;

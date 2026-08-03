@@ -599,11 +599,30 @@ function lexicalLinksInGroup(
   return result;
 }
 
+function hasHardBoundaryBetween(
+  hardBoundaries: readonly number[],
+  start: number,
+  end: number,
+): boolean {
+  let low = 0;
+  let high = hardBoundaries.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (hardBoundaries[middle] <= start) low = middle + 1;
+    else high = middle;
+  }
+  return low < hardBoundaries.length && hardBoundaries[low] < end;
+}
+
 function linksInGroup(
   group: AssembledGroup,
   lexicalLinks: readonly LexicalTerminalLinkCandidate[],
 ): FullTerminalLinkCandidate[] {
   const result: FullTerminalLinkCandidate[] = [];
+  const hardBoundaries: number[] = [];
+  for (const boundary of group.boundaries) {
+    if (boundary.kind === "hard") hardBoundaries.push(boundary.index);
+  }
   for (const lexical of lexicalLinks) {
     const text = lexical.parsedText;
     if (!text) continue;
@@ -616,11 +635,10 @@ function linksInGroup(
       segments,
       rawSegments: lexical.rawSegments,
       rawTermination: lexical.rawTermination,
-      requiresConfirmation: group.boundaries.some(
-        (boundary) =>
-          boundary.kind === "hard" &&
-          boundary.index > lexical.start &&
-          boundary.index < end,
+      requiresConfirmation: hasHardBoundaryBetween(
+        hardBoundaries,
+        lexical.start,
+        end,
       ),
     });
   }
