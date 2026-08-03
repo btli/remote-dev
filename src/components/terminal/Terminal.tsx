@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle, useMemo, Activity } from "react";
+import { useEffect, useLayoutEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle, useMemo, Activity } from "react";
 import type { Terminal as XTermType } from "@xterm/xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import type { ImageAddon as ImageAddonType } from "@xterm/addon-image";
@@ -202,8 +202,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   // sidebar re-seed on reconnect (mirrors useTerminalWebSocket's hasConnectedBefore).
   const hasConnectedBeforeRef = useRef(false);
   const maxReconnectAttempts = 5;
-
-  isActiveRef.current = isActive;
 
   /**
    * Atomically marks session exit as intentional and cancels any pending reconnect.
@@ -1304,8 +1302,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     };
   }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, terminalType, markIntentionalExit, focusIfPresented]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     visibleRef.current = visible;
+    isActiveRef.current = isActive;
+  }, [visible, isActive]);
+
+  useEffect(() => {
     syncFocusToServerRef.current?.();
     reconcilerRef.current?.notifyPanelVisibility(visible);
   }, [visible]);

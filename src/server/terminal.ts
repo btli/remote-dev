@@ -692,7 +692,15 @@ export class PrimaryPromotionCoordinator {
 
     if (reassert) {
       const pendingCandidate = this.pendingCandidates.get(sessionId)?.connectionId;
-      if (pendingCandidate && pendingCandidate !== connectionId) return "ignored";
+      if (pendingCandidate && pendingCandidate !== connectionId) {
+        const pendingConnection = this.host.getConnection(pendingCandidate);
+        const supersedesPendingSibling =
+          candidate.clientInstanceId !== null &&
+          pendingConnection?.clientInstanceId === candidate.clientInstanceId &&
+          candidate.connectionSeq > pendingConnection.connectionSeq;
+        if (!supersedesPendingSibling) return "ignored";
+        this.clearPendingPromotion(sessionId);
+      }
 
       if (
         !newerSameClientInstance &&
@@ -1455,15 +1463,33 @@ export function pickNextPrimaryConnection(
   conns: ReadonlyArray<
     Pick<
       PromotionConnectionState,
-      "connectionId" | "isVisible" | "lastFocusAt" | "lastInputAt"
+      | "connectionId"
+      | "connectionSeq"
+      | "clientInstanceId"
+      | "isVisible"
+      | "lastFocusAt"
+      | "lastInputAt"
     >
   >,
 ): string | null {
   if (conns.length === 0) return null;
   const visible = conns.filter((c) => c.isVisible);
   const pool = visible.length > 0 ? visible : conns;
-  let best = pool[0];
-  for (const c of pool) {
+  const newestConnectionByInstance = new Map<string, (typeof pool)[number]>();
+  for (const connection of pool) {
+    if (connection.clientInstanceId === null) continue;
+    const newest = newestConnectionByInstance.get(connection.clientInstanceId);
+    if (!newest || connection.connectionSeq > newest.connectionSeq) {
+      newestConnectionByInstance.set(connection.clientInstanceId, connection);
+    }
+  }
+  const eligible = pool.filter(
+    (connection) =>
+      connection.clientInstanceId === null ||
+      newestConnectionByInstance.get(connection.clientInstanceId) === connection,
+  );
+  let best = eligible[0];
+  for (const c of eligible) {
     const engagement = connectionEngagement(c);
     const bestEngagement = connectionEngagement(best);
     if (

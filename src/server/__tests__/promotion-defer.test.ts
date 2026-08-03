@@ -535,7 +535,7 @@ describe("PrimaryPromotionCoordinator", () => {
     expect(host.broadcasts).toHaveLength(0);
     vi.advanceTimersByTime(700);
 
-    expect(["B", "C", "D"]).toContain(host.primaries.get("s1"));
+    expect(host.primaries.get("s1")).toBe("D");
     expect(host.broadcasts).toEqual(["s1"]);
     expect(host.reassertions).toHaveLength(1);
   });
@@ -728,16 +728,16 @@ describe("replacement primary selection", () => {
   it("prefers visible connections and keeps pool order for zero-timestamp ties", () => {
     expect(
       pickNextPrimaryConnection([
-        { connectionId: "A", isVisible: false, lastFocusAt: 0, lastInputAt: 0 },
-        { connectionId: "B", isVisible: true, lastFocusAt: 0, lastInputAt: 0 },
-        { connectionId: "C", isVisible: true, lastFocusAt: 0, lastInputAt: 0 },
+        { connectionId: "A", connectionSeq: 1, clientInstanceId: null, isVisible: false, lastFocusAt: 0, lastInputAt: 0 },
+        { connectionId: "B", connectionSeq: 2, clientInstanceId: null, isVisible: true, lastFocusAt: 0, lastInputAt: 0 },
+        { connectionId: "C", connectionSeq: 3, clientInstanceId: null, isVisible: true, lastFocusAt: 0, lastInputAt: 0 },
       ]),
     ).toBe("B");
 
     expect(
       pickNextPrimaryConnection([
-        { connectionId: "A", isVisible: false, lastFocusAt: 0, lastInputAt: 0 },
-        { connectionId: "B", isVisible: false, lastFocusAt: 0, lastInputAt: 0 },
+        { connectionId: "A", connectionSeq: 1, clientInstanceId: null, isVisible: false, lastFocusAt: 0, lastInputAt: 0 },
+        { connectionId: "B", connectionSeq: 2, clientInstanceId: null, isVisible: false, lastFocusAt: 0, lastInputAt: 0 },
       ]),
     ).toBe("A");
   });
@@ -745,8 +745,8 @@ describe("replacement primary selection", () => {
   it("ranks visible handoff survivors by their latest focus or input engagement", () => {
     expect(
       pickNextPrimaryConnection([
-        { connectionId: "B", isVisible: true, lastFocusAt: 100, lastInputAt: 900 },
-        { connectionId: "C", isVisible: true, lastFocusAt: 500, lastInputAt: 0 },
+        { connectionId: "B", connectionSeq: 1, clientInstanceId: null, isVisible: true, lastFocusAt: 100, lastInputAt: 900 },
+        { connectionId: "C", connectionSeq: 2, clientInstanceId: null, isVisible: true, lastFocusAt: 500, lastInputAt: 0 },
       ]),
     ).toBe("B");
   });
@@ -754,10 +754,41 @@ describe("replacement primary selection", () => {
   it("falls back to focus recency when viewer-only engagement ties", () => {
     expect(
       pickNextPrimaryConnection([
-        { connectionId: "B", isVisible: false, lastFocusAt: 100, lastInputAt: 900 },
-        { connectionId: "C", isVisible: false, lastFocusAt: 900, lastInputAt: 0 },
+        { connectionId: "B", connectionSeq: 1, clientInstanceId: null, isVisible: false, lastFocusAt: 100, lastInputAt: 900 },
+        { connectionId: "C", connectionSeq: 2, clientInstanceId: null, isVisible: false, lastFocusAt: 900, lastInputAt: 0 },
       ]),
     ).toBe("C");
+  });
+
+  it("excludes a freshened older-generation zombie before ranking handoff engagement", () => {
+    expect(
+      pickNextPrimaryConnection([
+        {
+          connectionId: "phone-zombie",
+          connectionSeq: 10,
+          clientInstanceId: "phone-instance",
+          isVisible: true,
+          lastFocusAt: 1000,
+          lastInputAt: 0,
+        },
+        {
+          connectionId: "phone-live",
+          connectionSeq: 11,
+          clientInstanceId: "phone-instance",
+          isVisible: true,
+          lastFocusAt: 100,
+          lastInputAt: 0,
+        },
+        {
+          connectionId: "challenger",
+          connectionSeq: 12,
+          clientInstanceId: "challenger-instance",
+          isVisible: true,
+          lastFocusAt: 500,
+          lastInputAt: 0,
+        },
+      ]),
+    ).toBe("challenger");
   });
 });
 

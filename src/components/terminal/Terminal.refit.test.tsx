@@ -28,6 +28,7 @@ import {
   startTransition,
   StrictMode,
   Suspense,
+  useLayoutEffect,
   useState,
 } from "react";
 
@@ -535,6 +536,48 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
     act(() => view.getByRole("button", { name: "Reveal" }).click());
     expect(speculativeRenderSeen).toBe(true);
     act(() => socket.open());
+
+    expect(socket.sentTypes()).toContain("client_blur");
+    expect(socket.sentTypes()).not.toContain("client_focus");
+  });
+
+  it("flushes blur when a socket opens after committed hide but before passive effects", async () => {
+    const Terminal = await getTerminal();
+    autoOpenSockets = false;
+
+    function OpenSocketOnCommittedHide({ visible }: { visible: boolean }) {
+      useLayoutEffect(() => {
+        if (!visible) wsInstances.at(-1)?.open();
+      }, [visible]);
+      return null;
+    }
+
+    function Harness() {
+      const [visible, setVisible] = useState(true);
+      return (
+        <>
+          <button type="button" onClick={() => setVisible(false)}>
+            Hide
+          </button>
+          <Terminal
+            sessionId="s1"
+            tmuxSessionName="rdv-s1"
+            wsUrl="ws://localhost:0"
+            terminalType="shell"
+            visible={visible}
+          />
+          <OpenSocketOnCommittedHide visible={visible} />
+        </>
+      );
+    }
+
+    const view = render(<Harness />);
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.readyState).toBe(MockWebSocket.CONNECTING);
+    });
+    const socket = wsInstances.at(-1)!;
+
+    act(() => view.getByRole("button", { name: "Hide" }).click());
 
     expect(socket.sentTypes()).toContain("client_blur");
     expect(socket.sentTypes()).not.toContain("client_focus");
