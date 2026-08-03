@@ -2039,14 +2039,32 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     const browserClipboard = navigator.clipboard;
 
     const readAndSync = async () => {
+      const input = currentBrowserClipboardInput();
+      const eligibilityToken = clipboardSync.createEligibilityToken();
       if (
-        !clipboardSync.canReadLocalClipboard() ||
+        eligibilityToken === null ||
+        !input ||
+        !input.isConnected ||
+        document.activeElement !== input ||
         document.hidden ||
         !document.hasFocus()
       ) {
         return;
       }
       await readBrowserClipboard(browserClipboard, (text) => {
+        // Clipboard reads can remain pending across focus, visibility,
+        // primary, socket, and session transitions. A later A→B→A must not
+        // let text captured by A escape through B's replacement lease.
+        if (
+          !clipboardSync.isEligibilityTokenCurrent(eligibilityToken) ||
+          currentBrowserClipboardInput() !== input ||
+          !input.isConnected ||
+          document.activeElement !== input ||
+          document.hidden ||
+          !document.hasFocus()
+        ) {
+          return;
+        }
         clipboardSync.writeLocalText(text);
       });
     };
@@ -2074,6 +2092,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   }, [
     clipboardMode,
     clipboardSync,
+    currentBrowserClipboardInput,
     deviceClipboardSyncEnabled,
     isActive,
     visible,

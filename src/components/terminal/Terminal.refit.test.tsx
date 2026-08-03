@@ -536,6 +536,263 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
     });
   });
 
+  it("drops a clipboard read that completes after focus leaves and returns", async () => {
+    localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+    const resolveReads: Array<(text: string) => void> = [];
+    clipboardReadText.mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveReads.push(resolve);
+        }),
+    );
+    const Terminal = await getTerminal();
+    render(
+      <>
+        <Terminal
+          sessionId="clipboard-stale-focus"
+          tmuxSessionName="rdv-clipboard-stale-focus"
+          wsUrl="ws://localhost:0"
+          terminalType="shell"
+          isActive
+          visible
+        />
+        <input aria-label="Other focus target" />
+      </>,
+    );
+
+    await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+    const socket = wsInstances.at(-1)!;
+    const textarea = xtermInstances.at(-1)!.textarea;
+    const otherInput = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Other focus target"]',
+    )!;
+    act(() => {
+      textarea.focus();
+      dispatchSocketMessage(socket, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+    });
+    await waitFor(() => expect(resolveReads).toHaveLength(1));
+
+    act(() => {
+      otherInput.focus();
+      textarea.focus();
+    });
+    await waitFor(() => expect(resolveReads).toHaveLength(2));
+    socket.sent.length = 0;
+
+    await act(async () => {
+      resolveReads[0]("stale focus clipboard");
+      await Promise.resolve();
+    });
+    expect(
+      socket.sent
+        .map((frame) => JSON.parse(frame))
+        .filter(
+          (frame) =>
+            frame.type === "clipboard_write" &&
+            frame.data === "stale focus clipboard",
+        ),
+    ).toEqual([]);
+
+    await act(async () => {
+      resolveReads[1]("current focus clipboard");
+      await Promise.resolve();
+    });
+    expect(socket.sent.map((frame) => JSON.parse(frame))).toContainEqual({
+      type: "clipboard_write",
+      data: "current focus clipboard",
+      updateId: expect.any(String),
+    });
+  });
+
+  it.each(["visibility", "primary"] as const)(
+    "drops a clipboard read that completes after a %s A→B→A transition",
+    async (transition) => {
+      localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+      const resolveReads: Array<(text: string) => void> = [];
+      clipboardReadText.mockImplementation(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveReads.push(resolve);
+          }),
+      );
+      let hidden = false;
+      const ownHiddenDescriptor = Object.getOwnPropertyDescriptor(
+        document,
+        "hidden",
+      );
+      if (transition === "visibility") {
+        Object.defineProperty(document, "hidden", {
+          configurable: true,
+          get: () => hidden,
+        });
+      }
+
+      try {
+        const Terminal = await getTerminal();
+        render(
+          <Terminal
+            sessionId={`clipboard-stale-${transition}`}
+            tmuxSessionName={`rdv-clipboard-stale-${transition}`}
+            wsUrl="ws://localhost:0"
+            terminalType="shell"
+            isActive
+            visible
+          />,
+        );
+        await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+        const socket = wsInstances.at(-1)!;
+        const textarea = xtermInstances.at(-1)!.textarea;
+        act(() => {
+          textarea.focus();
+          dispatchSocketMessage(socket, {
+            type: "primary_changed",
+            isPrimary: true,
+          });
+        });
+        await waitFor(() => expect(resolveReads).toHaveLength(1));
+
+        if (transition === "visibility") {
+          act(() => {
+            hidden = true;
+            document.dispatchEvent(new Event("visibilitychange"));
+            hidden = false;
+            document.dispatchEvent(new Event("visibilitychange"));
+          });
+          await act(
+            () =>
+              new Promise<void>((resolve) => {
+                requestAnimationFrame(() => resolve());
+              }),
+          );
+        } else {
+          act(() => {
+            dispatchSocketMessage(socket, {
+              type: "primary_changed",
+              isPrimary: false,
+            });
+            dispatchSocketMessage(socket, {
+              type: "primary_changed",
+              isPrimary: true,
+            });
+          });
+        }
+        await waitFor(() => expect(resolveReads).toHaveLength(2));
+        socket.sent.length = 0;
+
+        await act(async () => {
+          resolveReads[0](`stale ${transition} clipboard`);
+          await Promise.resolve();
+        });
+        expect(
+          socket.sent
+            .map((frame) => JSON.parse(frame))
+            .filter(
+              (frame) =>
+                frame.type === "clipboard_write" &&
+                frame.data === `stale ${transition} clipboard`,
+            ),
+        ).toEqual([]);
+
+        await act(async () => {
+          resolveReads[1](`current ${transition} clipboard`);
+          await Promise.resolve();
+        });
+        expect(socket.sent.map((frame) => JSON.parse(frame))).toContainEqual({
+          type: "clipboard_write",
+          data: `current ${transition} clipboard`,
+          updateId: expect.any(String),
+        });
+      } finally {
+        if (transition === "visibility") {
+          if (ownHiddenDescriptor) {
+            Object.defineProperty(document, "hidden", ownHiddenDescriptor);
+          } else {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            delete (document as any).hidden;
+          }
+        }
+      }
+    },
+  );
+
+  it("drops a clipboard read from the prior socket and session after replacement becomes eligible", async () => {
+    localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
+    const resolveReads: Array<(text: string) => void> = [];
+    clipboardReadText.mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveReads.push(resolve);
+        }),
+    );
+    const Terminal = await getTerminal();
+    const sessionView = (sessionId: string) => (
+      <Terminal
+        sessionId={sessionId}
+        tmuxSessionName={`rdv-${sessionId}`}
+        wsUrl="ws://localhost:0"
+        terminalType="shell"
+        isActive
+        visible
+      />
+    );
+    const view = render(sessionView("clipboard-read-session-a"));
+    await waitFor(() => expect(wsInstances.at(-1)?.readyState).toBe(1));
+    const firstSocket = wsInstances.at(-1)!;
+    act(() => {
+      xtermInstances.at(-1)!.textarea.focus();
+      dispatchSocketMessage(firstSocket, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+    });
+    await waitFor(() => expect(resolveReads).toHaveLength(1));
+
+    view.rerender(sessionView("clipboard-read-session-b"));
+    await waitFor(() => {
+      expect(wsInstances.at(-1)).not.toBe(firstSocket);
+      expect(wsInstances.at(-1)?.readyState).toBe(1);
+    });
+    const replacementSocket = wsInstances.at(-1)!;
+    act(() => {
+      xtermInstances.at(-1)!.textarea.focus();
+      dispatchSocketMessage(replacementSocket, {
+        type: "primary_changed",
+        isPrimary: true,
+      });
+    });
+    await waitFor(() => expect(resolveReads).toHaveLength(2));
+    replacementSocket.sent.length = 0;
+
+    await act(async () => {
+      resolveReads[0]("stale prior-session clipboard");
+      await Promise.resolve();
+    });
+    expect(
+      replacementSocket.sent
+        .map((frame) => JSON.parse(frame))
+        .filter(
+          (frame) =>
+            frame.type === "clipboard_write" &&
+            frame.data === "stale prior-session clipboard",
+        ),
+    ).toEqual([]);
+
+    await act(async () => {
+      resolveReads[1]("current replacement-session clipboard");
+      await Promise.resolve();
+    });
+    expect(
+      replacementSocket.sent.map((frame) => JSON.parse(frame)),
+    ).toContainEqual({
+      type: "clipboard_write",
+      data: "current replacement-session clipboard",
+      updateId: expect.any(String),
+    });
+  });
+
   it("syncs only while the registered mobile browser terminal input is focused", async () => {
     localStorageValues.set(CLIPBOARD_SYNC_STORAGE_KEY, "true");
     clipboardReadText.mockResolvedValue("mobile clipboard seed");
