@@ -30,6 +30,8 @@ import {
 const DATA_DIR = "/tmp/rdv usage data";
 const ROOT = `${DATA_DIR}/claude-oauth`;
 const SCRATCH = `${ROOT}/session-1`;
+const CANONICAL_ROOT = `/private${ROOT}`;
+const CANONICAL_SCRATCH = `${CANONICAL_ROOT}/session-1`;
 const NOW = new Date("2026-08-03T12:00:00.000Z");
 
 const credential = {
@@ -68,6 +70,40 @@ const account = {
   usageCredential: true,
 };
 
+type LstatEntry = Awaited<
+  ReturnType<UsageCredentialServiceDependencies["fileSystem"]["lstat"]>
+>;
+
+function realDirectoryEntry(identity: number = 1): LstatEntry {
+  return {
+    dev: 1,
+    ino: identity,
+    isDirectory: () => true,
+    isFile: () => false,
+    isSymbolicLink: () => false,
+  };
+}
+
+function regularFileEntry(identity: number = 2): LstatEntry {
+  return {
+    dev: 1,
+    ino: identity,
+    isDirectory: () => false,
+    isFile: () => true,
+    isSymbolicLink: () => false,
+  };
+}
+
+function symlinkEntry(): LstatEntry {
+  return {
+    dev: 1,
+    ino: 99,
+    isDirectory: () => false,
+    isFile: () => false,
+    isSymbolicLink: () => true,
+  };
+}
+
 function makeDependencies(
   overrides: Partial<UsageCredentialServiceDependencies> = {}
 ): UsageCredentialServiceDependencies {
@@ -85,11 +121,7 @@ function makeDependencies(
         if (path.endsWith("/.credentials.json")) {
           throw Object.assign(new Error("absent"), { code: "ENOENT" });
         }
-        return {
-          isDirectory: () => true,
-          isFile: () => false,
-          isSymbolicLink: () => false,
-        };
+        return realDirectoryEntry();
       }),
       realpath: vi.fn(async (path: string) => path),
     },
@@ -138,7 +170,7 @@ beforeEach(() => {
 });
 
 describe("scratch preparation and command", () => {
-  it("creates private root/session directories and a private onboarding seed", async () => {
+  it("creates missing data parents, then proves the root before the private session and seed", async () => {
     const deps = makeDependencies();
     const service = new ClaudeUsageCredentialService(deps);
 
@@ -166,6 +198,89 @@ describe("scratch preparation and command", () => {
       theme: "dark",
     });
     expect(prepared.command).toBe(buildUsageLoginCommand(SCRATCH));
+  });
+
+  it.each([
+    ["symlink", symlinkEntry()],
+    ["non-directory", regularFileEntry()],
+  ] as const)(
+    "rejects an existing %s scratch root before creating a session or seed file",
+    async (_kind, rootEntry) => {
+      const deps = makeDependencies();
+      vi.mocked(deps.fileSystem.mkdir).mockImplementation(async (path) => {
+        if (path === ROOT) {
+          throw Object.assign(new Error("exists"), { code: "EEXIST" });
+        }
+      });
+      vi.mocked(deps.fileSystem.lstat).mockImplementation(async (path) =>
+        path === ROOT ? rootEntry : realDirectoryEntry()
+      );
+      const service = new ClaudeUsageCredentialService(deps);
+
+      await expect(service.prepareScratch("session-1")).rejects.toThrow(
+        /scratch root.*real directory/i
+      );
+      expect(deps.fileSystem.mkdir).toHaveBeenCalledTimes(1);
+      expect(deps.fileSystem.mkdir).toHaveBeenCalledWith(ROOT, {
+        recursive: true,
+        mode: 0o700,
+      });
+      expect(deps.fileSystem.writeFile).not.toHaveBeenCalled();
+      expect(deps.harvester.harvest).not.toHaveBeenCalled();
+      expect(deps.harvester.delete).not.toHaveBeenCalled();
+    }
+  );
+
+  it("allows a stable real scratch root beneath a canonicalized ancestor", async () => {
+    const deps = makeDependencies();
+    vi.mocked(deps.fileSystem.mkdir).mockImplementation(async (path) => {
+      if (path === ROOT) {
+        throw Object.assign(new Error("exists"), { code: "EEXIST" });
+      }
+    });
+    vi.mocked(deps.fileSystem.realpath).mockImplementation(async (path) => {
+      if (path === ROOT) return CANONICAL_ROOT;
+      if (path === SCRATCH) return CANONICAL_SCRATCH;
+      return path;
+    });
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.prepareScratch("session-1")).resolves.toMatchObject({
+      scratchDir: SCRATCH,
+    });
+    expect(deps.fileSystem.mkdir).toHaveBeenCalledWith(SCRATCH, {
+      recursive: false,
+      mode: 0o700,
+    });
+    expect(deps.fileSystem.writeFile).toHaveBeenCalledWith(
+      `${SCRATCH}/.claude.json`,
+      expect.any(String),
+      { encoding: "utf8", mode: 0o600 }
+    );
+  });
+
+  it("revalidates a root rebound during session creation before writing the seed", async () => {
+    const deps = makeDependencies();
+    let rootRebound = false;
+    vi.mocked(deps.fileSystem.mkdir).mockImplementation(async (path) => {
+      if (path === SCRATCH) rootRebound = true;
+    });
+    vi.mocked(deps.fileSystem.lstat).mockImplementation(async (path) => {
+      if (path === ROOT) {
+        return rootRebound ? symlinkEntry() : realDirectoryEntry();
+      }
+      return realDirectoryEntry();
+    });
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.prepareScratch("session-1")).rejects.toThrow(
+      /scratch root.*real directory/i
+    );
+    expect(deps.fileSystem.mkdir).toHaveBeenCalledWith(SCRATCH, {
+      recursive: false,
+      mode: 0o700,
+    });
+    expect(deps.fileSystem.writeFile).not.toHaveBeenCalled();
   });
 
   it("quotes a single quote in the literal scratch path and blanks ambient auth", () => {
@@ -197,6 +312,93 @@ describe("scratch preparation and command", () => {
 });
 
 describe("capture validation and storage", () => {
+  it("uses a stable canonicalized root for child containment while harvesting the literal path", async () => {
+    const deps = makeDependencies();
+    vi.mocked(deps.fileSystem.realpath).mockImplementation(async (path) => {
+      if (path === ROOT) return CANONICAL_ROOT;
+      if (path === SCRATCH) return CANONICAL_SCRATCH;
+      return path;
+    });
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.capture(captureInput)).resolves.toMatchObject({
+      account,
+      usageValidated: true,
+    });
+    expect(deps.harvester.harvest).toHaveBeenCalledWith(SCRATCH);
+    expect(deps.probeIdentity).toHaveBeenCalledWith(SCRATCH);
+    expect(deps.harvester.delete).toHaveBeenCalledWith(SCRATCH);
+    expect(deps.fileSystem.rm).toHaveBeenCalledWith(SCRATCH, {
+      recursive: true,
+      force: true,
+    });
+  });
+
+  it("rejects a linked scratch root before credential or identity effects", async () => {
+    const deps = makeDependencies();
+    vi.mocked(deps.fileSystem.lstat).mockImplementation(async (path) => {
+      if (path === ROOT) return symlinkEntry();
+      if (path.endsWith("/.credentials.json")) {
+        throw Object.assign(new Error("absent"), { code: "ENOENT" });
+      }
+      return realDirectoryEntry();
+    });
+    vi.mocked(deps.fileSystem.realpath).mockImplementation(async (path) =>
+      path === ROOT
+        ? "/external/claude-oauth"
+        : path === SCRATCH
+          ? "/external/claude-oauth/session-1"
+          : path
+    );
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.capture(captureInput)).rejects.toThrow(
+      /scratch root.*real directory/i
+    );
+    expect(deps.harvester.harvest).not.toHaveBeenCalled();
+    expect(deps.fetchUsage).not.toHaveBeenCalled();
+    expect(deps.probeIdentity).not.toHaveBeenCalled();
+    expect(deps.storeCredential).not.toHaveBeenCalled();
+    expect(deps.harvester.delete).not.toHaveBeenCalled();
+    expect(deps.fileSystem.rm).not.toHaveBeenCalled();
+  });
+
+  it("rejects a root rebound across validation before the identity probe", async () => {
+    let rootRebound = false;
+    const deps = makeDependencies({
+      fetchUsage: vi.fn(async () => {
+        rootRebound = true;
+        return { outcome: "snapshot", snapshot } as const;
+      }),
+    });
+    vi.mocked(deps.fileSystem.lstat).mockImplementation(async (path) => {
+      if (path === ROOT) {
+        return rootRebound ? symlinkEntry() : realDirectoryEntry();
+      }
+      if (path.endsWith("/.credentials.json")) {
+        throw Object.assign(new Error("absent"), { code: "ENOENT" });
+      }
+      return realDirectoryEntry();
+    });
+    vi.mocked(deps.fileSystem.realpath).mockImplementation(async (path) => {
+      if (!rootRebound) return path;
+      if (path === ROOT) return "/external/claude-oauth";
+      if (path === SCRATCH) return "/external/claude-oauth/session-1";
+      return path;
+    });
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.capture(captureInput)).rejects.toThrow(
+      /scratch root.*real directory/i
+    );
+    expect(deps.harvester.harvest).toHaveBeenCalledWith(SCRATCH);
+    expect(deps.fetchUsage).toHaveBeenCalledOnce();
+    expect(deps.probeIdentity).not.toHaveBeenCalled();
+    expect(deps.storeCredential).not.toHaveBeenCalled();
+    expect(deps.harvester.delete).not.toHaveBeenCalled();
+    expect(deps.fileSystem.rm).not.toHaveBeenCalled();
+  });
+
   it.each([
     ROOT,
     `${ROOT}-prefix-sibling/session-1`,
@@ -240,11 +442,9 @@ describe("capture validation and storage", () => {
 
   it("rejects a scratch symlink before harvest or any downstream effect", async () => {
     const deps = makeDependencies();
-    vi.mocked(deps.fileSystem.lstat).mockResolvedValue({
-      isDirectory: () => false,
-      isFile: () => false,
-      isSymbolicLink: () => true,
-    });
+    vi.mocked(deps.fileSystem.lstat).mockImplementation(async (path) =>
+      path === ROOT ? realDirectoryEntry() : symlinkEntry()
+    );
     const service = new ClaudeUsageCredentialService(deps);
 
     await expect(service.capture(captureInput)).rejects.toThrow(
@@ -260,7 +460,7 @@ describe("capture validation and storage", () => {
   it("rejects a canonical target outside the canonical scratch root before harvest", async () => {
     const deps = makeDependencies();
     vi.mocked(deps.fileSystem.realpath).mockImplementation(async (path) =>
-      path === ROOT ? "/canonical/rdv/claude-oauth" : "/outside/session-1"
+      path === ROOT ? ROOT : "/outside/session-1"
     );
     const service = new ClaudeUsageCredentialService(deps);
 
@@ -278,16 +478,8 @@ describe("capture validation and storage", () => {
     const deps = makeDependencies();
     vi.mocked(deps.fileSystem.lstat).mockImplementation(async (path) =>
       path.endsWith("/.credentials.json")
-        ? {
-            isDirectory: () => false,
-            isFile: () => false,
-            isSymbolicLink: () => true,
-          }
-        : {
-            isDirectory: () => true,
-            isFile: () => false,
-            isSymbolicLink: () => false,
-          }
+        ? symlinkEntry()
+        : realDirectoryEntry()
     );
     const service = new ClaudeUsageCredentialService(deps);
 
@@ -306,24 +498,12 @@ describe("capture validation and storage", () => {
     let credentialInspections = 0;
     vi.mocked(deps.fileSystem.lstat).mockImplementation(async (path) => {
       if (!path.endsWith("/.credentials.json")) {
-        return {
-          isDirectory: () => true,
-          isFile: () => false,
-          isSymbolicLink: () => false,
-        };
+        return realDirectoryEntry();
       }
       credentialInspections += 1;
       return credentialInspections === 1
-        ? {
-            isDirectory: () => false,
-            isFile: () => true,
-            isSymbolicLink: () => false,
-          }
-        : {
-            isDirectory: () => false,
-            isFile: () => false,
-            isSymbolicLink: () => true,
-          };
+        ? regularFileEntry()
+        : symlinkEntry();
     });
     const service = new ClaudeUsageCredentialService(deps);
 
@@ -355,21 +535,14 @@ describe("capture validation and storage", () => {
     const deps = makeDependencies();
     let directoryInspections = 0;
     vi.mocked(deps.fileSystem.lstat).mockImplementation(async (path) => {
+      if (path === ROOT) return realDirectoryEntry();
       if (path.endsWith("/.credentials.json")) {
         throw Object.assign(new Error("absent"), { code: "ENOENT" });
       }
       directoryInspections += 1;
       return directoryInspections === 1
-        ? {
-            isDirectory: () => true,
-            isFile: () => false,
-            isSymbolicLink: () => false,
-          }
-        : {
-            isDirectory: () => false,
-            isFile: () => false,
-            isSymbolicLink: () => true,
-          };
+        ? realDirectoryEntry()
+        : symlinkEntry();
     });
     const service = new ClaudeUsageCredentialService(deps);
 
@@ -558,7 +731,7 @@ describe("capture validation and storage", () => {
     });
   });
 
-  it("returns account-not-found without cleanup when ownership vanishes at storage", async () => {
+  it("returns account-not-found after cleaning the harvested credential when ownership vanishes", async () => {
     const deps = makeDependencies({
       storeCredential: vi.fn(async () => null),
     });
@@ -569,7 +742,13 @@ describe("capture validation and storage", () => {
       usageValidated: false,
     });
     expect(deps.trackUsage).not.toHaveBeenCalled();
-    expect(deps.harvester.delete).not.toHaveBeenCalled();
+    expect(deps.harvester.delete).toHaveBeenCalledWith(SCRATCH);
+    expect(deps.fileSystem.rm).toHaveBeenCalledWith(SCRATCH, {
+      recursive: true,
+      force: true,
+    });
+    expect(deps.clearHistory).toHaveBeenCalledWith("rdv-session-1");
+    expect(deps.closeSession).toHaveBeenCalledWith("session-1", "user-1");
   });
 
   it("treats a rejected or stale snapshot write as not validated", async () => {
@@ -686,21 +865,14 @@ describe("successful capture cleanup", () => {
     const deps = makeDependencies();
     let directoryInspections = 0;
     vi.mocked(deps.fileSystem.lstat).mockImplementation(async (path) => {
+      if (path === ROOT) return realDirectoryEntry();
       if (path.endsWith("/.credentials.json")) {
         throw Object.assign(new Error("absent"), { code: "ENOENT" });
       }
       directoryInspections += 1;
       return directoryInspections <= 2
-        ? {
-            isDirectory: () => true,
-            isFile: () => false,
-            isSymbolicLink: () => false,
-          }
-        : {
-            isDirectory: () => false,
-            isFile: () => false,
-            isSymbolicLink: () => true,
-          };
+        ? realDirectoryEntry()
+        : symlinkEntry();
     });
     const service = new ClaudeUsageCredentialService(deps);
 
@@ -740,9 +912,84 @@ describe("recursive deletion guard", () => {
     }
     expect(deps.fileSystem.rm).not.toHaveBeenCalled();
   });
+
+  it("refuses recursive removal through a linked scratch root", async () => {
+    const deps = makeDependencies();
+    vi.mocked(deps.fileSystem.lstat).mockImplementation(async (path) =>
+      path === ROOT ? symlinkEntry() : realDirectoryEntry()
+    );
+    vi.mocked(deps.fileSystem.realpath).mockImplementation(async (path) =>
+      path === ROOT
+        ? "/external/claude-oauth"
+        : "/external/claude-oauth/session-1"
+    );
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.removeScratchDirectory(SCRATCH)).rejects.toThrow(
+      /scratch root.*real directory/i
+    );
+    expect(deps.fileSystem.rm).not.toHaveBeenCalled();
+    expect(deps.harvester.delete).not.toHaveBeenCalled();
+  });
 });
 
 describe("orphan cleanup", () => {
+  it("rejects a linked scratch root before orphan enumeration or deletion", async () => {
+    const deps = makeDependencies();
+    vi.mocked(deps.fileSystem.lstat).mockImplementation(async (path) =>
+      path === ROOT ? symlinkEntry() : realDirectoryEntry()
+    );
+    vi.mocked(deps.fileSystem.realpath).mockImplementation(async (path) =>
+      path === ROOT
+        ? "/external/claude-oauth"
+        : "/external/claude-oauth/old"
+    );
+    vi.mocked(deps.fileSystem.readdir).mockResolvedValue([
+      { name: "old", isDirectory: () => true },
+    ]);
+    vi.mocked(deps.fileSystem.stat).mockResolvedValue({
+      mtimeMs: NOW.getTime() - 25 * 60 * 60 * 1000,
+    });
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.cleanupOrphans()).rejects.toThrow(
+      /scratch root.*real directory/i
+    );
+    expect(deps.fileSystem.readdir).not.toHaveBeenCalled();
+    expect(deps.fileSystem.stat).not.toHaveBeenCalled();
+    expect(deps.harvester.delete).not.toHaveBeenCalled();
+    expect(deps.fileSystem.rm).not.toHaveBeenCalled();
+  });
+
+  it("revalidates the root after orphan enumeration before child effects", async () => {
+    let rootRebound = false;
+    const deps = makeDependencies();
+    vi.mocked(deps.fileSystem.lstat).mockImplementation(async (path) =>
+      path === ROOT && rootRebound ? symlinkEntry() : realDirectoryEntry()
+    );
+    vi.mocked(deps.fileSystem.realpath).mockImplementation(async (path) => {
+      if (!rootRebound) return path;
+      if (path === ROOT) return "/external/claude-oauth";
+      return "/external/claude-oauth/old";
+    });
+    vi.mocked(deps.fileSystem.readdir).mockImplementation(async () => {
+      rootRebound = true;
+      return [{ name: "old", isDirectory: () => true }];
+    });
+    vi.mocked(deps.fileSystem.stat).mockResolvedValue({
+      mtimeMs: NOW.getTime() - 25 * 60 * 60 * 1000,
+    });
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.cleanupOrphans()).rejects.toThrow(
+      /scratch root.*real directory/i
+    );
+    expect(deps.fileSystem.readdir).toHaveBeenCalledWith(ROOT);
+    expect(deps.fileSystem.stat).not.toHaveBeenCalled();
+    expect(deps.harvester.delete).not.toHaveBeenCalled();
+    expect(deps.fileSystem.rm).not.toHaveBeenCalled();
+  });
+
   it("retains young children, ignores non-directories, and deletes old direct children credential-first", async () => {
     const order: string[] = [];
     const deps = makeDependencies();
@@ -794,14 +1041,12 @@ describe("orphan cleanup", () => {
         mtimeMs: NOW.getTime() - 25 * 60 * 60 * 1000,
       });
       if (unsafeKind === "symlink") {
-        vi.mocked(deps.fileSystem.lstat).mockResolvedValue({
-          isDirectory: () => false,
-          isFile: () => false,
-          isSymbolicLink: () => true,
-        });
+        vi.mocked(deps.fileSystem.lstat).mockImplementation(async (path) =>
+          path === ROOT ? realDirectoryEntry() : symlinkEntry()
+        );
       } else {
         vi.mocked(deps.fileSystem.realpath).mockImplementation(async (path) =>
-          path === ROOT ? "/canonical/root" : "/outside/unsafe"
+          path === ROOT ? ROOT : "/outside/unsafe"
         );
       }
       const service = new ClaudeUsageCredentialService(deps);
@@ -850,12 +1095,13 @@ describe("orphan cleanup", () => {
 
   it("treats an absent scratch root as an empty orphan set", async () => {
     const deps = makeDependencies();
-    vi.mocked(deps.fileSystem.readdir).mockRejectedValue(
+    vi.mocked(deps.fileSystem.lstat).mockRejectedValue(
       Object.assign(new Error("missing"), { code: "ENOENT" })
     );
     const service = new ClaudeUsageCredentialService(deps);
 
     await expect(service.cleanupOrphans()).resolves.toBeUndefined();
+    expect(deps.fileSystem.readdir).not.toHaveBeenCalled();
     expect(deps.harvester.delete).not.toHaveBeenCalled();
   });
 });

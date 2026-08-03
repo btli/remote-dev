@@ -101,6 +101,8 @@ export interface UsageCredentialFileSystem {
   readdir(path: string): Promise<UsageScratchDirEntry[]>;
   stat(path: string): Promise<{ mtimeMs: number }>;
   lstat(path: string): Promise<{
+    dev: number;
+    ino: number;
     isDirectory(): boolean;
     isFile(): boolean;
     isSymbolicLink(): boolean;
@@ -168,6 +170,12 @@ export interface UsageCredentialCaptureResult {
   account: ClaudeAccountView | null;
   /** True only when the validation snapshot was successfully persisted. */
   usageValidated: boolean;
+}
+
+interface ScratchRootProof {
+  canonicalPath: string;
+  dev: number;
+  ino: number;
 }
 
 const defaultFileSystem: UsageCredentialFileSystem = {
@@ -288,14 +296,26 @@ export class ClaudeUsageCredentialService {
     const scratchDir = join(this.scratchRoot, sessionId);
     this.assertSafeScratchPath(scratchDir);
 
-    await this.dependencies.fileSystem.mkdir(this.scratchRoot, {
-      recursive: true,
-      mode: 0o700,
-    });
+    // Recursive creation also supports a first-run data directory. An existing
+    // final-component symlink can make mkdir report success, so no child or file
+    // effect is allowed until the lstat/realpath/inode proof immediately below.
+    try {
+      await this.dependencies.fileSystem.mkdir(this.scratchRoot, {
+        recursive: true,
+        mode: 0o700,
+      });
+    } catch (error) {
+      if (!hasCode(error, "EEXIST")) throw error;
+    }
+    const rootProof = await this.assertExistingSafeScratchRoot();
+
     await this.dependencies.fileSystem.mkdir(scratchDir, {
       recursive: false,
       mode: 0o700,
     });
+    // Session creation is another pathname window. Re-prove both the root and
+    // child before writing the onboarding seed through the literal path.
+    await this.assertExistingSafeScratchDirectory(scratchDir, rootProof);
     await this.dependencies.fileSystem.writeFile(
       join(scratchDir, ".claude.json"),
       JSON.stringify({ hasCompletedOnboarding: true, theme: "dark" }),
@@ -313,8 +333,14 @@ export class ClaudeUsageCredentialService {
     input: UsageCredentialCaptureInput
   ): Promise<UsageCredentialCaptureResult> {
     this.assertExactCaptureScratchPath(input);
-    await this.assertExistingSafeScratchDirectory(input.scratchDir);
-    await this.assertSafeCredentialFile(input.scratchDir, false);
+    let rootProof = await this.assertExistingSafeScratchDirectory(
+      input.scratchDir
+    );
+    rootProof = await this.assertSafeCredentialFile(
+      input.scratchDir,
+      false,
+      rootProof
+    );
 
     const credential = await this.dependencies.harvester.harvest(
       input.scratchDir
@@ -326,7 +352,11 @@ export class ClaudeUsageCredentialService {
       );
     }
     if (this.dependencies.platform === "linux") {
-      await this.assertSafeCredentialFile(input.scratchDir, true);
+      rootProof = await this.assertSafeCredentialFile(
+        input.scratchDir,
+        true,
+        rootProof
+      );
     }
     if (!credential.scopes.includes("user:profile")) {
       throw new UsageCredentialCaptureError(
@@ -360,10 +390,14 @@ export class ClaudeUsageCredentialService {
     // immediately before the identity probe performs its next credential
     // access under CLAUDE_CONFIG_DIR.
     this.assertExactCaptureScratchPath(input);
-    await this.assertExistingSafeScratchDirectory(input.scratchDir);
-    await this.assertSafeCredentialFile(
+    rootProof = await this.assertExistingSafeScratchDirectory(
       input.scratchDir,
-      this.dependencies.platform === "linux"
+      rootProof
+    );
+    rootProof = await this.assertSafeCredentialFile(
+      input.scratchDir,
+      this.dependencies.platform === "linux",
+      rootProof
     );
     const identity = await this.dependencies.probeIdentity(input.scratchDir);
     const targetEmail = normalizedEmail(input.targetEmail);
@@ -382,7 +416,10 @@ export class ClaudeUsageCredentialService {
       identity,
       this.dependencies.now()
     );
-    if (!stored) return { account: null, usageValidated: false };
+    if (!stored) {
+      await this.cleanupSuccessfulCapture(input, rootProof);
+      return { account: null, usageValidated: false };
+    }
 
     const usageValidated =
       validation.outcome === "snapshot"
@@ -392,13 +429,20 @@ export class ClaudeUsageCredentialService {
           )
         : false;
 
-    await this.cleanupSuccessfulCapture(input);
+    await this.cleanupSuccessfulCapture(input, rootProof);
     return { account: stored, usageValidated };
   }
 
   /** Filesystem removal boundary shared by successful and orphan cleanup. */
   async removeScratchDirectory(scratchDir: string): Promise<void> {
-    await this.assertExistingSafeScratchDirectory(scratchDir);
+    await this.removeScratchDirectoryUnderRoot(scratchDir);
+  }
+
+  private async removeScratchDirectoryUnderRoot(
+    scratchDir: string,
+    expectedRoot?: ScratchRootProof
+  ): Promise<void> {
+    await this.assertExistingSafeScratchDirectory(scratchDir, expectedRoot);
     await this.dependencies.fileSystem.rm(scratchDir, {
       recursive: true,
       force: true,
@@ -413,6 +457,14 @@ export class ClaudeUsageCredentialService {
   async cleanupOrphans(
     maxAgeMs: number = USAGE_OAUTH_ORPHAN_MAX_AGE_MS
   ): Promise<void> {
+    let rootProof: ScratchRootProof;
+    try {
+      rootProof = await this.assertExistingSafeScratchRoot();
+    } catch (error) {
+      if (hasCode(error, "ENOENT")) return;
+      throw error;
+    }
+
     let children: UsageScratchDirEntry[];
     try {
       children = await this.dependencies.fileSystem.readdir(this.scratchRoot);
@@ -420,6 +472,9 @@ export class ClaudeUsageCredentialService {
       if (hasCode(error, "ENOENT")) return;
       throw error;
     }
+    // Enumeration is an awaited pathname window. Do not inspect anything it
+    // returned unless the literal root still proves the same safe identity.
+    rootProof = await this.assertExistingSafeScratchRoot(rootProof);
 
     for (const child of children) {
       if (!child.isDirectory()) continue;
@@ -433,6 +488,7 @@ export class ClaudeUsageCredentialService {
 
       let mtimeMs: number;
       try {
+        rootProof = await this.assertExistingSafeScratchRoot(rootProof);
         ({ mtimeMs } = await this.dependencies.fileSystem.stat(childPath));
       } catch (error) {
         log.error("Could not inspect usage scratch orphan", {
@@ -447,7 +503,10 @@ export class ClaudeUsageCredentialService {
         // Re-resolve immediately before credential deletion. Keep childPath
         // literal for the harvester because Claude Code's Keychain suffix is
         // derived from that exact string, not its canonical target.
-        await this.assertExistingSafeScratchDirectory(childPath);
+        rootProof = await this.assertExistingSafeScratchDirectory(
+          childPath,
+          rootProof
+        );
       } catch (error) {
         log.error("Refused unsafe orphaned usage scratch directory", {
           scratchDir: childPath,
@@ -464,7 +523,7 @@ export class ClaudeUsageCredentialService {
         });
       }
       try {
-        await this.removeScratchDirectory(childPath);
+        await this.removeScratchDirectoryUnderRoot(childPath, rootProof);
         log.info(
           "Removed orphaned Claude usage credential scratch directory",
           { scratchDir: childPath }
@@ -502,25 +561,83 @@ export class ClaudeUsageCredentialService {
    * existing directory still resides beneath the canonical scratch root.
    */
   private async assertExistingSafeScratchDirectory(
-    scratchDir: string
-  ): Promise<void> {
+    scratchDir: string,
+    expectedRoot?: ScratchRootProof
+  ): Promise<ScratchRootProof> {
     this.assertSafeScratchPath(scratchDir);
+    const rootBefore = await this.assertExistingSafeScratchRoot(expectedRoot);
+
     const info = await this.dependencies.fileSystem.lstat(scratchDir);
     if (info.isSymbolicLink() || !info.isDirectory()) {
       throw new Error("Usage credential scratch path is not a real directory");
     }
 
-    const [canonicalRoot, canonicalScratch] = await Promise.all([
-      this.dependencies.fileSystem.realpath(this.scratchRoot),
-      this.dependencies.fileSystem.realpath(scratchDir),
-    ]);
+    const canonicalScratch = await this.dependencies.fileSystem.realpath(
+      scratchDir
+    );
+    // The child realpath call is another opportunity to swap an ancestor.
+    // Re-prove the root before trusting the canonical child result.
+    const rootAfter = await this.assertExistingSafeScratchRoot(rootBefore);
     if (
-      !isStrictlyWithinUsageScratchRoot(canonicalRoot, canonicalScratch)
+      !isStrictlyWithinUsageScratchRoot(
+        rootAfter.canonicalPath,
+        canonicalScratch
+      )
     ) {
       throw new Error(
         "Usage credential directory is outside the canonical scratch root"
       );
     }
+    return rootAfter;
+  }
+
+  /**
+   * Prove the literal root's final component instead of trusting a root/child
+   * pair that can both canonicalize through the same final symlink. Trusted
+   * ancestor symlinks are allowed; the stable canonical path is returned for
+   * child containment. The second lstat catches replacement during realpath.
+   */
+  private async assertExistingSafeScratchRoot(
+    expected?: ScratchRootProof
+  ): Promise<ScratchRootProof> {
+    const before = await this.dependencies.fileSystem.lstat(this.scratchRoot);
+    if (before.isSymbolicLink() || !before.isDirectory()) {
+      throw new Error(
+        "Usage credential scratch root is not a real directory"
+      );
+    }
+
+    const canonicalRoot = await this.dependencies.fileSystem.realpath(
+      this.scratchRoot
+    );
+    const after = await this.dependencies.fileSystem.lstat(this.scratchRoot);
+    if (
+      after.isSymbolicLink() ||
+      !after.isDirectory() ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino
+    ) {
+      throw new Error(
+        "Usage credential scratch root changed during validation"
+      );
+    }
+
+    const proof = {
+      canonicalPath: canonicalRoot,
+      dev: after.dev,
+      ino: after.ino,
+    };
+    if (
+      expected &&
+      (proof.canonicalPath !== expected.canonicalPath ||
+        proof.dev !== expected.dev ||
+        proof.ino !== expected.ino)
+    ) {
+      throw new Error(
+        "Usage credential scratch root changed between validation boundaries"
+      );
+    }
+    return proof;
   }
 
   /**
@@ -530,20 +647,23 @@ export class ClaudeUsageCredentialService {
    */
   private async assertSafeCredentialFile(
     scratchDir: string,
-    required: boolean
-  ): Promise<void> {
+    required: boolean,
+    expectedRoot?: ScratchRootProof
+  ): Promise<ScratchRootProof> {
+    const rootBefore = await this.assertExistingSafeScratchRoot(expectedRoot);
     const credentialPath = join(scratchDir, ".credentials.json");
     let info: Awaited<ReturnType<UsageCredentialFileSystem["lstat"]>>;
     try {
       info = await this.dependencies.fileSystem.lstat(credentialPath);
     } catch (error) {
       if (hasCode(error, "ENOENT")) {
+        const rootAfter = await this.assertExistingSafeScratchRoot(rootBefore);
         if (required) {
           throw new Error(
             "Linux credential file is missing after a successful harvest"
           );
         }
-        return;
+        return rootAfter;
       }
       throw error;
     }
@@ -553,6 +673,7 @@ export class ClaudeUsageCredentialService {
         "Claude usage credential file is not a regular non-symlink file"
       );
     }
+    return this.assertExistingSafeScratchRoot(rootBefore);
   }
 
   private async recordValidationSnapshot(
@@ -587,13 +708,17 @@ export class ClaudeUsageCredentialService {
   }
 
   private async cleanupSuccessfulCapture(
-    input: UsageCredentialCaptureInput
+    input: UsageCredentialCaptureInput,
+    expectedRoot: ScratchRootProof
   ): Promise<void> {
     try {
       this.assertExactCaptureScratchPath(input);
       // Revalidate immediately before deleting the exact derived credential;
       // the directory may have been rebound after the initial capture check.
-      await this.assertExistingSafeScratchDirectory(input.scratchDir);
+      await this.assertExistingSafeScratchDirectory(
+        input.scratchDir,
+        expectedRoot
+      );
       await this.dependencies.harvester.delete(input.scratchDir);
     } catch (error) {
       log.error("Could not delete captured scratch credential", {
@@ -602,7 +727,10 @@ export class ClaudeUsageCredentialService {
       });
     }
     try {
-      await this.removeScratchDirectory(input.scratchDir);
+      await this.removeScratchDirectoryUnderRoot(
+        input.scratchDir,
+        expectedRoot
+      );
     } catch (error) {
       log.error("Could not remove captured usage scratch directory", {
         sessionId: input.sessionId,
