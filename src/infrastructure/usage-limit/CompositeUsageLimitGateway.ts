@@ -24,6 +24,12 @@
  * non-null observation. An adapter that cannot answer on demand simply yields
  * to the next, so registration order stays a preference rather than a veto.
  *
+ * A typed RATE-LIMITED signal ([remote-dev-u7df], 429 + retry-after upstream)
+ * sits between the two: it is not an observation, so later adapters still get
+ * their chance to produce a real one, but it is not nothing either — the first
+ * such signal is returned when no adapter observes, so the sweep can align its
+ * retry to the reported reset instead of backing off blind.
+ *
  * api_key accounts currently resolve to "no gateway": the poller's usage
  * endpoint is subscription-only (`supports("api_key")` is false), and the
  * reactive detector keys off subscription reset headers [remote-dev-n4x4.1].
@@ -33,10 +39,12 @@
 import { db } from "@/db";
 import { claudeAccounts } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import type {
-  UsageLimitGateway,
-  LimitDetectionResult,
-  UsageLimitTarget,
+import {
+  isUsageLimitRateLimited,
+  type UsageLimitGateway,
+  type LimitDetectionResult,
+  type UsageLimitRateLimited,
+  type UsageLimitTarget,
 } from "@/application/ports/UsageLimitGateway";
 import { AccountKind } from "@/domain/value-objects/AccountKind";
 import type { ClaudeAccountKind } from "@/types/claude-limits";
@@ -58,7 +66,7 @@ export class CompositeUsageLimitGateway implements UsageLimitGateway {
 
   async fetchLimitState(
     target: UsageLimitTarget
-  ): Promise<LimitDetectionResult | null> {
+  ): Promise<LimitDetectionResult | UsageLimitRateLimited | null> {
     const accountKind = await this.resolveKind(target.accountId);
     if (!accountKind) return null; // unrecognized stored kind → no gateway
 
@@ -76,12 +84,19 @@ export class CompositeUsageLimitGateway implements UsageLimitGateway {
     }
 
     // Fall through until one adapter actually produces an observation. See the
-    // module docblock: an always-null adapter must not veto the ones after it.
+    // module docblock: an always-null adapter must not veto the ones after it,
+    // and a rate-limited signal is kept only as the fallback answer.
+    let rateLimited: UsageLimitRateLimited | null = null;
     for (const adapter of supporting) {
       const result = await adapter.fetchLimitState(target);
-      if (result) return result;
+      if (!result) continue;
+      if (isUsageLimitRateLimited(result)) {
+        rateLimited ??= result;
+        continue;
+      }
+      return result;
     }
-    return null;
+    return rateLimited;
   }
 
   /**

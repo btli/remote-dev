@@ -26,6 +26,11 @@ vi.mock("./poll-config", () => ({
 
 import { db } from "@/db";
 import { fetchClaudeUsage } from "@/infrastructure/external/anthropic-usage-adapter";
+import {
+  isUsageLimitRateLimited,
+  type LimitDetectionResult,
+  type UsageLimitRateLimited,
+} from "@/application/ports/UsageLimitGateway";
 import { UsageEndpointPoller } from "./UsageEndpointPoller";
 
 const claudeAccountsFindFirst = db.query.claudeAccounts.findFirst as ReturnType<
@@ -73,6 +78,21 @@ function makeSnapshot(
     limits: [] as NonNullable<(typeof over)["limits"]>,
     ...over,
   };
+}
+
+/** Wrap a snapshot in the adapter's discriminated fetch outcome. */
+function ok(snapshot: ReturnType<typeof makeSnapshot>) {
+  return { outcome: "snapshot" as const, snapshot };
+}
+
+/** Narrow a fetch result to an observation (fails the test otherwise). */
+function asObservation(
+  result: LimitDetectionResult | UsageLimitRateLimited | null
+): LimitDetectionResult | null {
+  if (result !== null && isUsageLimitRateLimited(result)) {
+    throw new Error("expected an observation, got a rate-limited signal");
+  }
+  return result;
 }
 
 function makePoller(): UsageEndpointPoller {
@@ -123,11 +143,13 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
       claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
       const reset5h = new Date("2025-06-13T15:00:00Z");
       fetchUsageMock.mockResolvedValue(
-        makeSnapshot({
-          window5hPct: 80,
-          window7dPct: 40,
-          resetAt5h: reset5h,
-        })
+        ok(
+          makeSnapshot({
+            window5hPct: 80,
+            window7dPct: 40,
+            resetAt5h: reset5h,
+          })
+        )
       );
 
       const poller = makePoller();
@@ -153,11 +175,11 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
     it("marks limited when a window is at/over 100%", async () => {
       claudeAccountsFindFirst.mockResolvedValue(undefined); // absent → subscription
       fetchUsageMock.mockResolvedValue(
-        makeSnapshot({ window5hPct: 100, window7dPct: 50 })
+        ok(makeSnapshot({ window5hPct: 100, window7dPct: 50 }))
       );
 
       const poller = makePoller();
-      const result = await poller.fetchLimitState(TARGET);
+      const result = asObservation(await poller.fetchLimitState(TARGET));
 
       expect(result?.isLimited).toBe(true);
     });
@@ -173,14 +195,32 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
       expect(fetchUsageMock).not.toHaveBeenCalled();
     });
 
-    it("returns null when the adapter reports no snapshot", async () => {
+    it("returns null when the adapter reports no data", async () => {
       claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
-      fetchUsageMock.mockResolvedValue(null);
+      fetchUsageMock.mockResolvedValue({ outcome: "no-data" });
 
       const poller = makePoller();
       const result = await poller.fetchLimitState(TARGET);
 
       expect(result).toBeNull();
+    });
+
+    it("passes a rate-limited outcome through as a typed signal, not null", async () => {
+      // [remote-dev-u7df] The 429's retry-after is the only thing that names
+      // the quota reset — it must reach the sweep, which schedules the next
+      // attempt from it instead of exponential backoff.
+      claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
+      const retryAt = new Date(Date.now() + 3578_000);
+      fetchUsageMock.mockResolvedValue({ outcome: "rate-limited", retryAt });
+
+      const poller = makePoller();
+      const result = await poller.fetchLimitState(TARGET);
+
+      expect(result).toEqual({
+        rateLimited: true,
+        accountId: "acct-1",
+        retryAt,
+      });
     });
   });
 
@@ -205,11 +245,11 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
       claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
       const orgReset = new Date("2025-06-13T16:00:00Z");
       fetchUsageMock.mockResolvedValue(
-        makeSnapshot({ orgPct: 100, resetAtOrg: orgReset })
+        ok(makeSnapshot({ orgPct: 100, resetAtOrg: orgReset }))
       );
 
       const poller = makePoller();
-      const result = await poller.fetchLimitState(TARGET);
+      const result = asObservation(await poller.fetchLimitState(TARGET));
 
       expect(result?.window5hPct).toBe(100);
       expect(result?.resetAt5h).toBe(orgReset);
@@ -221,26 +261,28 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
     claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
     const scopedReset = new Date("2026-07-30T22:59:59Z");
     fetchUsageMock.mockResolvedValue(
-      makeSnapshot({
-        window5hPct: 61,
-        window7dPct: 98,
-        limits: [
-          {
-            kind: "weekly_scoped",
-            group: "weekly",
-            percent: 100,
-            severity: "critical",
-            resetAt: scopedReset,
-            scopeModel: "Fable",
-            scopeSurface: null,
-            isActive: true,
-          },
-        ],
-      })
+      ok(
+        makeSnapshot({
+          window5hPct: 61,
+          window7dPct: 98,
+          limits: [
+            {
+              kind: "weekly_scoped",
+              group: "weekly",
+              percent: 100,
+              severity: "critical",
+              resetAt: scopedReset,
+              scopeModel: "Fable",
+              scopeSurface: null,
+              isActive: true,
+            },
+          ],
+        })
+      )
     );
 
     const poller = makePoller();
-    const result = await poller.fetchLimitState(TARGET);
+    const result = asObservation(await poller.fetchLimitState(TARGET));
 
     // The account is NOT limited overall even though one model's window is
     // exhausted — that distinction is exactly the point of the epic.
@@ -266,25 +308,27 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
   it("round-trips an unknown kind/severity verbatim (the vocabularies are open sets)", async () => {
     claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
     fetchUsageMock.mockResolvedValue(
-      makeSnapshot({
-        window5hPct: 10,
-        limits: [
-          {
-            kind: "monthly_scoped",
-            group: "monthly",
-            percent: 42,
-            severity: "elevated",
-            resetAt: null,
-            scopeModel: "Mythos",
-            scopeSurface: "code",
-            isActive: false,
-          },
-        ],
-      })
+      ok(
+        makeSnapshot({
+          window5hPct: 10,
+          limits: [
+            {
+              kind: "monthly_scoped",
+              group: "monthly",
+              percent: 42,
+              severity: "elevated",
+              resetAt: null,
+              scopeModel: "Mythos",
+              scopeSurface: "code",
+              isActive: false,
+            },
+          ],
+        })
+      )
     );
 
     const poller = makePoller();
-    const result = await poller.fetchLimitState(TARGET);
+    const result = asObservation(await poller.fetchLimitState(TARGET));
 
     expect(result?.windows[0]).toMatchObject({
       kind: "monthly_scoped",
@@ -305,7 +349,7 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
   it("never leaks the token into the result", async () => {
     claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
     fetchUsageMock.mockResolvedValue(
-      makeSnapshot({ window5hPct: 5, window7dPct: 5 })
+      ok(makeSnapshot({ window5hPct: 5, window7dPct: 5 }))
     );
 
     const poller = makePoller();

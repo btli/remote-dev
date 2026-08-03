@@ -513,6 +513,12 @@ RDV_INSTANCE_SLUG=
 # should make deliberately, not inherit from an unchanged config file. Reactive
 # scrollback detection works without this flag and is always on.
 #
+# Expected cadence: Anthropic rate-limits long-lived `claude setup-token`
+# credentials on this endpoint to roughly ONE read per hour per token (429 +
+# retry-after). The sweep aligns each account's next poll to that reset, so
+# usage refreshes about hourly per account — the dashboard's 5h/7d bars are not
+# realtime, and the first data appears up to an hour after enabling.
+#
 # Uncomment to enable:
 # RDV_CLAUDE_USAGE_POLL_ENABLED=1
 ```

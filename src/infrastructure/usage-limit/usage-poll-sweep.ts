@@ -23,6 +23,15 @@
  *   - **Per-account exponential backoff.** An account whose poll fails (revoked
  *     token, decrypt failure, endpoint error) is skipped for a growing interval
  *     instead of being retried every 10 minutes forever. Any success clears it.
+ *   - **Retry-after alignment.** [remote-dev-u7df] Anthropic rate-limits
+ *     long-lived setup-token credentials on the usage endpoint to ~1 request
+ *     per hour, so under this cadence most polls 429. The 429's `retry-after`
+ *     names the reset; the gateway surfaces it as a typed rate-limited result
+ *     and the sweep schedules that account's next attempt just past the reset
+ *     (plus 30-90s jitter) instead of exponential backoff — one successful
+ *     poll per quota window by construction rather than by luck. Rate limiting
+ *     is upstream pacing, not a failing account, so it never escalates
+ *     `consecutiveFailures`; genuine failures keep the exponential path.
  *
  * Backoff state is deliberately in-memory: it is a pacing hint, not a fact
  * worth persisting, and a restart erring toward "try again" is the right
@@ -38,6 +47,7 @@ import {
   usageLimitGateway,
   trackUsageLimitUseCase,
 } from "@/infrastructure/container";
+import { isUsageLimitRateLimited } from "@/application/ports/UsageLimitGateway";
 import { isUsagePollEnabled } from "./poll-config";
 import { createLogger } from "@/lib/logger";
 
@@ -51,6 +61,14 @@ const BACKOFF_BASE_MS = 10 * 60 * 1000;
 
 /** Ceiling on the backoff interval (~6 hours). */
 const BACKOFF_MAX_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Jitter added past a reported rate-limit reset (30-90s) so the retry lands
+ * safely after it and accounts don't herd onto the same instant.
+ * [remote-dev-u7df]
+ */
+const RATE_LIMIT_JITTER_MIN_MS = 30 * 1000;
+const RATE_LIMIT_JITTER_SPREAD_MS = 60 * 1000;
 
 /** Per-account failure state driving the backoff. */
 interface BackoffEntry {
@@ -93,6 +111,28 @@ function recordFailure(accountId: string, now: number): void {
   });
 }
 
+/**
+ * A rate-limited poll is upstream pacing, not a failing account: hold the
+ * account until just past the reported reset (a stale reset clamps to now)
+ * and leave `consecutiveFailures` untouched so a later genuine failure starts
+ * the exponential ladder from where it actually was. [remote-dev-u7df]
+ */
+function recordRateLimited(accountId: string, retryAt: Date, now: number): void {
+  const jitter =
+    RATE_LIMIT_JITTER_MIN_MS + Math.random() * RATE_LIMIT_JITTER_SPREAD_MS;
+  const nextAttemptAt = Math.min(
+    Math.max(retryAt.getTime(), now) + jitter,
+    now + BACKOFF_MAX_MS
+  );
+  const consecutiveFailures = backoff.get(accountId)?.consecutiveFailures ?? 0;
+  backoff.set(accountId, { consecutiveFailures, nextAttemptAt });
+  log.debug("Usage poll rate-limited; aligning next attempt to the reset", {
+    accountId,
+    retryAt: retryAt.toISOString(),
+    nextAttemptInMs: Math.round(nextAttemptAt - now),
+  });
+}
+
 /** A successful poll clears any accumulated backoff. */
 function recordSuccess(accountId: string): void {
   backoff.delete(accountId);
@@ -107,6 +147,7 @@ export async function runUsagePollSweep(): Promise<void> {
 
   let polled = 0;
   let recorded = 0;
+  let rateLimited = 0;
   let skipped = 0;
   try {
     const accounts = await db.query.claudeAccounts.findMany({
@@ -153,6 +194,13 @@ export async function runUsagePollSweep(): Promise<void> {
             recordFailure(account.id, Date.now());
             continue;
           }
+          if (isUsageLimitRateLimited(result)) {
+            // The endpoint 429'd with a usable retry-after: align the next
+            // attempt to the reported reset instead of the failure ladder.
+            recordRateLimited(account.id, result.retryAt, Date.now());
+            rateLimited += 1;
+            continue;
+          }
           await trackUsageLimitUseCase.execute({
             accountId: account.id,
             userId: account.userId,
@@ -185,7 +233,12 @@ export async function runUsagePollSweep(): Promise<void> {
       )
     );
 
-    log.debug("Usage poll sweep complete", { polled, recorded, skipped });
+    log.debug("Usage poll sweep complete", {
+      polled,
+      recorded,
+      rateLimited,
+      skipped,
+    });
   } catch (error) {
     log.error("Usage poll sweep failed", { error: String(error) });
   }

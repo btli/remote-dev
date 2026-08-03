@@ -66,42 +66,64 @@ describe("usage poll: end-to-end through the real wiring", () => {
     expect(isUsagePollEnabled()).toBe(true);
     const reset = new Date("2026-08-09T00:00:00Z");
     fetchClaudeUsage.mockResolvedValue({
-      window5hPct: 61,
-      window7dPct: 98,
-      resetAt5h: null,
-      resetAt7d: null,
-      orgPct: null,
-      resetAtOrg: null,
-      limits: [
-        {
-          kind: "weekly_scoped",
-          group: "weekly",
-          percent: 100,
-          severity: "critical",
-          resetAt: reset,
-          scopeModel: "Fable",
-          scopeSurface: null,
-          isActive: true,
-        },
-      ],
+      outcome: "snapshot",
+      snapshot: {
+        window5hPct: 61,
+        window7dPct: 98,
+        resetAt5h: null,
+        resetAt7d: null,
+        orgPct: null,
+        resetAtOrg: null,
+        limits: [
+          {
+            kind: "weekly_scoped",
+            group: "weekly",
+            percent: 100,
+            severity: "critical",
+            resetAt: reset,
+            scopeModel: "Fable",
+            scopeSurface: null,
+            isActive: true,
+          },
+        ],
+      },
     });
 
     const result = await containerShapedGateway().fetchLimitState(TARGET);
 
     // The HTTP read actually happened — this is what G1 prevented.
     expect(fetchClaudeUsage).toHaveBeenCalledTimes(1);
-    expect(result?.source).toBe("poller");
-    // The account is NOT limited overall, but the per-model window rode out:
-    // exactly the live scenario the epic exists for.
-    expect(result?.isLimited).toBe(false);
-    expect(result?.window7dPct).toBe(98);
-    expect(result?.windows).toHaveLength(1);
-    expect(result?.windows[0]).toMatchObject({
-      kind: "weekly_scoped",
-      scopeModel: "Fable",
-      severity: "critical",
-      resetsAt: reset,
-      isActive: true,
+    expect(result).toMatchObject({
+      source: "poller",
+      // The account is NOT limited overall, but the per-model window rode out:
+      // exactly the live scenario the epic exists for.
+      isLimited: false,
+      window7dPct: 98,
+      windows: [
+        {
+          kind: "weekly_scoped",
+          scopeModel: "Fable",
+          severity: "critical",
+          resetsAt: reset,
+          isActive: true,
+        },
+      ],
+    });
+  });
+
+  it("with the flag ON, a 429'd fetch surfaces the typed rate-limited signal", async () => {
+    // [remote-dev-u7df] End-to-end: adapter 429 outcome → poller signal →
+    // composite fallback return. This is what the sweep schedules from.
+    const retryAt = new Date(Date.now() + 3_578_000);
+    fetchClaudeUsage.mockResolvedValue({ outcome: "rate-limited", retryAt });
+
+    const result = await containerShapedGateway().fetchLimitState(TARGET);
+
+    expect(fetchClaudeUsage).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      rateLimited: true,
+      accountId: "acct-1",
+      retryAt,
     });
   });
 

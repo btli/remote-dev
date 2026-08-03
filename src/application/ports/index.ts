@@ -53,7 +53,9 @@ export type {
   UsageLimitGateway,
   LimitDetectionResult,
   UsageLimitTarget,
+  UsageLimitRateLimited,
 } from "./UsageLimitGateway";
+export { isUsageLimitRateLimited } from "./UsageLimitGateway";
 
 export type { UsageLimitStateRepository } from "./UsageLimitStateRepository";
 
