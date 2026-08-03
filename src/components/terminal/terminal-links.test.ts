@@ -370,6 +370,43 @@ describe("terminal link reconstruction", () => {
     },
   );
 
+  it("carries a nested URL assignment across three hard rows", () => {
+    const parts = [
+      "https://redirect.test/a?",
+      "padding=1234567890&next=",
+      "https://dest.test/path",
+    ];
+    const cols = parts[0].length;
+    expect(parts[1]).toHaveLength(cols);
+    const target = parts.join("");
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const provider = createTerminalLinkProvider(
+      terminalBuffer(parts.map((part, index) => row(index, part, cols))),
+      { confirm, open },
+    );
+
+    for (const requestedRow of [1, 2, 3]) {
+      const link = provide(provider, requestedRow)[0];
+      expect(link).toMatchObject({
+        text: target,
+        range: {
+          start: { y: requestedRow },
+          end: { y: requestedRow },
+        },
+      });
+      link.activate(new MouseEvent("click"), link.text);
+    }
+    expect(confirm).toHaveBeenCalledTimes(3);
+    expect(confirm).toHaveBeenNthCalledWith(1, target);
+    expect(confirm).toHaveBeenNthCalledWith(2, target);
+    expect(confirm).toHaveBeenNthCalledWith(3, target);
+    expect(open).toHaveBeenCalledTimes(3);
+    expect(open).toHaveBeenNthCalledWith(1, target);
+    expect(open).toHaveBeenNthCalledWith(2, target);
+    expect(open).toHaveBeenNthCalledWith(3, target);
+  });
+
   it.each([
     "- item",
     "* item",
@@ -382,6 +419,10 @@ describe("terminal link reconstruction", () => {
     "a. item",
     "B) item",
     "user@host:~$ command",
+    "PS C:\\> command",
+    "[root@host ~]# command",
+    "(venv) user@host:~$ command",
+    "(.venv) $ command",
     "• bullet",
     "◦ bullet",
     "‣ bullet",
@@ -731,6 +772,34 @@ describe("terminal link provider", () => {
     expect(open).not.toHaveBeenCalled();
   });
 
+  it("guards a nested scheme when the outer lexical context is clipped", () => {
+    const parts = [
+      "https://redirect.test/a?",
+      "padding=1234567890&next=",
+      "https://dest.test/path",
+    ];
+    const cols = parts[0].length;
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const provider = createTerminalLinkProvider(
+      terminalBuffer(parts.map((part, index) => row(index, part, cols))),
+      { cellBudget: cols * 2, confirm, open },
+    );
+
+    const guard = provide(provider, 3)[0];
+    expect(guard).toMatchObject({
+      text: parts[2],
+      decorations: { pointerCursor: false, underline: false },
+      range: {
+        start: { x: 1, y: 3 },
+        end: { x: parts[2].length, y: 3 },
+      },
+    });
+    guard.activate(new MouseEvent("click"), guard.text);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it("guards a row whose combined-cell content exceeds the code-unit budget", () => {
     const target = "https://example.test/path";
     const cells: TerminalLinkCellSnapshot[] = [
@@ -758,6 +827,118 @@ describe("terminal link provider", () => {
         start: { x: 1, y: 1 },
         end: { x: cols, y: 1 },
       },
+    });
+    guard.activate(new MouseEvent("click"), guard.text);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("keeps a resolved exact link before a code-unit-clipped span navigable", () => {
+    const target = "https://safe.test/path";
+    const unresolved = [
+      { chars: `x${"\u0301".repeat(256)}`, width: 1 },
+      ...cellsFromText("https://hidden.test", 19),
+    ];
+    const cells: TerminalLinkCellSnapshot[] = [
+      ...cellsFromText(target, target.length),
+      { chars: " ", width: 1 },
+      ...unresolved,
+    ];
+    const cols = cells.length;
+    const firstUnresolvedX = target.length + 2;
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const provider = createTerminalLinkProvider(
+      terminalBuffer([{ index: 0, isWrapped: false, cells }]),
+      {
+        cellBudget: cols,
+        codeUnitBudget: target.length + 1,
+        confirm,
+        open,
+      },
+    );
+
+    const links = provide(provider, 1);
+    const exact = links.find((link) => !link.decorations);
+    const guard = links.find((link) => link.decorations?.underline === false);
+    expect(exact).toMatchObject({
+      text: target,
+      range: {
+        start: { x: 1, y: 1 },
+        end: { x: target.length, y: 1 },
+      },
+    });
+    expect(guard).toMatchObject({
+      range: {
+        start: { x: firstUnresolvedX, y: 1 },
+        end: { x: cols, y: 1 },
+      },
+      decorations: { pointerCursor: false, underline: false },
+    });
+
+    exact!.activate(new MouseEvent("click"), exact!.text);
+    guard!.activate(new MouseEvent("click"), guard!.text);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith(target);
+  });
+
+  it("keeps a resolved exact link before a cell-budget-clipped span navigable", () => {
+    const target = "https://safe.test/path";
+    const cols = target.length + 24;
+    const inspectedText = `${target} `;
+    const firstUnresolvedX = inspectedText.length + 1;
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const provider = createTerminalLinkProvider(
+      terminalBuffer([
+        row(0, `${inspectedText}https://hidden.test`, cols),
+      ]),
+      {
+        cellBudget: inspectedText.length,
+        confirm,
+        open,
+      },
+    );
+
+    const links = provide(provider, 1);
+    const exact = links.find((link) => !link.decorations);
+    const guard = links.find((link) => link.decorations?.underline === false);
+    expect(exact?.text).toBe(target);
+    expect(guard).toMatchObject({
+      range: {
+        start: { x: firstUnresolvedX, y: 1 },
+        end: { x: cols, y: 1 },
+      },
+      decorations: { pointerCursor: false, underline: false },
+    });
+
+    exact!.activate(new MouseEvent("click"), exact!.text);
+    guard!.activate(new MouseEvent("click"), guard!.text);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith(target);
+  });
+
+  it("guards a raw token that only moves off the clipped edge after trimming", () => {
+    const first = "https://example.";
+    const second = "com/path";
+    const cols = first.length;
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const provider = createTerminalLinkProvider(
+      terminalBuffer([row(0, first, cols), row(1, second, cols)]),
+      { cellBudget: cols, confirm, open },
+    );
+
+    const guard = provide(provider, 1)[0];
+    expect(guard).toMatchObject({
+      text: "https://example",
+      range: {
+        start: { x: 1, y: 1 },
+        end: { x: cols, y: 1 },
+      },
+      decorations: { pointerCursor: false, underline: false },
     });
     guard.activate(new MouseEvent("click"), guard.text);
     expect(confirm).not.toHaveBeenCalled();
@@ -859,6 +1040,33 @@ describe("terminal link provider", () => {
     const cachedLink = provide(provider, 1)[0];
 
     terminal.setActiveRows([row(0, "alternate screen", 32)]);
+    cachedLink.activate(new MouseEvent("click"), cachedLink.text);
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("does not activate a cached exact link after it becomes a guard", () => {
+    const target = "https://cached.test/path";
+    const cols = target.length;
+    const rows = [row(0, target, cols)];
+    const terminal = terminalBuffer(rows);
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const provider = createTerminalLinkProvider(terminal, {
+      cellBudget: cols,
+      confirm,
+      open,
+    });
+    const cachedLink = provide(provider, 1)[0];
+    expect(cachedLink.decorations).toBeUndefined();
+
+    rows.push(row(1, "possible continuation", cols));
+    expect(provide(provider, 1)[0]).toMatchObject({
+      text: target,
+      range: cachedLink.range,
+      decorations: { pointerCursor: false, underline: false },
+    });
     cachedLink.activate(new MouseEvent("click"), cachedLink.text);
 
     expect(confirm).not.toHaveBeenCalled();

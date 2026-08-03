@@ -78,6 +78,8 @@ interface AssembledGroup {
 interface FullTerminalLinkCandidate {
   text: string;
   segments: TerminalLinkCandidate["range"][];
+  rawSegments: TerminalLinkCandidate["range"][];
+  rawTermination: "separator" | "group-end";
   requiresConfirmation: boolean;
 }
 
@@ -90,7 +92,12 @@ const URL_START = /https?:\/\//gi;
 const URL_STOP = /[\s"'{}|\\^<>`]/u;
 const TRAILING_SENTENCE_PUNCTUATION = new Set([".", ","]);
 const FRESH_HTTP_SCHEME = /^https?:\/\//iu;
-const HARD_BOUNDARY_START = /^(?:[-*#$%+>]\s|(?:\d+|[a-z])[.)]\s|[\w.-]+@[\w.-]+:\S*[$#%]\s|[•◦‣⁃∙·▪▫●○◆◇▶▸])/iu;
+const HARD_BOUNDARY_STARTS = [
+  /^(?:[-*#$%+>]\s|(?:\d+|[a-z])[.)]\s|[\w.-]+@[\w.-]+:\S*[$#%]\s|[•◦‣⁃∙·▪▫●○◆◇▶▸])/iu,
+  /^PS [a-z]:\\[^>\r\n]*>\s/iu,
+  /^\[[\w.-]+@[\w.-]+(?:\s+[^\]\r\n]+)?\][#$%]\s/iu,
+  /^\([.\w-]+\)\s+(?:(?:[\w.-]+@[\w.-]+:\S*)?[$#%])\s/iu,
+];
 
 function isBlankCell(cell: TerminalLinkCellSnapshot | undefined): boolean {
   return !cell || cell.width === 0 || cell.chars === "" || /^\s+$/u.test(cell.chars);
@@ -219,10 +226,18 @@ function matchingHardLayout(
   );
 }
 
-function expectsUrlValue(text: string): boolean {
+function isHardBoundaryStart(text: string): boolean {
+  return HARD_BOUNDARY_STARTS.some((pattern) => pattern.test(text));
+}
+
+function hasUrlValueAssignmentSuffix(
+  text: string,
+  requireScheme: boolean,
+): boolean {
+  if (!text.endsWith("=")) return false;
   const schemeIndex = text.search(/https?:\/\//iu);
-  if (schemeIndex < 0 || !text.endsWith("=")) return false;
-  const token = text.slice(schemeIndex);
+  if (requireScheme && schemeIndex < 0) return false;
+  const token = schemeIndex >= 0 ? text.slice(schemeIndex) : text;
   const delimiterIndex = Math.max(
     token.lastIndexOf("?"),
     token.lastIndexOf("&"),
@@ -232,9 +247,15 @@ function expectsUrlValue(text: string): boolean {
   return delimiterIndex >= 0 && key.length > 0 && !key.includes("=");
 }
 
+function expectsUrlValue(text: string): boolean {
+  return hasUrlValueAssignmentSuffix(text, true);
+}
+
 function connectionBetween(
   previous: TerminalLinkRowSnapshot,
   next: TerminalLinkRowSnapshot,
+  previousContext?: string,
+  allowPartialUrlContext = false,
 ): RowConnection | null {
   if (next.index !== previous.index + 1) return null;
 
@@ -259,12 +280,22 @@ function connectionBetween(
   if (lastContentEnd(previous, previousBounds.end) !== previousBounds.end) return null;
   if (firstContentColumn(next, nextBounds.start) !== nextBounds.start) return null;
   const nextText = cellsText(next, nextBounds.start, nextBounds.end);
-  if (HARD_BOUNDARY_START.test(nextText)) {
+  if (isHardBoundaryStart(nextText)) {
     return null;
   }
   if (
     FRESH_HTTP_SCHEME.test(nextText) &&
-    !expectsUrlValue(cellsText(previous, previousBounds.start, previousBounds.end))
+    !expectsUrlValue(
+      previousContext ??
+        cellsText(previous, previousBounds.start, previousBounds.end),
+    ) &&
+    !(
+      allowPartialUrlContext &&
+      hasUrlValueAssignmentSuffix(
+        cellsText(previous, previousBounds.start, previousBounds.end),
+        false,
+      )
+    )
   ) {
     return null;
   }
@@ -296,12 +327,32 @@ function appendRowCells(
   }
 }
 
+function connectionsForRows(
+  rows: readonly TerminalLinkRowSnapshot[],
+): Array<RowConnection | null> {
+  const connections: Array<RowConnection | null> = [];
+  let context = "";
+  for (let index = 0; index < rows.length - 1; index++) {
+    const previous = rows[index];
+    const bounds = contentBounds(previous);
+    const incoming = connections[index - 1];
+    if (!incoming) context = "";
+    context += cellsText(
+      previous,
+      incoming?.nextStart ?? bounds.start,
+      bounds.end,
+    );
+    connections.push(
+      connectionBetween(previous, rows[index + 1], context),
+    );
+  }
+  return connections;
+}
+
 function assembleGroups(rows: readonly TerminalLinkRowSnapshot[]): AssembledGroup[] {
   if (rows.length === 0) return [];
   const sortedRows = [...rows].sort((a, b) => a.index - b.index);
-  const connections = sortedRows.slice(0, -1).map((row, index) =>
-    connectionBetween(row, sortedRows[index + 1]),
-  );
+  const connections = connectionsForRows(sortedRows);
   const groups: AssembledGroup[] = [];
 
   let rowIndex = 0;
@@ -413,19 +464,24 @@ function linksInGroup(group: AssembledGroup): FullTerminalLinkCandidate[] {
   let startMatch: RegExpExecArray | null;
   while ((startMatch = URL_START.exec(group.text))) {
     const start = startMatch.index;
-    let end = URL_START.lastIndex;
-    while (end < group.text.length && !URL_STOP.test(group.text[end])) end++;
+    let rawEnd = URL_START.lastIndex;
+    while (rawEnd < group.text.length && !URL_STOP.test(group.text[rawEnd])) {
+      rawEnd++;
+    }
 
-    const rawText = group.text.slice(start, end);
+    const rawText = group.text.slice(start, rawEnd);
     const text = trimUrlToken(rawText);
-    end -= rawText.length - text.length;
+    const end = rawEnd - (rawText.length - text.length);
     if (!text || !parseHttpUrl(text)) continue;
 
     const segments = segmentsForMapping(group.mapping, start, end);
-    if (segments.length === 0) continue;
+    const rawSegments = segmentsForMapping(group.mapping, start, rawEnd);
+    if (segments.length === 0 || rawSegments.length === 0) continue;
     result.push({
       text,
       segments,
+      rawSegments,
+      rawTermination: rawEnd === group.text.length ? "group-end" : "separator",
       requiresConfirmation: group.boundaries.some(
         (boundary) =>
           boundary.kind === "hard" && boundary.index > start && boundary.index < end,
@@ -521,7 +577,9 @@ function defaultHardLinkConfirmation(target: string): boolean {
 
 interface BufferRowSnapshot {
   row: TerminalLinkRowSnapshot;
+  inspectedCells: number;
   inspectedCodeUnits: number;
+  resolvedEndColumn: number;
   clipped: boolean;
 }
 
@@ -529,26 +587,23 @@ function snapshotBufferRow(
   buffer: TerminalLinkBuffer,
   cols: number,
   index: number,
+  cellBudget: number,
   codeUnitBudget: number,
 ): BufferRowSnapshot | null {
   const line = buffer.getLine(index);
   if (!line) return null;
   const cells: TerminalLinkCellSnapshot[] = [];
+  let inspectedCells = 0;
   let inspectedCodeUnits = 0;
-  let clipped = false;
   for (let column = 0; column < cols; column++) {
-    if (clipped) {
-      cells.push({ chars: "", width: 1 });
-      continue;
-    }
+    if (inspectedCells >= cellBudget) break;
     const cell = column < line.length ? line.getCell(column) : undefined;
+    inspectedCells++;
     const chars = cell?.getChars() ?? "";
     const width = cell?.getWidth() ?? 1;
     const codeUnits = width === 0 ? 0 : Math.max(1, chars.length);
     if (inspectedCodeUnits + codeUnits > codeUnitBudget) {
-      clipped = true;
-      cells.push({ chars: "", width });
-      continue;
+      break;
     }
     inspectedCodeUnits += codeUnits;
     cells.push({
@@ -558,8 +613,10 @@ function snapshotBufferRow(
   }
   return {
     row: { index, isWrapped: line.isWrapped, cells },
+    inspectedCells,
     inspectedCodeUnits,
-    clipped,
+    resolvedEndColumn: cells.length,
+    clipped: cells.length < cols,
   };
 }
 
@@ -567,7 +624,7 @@ interface StructuralSnapshot {
   rows: TerminalLinkRowSnapshot[];
   clippedBefore: boolean;
   clippedAfter: boolean;
-  guardWholeRequestedRow: boolean;
+  requestedResolvedEnd: number | null;
 }
 
 function couldContinueBefore(row: TerminalLinkRowSnapshot): boolean {
@@ -579,7 +636,7 @@ function couldContinueBefore(row: TerminalLinkRowSnapshot): boolean {
   // A fresh scheme is usually a boundary, but it can also be the value of a
   // query parameter on the uninspected previous row. Resolve that context or
   // conservatively guard it instead of exposing the nested URL as exact.
-  return !HARD_BOUNDARY_START.test(text);
+  return !isHardBoundaryStart(text);
 }
 
 function couldContinueAfter(row: TerminalLinkRowSnapshot): boolean {
@@ -615,40 +672,39 @@ function collectStructuralSnapshot(
       rows: [],
       clippedBefore: false,
       clippedAfter: false,
-      guardWholeRequestedRow: false,
-    };
-  }
-  if (cellBudget < cols) {
-    return {
-      rows: [],
-      clippedBefore: true,
-      clippedAfter: true,
-      guardWholeRequestedRow: true,
+      requestedResolvedEnd: null,
     };
   }
 
-  const initial = snapshotBufferRow(buffer, cols, requestedRow, codeUnitBudget);
+  const initial = snapshotBufferRow(
+    buffer,
+    cols,
+    requestedRow,
+    cellBudget,
+    codeUnitBudget,
+  );
   if (!initial) {
     return {
       rows: [],
       clippedBefore: false,
       clippedAfter: false,
-      guardWholeRequestedRow: false,
+      requestedResolvedEnd: null,
     };
   }
   if (initial.clipped) {
     return {
       rows: [initial.row],
-      clippedBefore: true,
+      clippedBefore:
+        requestedRow > 0 && couldContinueBefore(initial.row),
       clippedAfter: true,
-      guardWholeRequestedRow: true,
+      requestedResolvedEnd: initial.resolvedEndColumn,
     };
   }
 
   const rows = new Map<number, TerminalLinkRowSnapshot>([
     [requestedRow, initial.row],
   ]);
-  let inspectedCells = cols;
+  let inspectedCells = initial.inspectedCells;
   let inspectedCodeUnits = initial.inspectedCodeUnits;
   let top = requestedRow;
   let bottom = requestedRow;
@@ -657,6 +713,12 @@ function collectStructuralSnapshot(
   let clippedBefore = false;
   let clippedAfter = false;
   let expandTopNext = true;
+  const initialBounds = contentBounds(initial.row);
+  let connectionContext = cellsText(
+    initial.row,
+    initialBounds.start,
+    initialBounds.end,
+  );
 
   while (topOpen || bottomOpen) {
     const expandTop = topOpen && (!bottomOpen || expandTopNext);
@@ -682,9 +744,10 @@ function collectStructuralSnapshot(
       buffer,
       cols,
       adjacentIndex,
+      cols,
       codeUnitBudget - inspectedCodeUnits,
     );
-    inspectedCells += cols;
+    inspectedCells += adjacentSnapshot?.inspectedCells ?? 0;
     inspectedCodeUnits += adjacentSnapshot?.inspectedCodeUnits ?? 0;
     if (adjacentSnapshot?.clipped) {
       const couldContinue = expandTop
@@ -701,8 +764,8 @@ function collectStructuralSnapshot(
     const adjacent = adjacentSnapshot?.row;
     const connection = adjacent
       ? expandTop
-        ? connectionBetween(adjacent, edge)
-        : connectionBetween(edge, adjacent)
+        ? connectionBetween(adjacent, edge, undefined, true)
+        : connectionBetween(edge, adjacent, connectionContext)
       : null;
     if (!adjacent || !connection) {
       if (expandTop) topOpen = false;
@@ -712,9 +775,22 @@ function collectStructuralSnapshot(
 
     rows.set(adjacentIndex, adjacent);
     if (expandTop) {
+      const adjacentBounds = contentBounds(adjacent);
+      connectionContext =
+        cellsText(
+          adjacent,
+          adjacentBounds.start,
+          connection.previousEnd,
+        ) + connectionContext;
       top = adjacentIndex;
       topOpen = top > 0;
     } else {
+      const adjacentBounds = contentBounds(adjacent);
+      connectionContext += cellsText(
+        adjacent,
+        connection.nextStart,
+        adjacentBounds.end,
+      );
       bottom = adjacentIndex;
       bottomOpen = bottom < buffer.length - 1;
     }
@@ -724,7 +800,7 @@ function collectStructuralSnapshot(
     rows: [...rows.values()].sort((a, b) => a.index - b.index),
     clippedBefore,
     clippedAfter,
-    guardWholeRequestedRow: false,
+    requestedResolvedEnd: null,
   };
 }
 
@@ -734,22 +810,42 @@ function linkTouchesClippedEdge(
 ): boolean {
   const top = snapshot.rows[0];
   const bottom = snapshot.rows[snapshot.rows.length - 1];
-  if (snapshot.clippedBefore && top) {
-    const bounds = contentBounds(top);
-    const contentStart = firstContentColumn(top, bounds.start) + 1;
-    if (
-      link.segments.some(
-        (range) => range.start.y === top.index + 1 && range.start.x === contentStart,
-      )
-    ) {
-      return true;
+  if (snapshot.clippedBefore && top && link.rawSegments[0]) {
+    const firstRange = link.rawSegments[0];
+    const startRowPosition = snapshot.rows.findIndex(
+      (row) => row.index + 1 === firstRange.start.y,
+    );
+    const startRow = snapshot.rows[startRowPosition];
+    if (startRow) {
+      const bounds = contentBounds(startRow);
+      const startsAtContentEdge =
+        firstRange.start.x === firstContentColumn(startRow, bounds.start) + 1;
+      if (startsAtContentEdge && startRow.index === top.index) return true;
+
+      const previous = snapshot.rows[startRowPosition - 1];
+      if (startsAtContentEdge && previous) {
+        const previousBounds = contentBounds(previous);
+        if (
+          hasUrlValueAssignmentSuffix(
+            cellsText(previous, previousBounds.start, previousBounds.end),
+            false,
+          )
+        ) {
+          return true;
+        }
+      }
     }
   }
   if (snapshot.clippedAfter && bottom) {
     const bounds = contentBounds(bottom);
     const contentEnd = lastContentEnd(bottom, bounds.end);
+    const possibleEarlyWideWrap =
+      snapshot.requestedResolvedEnd === null &&
+      contentEnd === bounds.end - 1 &&
+      isBlankCell(bottom.cells[bounds.end - 1]);
     if (
-      link.segments.some(
+      (link.rawTermination === "group-end" || possibleEarlyWideWrap) &&
+      link.rawSegments.some(
         (range) => range.end.y === bottom.index + 1 && range.end.x === contentEnd,
       )
     ) {
@@ -771,44 +867,63 @@ function computeCurrentTerminalLinks(
     cellBudget,
     codeUnitBudget,
   );
-  if (
-    snapshot.guardWholeRequestedRow ||
-    snapshot.clippedBefore ||
-    snapshot.clippedAfter
-  ) {
+  if (snapshot.clippedBefore || snapshot.clippedAfter) {
     const requested = snapshot.rows.find((row) => row.index === requestedRow);
     const localCandidates = requested
       ? computeTerminalLinks([requested], requestedRow)
       : [];
-    if (snapshot.guardWholeRequestedRow) {
-      return [
-        {
-          text: localCandidates[0]?.text ?? "",
-          range: {
-            start: { x: 1, y: requestedRow + 1 },
-            end: { x: source.cols, y: requestedRow + 1 },
-          },
-          requiresConfirmation: false,
-          guard: true,
-        },
-      ];
-    }
-    return requestedLinkSegments(snapshot.rows, requestedRow).map(
+    const candidates = requestedLinkSegments(snapshot.rows, requestedRow).map(
       ({ link, range }) => {
         const guard = linkTouchesClippedEdge(link, snapshot);
+        const rawRange = link.rawSegments.find(
+          (candidateRange) => candidateRange.start.y === requestedRow + 1,
+        );
         const localText = localCandidates.find(
           (candidate) =>
             candidate.range.start.x === range.start.x &&
             candidate.range.end.x === range.end.x,
         )?.text;
+        let candidateRange = guard && rawRange ? rawRange : range;
+        if (
+          guard &&
+          rawRange &&
+          snapshot.requestedResolvedEnd !== null &&
+          rawRange.end.x === snapshot.requestedResolvedEnd
+        ) {
+          candidateRange = {
+            start: rawRange.start,
+            end: { x: source.cols, y: requestedRow + 1 },
+          };
+        }
         return {
           text: guard ? (localText ?? link.text) : link.text,
-          range,
+          range: candidateRange,
           requiresConfirmation: link.requiresConfirmation,
           guard,
         };
       },
     );
+    if (snapshot.requestedResolvedEnd !== null) {
+      const firstUnresolvedX = snapshot.requestedResolvedEnd + 1;
+      const unresolvedCovered = candidates.some(
+        (candidate) =>
+          candidate.guard &&
+          candidate.range.start.x <= firstUnresolvedX &&
+          candidate.range.end.x >= source.cols,
+      );
+      if (firstUnresolvedX <= source.cols && !unresolvedCovered) {
+        candidates.push({
+          text: "",
+          range: {
+            start: { x: firstUnresolvedX, y: requestedRow + 1 },
+            end: { x: source.cols, y: requestedRow + 1 },
+          },
+          requiresConfirmation: false,
+          guard: true,
+        });
+      }
+    }
+    return candidates;
   }
   return computeTerminalLinks(snapshot.rows, requestedRow).map((candidate) => ({
     ...candidate,
@@ -816,10 +931,11 @@ function computeCurrentTerminalLinks(
   }));
 }
 
-function linkIdentity(link: TerminalLinkCandidate): string {
+function linkIdentity(link: ProviderTerminalLinkCandidate): string {
   return [
     link.text,
     link.requiresConfirmation ? "inferred" : "exact",
+    link.guard ? "guard" : "navigable",
     link.range.start.x,
     link.range.start.y,
     link.range.end.x,
@@ -876,7 +992,7 @@ export function createTerminalLinkProvider(
               cellBudget,
               codeUnitBudget,
             ).find((link) => linkIdentity(link) === identity);
-            if (!current) return;
+            if (!current || current.guard) return;
             if (current.requiresConfirmation && !confirm(current.text)) return;
             open(current.text);
           },

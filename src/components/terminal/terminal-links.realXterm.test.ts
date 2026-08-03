@@ -215,8 +215,17 @@ describe("terminal links against real xterm.js", () => {
     });
 
     screen.dispatchEvent(
-      new MouseEvent("click", {
+      new MouseEvent("mousedown", {
         bubbles: true,
+        button: 0,
+        clientX: CELL_WIDTH / 2,
+        clientY: CELL_HEIGHT / 2,
+      }),
+    );
+    screen.dispatchEvent(
+      new MouseEvent("mouseup", {
+        bubbles: true,
+        button: 0,
         clientX: CELL_WIDTH / 2,
         clientY: CELL_HEIGHT / 2,
       }),
