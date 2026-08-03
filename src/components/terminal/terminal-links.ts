@@ -85,9 +85,21 @@ interface FullTerminalLinkCandidate {
 
 interface LexicalTerminalLinkCandidate {
   rawText: string;
+  parsedText: string | null;
   rawSegments: TerminalLinkCandidate["range"][];
   rawTermination: "separator" | "group-end";
   start: number;
+}
+
+interface TerminalLinkScanWork {
+  remaining: number;
+  exhausted: boolean;
+}
+
+interface TerminalLinkAnalysis {
+  links: FullTerminalLinkCandidate[];
+  lexical: LexicalTerminalLinkCandidate[];
+  exhausted: boolean;
 }
 
 interface ProviderTerminalLinkCandidate extends TerminalLinkCandidate {
@@ -99,6 +111,13 @@ const URL_START = /https?:\/\//gi;
 const URL_STOP = /[\s"'{}|\\^<>`]/u;
 const TRAILING_SENTENCE_PUNCTUATION = new Set([".", ","]);
 const FRESH_HTTP_SCHEME = /^https?:\/\//iu;
+// Assembly remains linear under codeUnitBudget. Candidate suffix work needs a
+// second request-wide ceiling because nested invalid schemes can otherwise
+// remap, trim, and parse the same remaining code units repeatedly.
+const LINK_SCAN_WORK_PER_CODE_UNIT = 32;
+// Reserve the worst-case passes before touching a candidate: raw slicing,
+// trimming, parsing, raw mapping, and parsed mapping.
+const LINK_CANDIDATE_WORK_PER_CODE_UNIT = 5;
 const HARD_BOUNDARY_STARTS = [
   /^(?:[-*#$%+>]\s|(?:\d+|[a-z])[.)]\s|[\w.-]+@[\w.-]+:\S*[$#%]\s|[•◦‣⁃∙·▪▫●○◆◇▶▸])/iu,
   /^PS [a-z]:\\[^>\r\n]*>\s/iu,
@@ -489,24 +508,56 @@ function segmentsForMapping(
   return result;
 }
 
+function reserveLinkScanWork(
+  work: TerminalLinkScanWork,
+  codeUnits: number,
+): boolean {
+  if (codeUnits > work.remaining) {
+    work.exhausted = true;
+    return false;
+  }
+  work.remaining -= codeUnits;
+  return true;
+}
+
 function lexicalLinksInGroup(
   group: AssembledGroup,
+  work: TerminalLinkScanWork,
 ): LexicalTerminalLinkCandidate[] {
   const result: LexicalTerminalLinkCandidate[] = [];
   URL_START.lastIndex = 0;
+  let tokenEnd = 0;
   let startMatch: RegExpExecArray | null;
   while ((startMatch = URL_START.exec(group.text))) {
     const start = startMatch.index;
-    let rawEnd = URL_START.lastIndex;
-    while (rawEnd < group.text.length && !URL_STOP.test(group.text[rawEnd])) {
-      rawEnd++;
+    if (start >= tokenEnd) {
+      tokenEnd = URL_START.lastIndex;
+      while (
+        tokenEnd < group.text.length &&
+        !URL_STOP.test(group.text[tokenEnd])
+      ) {
+        tokenEnd++;
+      }
     }
 
+    const rawEnd = tokenEnd;
+    const candidateCodeUnits = rawEnd - start;
+    if (
+      !reserveLinkScanWork(
+        work,
+        candidateCodeUnits * LINK_CANDIDATE_WORK_PER_CODE_UNIT,
+      )
+    ) {
+      break;
+    }
     const rawText = group.text.slice(start, rawEnd);
+    const text = trimUrlToken(rawText);
+    const parsedText = text && parseHttpUrl(text) ? text : null;
     const rawSegments = segmentsForMapping(group.mapping, start, rawEnd);
     if (rawSegments.length > 0) {
       result.push({
         rawText,
+        parsedText,
         rawSegments,
         rawTermination:
           rawEnd === group.text.length ? "group-end" : "separator",
@@ -516,19 +567,22 @@ function lexicalLinksInGroup(
     // Preserve the previous scanner behavior: a valid outer URL owns nested
     // schemes in its value, while an invalid outer token still lets a later
     // scheme be considered independently.
-    if (parseHttpUrl(trimUrlToken(rawText))) {
+    if (parsedText) {
       URL_START.lastIndex = Math.max(URL_START.lastIndex, rawEnd);
     }
   }
   return result;
 }
 
-function linksInGroup(group: AssembledGroup): FullTerminalLinkCandidate[] {
+function linksInGroup(
+  group: AssembledGroup,
+  lexicalLinks: readonly LexicalTerminalLinkCandidate[],
+): FullTerminalLinkCandidate[] {
   const result: FullTerminalLinkCandidate[] = [];
-  for (const lexical of lexicalLinksInGroup(group)) {
-    const text = trimUrlToken(lexical.rawText);
+  for (const lexical of lexicalLinks) {
+    const text = lexical.parsedText;
+    if (!text) continue;
     const end = lexical.start + text.length;
-    if (!text || !parseHttpUrl(text)) continue;
 
     const segments = segmentsForMapping(group.mapping, lexical.start, end);
     if (segments.length === 0) continue;
@@ -548,18 +602,48 @@ function linksInGroup(group: AssembledGroup): FullTerminalLinkCandidate[] {
   return result;
 }
 
+function linkScanWork(codeUnitBudget: number): TerminalLinkScanWork {
+  return {
+    remaining: Math.min(
+      Number.MAX_SAFE_INTEGER,
+      Math.max(1, Math.floor(codeUnitBudget)) * LINK_SCAN_WORK_PER_CODE_UNIT,
+    ),
+    exhausted: false,
+  };
+}
+
+function analyzeTerminalLinks(
+  rows: readonly TerminalLinkRowSnapshot[],
+  requestedWork?: TerminalLinkScanWork,
+): TerminalLinkAnalysis {
+  const groups = assembleGroups(rows);
+  const assembledCodeUnits = groups.reduce(
+    (total, group) => total + group.text.length,
+    0,
+  );
+  const work = requestedWork ?? linkScanWork(assembledCodeUnits);
+  const links: FullTerminalLinkCandidate[] = [];
+  const lexical: LexicalTerminalLinkCandidate[] = [];
+  for (const group of groups) {
+    const groupLexical = lexicalLinksInGroup(group, work);
+    lexical.push(...groupLexical);
+    if (work.exhausted) break;
+    links.push(...linksInGroup(group, groupLexical));
+  }
+  return { links, lexical, exhausted: work.exhausted };
+}
+
 interface RequestedLinkSegment {
   link: FullTerminalLinkCandidate;
   range: TerminalLinkCandidate["range"];
 }
 
 function requestedLinkSegments(
-  rows: readonly TerminalLinkRowSnapshot[],
+  links: readonly FullTerminalLinkCandidate[],
   requestedRow: number,
 ): RequestedLinkSegment[] {
   const seen = new Set<string>();
-  return assembleGroups(rows)
-    .flatMap(linksInGroup)
+  return links
     .flatMap((link) =>
       link.segments
         .filter((range) => range.start.y === requestedRow + 1)
@@ -581,11 +665,15 @@ export function computeTerminalLinks(
   rows: readonly TerminalLinkRowSnapshot[],
   requestedRow: number,
 ): TerminalLinkCandidate[] {
-  return requestedLinkSegments(rows, requestedRow).map(({ link, range }) => ({
-    text: link.text,
-    range,
-    requiresConfirmation: link.requiresConfirmation,
-  }));
+  const analysis = analyzeTerminalLinks(rows);
+  if (analysis.exhausted) return [];
+  return requestedLinkSegments(analysis.links, requestedRow).map(
+    ({ link, range }) => ({
+      text: link.text,
+      range,
+      requiresConfirmation: link.requiresConfirmation,
+    }),
+  );
 }
 
 interface TerminalLinkBufferCell {
@@ -1151,6 +1239,27 @@ function normalizeProviderCandidates(
     .map(({ candidate }) => candidate);
 }
 
+function exhaustedLinkScanGuard(
+  source: TerminalLinkSource,
+  requestedRow: number,
+): ProviderTerminalLinkCandidate[] {
+  return normalizeProviderCandidates(
+    [
+      {
+        text: "",
+        range: {
+          start: { x: 1, y: requestedRow + 1 },
+          end: { x: source.cols, y: requestedRow + 1 },
+        },
+        requiresConfirmation: false,
+        guard: true,
+      },
+    ],
+    requestedRow,
+    source.cols,
+  );
+}
+
 function computeCurrentTerminalLinks(
   source: TerminalLinkSource,
   requestedRow: number,
@@ -1163,16 +1272,32 @@ function computeCurrentTerminalLinks(
     cellBudget,
     codeUnitBudget,
   );
+  const work = linkScanWork(codeUnitBudget);
+  const analysis = analyzeTerminalLinks(snapshot.rows, work);
+  if (analysis.exhausted) {
+    return exhaustedLinkScanGuard(source, requestedRow);
+  }
   if (
     snapshot.clippedBefore ||
     snapshot.clippedAfter ||
     snapshot.ambiguousHardBoundaryAfter
   ) {
     const requested = snapshot.rows.find((row) => row.index === requestedRow);
-    const localCandidates = requested
-      ? computeTerminalLinks([requested], requestedRow)
-      : [];
-    const candidates = requestedLinkSegments(snapshot.rows, requestedRow).map(
+    const localAnalysis = requested
+      ? analyzeTerminalLinks([requested], work)
+      : { links: [], lexical: [], exhausted: false };
+    if (work.exhausted) {
+      return exhaustedLinkScanGuard(source, requestedRow);
+    }
+    const localCandidates = requestedLinkSegments(
+      localAnalysis.links,
+      requestedRow,
+    ).map(({ link, range }) => ({
+      text: link.text,
+      range,
+      requiresConfirmation: link.requiresConfirmation,
+    }));
+    const candidates = requestedLinkSegments(analysis.links, requestedRow).map(
       ({ link, range }) => {
         const guard = linkTouchesClippedEdge(link, snapshot);
         const rawRange = link.rawSegments.find(
@@ -1203,27 +1328,25 @@ function computeCurrentTerminalLinks(
         };
       },
     );
-    for (const group of assembleGroups(snapshot.rows)) {
-      for (const lexical of lexicalLinksInGroup(group)) {
-        if (parseHttpUrl(trimUrlToken(lexical.rawText))) continue;
-        if (!lexicalLinkTouchesClippedEdge(lexical, snapshot)) continue;
-        for (const rawRange of lexical.rawSegments) {
-          if (rawRange.start.y !== requestedRow + 1) continue;
-          const reachesRequestedClip =
-            snapshot.requestedResolvedEnd !== null &&
-            rawRange.end.x >= snapshot.requestedResolvedEnd;
-          candidates.push({
-            text: lexical.rawText,
-            range: reachesRequestedClip
-              ? {
-                  start: rawRange.start,
-                  end: { x: source.cols, y: requestedRow + 1 },
-                }
-              : rawRange,
-            requiresConfirmation: false,
-            guard: true,
-          });
-        }
+    for (const lexical of analysis.lexical) {
+      if (lexical.parsedText) continue;
+      if (!lexicalLinkTouchesClippedEdge(lexical, snapshot)) continue;
+      for (const rawRange of lexical.rawSegments) {
+        if (rawRange.start.y !== requestedRow + 1) continue;
+        const reachesRequestedClip =
+          snapshot.requestedResolvedEnd !== null &&
+          rawRange.end.x >= snapshot.requestedResolvedEnd;
+        candidates.push({
+          text: lexical.rawText,
+          range: reachesRequestedClip
+            ? {
+                start: rawRange.start,
+                end: { x: source.cols, y: requestedRow + 1 },
+              }
+            : rawRange,
+          requiresConfirmation: false,
+          guard: true,
+        });
       }
     }
     if (snapshot.requestedResolvedEnd !== null) {
@@ -1249,10 +1372,14 @@ function computeCurrentTerminalLinks(
     return normalizeProviderCandidates(candidates, requestedRow, source.cols);
   }
   return normalizeProviderCandidates(
-    computeTerminalLinks(snapshot.rows, requestedRow).map((candidate) => ({
-      ...candidate,
-      guard: false,
-    })),
+    requestedLinkSegments(analysis.links, requestedRow).map(
+      ({ link, range }) => ({
+        text: link.text,
+        range,
+        requiresConfirmation: link.requiresConfirmation,
+        guard: false,
+      }),
+    ),
     requestedRow,
     source.cols,
   );

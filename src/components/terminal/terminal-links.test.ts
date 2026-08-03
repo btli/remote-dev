@@ -868,6 +868,84 @@ describe("terminal link provider", () => {
     expect(open).not.toHaveBeenCalled();
   });
 
+  it("bounds invalid nested-scheme work and fails closed", () => {
+    const cols = 200;
+    const rowCount = 82;
+    const repeatedInvalidScheme = "https://[";
+    const text = repeatedInvalidScheme
+      .repeat(Math.ceil((cols * rowCount) / repeatedInvalidScheme.length))
+      .slice(0, cols * rowCount);
+    const rows = rowsForUrl(text, cols, (index) => index > 0);
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const controller = terminalLinkController(terminalBuffer(rows), {
+      confirm,
+      open,
+    });
+    const NativeURL = globalThis.URL;
+    const nativeSlice = String.prototype.slice;
+    let parseAttempts = 0;
+    let slicedCodeUnits = 0;
+    const CountingURL = new Proxy(NativeURL, {
+      construct(target, argumentsList) {
+        parseAttempts++;
+        return Reflect.construct(target, argumentsList, target);
+      },
+    });
+    const slice = vi
+      .spyOn(String.prototype, "slice")
+      .mockImplementation(function (this: string, start, end) {
+        const result = nativeSlice.call(this, start, end);
+        slicedCodeUnits += result.length;
+        return result;
+      });
+    vi.stubGlobal("URL", CountingURL);
+
+    let links: ILink[];
+    const started = performance.now();
+    try {
+      links = provide(controller.linkProvider, 41);
+    } finally {
+      slice.mockRestore();
+      vi.stubGlobal("URL", NativeURL);
+    }
+    const elapsed = performance.now() - started;
+
+    // Candidate suffixes also drive trimming and range remapping, so bounding
+    // both parser attempts and copied suffix units catches the quadratic path
+    // without making correctness depend on host timing.
+    expect(parseAttempts).toBeLessThanOrEqual(32);
+    expect(slicedCodeUnits).toBeLessThanOrEqual(text.length * 64);
+    expect(elapsed).toBeLessThan(1_000);
+
+    expect(links.length).toBeGreaterThan(0);
+    for (const link of links) {
+      expect(link.decorations).toMatchObject({
+        pointerCursor: false,
+        underline: false,
+      });
+      link.activate(new MouseEvent("click"), link.text);
+    }
+    for (let x = 1; x <= cols; x++) {
+      expect(
+        links.filter(
+          (link) => link.range.start.x <= x && link.range.end.x >= x,
+        ),
+        `inert ownership at column ${x}`,
+      ).toHaveLength(1);
+    }
+
+    const requestedText = text.slice(40 * cols, 41 * cols);
+    const schemeStart = requestedText.indexOf("https://");
+    controller.hoverWebLink("https://", {
+      start: { x: schemeStart + 1, y: 41 },
+      end: { x: schemeStart + "https://".length, y: 41 },
+    });
+    expect(controller.activateWebLink("https://")).toBe(false);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it("expands structurally beyond seventeen rows when the complete target is under budget", () => {
     const cols = 12;
     const url = `https://example.test/${"a".repeat(240)}`;
