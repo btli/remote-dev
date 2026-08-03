@@ -1500,8 +1500,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // Handler to resume a specific prior agent session, for any resume-capable
   // provider. The resume flags come from the client-safe registry mirror
-  // (`buildResumeAgentFlags`): claude/gemini → `--resume <id>`, opencode →
-  // `--session <id>`, codex → `resume <id>` (a subcommand that the agent plugin
+  // (`buildResumeAgentFlags`): claude/gemini/cursor → `--resume <id>`,
+  // opencode → `--session <id>`, codex → `resume <id>` (a subcommand that the agent plugin
   // appends right after the command). Passing flags lets the agent plugin own
   // command assembly — the legacy string-built `startupCommand` wrapper override
   // (e.g. `jclaude`) was removed.

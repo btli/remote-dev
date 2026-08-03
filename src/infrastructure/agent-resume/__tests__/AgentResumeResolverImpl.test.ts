@@ -51,6 +51,18 @@ describe("AgentResumeResolverImpl", () => {
     expect(res?.resumeFlags).toEqual(["--session", "oc"]);
   });
 
+  it("uses a stored Cursor chat id as --resume flags", async () => {
+    const res = await r.resolveResume(
+      sess({ agentProvider: "cursor", typeMetadata: { agentSessionId: { cursor: "chat-123" } } }),
+    );
+    expect(res).toEqual({
+      provider: "cursor",
+      nativeSessionId: "chat-123",
+      resumeFlags: ["--resume", "chat-123"],
+      argvOverride: null,
+    });
+  });
+
   it("returns null for antigravity (no resume support)", async () => {
     expect(await r.resolveResume(sess({ agentProvider: "antigravity" }))).toBeNull();
   });

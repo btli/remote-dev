@@ -1017,7 +1017,7 @@ POST /api/agent-cli/status              # [session] verify CLI execution with en
 ```
 
 Returns version, resolved path, and install instructions for each supported
-agent CLI (Claude Code, Codex, Gemini, OpenCode). The `POST` form runs a live
+agent CLI (Claude Code, Codex, Gemini, Antigravity, OpenCode, Cursor). The `POST` form runs a live
 verification of a CLI with a given environment.
 
 ---
@@ -1085,15 +1085,18 @@ Query params:
 
 | Param | Required | Notes |
 |-------|----------|-------|
-| `provider` | yes | One of `claude` \| `codex` \| `gemini` \| `opencode`. `antigravity` and `none` are rejected `400 INVALID_PROVIDER` (no resume support). |
+| `provider` | yes | One of `claude` \| `codex` \| `gemini` \| `opencode` \| `cursor`. `antigravity` and `none` are rejected `400 INVALID_PROVIDER` (no resume support). |
 | `projectPath` | yes | Absolute path of the project directory; otherwise `400 INVALID_PROJECT_PATH`. |
 | `profileId` | no | Agent profile ID; scopes discovery to that profile's isolated CLI home dir. |
 | `limit` | no | Default 20, clamped to 1–50. |
 
 Response: `{ provider, sessions: ResumableSessionSummary[] }`. Claude entries
 carry rich previews (first message + git branch) from their `.jsonl` history;
-`codex`/`gemini`/`opencode` entries return id + timestamp from disk discovery
-(no preview).
+`codex`/`gemini`/`opencode` entries return id + timestamp from flat-file disk
+discovery (no preview). Cursor also returns id + timestamp by scanning
+`~/.cursor/chats/<workspace-hash>/<chat-id>/meta.json` (or the equivalent under
+`CURSOR_DATA_DIR`) and selecting resumable conversations whose `cwd` matches the
+requested project.
 
 ---
 

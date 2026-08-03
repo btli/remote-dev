@@ -7,6 +7,7 @@ import {
   getProviderDocsUrl,
   getRequiredEnvVars,
   checkRequiredEnvVars,
+  matchesProviderIdentity,
 } from "./agent-cli-service";
 
 describe("AgentCLIService", () => {
@@ -17,10 +18,30 @@ describe("AgentCLIService", () => {
       expect(getCLICommand("gemini")).toBe("gemini");
       expect(getCLICommand("antigravity")).toBe("agy");
       expect(getCLICommand("opencode")).toBe("opencode");
+      expect(getCLICommand("cursor")).toBe("agent");
     });
 
     it("returns null for 'all' provider", () => {
       expect(getCLICommand("all")).toBeNull();
+    });
+  });
+
+  describe("matchesProviderIdentity", () => {
+    it("accepts Cursor's distinctive help output for the generic agent executable", () => {
+      expect(
+        matchesProviderIdentity(
+          "cursor",
+          "Usage: agent [options]\nStart the Cursor Agent\n--resume [chatId]",
+        ),
+      ).toBe(true);
+    });
+
+    it("rejects an unrelated executable named agent", () => {
+      expect(matchesProviderIdentity("cursor", "generic build agent 1.2.3")).toBe(false);
+    });
+
+    it("does not add an identity requirement to provider-specific executable names", () => {
+      expect(matchesProviderIdentity("codex", "")).toBe(true);
     });
   });
 
@@ -54,6 +75,12 @@ describe("AgentCLIService", () => {
       expect(instructions).toContain("npm install -g");
       expect(instructions).toContain("opencode-ai");
     });
+
+    it("returns Cursor's official install script", () => {
+      expect(getInstallInstructions("cursor")).toContain(
+        "curl https://cursor.com/install -fsS | bash",
+      );
+    });
   });
 
   describe("getProviderDocsUrl", () => {
@@ -63,6 +90,7 @@ describe("AgentCLIService", () => {
       expect(getProviderDocsUrl("gemini")).toContain("geminicli.com");
       expect(getProviderDocsUrl("antigravity")).toContain("antigravity.google");
       expect(getProviderDocsUrl("opencode")).toContain("opencode.ai");
+      expect(getProviderDocsUrl("cursor")).toBe("https://docs.cursor.com/en/cli/overview");
     });
   });
 
@@ -90,6 +118,11 @@ describe("AgentCLIService", () => {
     it("returns empty array for opencode (multi-provider)", () => {
       const envVars = getRequiredEnvVars("opencode");
       expect(envVars).toEqual([]);
+    });
+
+    it("does not require CURSOR_API_KEY because browser login is supported", () => {
+      expect(getRequiredEnvVars("cursor")).toEqual([]);
+      expect(checkRequiredEnvVars("cursor", {})).toEqual({ valid: true, missing: [] });
     });
   });
 

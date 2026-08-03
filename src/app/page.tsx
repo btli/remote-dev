@@ -14,7 +14,7 @@ import { NotificationProvider } from "@/contexts/NotificationContext";
 import { PeerChatProvider } from "@/contexts/PeerChatContext";
 import { ChannelProvider } from "@/contexts/ChannelContext";
 import { MobileViewportSwitch } from "@/components/mobile/MobileViewportSwitch";
-import type { TerminalSession } from "@/types/session";
+import type { AgentProviderType, TerminalSession } from "@/types/session";
 
 // NOTE (c9aq): Desktop-only context providers (Template, Recording,
 // Trash, Schedule, Secrets, LiteLLM, Profile, GitHubAccount, GitHubStats,
@@ -87,7 +87,7 @@ export default async function Home() {
     claudeAccountId: s.claudeAccountId ?? null,
     terminalType: s.terminalType ?? "shell",
     scopeKey: s.scopeKey ?? null,
-    agentProvider: s.agentProvider as "claude" | "codex" | "gemini" | "opencode" | "none" | null,
+    agentProvider: s.agentProvider as AgentProviderType | null,
     agentExitState: s.agentExitState as "running" | "exited" | "restarting" | "closed" | null,
     agentExitCode: s.agentExitCode ?? null,
     agentExitedAt: s.agentExitedAt ? new Date(s.agentExitedAt) : null,

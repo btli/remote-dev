@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
 import * as AgentCLIService from "@/services/agent-cli-service";
-import type { AgentProvider } from "@/types/agent";
+import type { AgentCLIProvider } from "@/services/agent-cli-service";
 
 /**
  * GET /api/agent-cli/status - Get status of all AI coding CLIs
@@ -10,19 +10,23 @@ import type { AgentProvider } from "@/types/agent";
  */
 export const GET = withAuth(async (request) => {
   const url = new URL(request.url);
-  const provider = url.searchParams.get("provider") as AgentProvider | null;
+  const provider = url.searchParams.get("provider");
 
   if (provider && provider !== "all") {
+    if (!AgentCLIService.AGENT_CLI_PROVIDERS.includes(provider as AgentCLIProvider)) {
+      return errorResponse(`Invalid provider: ${provider}`, 400);
+    }
+    const cliProvider = provider as AgentCLIProvider;
     // Check single provider
-    const status = await AgentCLIService.checkCLIStatus(provider);
+    const status = await AgentCLIService.checkCLIStatus(cliProvider);
 
     return NextResponse.json({
       ...status,
       installInstructions: status.installed
         ? undefined
-        : AgentCLIService.getInstallInstructions(provider),
-      docsUrl: AgentCLIService.getProviderDocsUrl(provider),
-      requiredEnvVars: AgentCLIService.getRequiredEnvVars(provider),
+        : AgentCLIService.getInstallInstructions(cliProvider),
+      docsUrl: AgentCLIService.getProviderDocsUrl(cliProvider),
+      requiredEnvVars: AgentCLIService.getRequiredEnvVars(cliProvider),
     });
   }
 
@@ -35,13 +39,13 @@ export const GET = withAuth(async (request) => {
     installInstructions: status.installed
       ? undefined
       : AgentCLIService.getInstallInstructions(
-          status.provider as Exclude<AgentProvider, "all">
+          status.provider
         ),
     docsUrl: AgentCLIService.getProviderDocsUrl(
-      status.provider as Exclude<AgentProvider, "all">
+      status.provider
     ),
     requiredEnvVars: AgentCLIService.getRequiredEnvVars(
-      status.provider as Exclude<AgentProvider, "all">
+      status.provider
     ),
   }));
 
@@ -72,14 +76,13 @@ export const POST = withAuth(async (request) => {
     return errorResponse("Provider is required and cannot be 'all'", 400);
   }
 
-  const validProviders = ["claude", "codex", "gemini", "antigravity", "opencode"];
-  if (!validProviders.includes(provider)) {
+  if (!AgentCLIService.AGENT_CLI_PROVIDERS.includes(provider as AgentCLIProvider)) {
     return errorResponse(`Invalid provider: ${provider}`, 400);
   }
 
   // Check required environment variables
   const envCheck = AgentCLIService.checkRequiredEnvVars(
-    provider as Exclude<AgentProvider, "all">,
+    provider as AgentCLIProvider,
     { ...process.env, ...env }
   );
 
@@ -96,7 +99,7 @@ export const POST = withAuth(async (request) => {
 
   // Verify CLI execution
   const result = await AgentCLIService.verifyCLIExecution(
-    provider as Exclude<AgentProvider, "all">,
+    provider as AgentCLIProvider,
     env
   );
 

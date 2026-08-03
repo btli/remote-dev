@@ -12,6 +12,7 @@ class AgentCliApi implements AgentCliPort {
     'codex': 'OpenAI Codex',
     'gemini': 'Gemini CLI',
     'opencode': 'OpenCode',
+    'cursor': 'Cursor',
   };
 
   @override

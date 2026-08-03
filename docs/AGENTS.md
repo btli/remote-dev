@@ -5,15 +5,18 @@ per-profile environment. This document is the canonical reference for the suppor
 provider roster, agent profile isolation, per-profile theming, CLI verification, and
 a summary of agent-to-agent peer communication.
 
-> Sources of truth: [`src/types/agent.ts`](../src/types/agent.ts),
+> Runtime provider sources of truth: [`src/types/session.ts`](../src/types/session.ts),
 > [`src/services/agent-cli-service.ts`](../src/services/agent-cli-service.ts),
+> and [`src/lib/agent-resume/agent-resume-registry.ts`](../src/lib/agent-resume/agent-resume-registry.ts).
+> Profile configuration remains separately modeled by
+> [`src/types/agent.ts`](../src/types/agent.ts) and
 > [`src/services/agent-profile-service.ts`](../src/services/agent-profile-service.ts).
 
 ---
 
 ## 1. Supported providers
 
-There are **five** agent providers (the `all` sentinel is a UI/template convenience,
+There are **six** agent providers (the `all` sentinel is a UI/template convenience,
 not a runnable provider).
 
 | Provider id | CLI command | Config file | Config dir (rel. to `HOME`) | Required env | Isolation env var |
@@ -23,6 +26,7 @@ not a runnable provider).
 | `gemini` | `gemini` | `GEMINI.md` | `.gemini` | `GOOGLE_API_KEY` | `GEMINI_HOME` |
 | `antigravity` | `agy` | `ANTIGRAVITY.md` | `.gemini` (shares Gemini's dir) | `GOOGLE_API_KEY` | `ANTIGRAVITY_HOME` |
 | `opencode` | `opencode` | `OPENCODE.md` | `.config/opencode` | _none required_ | `OPENCODE_HOME` |
+| `cursor` | `agent` | project-root `AGENTS.md` / `.cursor/rules` | `.cursor` (or XDG config) | _none required_ | generic `XDG_CONFIG_HOME` only |
 
 > **Claude is deliberately NOT config-dir isolated** [remote-dev-n4x4.6].
 > `ProfileIsolation` emits no `CLAUDE_CONFIG_DIR`, so every Claude session uses
@@ -43,9 +47,17 @@ Notes confirmed against source:
   `getRequiredEnvVars()`.
 - **`opencode`** has **no required env var** — it supports multiple model providers
   configured in its own config, so `getRequiredEnvVars("opencode")` returns `[]`.
+- **`cursor`** launches the interactive TUI with bare **`agent`**. Browser login is
+  supported, so `CURSOR_API_KEY` is optional and `getRequiredEnvVars("cursor")`
+  returns `[]`. Cursor documents `CURSOR_CONFIG_DIR` and XDG configuration for
+  CLI settings; Remote Dev's existing profile `XDG_CONFIG_HOME` overlay is
+  sufficient, so no `CURSOR_HOME` is invented. Conversation data stays under
+  `~/.cursor` unless `CURSOR_DATA_DIR` is explicitly set. There is no Cursor
+  profile JSON editor because no compatible Cursor JSON settings schema is
+  modeled here.
 
-Display names (`PROVIDER_DISPLAY_NAMES`): Claude Code, OpenAI Codex, Gemini CLI,
-Antigravity CLI, OpenCode.
+Runtime display names (`AGENT_PROVIDERS`): Claude Code, OpenAI Codex, Gemini CLI,
+Antigravity CLI, OpenCode, Cursor.
 
 > The codex config file is literally named `AGENTS.md`. That is unrelated to *this*
 > documentation file (`docs/AGENTS.md`).
@@ -55,13 +67,14 @@ Antigravity CLI, OpenCode.
 `getInstallInstructions()` and `getProviderDocsUrl()` return per-provider install
 commands and documentation links:
 
-| Provider | Install (npm) | Docs |
+| Provider | Install | Docs |
 |----------|---------------|------|
 | `claude` | `npm install -g @anthropic-ai/claude-code` | https://docs.anthropic.com/claude-code |
 | `codex` | `npm install -g @openai/codex` | https://platform.openai.com/docs/codex-cli |
 | `gemini` | `npm install -g @google/gemini-cli` | https://geminicli.com/docs/ |
 | `antigravity` | _CLI install currently unavailable — the documented `https://google.dev/antigravity/install` installer URL is 404 (TBD)_ | https://antigravity.google/docs/cli-overview |
 | `opencode` | `npm install -g opencode-ai` | https://opencode.ai/docs/ |
+| `cursor` | `curl https://cursor.com/install -fsS \| bash` | https://docs.cursor.com/en/cli/overview |
 
 > **Package names ≠ binary names.** The npm packages `@openai/codex` and
 > `opencode-ai` install the binaries `codex` and `opencode` respectively (the
@@ -89,9 +102,11 @@ holds provider configs, an isolated git identity, an SSH dir, and a `.config` ro
 └── .local/share/      # XDG data root (created via XDG_DATA_HOME)
 ```
 
-Which provider config files are written depends on the profile's `provider`: a
-single-provider profile gets only that provider's dir + config file; a profile with
-provider `all` gets every provider's config. Each generated config file is seeded
+Which profile-backed config files are written depends on the profile's `provider`:
+a single-provider profile gets only that provider's dir + config file; a profile
+with provider `all` gets every modeled profile config. Cursor is runtime-only in
+this model and relies on the generic XDG overlay plus project-root instructions;
+it does not borrow another provider's JSON editor. Each generated config file is seeded
 with a header plus an **`rdv` quick-reference** section so the agent immediately
 knows it is running inside Remote Dev (start with `rdv context`).
 
@@ -106,7 +121,7 @@ interface in [`src/types/agent.ts`](../src/types/agent.ts)):
 
 | Var | Role |
 |-----|------|
-| `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` | Redirect config/data/cache into the profile dir |
+| `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` | Redirect config/data/cache into the profile dir; Cursor honors the XDG config location without a dedicated `CURSOR_HOME` |
 | `CODEX_HOME`, `GEMINI_HOME`, `ANTIGRAVITY_HOME`, `OPENCODE_HOME` | Per-provider config roots. **`CLAUDE_CONFIG_DIR` is deliberately absent** — Claude shares the real `~/.claude`; identity comes from an injected `CLAUDE_CODE_OAUTH_TOKEN` [remote-dev-n4x4.6] |
 | `GIT_CONFIG_GLOBAL`, `GIT_SSH_COMMAND` | Point git at the profile's `.gitconfig` / SSH key |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY` | Injected per provider |
@@ -237,7 +252,7 @@ API (see [`API.md`](./API.md)):
 `AgentCLIService` ([`agent-cli-service.ts`](../src/services/agent-cli-service.ts))
 verifies whether each agent CLI is installed and resolves its version.
 
-- **`GET /api/agent-cli/status`** returns the status of all five providers:
+- **`GET /api/agent-cli/status`** returns the status of all six providers:
   `{ statuses[], installedCount, totalCount }`, where each status carries
   `{ provider, installed, version?, command, path?, error? }`.
 - Detection runs `which <command>` to find the binary, then tries `<command>
@@ -274,7 +289,7 @@ provider).
   missed (compaction, brief disconnect), driven by a durable per-session cursor.
   The PreToolUse hook additionally drains the inbox as a poll fallback. This is
   the only provider with hands-off delivery.
-- **Codex, Gemini, OpenCode, Antigravity — manual pull.** These providers have
+- **Codex, Gemini, OpenCode, Antigravity, Cursor — manual pull.** These providers have
   **no MCP server and no hooks**, so nothing is pushed to them. They must poll
   their own inbox by running `rdv peer messages` (which reads the same durable
   cursor and auto-acks the batch it returns). Until an agent calls it, queued
@@ -334,8 +349,8 @@ For the full design (Unix-socket push relay, internal endpoints, dedup), see the
 ## 6. Session durability & resume (Vault)
 
 When an agent CLI process dies, the terminal server restarts, or the host/pod
-restarts, the agent's **conversation** is brought back via the provider's native
-resume mechanism — not just an empty tmux pane. The behavior is **declarative**:
+restarts, supported providers can bring the agent's **conversation** back via
+their resume mechanism — not just an empty tmux pane. The behavior is **declarative**:
 a single per-provider registry (`src/lib/agent-resume/agent-resume-registry.ts`)
 is the source of truth, consumed by the resume resolver
 (`src/infrastructure/agent-resume/AgentResumeResolverImpl.ts`) and wired into
@@ -350,6 +365,7 @@ cold-attach recreate).
 | `codex` | ✅ | `codex resume <id>` (**subcommand**, argv override) | newest rollout file under `$CODEX_HOME` (default `~/.codex/sessions`) | Disk discovery at relaunch |
 | `gemini` | ✅ | `gemini --resume <id>` (flag) | newest checkpoint under `$GEMINI_HOME` (default `~/.gemini/tmp`) | Disk discovery at relaunch |
 | `opencode` | ✅ | `opencode --session <id>` (flag) | newest session under `$OPENCODE_HOME` (default `~/.local/share/opencode`) | Disk discovery at relaunch |
+| `cursor` | ✅ | `agent --resume <id>` (flag) | `~/.cursor/chats/<workspace-hash>/<chat-id>/meta.json` (or `$CURSOR_DATA_DIR/chats/...`), filtered by `meta.cwd` and `hasConversation` | Project-scoped chat-index discovery at relaunch |
 | `antigravity` | ❌ | — (no confirmed resume flag) | — | — — relaunches **fresh** (UI marks "Fresh (resume unsupported)") |
 
 Notes:
@@ -357,14 +373,19 @@ Notes:
 - **Codex resume is a subcommand, not a flag** — the registry models this with a
   `resume: { kind: "subcommand" }` template that produces a full argv override
   (`["codex","resume","<id>"]`) rather than appended flags.
-- **Flag spelling is version-dependent** for gemini/opencode. `verifyResumeFlag()`
+- **Flag spelling is version-dependent** for gemini/opencode/cursor. `verifyResumeFlag()`
   probes the installed CLI's `--help` at startup diagnostics and logs a `warn`
   if the token is missing, so drift is detectable without changing the resolver
   (adjust the registry only).
 - **Native id capture asymmetry:** Claude pushes its id in real time via the
-  Stop hook; the other providers have no hook system today and rely on **disk
-  discovery** (newest session file under the profile-isolated home dir) at
-  relaunch.
+  Stop hook; Codex/Gemini/OpenCode rely on **flat-file disk discovery** at
+  relaunch. Cursor scans metadata in its nested
+  `~/.cursor/chats/<workspace-hash>/<chat-id>/meta.json` index, includes only
+  entries whose `cwd` matches the requested project and whose
+  `hasConversation` value is true, and respects `CURSOR_DATA_DIR` when set.
+  Cursor's config-dir/XDG settings do not relocate this data. A separately
+  pushed native id, when available, is stored in
+  `typeMetadata.agentSessionId`; native ids are never part of the resume binding.
 - **Durable resume binding:** at create time a sanitized resume binding
   (provider + flags + **secrets-stripped** env) is persisted into
   `terminalSessions.typeMetadata.resumeBinding`. After a pod restart this env is

@@ -2813,9 +2813,9 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
 
   // [hgwo] POST /internal/agent-session-id — durably record a provider's native
   // session id so the agent's CONVERSATION can be resumed after process death,
-  // terminal-server restart, or pod restart. Generic across all 5 providers
+  // terminal-server restart, or pod restart. Generic across all six providers
   // (Claude also pushes via the claude-session-map handler above; Codex/Gemini/
-  // OpenCode have no hook and fall back to disk discovery at relaunch).
+  // OpenCode/Cursor have no hook and fall back to disk discovery at relaunch).
   if (pathname === "/internal/agent-session-id" && req.method === "POST") {
     if (!isLocalhostRequest(req)) {
       sendJson(res, 403, { error: "Forbidden: localhost only" });

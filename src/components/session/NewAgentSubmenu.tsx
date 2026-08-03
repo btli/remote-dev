@@ -31,8 +31,7 @@ import {
   ContextMenuSubContent,
   ContextMenuSubTrigger,
 } from "@/components/ui/context-menu";
-import type { AgentProviderType } from "@/types/session";
-import { PROVIDER_DISPLAY_NAMES } from "@/types/agent";
+import { AGENT_PROVIDERS, type AgentProviderType } from "@/types/session";
 import { AGENT_VISUALS } from "./project-tree/agentVisuals";
 
 /**
@@ -49,6 +48,7 @@ const PROVIDER_ICON_COLORS: Record<Exclude<AgentProviderType, "none">, string> =
   gemini: "text-sky-500 dark:text-sky-400",
   antigravity: "text-pink-500 dark:text-pink-400",
   opencode: "text-amber-500 dark:text-amber-400",
+  cursor: "text-indigo-500 dark:text-indigo-400",
 };
 
 // ---------------------------------------------------------------------------
@@ -107,6 +107,7 @@ const ALL_PROVIDERS: Array<Exclude<AgentProviderType, "none">> = [
   "gemini",
   "antigravity",
   "opencode",
+  "cursor",
 ];
 
 async function fetchOnce(): Promise<void> {
@@ -131,11 +132,12 @@ async function fetchOnce(): Promise<void> {
     // remain in the menu when the API response omits them.
     const statuses: AgentCLISummary[] = ALL_PROVIDERS.map((provider) => {
       const row = byProvider.get(provider);
+      const config = AGENT_PROVIDERS.find((candidate) => candidate.id === provider);
       return {
         provider,
         installed: Boolean(row?.installed),
         version: row?.version,
-        command: row?.command ?? provider,
+        command: row?.command ?? config?.command ?? provider,
       };
     });
     setCache({ statuses, loading: false, error: null });
@@ -144,7 +146,8 @@ async function fetchOnce(): Promise<void> {
       statuses: ALL_PROVIDERS.map((provider) => ({
         provider,
         installed: false,
-        command: provider,
+        command:
+          AGENT_PROVIDERS.find((candidate) => candidate.id === provider)?.command ?? provider,
       })),
       loading: false,
       error: err instanceof Error ? err.message : "Failed to load",
@@ -207,7 +210,8 @@ interface SubmenuProps {
 }
 
 function ProviderLine({ status }: { status: AgentCLISummary }) {
-  const label = PROVIDER_DISPLAY_NAMES[status.provider] ?? status.provider;
+  const label =
+    AGENT_PROVIDERS.find((provider) => provider.id === status.provider)?.name ?? status.provider;
   return (
     <div className="flex flex-col items-start gap-0.5 min-w-0">
       <span className="text-xs font-medium truncate max-w-[220px]">{label}</span>
