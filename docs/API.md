@@ -920,6 +920,7 @@ POST   /api/claude-accounts/setup-session         # launch a session running `cl
 POST   /api/claude-accounts/capture               # capture the printed token from that session
 POST   /api/claude-accounts/usage-setup-session   # launch isolated usage OAuth for an account
 POST   /api/claude-accounts/usage-capture         # attach the usage credential from that session
+POST   /api/claude-accounts/usage-abort           # cancel and clean an unfinished usage sign-in
 
 GET    /api/profiles/select?projectId=   # recommended profile + account for a project (wizard pre-fill)
 GET    /api/claude/usage                 # dashboard payload: all accounts + state + pool membership
@@ -1041,19 +1042,34 @@ The web dialog closes immediately only when all three booleans are true.
 Otherwise it keeps the completed result visible, explains the specific warning,
 and prevents the successful capture from being submitted twice.
 
-Expected conflicts keep the session available where a retry can help:
+Expected conflicts retain the session only where retrying it can help:
 
 | Status/code | Meaning |
 |---|---|
 | `409 CREDENTIALS_NOT_READY` | Sign-in has not produced credentials yet. Finish it and retry. |
-| `409 MISSING_SCOPE` | The login lacks `user:profile`, or Anthropic rejected that scope. Sign in again and grant the requested permission. |
-| `409 ACCOUNT_MISMATCH` | The scratch login identifies a different Claude account. Sign in with the account matching the target row. |
+| `409 MISSING_SCOPE` | The login lacks `user:profile`, or Anthropic rejected that scope. The scratch credential/session are removed; start a fresh sign-in and grant the requested permission. |
+| `409 ACCOUNT_MISMATCH` | The scratch login identifies a different Claude account. That account's scratch credential/session are removed; start over with the account matching the target row. |
 | `409 CAPTURE_FAILED` | An environmental capture step failed without exposing credential-bearing details. Retry from the sign-in session. |
 
 A missing or foreign session/account returns `404`. A missing/non-string
 `sessionId`, a session without usage-flow provenance
 (`NOT_A_USAGE_SETUP_SESSION`), or incomplete trusted session metadata
 (`INVALID_USAGE_SETUP_SESSION`) returns `400`.
+
+Closing the web dialog while setup is active sends a non-blocking cleanup
+request using the owner-scoped session id:
+
+```http
+POST /api/claude-accounts/usage-abort
+Content-Type: application/json
+
+{ "sessionId": "session-id" }
+```
+
+A successful request returns `{ "cleanupComplete": true }`, or `false` when
+one or more best-effort credential, directory, scrollback, or session cleanup
+steps failed. The client closes regardless of this outcome. Foreign/missing
+sessions return `404`; invalid provenance or metadata returns `400`.
 
 ### Identity
 

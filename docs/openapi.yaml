@@ -1354,6 +1354,34 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ClaudeUsageCaptureConflict' }
+  /api/claude-accounts/usage-abort:
+    post:
+      tags: [ClaudeLimits]
+      summary: Cancel and clean an unfinished Claude usage sign-in
+      description: >-
+        Best-effort cancellation using only an owner-scoped usage setup
+        session. The scratch path is read from trusted session metadata. The
+        server deletes or confirms absence of the derived credential before
+        removing the scratch directory, then clears scrollback and closes the
+        session. The web dialog does not wait for this request before closing.
+      security:
+        - apiKey: []
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClaudeUsageAbortRequest' }
+      responses:
+        '200':
+          description: Cancellation attempted; false means one or more cleanup steps failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClaudeUsageAbortResponse' }
+        '400': { description: "Invalid body/session id, a session without usage-flow provenance (code NOT_A_USAGE_SETUP_SESSION), or incomplete trusted metadata (code INVALID_USAGE_SETUP_SESSION)", content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Session is missing or belongs to another user, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '500': { description: Cleanup could not start safely (code ABORT_FAILED), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /api/profiles/select:
     get:
       tags: [ClaudeLimits]
@@ -2840,6 +2868,16 @@ components:
       properties:
         error: { type: string }
         code: { type: string, enum: [CREDENTIALS_NOT_READY, MISSING_SCOPE, ACCOUNT_MISMATCH, CAPTURE_FAILED] }
+    ClaudeUsageAbortRequest:
+      type: object
+      required: [sessionId]
+      properties:
+        sessionId: { type: string, pattern: '\S', description: Owner-scoped session returned by the usage setup endpoint; other request properties carry no path authority }
+    ClaudeUsageAbortResponse:
+      type: object
+      required: [cleanupComplete]
+      properties:
+        cleanupComplete: { type: boolean, description: True only when derived credential deletion or confirmed absence, scratch-directory removal, scrollback clearing, and session closure all completed }
     ClaudeAccountSaveResult:
       type: object
       properties:

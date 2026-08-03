@@ -585,7 +585,7 @@ describe("capture validation and storage", () => {
           ...credential,
           scopes: ["user:profile:read", "USER:PROFILE"],
         })),
-        delete: vi.fn(),
+        delete: vi.fn(async () => "deleted" as const),
       },
     });
     const service = new ClaudeUsageCredentialService(deps);
@@ -595,10 +595,16 @@ describe("capture validation and storage", () => {
     });
     expect(deps.fetchUsage).not.toHaveBeenCalled();
     expect(deps.storeCredential).not.toHaveBeenCalled();
-    expect(deps.harvester.delete).not.toHaveBeenCalled();
+    expect(deps.harvester.delete).toHaveBeenCalledWith(SCRATCH);
+    expect(deps.fileSystem.rm).toHaveBeenCalledWith(SCRATCH, {
+      recursive: true,
+      force: true,
+    });
+    expect(deps.clearHistory).toHaveBeenCalledWith("rdv-session-1");
+    expect(deps.closeSession).toHaveBeenCalledWith("session-1", "user-1");
   });
 
-  it("maps a forbidden validation to MISSING_SCOPE and leaves the session for diagnosis", async () => {
+  it("maps a forbidden validation to MISSING_SCOPE and removes the terminal credential", async () => {
     const deps = makeDependencies({
       fetchUsage: vi.fn(
         async (): Promise<ClaudeUsageFetchResult> => ({
@@ -612,7 +618,13 @@ describe("capture validation and storage", () => {
       code: "MISSING_SCOPE",
     });
     expect(deps.storeCredential).not.toHaveBeenCalled();
-    expect(deps.harvester.delete).not.toHaveBeenCalled();
+    expect(deps.harvester.delete).toHaveBeenCalledWith(SCRATCH);
+    expect(deps.fileSystem.rm).toHaveBeenCalledWith(SCRATCH, {
+      recursive: true,
+      force: true,
+    });
+    expect(deps.clearHistory).toHaveBeenCalledWith("rdv-session-1");
+    expect(deps.closeSession).toHaveBeenCalledWith("session-1", "user-1");
   });
 
   it.each(["rate-limited", "no-data"] as const)(
@@ -637,7 +649,7 @@ describe("capture validation and storage", () => {
     }
   );
 
-  it("rejects a nonblank mismatched email before storage or cleanup", async () => {
+  it("rejects a nonblank mismatched email and removes the other account's credential", async () => {
     const deps = makeDependencies({
       probeIdentity: vi.fn(async () => ({
         loggedIn: true,
@@ -655,7 +667,33 @@ describe("capture validation and storage", () => {
       code: "ACCOUNT_MISMATCH",
     });
     expect(deps.storeCredential).not.toHaveBeenCalled();
-    expect(deps.harvester.delete).not.toHaveBeenCalled();
+    expect(deps.harvester.delete).toHaveBeenCalledWith(SCRATCH);
+    expect(deps.fileSystem.rm).toHaveBeenCalledWith(SCRATCH, {
+      recursive: true,
+      force: true,
+    });
+    expect(deps.clearHistory).toHaveBeenCalledWith("rdv-session-1");
+    expect(deps.closeSession).toHaveBeenCalledWith("session-1", "user-1");
+  });
+
+  it("cleans the harvested credential before surfacing a credential-store failure", async () => {
+    const storeError = new Error("usage credential DB unavailable");
+    const deps = makeDependencies({
+      storeCredential: vi.fn(async () => {
+        throw storeError;
+      }),
+    });
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.capture(captureInput)).rejects.toBe(storeError);
+    expect(deps.trackUsage).not.toHaveBeenCalled();
+    expect(deps.harvester.delete).toHaveBeenCalledWith(SCRATCH);
+    expect(deps.fileSystem.rm).toHaveBeenCalledWith(SCRATCH, {
+      recursive: true,
+      force: true,
+    });
+    expect(deps.clearHistory).toHaveBeenCalledWith("rdv-session-1");
+    expect(deps.closeSession).toHaveBeenCalledWith("session-1", "user-1");
   });
 
   it.each([
@@ -799,6 +837,21 @@ describe("capture validation and storage", () => {
 });
 
 describe("successful capture cleanup", () => {
+  it("aborts an unfinished setup with the same credential-first cleanup", async () => {
+    const deps = makeDependencies();
+    const service = new ClaudeUsageCredentialService(deps);
+
+    await expect(service.abort(captureInput)).resolves.toBe(true);
+
+    expect(deps.harvester.delete).toHaveBeenCalledWith(SCRATCH);
+    expect(deps.fileSystem.rm).toHaveBeenCalledWith(SCRATCH, {
+      recursive: true,
+      force: true,
+    });
+    expect(deps.clearHistory).toHaveBeenCalledWith("rdv-session-1");
+    expect(deps.closeSession).toHaveBeenCalledWith("session-1", "user-1");
+  });
+
   it("runs credential deletion, guarded directory removal, history clear, and close in exact order", async () => {
     const order: string[] = [];
     const deps = makeDependencies({

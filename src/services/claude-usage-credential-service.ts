@@ -18,7 +18,8 @@
  *     scratch root. An undefined/default config dir is never passed.
  *   - Tokens are handed only to the injected validation/store boundaries and
  *     never appear in logs, errors, or return values.
- *   - Cleanup begins only after the owner-scoped credential write succeeds.
+ *   - A harvested credential is cleaned on every terminal outcome; only the
+ *     genuinely resumable CREDENTIALS_NOT_READY state leaves the session open.
  */
 
 import {
@@ -164,6 +165,11 @@ export interface UsageCredentialCaptureInput {
   tmuxSessionName: string;
   scratchDir: string;
 }
+
+export type UsageCredentialCleanupInput = Pick<
+  UsageCredentialCaptureInput,
+  "userId" | "sessionId" | "tmuxSessionName" | "scratchDir"
+>;
 
 export interface UsageCredentialCaptureResult {
   /** Null when the owner-scoped account disappeared before the store. */
@@ -367,9 +373,13 @@ export class ClaudeUsageCredentialService {
       );
     }
     if (!credential.scopes.includes("user:profile")) {
-      throw new UsageCredentialCaptureError(
-        "MISSING_SCOPE",
-        "Claude usage credentials do not include user:profile"
+      return this.rejectTerminalCapture(
+        input,
+        rootProof,
+        new UsageCredentialCaptureError(
+          "MISSING_SCOPE",
+          "Claude usage credentials do not include user:profile"
+        )
       );
     }
 
@@ -378,9 +388,13 @@ export class ClaudeUsageCredentialService {
       "subscription"
     );
     if (validation.outcome === "forbidden") {
-      throw new UsageCredentialCaptureError(
-        "MISSING_SCOPE",
-        "Anthropic rejected the credential's usage scope"
+      return this.rejectTerminalCapture(
+        input,
+        rootProof,
+        new UsageCredentialCaptureError(
+          "MISSING_SCOPE",
+          "Anthropic rejected the credential's usage scope"
+        )
       );
     }
     if (
@@ -411,21 +425,31 @@ export class ClaudeUsageCredentialService {
     const targetEmail = normalizedEmail(input.targetEmail);
     const scratchEmail = normalizedEmail(identity.email);
     if (targetEmail && scratchEmail && targetEmail !== scratchEmail) {
-      throw new UsageCredentialCaptureError(
-        "ACCOUNT_MISMATCH",
-        "The scratch login belongs to a different Claude account"
+      return this.rejectTerminalCapture(
+        input,
+        rootProof,
+        new UsageCredentialCaptureError(
+          "ACCOUNT_MISMATCH",
+          "The scratch login belongs to a different Claude account"
+        )
       );
     }
 
-    const stored = await this.dependencies.storeCredential(
-      input.accountId,
-      input.userId,
-      credential,
-      identity,
-      this.dependencies.now()
-    );
+    let stored: ClaudeAccountView | null;
+    try {
+      stored = await this.dependencies.storeCredential(
+        input.accountId,
+        input.userId,
+        credential,
+        identity,
+        this.dependencies.now()
+      );
+    } catch (error) {
+      await this.cleanupCaptureArtifacts(input, rootProof);
+      throw error;
+    }
     if (!stored) {
-      const cleanupComplete = await this.cleanupSuccessfulCapture(
+      const cleanupComplete = await this.cleanupCaptureArtifacts(
         input,
         rootProof
       );
@@ -440,11 +464,24 @@ export class ClaudeUsageCredentialService {
           )
         : false;
 
-    const cleanupComplete = await this.cleanupSuccessfulCapture(
+    const cleanupComplete = await this.cleanupCaptureArtifacts(
       input,
       rootProof
     );
     return { account: stored, usageValidated, cleanupComplete };
+  }
+
+  /**
+   * Abort an unfinished setup session without reading or storing its OAuth
+   * credential. Cancellation is terminal, so it uses the same credential-first
+   * cleanup as capture failures and closes the session after clearing history.
+   */
+  async abort(input: UsageCredentialCleanupInput): Promise<boolean> {
+    this.assertExactCaptureScratchPath(input);
+    const rootProof = await this.assertExistingSafeScratchDirectory(
+      input.scratchDir
+    );
+    return this.cleanupCaptureArtifacts(input, rootProof);
   }
 
   /** Filesystem removal boundary shared by successful and orphan cleanup. */
@@ -572,7 +609,7 @@ export class ClaudeUsageCredentialService {
   }
 
   private assertExactCaptureScratchPath(
-    input: UsageCredentialCaptureInput
+    input: Pick<UsageCredentialCaptureInput, "sessionId" | "scratchDir">
   ): void {
     const expected = join(this.scratchRoot, input.sessionId);
     if (input.scratchDir !== expected) {
@@ -735,8 +772,19 @@ export class ClaudeUsageCredentialService {
     }
   }
 
-  private async cleanupSuccessfulCapture(
+  private async rejectTerminalCapture(
     input: UsageCredentialCaptureInput,
+    expectedRoot: ScratchRootProof,
+    error: UsageCredentialCaptureError
+  ): Promise<never> {
+    // These outcomes require a fresh login. Closing here prevents client or
+    // server recovery from reusing a wrong-account or under-scoped credential.
+    await this.cleanupCaptureArtifacts(input, expectedRoot);
+    throw error;
+  }
+
+  private async cleanupCaptureArtifacts(
+    input: UsageCredentialCleanupInput,
     expectedRoot: ScratchRootProof
   ): Promise<boolean> {
     let cleanupComplete = true;
@@ -824,6 +872,13 @@ export function captureUsageCredential(
   input: UsageCredentialCaptureInput
 ): Promise<UsageCredentialCaptureResult> {
   return defaultService.capture(input);
+}
+
+/** Default cancellation boundary used by the abort route. */
+export function abortUsageCredentialCapture(
+  input: UsageCredentialCleanupInput
+): Promise<boolean> {
+  return defaultService.abort(input);
 }
 
 /** One-shot startup cleanup; intentionally no interval in this module. */

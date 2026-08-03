@@ -19,8 +19,10 @@
  * recoverable session proceed rather than leaving setup disabled forever.
  *
  * Finish POSTs exactly `{ sessionId }`. `CREDENTIALS_NOT_READY` remains a
- * retryable notice; missing scope and account mismatch stay hard, actionable
- * errors. A fully validated, cleaned, poll-enabled capture closes immediately.
+ * retryable notice; missing scope and account mismatch return to a fresh-login
+ * start after server cleanup. Closing an unfinished setup sends a best-effort
+ * abort without delaying the dialog. A fully validated, cleaned, poll-enabled
+ * capture closes immediately.
  * Any false or malformed success field remains visible as a terminal completed
  * state, so setup cannot be submitted twice and the user sees why readings may
  * be absent, stale, or awaiting cleanup. Client-side failures use console.error
@@ -142,6 +144,21 @@ function parseCaptureCompletion(data: unknown): UsageCaptureCompletion | null {
   };
 }
 
+async function abortSetupSession(sessionId: string): Promise<void> {
+  try {
+    const response = await apiFetch("/api/claude-accounts/usage-abort", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId }),
+    });
+    if (!response.ok) {
+      throw new Error(`usage abort ${response.status}`);
+    }
+  } catch (caught) {
+    console.error("Failed to abort Claude usage setup", caught);
+  }
+}
+
 export function UsageTrackingDialog({
   account,
   open,
@@ -180,12 +197,23 @@ export function UsageTrackingDialog({
     setRecoveryPhase("refreshing");
   }, []);
 
+  const dismissWithoutAbort = useCallback(() => {
+    reset();
+    onOpenChange(false);
+  }, [onOpenChange, reset]);
+
   const handleOpenChange = useCallback(
     (next: boolean) => {
-      if (!next) reset();
-      onOpenChange(next);
+      if (next) {
+        onOpenChange(true);
+        return;
+      }
+      const sessionId = !completion ? setupSession?.sessionId : null;
+      reset();
+      onOpenChange(false);
+      if (sessionId) void abortSetupSession(sessionId);
     },
-    [onOpenChange, reset]
+    [completion, onOpenChange, reset, setupSession]
   );
 
   const recoverUsageSession = useCallback(
@@ -331,7 +359,7 @@ export function UsageTrackingDialog({
     try {
       await refreshSessions();
       setActiveSession(setupSession.sessionId);
-      handleOpenChange(false);
+      dismissWithoutAbort();
     } catch (caught) {
       console.error("Failed to open usage setup session", caught);
       setError("Could not open the terminal session. Try again.");
@@ -362,12 +390,30 @@ export function UsageTrackingDialog({
           );
         } else if (failure.code === "MISSING_SCOPE") {
           setError(
-            "Usage permission was not granted. Restart the Claude usage sign-in in this terminal and grant usage permission."
+            "Usage permission was not granted. Start a new Claude usage sign-in and grant usage permission."
           );
+          setSetupSession(null);
+          try {
+            await refreshSessions();
+          } catch (caught) {
+            console.error(
+              "Failed to refresh sessions after terminal usage capture failure",
+              caught
+            );
+          }
         } else if (failure.code === "ACCOUNT_MISMATCH") {
           setError(
-            "A different Claude account was used and was not attached. Restart sign-in with the account shown here."
+            "A different Claude account was used and was not attached. Start a new sign-in with the account shown here."
           );
+          setSetupSession(null);
+          try {
+            await refreshSessions();
+          } catch (caught) {
+            console.error(
+              "Failed to refresh sessions after terminal usage capture failure",
+              caught
+            );
+          }
         } else {
           setError(failure.message);
         }
@@ -397,7 +443,7 @@ export function UsageTrackingDialog({
         captured.cleanupComplete &&
         captured.pollEnabled
       ) {
-        handleOpenChange(false);
+        dismissWithoutAbort();
       } else {
         setCompletion(nextCompletion);
       }

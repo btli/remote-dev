@@ -298,6 +298,75 @@ describe("UsageTrackingDialog", () => {
       expect(setActiveSession).toHaveBeenCalledWith("usage-session-1");
       expect(onOpenChange).toHaveBeenCalledWith(false);
     });
+    expect(apiFetch).not.toHaveBeenCalledWith(
+      "/api/claude-accounts/usage-abort",
+      expect.anything()
+    );
+  });
+
+  it("best-effort aborts an active setup when Cancel closes the dialog", async () => {
+    apiFetch.mockImplementation((url: string) => {
+      if (url === "/api/projects") {
+        return Promise.resolve(
+          jsonResponse({ projects: [{ id: "project-1", name: "Remote Dev" }] })
+        );
+      }
+      if (url === "/api/claude-accounts/usage-setup-session") {
+        return Promise.resolve(jsonResponse(setup, true, 201));
+      }
+      if (url === "/api/claude-accounts/usage-abort") {
+        return Promise.resolve(jsonResponse({ cleanupComplete: true }));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const { onOpenChange } = renderDialog();
+    await startSession();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    await waitFor(() => {
+      expect(apiFetch).toHaveBeenCalledWith(
+        "/api/claude-accounts/usage-abort",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ sessionId: "usage-session-1" }),
+        })
+      );
+    });
+  });
+
+  it("does not block closing when the best-effort abort request fails", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    apiFetch.mockImplementation((url: string) => {
+      if (url === "/api/projects") {
+        return Promise.resolve(
+          jsonResponse({ projects: [{ id: "project-1", name: "Remote Dev" }] })
+        );
+      }
+      if (url === "/api/claude-accounts/usage-setup-session") {
+        return Promise.resolve(jsonResponse(setup, true, 201));
+      }
+      if (url === "/api/claude-accounts/usage-abort") {
+        return Promise.reject(new Error("abort unavailable"));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const { onOpenChange } = renderDialog();
+    await startSession();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    await waitFor(() => {
+      expect(consoleError).toHaveBeenCalledWith(
+        "Failed to abort Claude usage setup",
+        expect.any(Error)
+      );
+    });
+    consoleError.mockRestore();
   });
 
   it("posts exactly the session id and keeps a not-ready session retryable", async () => {
@@ -349,7 +418,7 @@ describe("UsageTrackingDialog", () => {
   it.each([
     [
       "MISSING_SCOPE",
-      /usage permission was not granted.*restart.*usage sign-in/i,
+      /usage permission was not granted.*start a new Claude usage sign-in/i,
     ],
     [
       "ACCOUNT_MISMATCH",
@@ -377,6 +446,9 @@ describe("UsageTrackingDialog", () => {
 
     expect(await screen.findByText(message)).toBeInTheDocument();
     expect(screen.queryByText("internal detail")).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Start usage sign-in" })
+    ).toBeEnabled();
   });
 
   it("completes, refreshes, closes, and resets when capture is fully ready", async () => {
