@@ -908,6 +908,174 @@ function linkTouchesClippedEdge(
   return lexicalLinkTouchesClippedEdge(link, snapshot);
 }
 
+interface BoundedProviderCandidate {
+  candidate: ProviderTerminalLinkCandidate;
+  start: number;
+  end: number;
+  order: number;
+}
+
+function guardForInterval(
+  interval: readonly BoundedProviderCandidate[],
+  start: number,
+  end: number,
+  row: number,
+): BoundedProviderCandidate {
+  const preferred =
+    interval
+      .filter(({ candidate }) => candidate.guard)
+      .sort(
+        (left, right) =>
+          left.start - right.start ||
+          right.end - left.end ||
+          left.order - right.order,
+      )[0] ?? interval.reduce((left, right) =>
+        left.order <= right.order ? left : right,
+      );
+  return {
+    candidate: {
+      text: preferred.candidate.text,
+      range: {
+        start: { x: start, y: row },
+        end: { x: end, y: row },
+      },
+      requiresConfirmation: false,
+      guard: true,
+    },
+    start,
+    end,
+    order: Math.min(...interval.map(({ order }) => order)),
+  };
+}
+
+function mergeAdjacentGuards(
+  candidates: readonly BoundedProviderCandidate[],
+  row: number,
+): BoundedProviderCandidate[] {
+  const sorted = [...candidates].sort(
+    (left, right) =>
+      left.start - right.start ||
+      right.end - left.end ||
+      left.order - right.order,
+  );
+  const result: BoundedProviderCandidate[] = [];
+  for (const candidate of sorted) {
+    const previous = result[result.length - 1];
+    if (!previous || candidate.start > previous.end + 1) {
+      result.push(candidate);
+      continue;
+    }
+    result[result.length - 1] = guardForInterval(
+      [previous, candidate],
+      previous.start,
+      Math.max(previous.end, candidate.end),
+      row,
+    );
+  }
+  return result;
+}
+
+/**
+ * xterm removes later links when their inclusive ranges intersect an earlier
+ * reply from the same provider. Collapse every guarded component before the
+ * reply crosses that boundary, and turn ambiguous overlapping navigable
+ * candidates into one inert guard. Disjoint exact links remain navigable.
+ */
+function normalizeProviderCandidates(
+  candidates: readonly ProviderTerminalLinkCandidate[],
+  requestedRow: number,
+  cols: number,
+): ProviderTerminalLinkCandidate[] {
+  if (!Number.isFinite(cols) || cols < 1) return [];
+  const row = requestedRow + 1;
+  const maxX = Math.floor(cols);
+  const bounded: BoundedProviderCandidate[] = [];
+  for (let order = 0; order < candidates.length; order++) {
+    const candidate = candidates[order];
+    if (
+      candidate.range.start.y !== row ||
+      candidate.range.end.y !== row ||
+      !Number.isFinite(candidate.range.start.x) ||
+      !Number.isFinite(candidate.range.end.x)
+    ) {
+      continue;
+    }
+    const start = Math.max(1, Math.floor(candidate.range.start.x));
+    const end = Math.min(maxX, Math.floor(candidate.range.end.x));
+    if (start > end) continue;
+    bounded.push({
+      candidate: {
+        ...candidate,
+        range: {
+          start: { x: start, y: row },
+          end: { x: end, y: row },
+        },
+      },
+      start,
+      end,
+      order,
+    });
+  }
+
+  const guardSeeds = mergeAdjacentGuards(
+    bounded.filter(({ candidate }) => candidate.guard),
+    row,
+  );
+  const intervals = [
+    ...guardSeeds,
+    ...bounded.filter(({ candidate }) => !candidate.guard),
+  ].sort(
+    (left, right) =>
+      left.start - right.start ||
+      right.end - left.end ||
+      Number(right.candidate.guard) - Number(left.candidate.guard) ||
+      left.order - right.order,
+  );
+
+  const normalized: BoundedProviderCandidate[] = [];
+  let component: BoundedProviderCandidate[] = [];
+  let componentEnd = 0;
+  const finishComponent = (): void => {
+    if (component.length === 0) return;
+    const start = component[0].start;
+    const hasGuard = component.some(({ candidate }) => candidate.guard);
+    if (hasGuard || component.length > 1) {
+      normalized.push(
+        guardForInterval(component, start, componentEnd, row),
+      );
+    } else {
+      normalized.push(component[0]);
+    }
+    component = [];
+    componentEnd = 0;
+  };
+
+  for (const interval of intervals) {
+    if (component.length > 0 && interval.start > componentEnd) {
+      finishComponent();
+    }
+    component.push(interval);
+    componentEnd = Math.max(componentEnd, interval.end);
+  }
+  finishComponent();
+
+  const guards = mergeAdjacentGuards(
+    normalized.filter(({ candidate }) => candidate.guard),
+    row,
+  );
+  return [
+    ...guards,
+    ...normalized.filter(({ candidate }) => !candidate.guard),
+  ]
+    .sort(
+      (left, right) =>
+        left.start - right.start ||
+        left.end - right.end ||
+        left.order - right.order,
+    )
+    .map(({ candidate }) => candidate);
+}
+
 function computeCurrentTerminalLinks(
   source: TerminalLinkSource,
   requestedRow: number,
@@ -999,12 +1167,16 @@ function computeCurrentTerminalLinks(
         });
       }
     }
-    return candidates;
+    return normalizeProviderCandidates(candidates, requestedRow, source.cols);
   }
-  return computeTerminalLinks(snapshot.rows, requestedRow).map((candidate) => ({
-    ...candidate,
-    guard: false,
-  }));
+  return normalizeProviderCandidates(
+    computeTerminalLinks(snapshot.rows, requestedRow).map((candidate) => ({
+      ...candidate,
+      guard: false,
+    })),
+    requestedRow,
+    source.cols,
+  );
 }
 
 function linkIdentity(link: ProviderTerminalLinkCandidate): string {

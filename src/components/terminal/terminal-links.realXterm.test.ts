@@ -311,6 +311,63 @@ describe("terminal links against real xterm.js", () => {
     expect(stockOpen).not.toHaveBeenCalled();
   });
 
+  it("normalizes nested clipped guards before WebLinksAddon overlap pruning", async () => {
+    const inspected = "https://example.test[!https://nested.test";
+    const text = `${inspected} rest`;
+    const { term, parent, screen, core } = openRealTerminal({
+      cols: text.length,
+    });
+    disposals.push(() => {
+      term.dispose();
+      parent.remove();
+    });
+    await write(term, text);
+
+    const customOpen = vi.fn(() => true);
+    const stockOpen = vi.fn();
+    term.registerLinkProvider(
+      createTerminalLinkProvider(term, {
+        cellBudget: inspected.length,
+        confirm: () => true,
+        open: customOpen,
+      }),
+    );
+    term.loadAddon(new WebLinksAddon((_event, target) => stockOpen(target)));
+
+    const providers = core._linkProviderService.linkProviders;
+    const custom = provide(providers[1], 1);
+    const stock = provide(providers[2], 1);
+    expect(custom).toHaveLength(1);
+    expect(custom[0]).toMatchObject({
+      range: {
+        start: { x: 1, y: 1 },
+        end: { x: text.length, y: 1 },
+      },
+      decorations: { pointerCursor: false, underline: false },
+    });
+    expect(stock.map((link) => link.text)).toEqual([
+      "https://example.test",
+      "https://nested.test",
+    ]);
+
+    movePointer(screen, 5);
+    expect(core.linkifier?.currentLink?.link).toMatchObject({
+      range: custom[0].range,
+      decorations: { pointerCursor: false, underline: false },
+    });
+    clickPointer(screen, 5);
+
+    movePointer(screen, 27);
+    expect(core.linkifier?.currentLink?.link).toMatchObject({
+      range: custom[0].range,
+      decorations: { pointerCursor: false, underline: false },
+    });
+    clickPointer(screen, 27);
+
+    expect(customOpen).not.toHaveBeenCalled();
+    expect(stockOpen).not.toHaveBeenCalled();
+  });
+
   it("keeps clipped wide-cell guards disjoint so a later stock URL stays inert", async () => {
     const prefix = "https://wide.test/";
     const hidden = "https://hidden.test";

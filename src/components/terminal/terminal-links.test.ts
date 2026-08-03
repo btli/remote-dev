@@ -337,7 +337,7 @@ describe("terminal link reconstruction", () => {
     ]);
   });
 
-  it.each(["?next=", "?source=terminal&url="])(
+  it.each(["?next=", "?source=terminal&url=", "#next="])(
     "keeps a fresh scheme as a query value after %s",
     (query) => {
       const first = `https://redirect.test/${query}`;
@@ -991,6 +991,84 @@ describe("terminal link provider", () => {
     links[0].activate(new MouseEvent("click"), links[0].text);
     expect(confirm).not.toHaveBeenCalled();
     expect(open).not.toHaveBeenCalled();
+  });
+
+  it("unions nested and outer clipped guards before xterm can prune the outer range", () => {
+    const inspected = "https://example.test[!https://nested.test";
+    const text = `${inspected} rest`;
+    const cols = text.length;
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const provider = createTerminalLinkProvider(
+      terminalBuffer([row(0, text, cols)]),
+      { cellBudget: inspected.length, confirm, open },
+    );
+
+    const links = provide(provider, 1);
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({
+      text: inspected,
+      range: {
+        start: { x: 1, y: 1 },
+        end: { x: cols, y: 1 },
+      },
+      decorations: { pointerCursor: false, underline: false },
+    });
+    for (let x = 1; x <= cols; x++) {
+      expect(
+        links.filter(
+          (link) => link.range.start.x <= x && link.range.end.x >= x,
+        ),
+        `normalized custom ownership at column ${x}`,
+      ).toHaveLength(1);
+    }
+
+    links[0].activate(new MouseEvent("click"), links[0].text);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("preserves a disjoint exact link before normalized clipped guards", () => {
+    const safe = "https://safe.test/path";
+    const inspected = "https://example.test[!https://nested.test";
+    const text = `${safe} ${inspected} rest`;
+    const cols = text.length;
+    const guardStart = safe.length + 2;
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const provider = createTerminalLinkProvider(
+      terminalBuffer([row(0, text, cols)]),
+      {
+        cellBudget: safe.length + 1 + inspected.length,
+        confirm,
+        open,
+      },
+    );
+
+    const links = provide(provider, 1);
+    expect(links).toHaveLength(2);
+    const exact = links.find((link) => !link.decorations);
+    const guard = links.find((link) => link.decorations?.underline === false);
+    expect(exact).toMatchObject({
+      text: safe,
+      range: {
+        start: { x: 1, y: 1 },
+        end: { x: safe.length, y: 1 },
+      },
+    });
+    expect(guard).toMatchObject({
+      range: {
+        start: { x: guardStart, y: 1 },
+        end: { x: cols, y: 1 },
+      },
+      decorations: { pointerCursor: false, underline: false },
+    });
+
+    exact!.activate(new MouseEvent("click"), exact!.text);
+    guard!.activate(new MouseEvent("click"), guard!.text);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith(safe);
   });
 
   it("returns non-overlapping guards when a cell budget ends after a width-2 lead", () => {
