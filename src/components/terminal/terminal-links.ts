@@ -81,11 +81,16 @@ interface FullTerminalLinkCandidate {
   requiresConfirmation: boolean;
 }
 
+interface ProviderTerminalLinkCandidate extends TerminalLinkCandidate {
+  readonly guard: boolean;
+}
+
 const BORDER_CHARS = new Set(["│", "┃", "║", "|"]);
 const URL_START = /https?:\/\//gi;
 const URL_STOP = /[\s"'{}|\\^<>`]/u;
-const SENTENCE_PUNCTUATION = new Set([".", ",", "!", "?", ";", ":"]);
-const HARD_CONTINUATION_START = /^(?:https?:\/\/|[-*#]\s|[•◦‣⁃∙·▪▫●○◆◇▶▸])/iu;
+const TRAILING_SENTENCE_PUNCTUATION = new Set([".", ","]);
+const FRESH_HTTP_SCHEME = /^https?:\/\//iu;
+const HARD_BOUNDARY_START = /^(?:[-*#$%+>]\s|(?:\d+|[a-z])[.)]\s|[\w.-]+@[\w.-]+:\S*[$#%]\s|[•◦‣⁃∙·▪▫●○◆◇▶▸])/iu;
 
 function isBlankCell(cell: TerminalLinkCellSnapshot | undefined): boolean {
   return !cell || cell.width === 0 || cell.chars === "" || /^\s+$/u.test(cell.chars);
@@ -214,6 +219,19 @@ function matchingHardLayout(
   );
 }
 
+function expectsUrlValue(text: string): boolean {
+  const schemeIndex = text.search(/https?:\/\//iu);
+  if (schemeIndex < 0 || !text.endsWith("=")) return false;
+  const token = text.slice(schemeIndex);
+  const delimiterIndex = Math.max(
+    token.lastIndexOf("?"),
+    token.lastIndexOf("&"),
+    token.lastIndexOf("#"),
+  );
+  const key = token.slice(delimiterIndex + 1, -1);
+  return delimiterIndex >= 0 && key.length > 0 && !key.includes("=");
+}
+
 function connectionBetween(
   previous: TerminalLinkRowSnapshot,
   next: TerminalLinkRowSnapshot,
@@ -240,10 +258,13 @@ function connectionBetween(
   if (!matchingHardLayout(previousBounds, nextBounds)) return null;
   if (lastContentEnd(previous, previousBounds.end) !== previousBounds.end) return null;
   if (firstContentColumn(next, nextBounds.start) !== nextBounds.start) return null;
+  const nextText = cellsText(next, nextBounds.start, nextBounds.end);
+  if (HARD_BOUNDARY_START.test(nextText)) {
+    return null;
+  }
   if (
-    HARD_CONTINUATION_START.test(
-      cellsText(next, nextBounds.start, nextBounds.end),
-    )
+    FRESH_HTTP_SCHEME.test(nextText) &&
+    !expectsUrlValue(cellsText(previous, previousBounds.start, previousBounds.end))
   ) {
     return null;
   }
@@ -310,27 +331,47 @@ function assembleGroups(rows: readonly TerminalLinkRowSnapshot[]): AssembledGrou
 }
 
 function trimUrlToken(token: string): string {
-  let end = token.length;
-  let changed = true;
-  while (changed && end > 0) {
-    changed = false;
-    while (end > 0 && SENTENCE_PUNCTUATION.has(token[end - 1])) {
-      end--;
-      changed = true;
+  const closingBalance: Record<string, number> = {
+    ")": 0,
+    "]": 0,
+    "}": 0,
+  };
+  for (let index = 0; index < token.length; index++) {
+    switch (token[index]) {
+      case "(":
+        closingBalance[")"]++;
+        break;
+      case ")":
+        closingBalance[")"]--;
+        break;
+      case "[":
+        closingBalance["]"]++;
+        break;
+      case "]":
+        closingBalance["]"]--;
+        break;
+      case "{":
+        closingBalance["}"]++;
+        break;
+      case "}":
+        closingBalance["}"]--;
+        break;
     }
+  }
 
+  let end = token.length;
+  while (end > 0) {
     const last = token[end - 1];
-    const pairs: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
-    const open = pairs[last];
-    if (open) {
-      const value = token.slice(0, end);
-      const opens = Array.from(value).filter((char) => char === open).length;
-      const closes = Array.from(value).filter((char) => char === last).length;
-      if (closes > opens) {
-        end--;
-        changed = true;
-      }
+    if (TRAILING_SENTENCE_PUNCTUATION.has(last)) {
+      end--;
+      continue;
     }
+    if (closingBalance[last] < 0) {
+      closingBalance[last]++;
+      end--;
+      continue;
+    }
+    break;
   }
   return token.slice(0, end);
 }
@@ -395,6 +436,31 @@ function linksInGroup(group: AssembledGroup): FullTerminalLinkCandidate[] {
   return result;
 }
 
+interface RequestedLinkSegment {
+  link: FullTerminalLinkCandidate;
+  range: TerminalLinkCandidate["range"];
+}
+
+function requestedLinkSegments(
+  rows: readonly TerminalLinkRowSnapshot[],
+  requestedRow: number,
+): RequestedLinkSegment[] {
+  const seen = new Set<string>();
+  return assembleGroups(rows)
+    .flatMap(linksInGroup)
+    .flatMap((link) =>
+      link.segments
+        .filter((range) => range.start.y === requestedRow + 1)
+        .map((range) => ({ link, range })),
+    )
+    .filter(({ link, range }) => {
+      const key = `${range.start.x}:${range.start.y}-${range.end.x}:${range.end.y}:${link.text}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
 /**
  * Compute terminal links from fresh buffer-like rows. The requested row is an
  * absolute zero-based buffer index; only links intersecting it are returned.
@@ -403,24 +469,11 @@ export function computeTerminalLinks(
   rows: readonly TerminalLinkRowSnapshot[],
   requestedRow: number,
 ): TerminalLinkCandidate[] {
-  const seen = new Set<string>();
-  return assembleGroups(rows)
-    .flatMap(linksInGroup)
-    .flatMap((link) =>
-      link.segments
-        .filter((range) => range.start.y === requestedRow + 1)
-        .map((range) => ({
-          text: link.text,
-          range,
-          requiresConfirmation: link.requiresConfirmation,
-        })),
-    )
-    .filter((link) => {
-      const key = `${link.range.start.x}:${link.range.start.y}-${link.range.end.x}:${link.range.end.y}:${link.text}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+  return requestedLinkSegments(rows, requestedRow).map(({ link, range }) => ({
+    text: link.text,
+    range,
+    requiresConfirmation: link.requiresConfirmation,
+  }));
 }
 
 interface TerminalLinkBufferCell {
@@ -453,9 +506,12 @@ export interface TerminalLinkProviderOptions {
   readonly open?: (target: string) => unknown;
   /** Maximum number of terminal cells inspected for one provider request. */
   readonly cellBudget?: number;
+  /** Maximum UTF-16 code units assembled for one provider request. */
+  readonly codeUnitBudget?: number;
 }
 
 const DEFAULT_LINK_SCAN_CELL_BUDGET = 16_384;
+const DEFAULT_LINK_SCAN_CODE_UNIT_BUDGET = 32_768;
 
 function defaultHardLinkConfirmation(target: string): boolean {
   return window.confirm(
@@ -463,27 +519,55 @@ function defaultHardLinkConfirmation(target: string): boolean {
   );
 }
 
+interface BufferRowSnapshot {
+  row: TerminalLinkRowSnapshot;
+  inspectedCodeUnits: number;
+  clipped: boolean;
+}
+
 function snapshotBufferRow(
   buffer: TerminalLinkBuffer,
   cols: number,
   index: number,
-): TerminalLinkRowSnapshot | null {
+  codeUnitBudget: number,
+): BufferRowSnapshot | null {
   const line = buffer.getLine(index);
   if (!line) return null;
   const cells: TerminalLinkCellSnapshot[] = [];
+  let inspectedCodeUnits = 0;
+  let clipped = false;
   for (let column = 0; column < cols; column++) {
+    if (clipped) {
+      cells.push({ chars: "", width: 1 });
+      continue;
+    }
     const cell = column < line.length ? line.getCell(column) : undefined;
+    const chars = cell?.getChars() ?? "";
+    const width = cell?.getWidth() ?? 1;
+    const codeUnits = width === 0 ? 0 : Math.max(1, chars.length);
+    if (inspectedCodeUnits + codeUnits > codeUnitBudget) {
+      clipped = true;
+      cells.push({ chars: "", width });
+      continue;
+    }
+    inspectedCodeUnits += codeUnits;
     cells.push({
-      chars: cell?.getChars() ?? "",
-      width: cell?.getWidth() ?? 1,
+      chars,
+      width,
     });
   }
-  return { index, isWrapped: line.isWrapped, cells };
+  return {
+    row: { index, isWrapped: line.isWrapped, cells },
+    inspectedCodeUnits,
+    clipped,
+  };
 }
 
 interface StructuralSnapshot {
   rows: TerminalLinkRowSnapshot[];
-  clipped: boolean;
+  clippedBefore: boolean;
+  clippedAfter: boolean;
+  guardWholeRequestedRow: boolean;
 }
 
 function couldContinueBefore(row: TerminalLinkRowSnapshot): boolean {
@@ -491,14 +575,20 @@ function couldContinueBefore(row: TerminalLinkRowSnapshot): boolean {
   if (row.isWrapped) return true;
   const bounds = contentBounds(row);
   if (firstContentColumn(row, bounds.start) !== bounds.start) return false;
-  return !HARD_CONTINUATION_START.test(
-    cellsText(row, bounds.start, bounds.end),
-  );
+  const text = cellsText(row, bounds.start, bounds.end);
+  // A fresh scheme is usually a boundary, but it can also be the value of a
+  // query parameter on the uninspected previous row. Resolve that context or
+  // conservatively guard it instead of exposing the nested URL as exact.
+  return !HARD_BOUNDARY_START.test(text);
 }
 
 function couldContinueAfter(row: TerminalLinkRowSnapshot): boolean {
   const bounds = contentBounds(row);
-  return lastContentEnd(row, bounds.end) === bounds.end;
+  const contentEnd = lastContentEnd(row, bounds.end);
+  return (
+    contentEnd === bounds.end ||
+    (contentEnd === bounds.end - 1 && isBlankCell(row.cells[bounds.end - 1]))
+  );
 }
 
 /**
@@ -512,30 +602,60 @@ function collectStructuralSnapshot(
   source: TerminalLinkSource,
   requestedRow: number,
   cellBudget: number,
+  codeUnitBudget: number,
 ): StructuralSnapshot {
   const buffer = source.buffer.active;
   const cols = source.cols;
   if (
     requestedRow < 0 ||
     requestedRow >= buffer.length ||
-    cols <= 0 ||
-    cellBudget < cols
+    cols <= 0
   ) {
-    return { rows: [], clipped: false };
+    return {
+      rows: [],
+      clippedBefore: false,
+      clippedAfter: false,
+      guardWholeRequestedRow: false,
+    };
+  }
+  if (cellBudget < cols) {
+    return {
+      rows: [],
+      clippedBefore: true,
+      clippedAfter: true,
+      guardWholeRequestedRow: true,
+    };
   }
 
-  const initial = snapshotBufferRow(buffer, cols, requestedRow);
-  if (!initial) return { rows: [], clipped: false };
+  const initial = snapshotBufferRow(buffer, cols, requestedRow, codeUnitBudget);
+  if (!initial) {
+    return {
+      rows: [],
+      clippedBefore: false,
+      clippedAfter: false,
+      guardWholeRequestedRow: false,
+    };
+  }
+  if (initial.clipped) {
+    return {
+      rows: [initial.row],
+      clippedBefore: true,
+      clippedAfter: true,
+      guardWholeRequestedRow: true,
+    };
+  }
 
   const rows = new Map<number, TerminalLinkRowSnapshot>([
-    [requestedRow, initial],
+    [requestedRow, initial.row],
   ]);
   let inspectedCells = cols;
+  let inspectedCodeUnits = initial.inspectedCodeUnits;
   let top = requestedRow;
   let bottom = requestedRow;
   let topOpen = top > 0;
   let bottomOpen = bottom < buffer.length - 1;
-  let clipped = false;
+  let clippedBefore = false;
+  let clippedAfter = false;
   let expandTopNext = true;
 
   while (topOpen || bottomOpen) {
@@ -549,14 +669,36 @@ function collectStructuralSnapshot(
       const couldContinue = expandTop
         ? couldContinueBefore(edge)
         : couldContinueAfter(edge);
-      if (couldContinue) clipped = true;
+      if (couldContinue) {
+        if (expandTop) clippedBefore = true;
+        else clippedAfter = true;
+      }
       if (expandTop) topOpen = false;
       else bottomOpen = false;
       continue;
     }
 
-    const adjacent = snapshotBufferRow(buffer, cols, adjacentIndex);
+    const adjacentSnapshot = snapshotBufferRow(
+      buffer,
+      cols,
+      adjacentIndex,
+      codeUnitBudget - inspectedCodeUnits,
+    );
     inspectedCells += cols;
+    inspectedCodeUnits += adjacentSnapshot?.inspectedCodeUnits ?? 0;
+    if (adjacentSnapshot?.clipped) {
+      const couldContinue = expandTop
+        ? couldContinueBefore(edge)
+        : couldContinueAfter(edge);
+      if (couldContinue) {
+        if (expandTop) clippedBefore = true;
+        else clippedAfter = true;
+      }
+      if (expandTop) topOpen = false;
+      else bottomOpen = false;
+      continue;
+    }
+    const adjacent = adjacentSnapshot?.row;
     const connection = adjacent
       ? expandTop
         ? connectionBetween(adjacent, edge)
@@ -580,18 +722,98 @@ function collectStructuralSnapshot(
 
   return {
     rows: [...rows.values()].sort((a, b) => a.index - b.index),
-    clipped,
+    clippedBefore,
+    clippedAfter,
+    guardWholeRequestedRow: false,
   };
+}
+
+function linkTouchesClippedEdge(
+  link: FullTerminalLinkCandidate,
+  snapshot: StructuralSnapshot,
+): boolean {
+  const top = snapshot.rows[0];
+  const bottom = snapshot.rows[snapshot.rows.length - 1];
+  if (snapshot.clippedBefore && top) {
+    const bounds = contentBounds(top);
+    const contentStart = firstContentColumn(top, bounds.start) + 1;
+    if (
+      link.segments.some(
+        (range) => range.start.y === top.index + 1 && range.start.x === contentStart,
+      )
+    ) {
+      return true;
+    }
+  }
+  if (snapshot.clippedAfter && bottom) {
+    const bounds = contentBounds(bottom);
+    const contentEnd = lastContentEnd(bottom, bounds.end);
+    if (
+      link.segments.some(
+        (range) => range.end.y === bottom.index + 1 && range.end.x === contentEnd,
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function computeCurrentTerminalLinks(
   source: TerminalLinkSource,
   requestedRow: number,
   cellBudget: number,
-): TerminalLinkCandidate[] {
-  const snapshot = collectStructuralSnapshot(source, requestedRow, cellBudget);
-  if (snapshot.clipped) return [];
-  return computeTerminalLinks(snapshot.rows, requestedRow);
+  codeUnitBudget: number,
+): ProviderTerminalLinkCandidate[] {
+  const snapshot = collectStructuralSnapshot(
+    source,
+    requestedRow,
+    cellBudget,
+    codeUnitBudget,
+  );
+  if (
+    snapshot.guardWholeRequestedRow ||
+    snapshot.clippedBefore ||
+    snapshot.clippedAfter
+  ) {
+    const requested = snapshot.rows.find((row) => row.index === requestedRow);
+    const localCandidates = requested
+      ? computeTerminalLinks([requested], requestedRow)
+      : [];
+    if (snapshot.guardWholeRequestedRow) {
+      return [
+        {
+          text: localCandidates[0]?.text ?? "",
+          range: {
+            start: { x: 1, y: requestedRow + 1 },
+            end: { x: source.cols, y: requestedRow + 1 },
+          },
+          requiresConfirmation: false,
+          guard: true,
+        },
+      ];
+    }
+    return requestedLinkSegments(snapshot.rows, requestedRow).map(
+      ({ link, range }) => {
+        const guard = linkTouchesClippedEdge(link, snapshot);
+        const localText = localCandidates.find(
+          (candidate) =>
+            candidate.range.start.x === range.start.x &&
+            candidate.range.end.x === range.end.x,
+        )?.text;
+        return {
+          text: guard ? (localText ?? link.text) : link.text,
+          range,
+          requiresConfirmation: link.requiresConfirmation,
+          guard,
+        };
+      },
+    );
+  }
+  return computeTerminalLinks(snapshot.rows, requestedRow).map((candidate) => ({
+    ...candidate,
+    guard: false,
+  }));
 }
 
 function linkIdentity(link: TerminalLinkCandidate): string {
@@ -615,10 +837,15 @@ export function createTerminalLinkProvider(
 ): ILinkProvider {
   const confirm = options.confirm ?? defaultHardLinkConfirmation;
   const open = options.open ?? createHttpLinkOpener();
-  const cellBudget = Math.max(
-    1,
-    options.cellBudget ?? DEFAULT_LINK_SCAN_CELL_BUDGET,
-  );
+  const requestedCellBudget = options.cellBudget ?? DEFAULT_LINK_SCAN_CELL_BUDGET;
+  const cellBudget = Number.isFinite(requestedCellBudget)
+    ? Math.max(1, Math.floor(requestedCellBudget))
+    : DEFAULT_LINK_SCAN_CELL_BUDGET;
+  const requestedCodeUnitBudget =
+    options.codeUnitBudget ?? DEFAULT_LINK_SCAN_CODE_UNIT_BUDGET;
+  const codeUnitBudget = Number.isFinite(requestedCodeUnitBudget)
+    ? Math.max(1, Math.floor(requestedCodeUnitBudget))
+    : DEFAULT_LINK_SCAN_CODE_UNIT_BUDGET;
 
   return {
     provideLinks(bufferLineNumber, callback) {
@@ -627,8 +854,17 @@ export function createTerminalLinkProvider(
         source,
         requestedRow,
         cellBudget,
+        codeUnitBudget,
       );
       const links = candidates.map((candidate) => {
+        if (candidate.guard) {
+          return {
+            text: candidate.text,
+            range: candidate.range,
+            decorations: { pointerCursor: false, underline: false },
+            activate: () => {},
+          };
+        }
         const identity = linkIdentity(candidate);
         return {
           text: candidate.text,
@@ -638,6 +874,7 @@ export function createTerminalLinkProvider(
               source,
               requestedRow,
               cellBudget,
+              codeUnitBudget,
             ).find((link) => linkIdentity(link) === identity);
             if (!current) return;
             if (current.requiresConfirmation && !confirm(current.text)) return;

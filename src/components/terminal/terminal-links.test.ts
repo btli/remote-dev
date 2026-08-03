@@ -337,10 +337,51 @@ describe("terminal link reconstruction", () => {
     ]);
   });
 
+  it.each(["?next=", "?source=terminal&url="])(
+    "keeps a fresh scheme as a query value after %s",
+    (query) => {
+      const first = `https://redirect.test/${query}`;
+      const second = "https://dest.test/path";
+      const target = `${first}${second}`;
+      const cols = first.length;
+      const confirm = vi.fn(() => true);
+      const open = vi.fn(() => true);
+      const provider = createTerminalLinkProvider(
+        terminalBuffer([row(0, first, cols), row(1, second, cols)]),
+        { confirm, open },
+      );
+
+      for (const requestedRow of [1, 2]) {
+        const link = provide(provider, requestedRow)[0];
+        expect(link).toMatchObject({
+          text: target,
+          range: {
+            start: { y: requestedRow },
+            end: { y: requestedRow },
+          },
+        });
+        link.activate(new MouseEvent("click"), link.text);
+      }
+      expect(confirm).toHaveBeenCalledTimes(2);
+      expect(confirm).toHaveBeenNthCalledWith(1, target);
+      expect(confirm).toHaveBeenNthCalledWith(2, target);
+      expect(open).toHaveBeenNthCalledWith(1, target);
+      expect(open).toHaveBeenNthCalledWith(2, target);
+    },
+  );
+
   it.each([
     "- item",
     "* item",
     "# prompt",
+    "$ prompt",
+    "% prompt",
+    "+ item",
+    "1. item",
+    "2) item",
+    "a. item",
+    "B) item",
+    "user@host:~$ command",
     "• bullet",
     "◦ bullet",
     "‣ bullet",
@@ -396,6 +437,25 @@ describe("terminal link reconstruction", () => {
     ]);
   });
 
+  it.each([
+    "https://example.test/download;",
+    "https://example.test/?q=ready!",
+    "https://example.test/#frag?",
+  ])("preserves URL-valid final punctuation during activation: %s", (target) => {
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const provider = createTerminalLinkProvider(
+      terminalBuffer([row(0, target, target.length + 4)]),
+      { confirm, open },
+    );
+
+    const link = provide(provider, 1)[0];
+    expect(link.text).toBe(target);
+    link.activate(new MouseEvent("click"), link.text);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledWith(target);
+  });
+
   it("supports IPv6, credentials, ports, escapes, query/hash, and balanced parentheses", () => {
     const targets = [
       "https://[::1]",
@@ -422,6 +482,24 @@ describe("terminal link reconstruction", () => {
         (link) => link.text,
       ),
     ).toEqual([balanced, ipv6]);
+  });
+
+  it("trims a large unmatched delimiter suffix in a bounded number of passes", () => {
+    const target = "https://example.test/path";
+    const text = `${target}${")".repeat(1_024)}`;
+    const source = row(0, text, text.length);
+    const slice = vi.spyOn(String.prototype, "slice");
+
+    try {
+      expect(computeTerminalLinks([source], 0).map((link) => link.text)).toEqual([
+        target,
+      ]);
+      // Counting full-string slice passes demonstrates bounded trimming without
+      // relying on a machine-dependent wall-clock threshold.
+      expect(slice.mock.calls.length).toBeLessThan(16);
+    } finally {
+      slice.mockRestore();
+    }
   });
 
   it("maps wide and combining cells back to xterm ranges", () => {
@@ -524,19 +602,166 @@ describe("terminal link provider", () => {
     }
   });
 
-  it("returns no navigable fragment when a structural group exceeds the cell budget", () => {
+  it("guards a clipped local fragment instead of exposing it to lower providers", () => {
     const cols = 12;
     const url = `https://example.test/${"a".repeat(240)}`;
     const rows = rowsForUrl(url, cols);
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
     const provider = createTerminalLinkProvider(terminalBuffer(rows), {
       cellBudget: cols * 6,
-      confirm: () => true,
-      open: () => true,
+      confirm,
+      open,
     });
 
-    for (const rowIndex of [0, Math.floor(rows.length / 2), rows.length - 1]) {
-      expect(provide(provider, rowIndex + 1)).toEqual([]);
-    }
+    const guard = provide(provider, 1)[0];
+    expect(guard).toMatchObject({
+      text: url.slice(0, cols),
+      decorations: { pointerCursor: false, underline: false },
+      range: {
+        start: { x: 1, y: 1 },
+        end: { x: cols, y: 1 },
+      },
+    });
+    guard.activate(new MouseEvent("click"), guard.text);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+
+    expect(provide(provider, Math.floor(rows.length / 2) + 1)).toEqual([]);
+    expect(provide(provider, rows.length)).toEqual([]);
+  });
+
+  it("guards a budget edge immediately before an early-wrapped wide glyph", () => {
+    const prefix = "https://example.test/caf";
+    const cols = prefix.length + 1;
+    const firstCells = [
+      ...cellsFromText(prefix, prefix.length),
+      { chars: "", width: 1 },
+    ];
+    const secondCells: TerminalLinkCellSnapshot[] = [
+      { chars: "中", width: 2 },
+      { chars: "", width: 0 },
+      ...cellsFromText("", cols - 2),
+    ];
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const provider = createTerminalLinkProvider(
+      terminalBuffer([
+        { index: 0, isWrapped: false, cells: firstCells },
+        { index: 1, isWrapped: true, cells: secondCells },
+      ]),
+      { cellBudget: cols, confirm, open },
+    );
+
+    const guard = provide(provider, 1)[0];
+    expect(guard).toMatchObject({
+      text: prefix,
+      decorations: { pointerCursor: false, underline: false },
+      range: {
+        start: { x: 1, y: 1 },
+        end: { x: prefix.length, y: 1 },
+      },
+    });
+    guard.activate(new MouseEvent("click"), guard.text);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unrelated ordinary exact link navigable and unguarded", () => {
+    const target = "https://ordinary.test/path";
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const provider = createTerminalLinkProvider(
+      terminalBuffer([row(0, target, 40)]),
+      { cellBudget: 40, confirm, open },
+    );
+
+    const link = provide(provider, 1)[0];
+    expect(link.text).toBe(target);
+    expect(link.decorations).toBeUndefined();
+    link.activate(new MouseEvent("click"), link.text);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledWith(target);
+  });
+
+  it("does not guard an exact link unrelated to a clipped row edge", () => {
+    const target = "https://ordinary.test/x";
+    const cols = target.length + 12;
+    const first = `${target} ${"a".repeat(cols - target.length - 1)}`;
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const provider = createTerminalLinkProvider(
+      terminalBuffer([
+        row(0, first, cols),
+        row(1, "possible continuation", cols),
+      ]),
+      { cellBudget: cols, confirm, open },
+    );
+
+    const link = provide(provider, 1)[0];
+    expect(link.text).toBe(target);
+    expect(link.decorations).toBeUndefined();
+    link.activate(new MouseEvent("click"), link.text);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledWith(target);
+  });
+
+  it("guards a fresh-scheme row when its possible query context is clipped", () => {
+    const first = "https://redirect.test/?next=";
+    const second = "https://dest.test/path";
+    const cols = first.length;
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const provider = createTerminalLinkProvider(
+      terminalBuffer([row(0, first, cols), row(1, second, cols)]),
+      { cellBudget: cols, confirm, open },
+    );
+
+    const guard = provide(provider, 2)[0];
+    expect(guard).toMatchObject({
+      text: second,
+      decorations: { pointerCursor: false, underline: false },
+      range: {
+        start: { x: 1, y: 2 },
+        end: { x: second.length, y: 2 },
+      },
+    });
+    guard.activate(new MouseEvent("click"), guard.text);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("guards a row whose combined-cell content exceeds the code-unit budget", () => {
+    const target = "https://example.test/path";
+    const cells: TerminalLinkCellSnapshot[] = [
+      ...cellsFromText(target, target.length),
+      { chars: `x${"\u0301".repeat(256)}`, width: 1 },
+    ];
+    const cols = cells.length;
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const provider = createTerminalLinkProvider(
+      terminalBuffer([{ index: 0, isWrapped: false, cells }]),
+      {
+        cellBudget: cols,
+        codeUnitBudget: target.length + 8,
+        confirm,
+        open,
+      },
+    );
+
+    const guard = provide(provider, 1)[0];
+    expect(guard).toMatchObject({
+      text: target,
+      decorations: { pointerCursor: false, underline: false },
+      range: {
+        start: { x: 1, y: 1 },
+        end: { x: cols, y: 1 },
+      },
+    });
+    guard.activate(new MouseEvent("click"), guard.text);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
   });
 
   it("owns the complete hard-row range and confirms its full target synchronously", () => {

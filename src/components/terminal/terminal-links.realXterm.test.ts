@@ -164,6 +164,68 @@ describe("terminal links against real xterm.js", () => {
     expect(core.linkifier?.currentLink?.link.range).toEqual(custom.range);
   });
 
+  it("uses a non-navigating custom guard when the structural scan is clipped", async () => {
+    const { term, parent, screen, core } = openRealTerminal();
+    disposals.push(() => {
+      term.dispose();
+      parent.remove();
+    });
+
+    const target = "https://example.test/a-long-continuation";
+    const first = target.slice(0, COLS);
+    const second = target.slice(COLS);
+    await write(term, `${first}\x1b[2;1H${second}`);
+    expect(term.buffer.active.getLine(1)?.isWrapped).toBe(false);
+
+    const confirm = vi.fn(() => true);
+    const customOpen = vi.fn(() => true);
+    const stockOpen = vi.fn();
+    term.registerLinkProvider(
+      createTerminalLinkProvider(term, {
+        cellBudget: COLS,
+        confirm,
+        open: customOpen,
+      }),
+    );
+    term.loadAddon(new WebLinksAddon((_event, text) => stockOpen(text)));
+
+    const providers = core._linkProviderService.linkProviders;
+    const guard = provide(providers[1], 1)[0];
+    const stock = provide(providers[2], 1)[0];
+    expect(guard).toMatchObject({
+      text: first,
+      decorations: { pointerCursor: false, underline: false },
+      range: {
+        start: { x: 1, y: 1 },
+        end: { x: COLS, y: 1 },
+      },
+    });
+    expect(stock.text).toBe(first);
+
+    screen.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        clientX: CELL_WIDTH / 2,
+        clientY: CELL_HEIGHT / 2,
+      }),
+    );
+    expect(core.linkifier?.currentLink?.link).toMatchObject({
+      text: guard.text,
+      range: guard.range,
+    });
+
+    screen.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        clientX: CELL_WIDTH / 2,
+        clientY: CELL_HEIGHT / 2,
+      }),
+    );
+    expect(confirm).not.toHaveBeenCalled();
+    expect(customOpen).not.toHaveBeenCalled();
+    expect(stockOpen).not.toHaveBeenCalled();
+  });
+
   it("keeps OSC 8 first priority while filtering unsafe protocols", async () => {
     const openWindow = vi.fn(() => ({}) as Window);
     const safeOpen = createHttpLinkOpener(openWindow);
