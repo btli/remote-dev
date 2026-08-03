@@ -13,6 +13,8 @@ import {
 } from "./claude-credential-harvester";
 
 const SCRATCH_DIR = "/tmp/rdv-test-oauth/session-42";
+const SYNTHETIC_CONFIG_DIR =
+  "/Users/example/.remote-dev/profiles/00000000-0000-4000-8000-000000000000/.claude";
 const ACCESS_TOKEN = "test-access-token";
 const REFRESH_TOKEN = "test-refresh-token";
 
@@ -46,17 +48,15 @@ function openedCredential(raw: string = credentialJson()) {
 }
 
 describe("deriveClaudeCredentialServiceName", () => {
-  it("pins the verified custom-config derivation vector", () => {
-    expect(
-      deriveClaudeCredentialServiceName(
-        "/Users/bryanli/.remote-dev/profiles/a04f4587-977c-450c-b361-7827659bd894/.claude"
-      )
-    ).toBe("Claude Code-credentials-174cb014");
+  it("pins a synthetic custom-config derivation vector", () => {
+    expect(deriveClaudeCredentialServiceName(SYNTHETIC_CONFIG_DIR)).toBe(
+      "Claude Code-credentials-4ef32b8b"
+    );
   });
 
   it("hashes the literal path without normalizing its trailing slash", () => {
-    expect(deriveClaudeCredentialServiceName("/tmp/scratch")).not.toBe(
-      deriveClaudeCredentialServiceName("/tmp/scratch/")
+    expect(deriveClaudeCredentialServiceName(`${SYNTHETIC_CONFIG_DIR}/`)).toBe(
+      "Claude Code-credentials-dce25684"
     );
   });
 });

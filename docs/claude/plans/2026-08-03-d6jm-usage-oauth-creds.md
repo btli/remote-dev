@@ -52,10 +52,12 @@ and refresh it server-side.
 - Default config dir → service **`Claude Code-credentials`**, account = OS username.
 - Custom `CLAUDE_CONFIG_DIR` → service **`Claude Code-credentials-<first 8 hex of
   sha256(configDirPath)>`**, account = OS username.
-  - Verified: sha256(`/Users/bryanli/.remote-dev/profiles/a04f4587-…/.claude`)[:8] =
-    `174cb014` matches the live Keychain item `Claude Code-credentials-174cb014`.
-  - The hash input is the literal `CLAUDE_CONFIG_DIR` path string (no trailing slash,
-    no canonicalization observed). Write a unit test pinning this exact example.
+  - Live verification confirmed that this derivation matches a real Keychain item.
+    Public synthetic vector: sha256(`/Users/example/.remote-dev/profiles/00000000-0000-4000-8000-000000000000/.claude`)[:8]
+    = `4ef32b8b`, yielding `Claude Code-credentials-4ef32b8b`.
+  - The hash input is the literal `CLAUDE_CONFIG_DIR` path string with no
+    canonicalization. Adding a trailing slash changes the synthetic suffix to
+    `dce25684`. Unit tests pin both exact strings.
 - Linux / headless: credentials live at **`<CLAUDE_CONFIG_DIR>/.credentials.json`**
   (same JSON). Implement both harvest paths behind one interface; pick by
   `process.platform`.
