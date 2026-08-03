@@ -110,8 +110,9 @@ it. The golden dev-env image already installs the Cursor bundle under
 To use Cursor in the UI:
 
 1. Open **Settings → Agents** and confirm Cursor is shown as installed.
-2. Use a project's **New Agent → Cursor** action, or make Cursor the default
-   provider and use the one-click **New Agent** action.
+2. Right-click a project and choose **New Cursor Agent**. Cursor also remains
+   available under **Pick Agent**, or you can make it the default provider and
+   use the one-click **New Agent** action.
 3. To reopen an earlier conversation, make Cursor the project's default agent
    and choose the project's **Resume** action. Remote Dev lists only CLI chats
    whose stored `cwd` exactly matches that project's working directory.
