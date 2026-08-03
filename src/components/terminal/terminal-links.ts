@@ -1296,12 +1296,18 @@ function exhaustedLinkScanGuard(
   );
 }
 
-function computeCurrentTerminalLinks(
+interface CurrentTerminalLinkAnalysis {
+  snapshot: StructuralSnapshot;
+  work: TerminalLinkScanWork;
+  analysis: TerminalLinkAnalysis;
+}
+
+function analyzeCurrentTerminalLinks(
   source: TerminalLinkSource,
   requestedRow: number,
   cellBudget: number,
   codeUnitBudget: number,
-): ProviderTerminalLinkCandidate[] {
+): CurrentTerminalLinkAnalysis {
   const work = linkScanWork(codeUnitBudget);
   const snapshot = collectStructuralSnapshot(
     source,
@@ -1311,9 +1317,22 @@ function computeCurrentTerminalLinks(
     work,
   );
   if (work.exhausted) {
-    return exhaustedLinkScanGuard(source, requestedRow);
+    return {
+      snapshot,
+      work,
+      analysis: { links: [], lexical: [], exhausted: true },
+    };
   }
   const analysis = analyzeTerminalLinks(snapshot.rows, work);
+  return { snapshot, work, analysis };
+}
+
+function currentTerminalLinksForRow(
+  source: TerminalLinkSource,
+  requestedRow: number,
+  current: CurrentTerminalLinkAnalysis,
+): ProviderTerminalLinkCandidate[] {
+  const { snapshot, work, analysis } = current;
   if (analysis.exhausted) {
     return exhaustedLinkScanGuard(source, requestedRow);
   }
@@ -1422,6 +1441,24 @@ function computeCurrentTerminalLinks(
     ),
     requestedRow,
     source.cols,
+  );
+}
+
+function computeCurrentTerminalLinks(
+  source: TerminalLinkSource,
+  requestedRow: number,
+  cellBudget: number,
+  codeUnitBudget: number,
+): ProviderTerminalLinkCandidate[] {
+  return currentTerminalLinksForRow(
+    source,
+    requestedRow,
+    analyzeCurrentTerminalLinks(
+      source,
+      requestedRow,
+      cellBudget,
+      codeUnitBudget,
+    ),
   );
 }
 
@@ -1560,17 +1597,22 @@ function resolveHoveredWebLink(
   }
   const rowCount = end.y - start.y + 1;
   if (rowCount * cols > cellBudget) return null;
+  const currentAnalysis = analyzeCurrentTerminalLinks(
+    source,
+    start.y - 1,
+    cellBudget,
+    codeUnitBudget,
+  );
 
   let resolved: ProviderTerminalLinkCandidate | null = null;
   for (let oneBasedRow = start.y; oneBasedRow <= end.y; oneBasedRow++) {
     const rowStart = oneBasedRow === start.y ? start.x : 1;
     const rowEnd = oneBasedRow === end.y ? end.x : cols;
     if (rowStart > rowEnd) return null;
-    const intersecting = computeCurrentTerminalLinks(
+    const intersecting = currentTerminalLinksForRow(
       source,
       oneBasedRow - 1,
-      cellBudget,
-      codeUnitBudget,
+      currentAnalysis,
     ).filter((candidate) =>
       rangesIntersect(
         candidate.range.start.x,

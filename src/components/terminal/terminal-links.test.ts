@@ -39,7 +39,10 @@ function rowsForUrl(
   return result;
 }
 
-function terminalBuffer(rows: TerminalLinkRowSnapshot[]) {
+function terminalBuffer(
+  rows: TerminalLinkRowSnapshot[],
+  onCellRead: () => void = () => {},
+) {
   let activeRows = rows;
   const terminal = {
     cols: rows[0]?.cells.length ?? 0,
@@ -56,6 +59,7 @@ function terminalBuffer(rows: TerminalLinkRowSnapshot[]) {
               isWrapped: source.isWrapped,
               length: source.cells.length,
               getCell(column: number) {
+                onCellRead();
                 const cell = source.cells[column];
                 if (!cell) return undefined;
                 return {
@@ -663,6 +667,56 @@ describe("terminal link reconstruction", () => {
 });
 
 describe("WebLinks activation arbitration", () => {
+  it("bounds total work across a multi-row WebLinks activation", () => {
+    const cols = 20;
+    const invalidPrefixes = "https://[x".repeat(40);
+    const target = `https://valid.test/${"a".repeat(4_000)}`;
+    const token = `${invalidPrefixes}${target}`;
+    expect(invalidPrefixes).toHaveLength(400);
+    expect(target).toHaveLength(4_019);
+    expect(token).toHaveLength(4_419);
+
+    let cellReads = 0;
+    const source = terminalBuffer(
+      rowsForUrl(token, cols, (index) => index > 0),
+      () => cellReads++,
+    );
+    const confirm = vi.fn(() => true);
+    const open = vi.fn(() => true);
+    const controller = terminalLinkController(source, { confirm, open });
+    controller.hoverWebLink(target, {
+      start: { x: 1, y: 21 },
+      end: { x: 19, y: 221 },
+    });
+
+    const NativeURL = globalThis.URL;
+    let parseAttempts = 0;
+    const CountingURL = new Proxy(NativeURL, {
+      construct(targetConstructor, argumentsList) {
+        parseAttempts++;
+        return Reflect.construct(
+          targetConstructor,
+          argumentsList,
+          targetConstructor,
+        );
+      },
+    });
+    vi.stubGlobal("URL", CountingURL);
+    let activated: boolean;
+    try {
+      activated = controller.activateWebLink(target);
+    } finally {
+      vi.stubGlobal("URL", NativeURL);
+    }
+
+    expect.soft(parseAttempts).toBeLessThanOrEqual(64);
+    expect.soft(cellReads).toBeLessThanOrEqual(16_384);
+    expect.soft(activated).toBe(true);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith(target);
+  });
+
   it("rejects a stock URL prefix before a structurally rejected hard row", () => {
     const prefix = "https://origin.test/prefix/";
     const cols = prefix.length;
