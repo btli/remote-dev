@@ -26,6 +26,7 @@ import {
 import {
   captureUsageCredential,
   UsageCredentialCaptureError,
+  type UsageCredentialCaptureResult,
 } from "@/services/claude-usage-credential-service";
 import * as SessionService from "@/services/session-service";
 
@@ -87,7 +88,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
   const account = await getAccount(accountId, userId);
   if (!account) return errorResponse("Claude account not found", 404);
 
-  let captured: Awaited<ReturnType<typeof captureUsageCredential>>;
+  let captured: UsageCredentialCaptureResult;
   try {
     captured = await captureUsageCredential({
       userId,

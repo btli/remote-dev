@@ -25,6 +25,7 @@ import {
 import {
   prepareUsageCredentialScratch,
   removeUsageCredentialScratch,
+  type PreparedUsageScratch,
 } from "@/services/claude-usage-credential-service";
 import * as SessionService from "@/services/session-service";
 import * as TmuxService from "@/services/tmux-service";
@@ -142,9 +143,7 @@ async function recoverOrCreateUsageSetup(
     },
   });
 
-  let prepared: Awaited<
-    ReturnType<typeof prepareUsageCredentialScratch>
-  > | null = null;
+  let prepared: PreparedUsageScratch | null = null;
   try {
     prepared = await prepareUsageCredentialScratch(session.id);
     await SessionService.updateSession(session.id, userId, {
@@ -174,10 +173,6 @@ async function recoverOrCreateUsageSetup(
       });
     }
     throw error;
-  }
-
-  if (!prepared) {
-    throw new Error("Claude usage scratch preparation did not return a result");
   }
 
   let commandSent = true;
