@@ -87,6 +87,8 @@ tags:
     description: Agent instruction files (CLAUDE.md, AGENTS.md, ...)
   - name: ClaudeSessions
     description: Resumable Claude Code sessions
+  - name: AgentSessions
+    description: Provider-generic resumable agent sessions
   - name: MCPServers
     description: User/folder MCP server registry
   - name: Secrets
@@ -1445,13 +1447,28 @@ paths:
     get:
       tags: [AgentCLI]
       summary: Get CLI installation status
-      parameters: [{ name: provider, in: query, schema: { type: string } }]
-      responses: { '200': { description: CLI status, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+      description: Returns all runnable agent CLIs by default. Cursor resolves the primary `agent` executable and verifies its identity from `agent --help`.
+      parameters:
+        - { name: provider, in: query, schema: { type: string, enum: [all, claude, codex, gemini, antigravity, opencode, cursor], default: all } }
+      responses:
+        '200': { description: CLI status, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '400': { description: Invalid provider, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
     post:
       tags: [AgentCLI]
       summary: Verify CLI execution with environment
-      requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }
-      responses: { '200': { description: Verification result, content: { application/json: { schema: { type: object, additionalProperties: true } } } } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider]
+              properties:
+                provider: { type: string, enum: [claude, codex, gemini, antigravity, opencode, cursor] }
+                env: { type: object, additionalProperties: { type: string }, description: Optional environment used only for the live verification }
+      responses:
+        '200': { description: Verification result, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '400': { description: Missing/invalid provider or required environment, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
   /api/agent-providers:
     get:
       tags: [AgentProviders]
@@ -1502,7 +1519,7 @@ paths:
 
   /api/agent/sessions:
     get:
-      tags: [ClaudeSessions]
+      tags: [AgentSessions]
       summary: List resumable agent sessions (provider-generic)
       description: >-
         Provider-generic generalization of /api/agent/claude-sessions covering

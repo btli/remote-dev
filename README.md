@@ -215,7 +215,7 @@ For the deep dive, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture and design |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Contributor setup, quality gates, and the schema codegen + worktree workflow |
 | [docs/API.md](docs/API.md) | REST API reference (see also [docs/openapi.yaml](docs/openapi.yaml)) |
-| [docs/AGENTS.md](docs/AGENTS.md) | Multi-agent CLI support, profiles, and isolation |
+| [docs/AGENTS.md](docs/AGENTS.md) | Multi-agent CLI support, including Cursor `agent` installation, authentication, resume, profiles, and isolation |
 | [docs/AUTOMATION.md](docs/AUTOMATION.md) | Scheduled/triggered runs, Crown, and the supervisor |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production blue/green deploys and the deploy webhook |
 | [docs/MULTI_INSTANCE.md](docs/MULTI_INSTANCE.md) | Hosting multiple isolated instances via `RDV_BASE_PATH` |

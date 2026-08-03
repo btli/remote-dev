@@ -1005,9 +1005,22 @@ GET  /api/agent-cli/status?provider=…   # [session] installation status of all
 POST /api/agent-cli/status              # [session] verify CLI execution with environment
 ```
 
-Returns version, resolved path, and install instructions for each supported
-agent CLI (Claude Code, Codex, Gemini, Antigravity, OpenCode, Cursor). The `POST` form runs a live
-verification of a CLI with a given environment.
+`GET` accepts `provider=all` (or no provider) for the full roster, or one of
+`claude`, `codex`, `gemini`, `antigravity`, `opencode`, and `cursor`. It returns
+the resolved command/path, installed state, version when available, install
+instructions for missing CLIs, documentation URL, and required environment
+variables. Unknown providers return `400`.
+
+`POST` accepts `{ provider, env? }` and runs a live execution check. Cursor uses
+the bare `agent` command and has no required environment variables because
+browser authentication is supported; callers may still supply
+`CURSOR_API_KEY` in `env` for headless verification.
+
+Because `agent` is a generic executable name, Cursor status performs an extra
+identity check against `agent --help`. The binary must identify itself as Cursor
+Agent and advertise `--resume`; an unrelated executable named `agent` is
+reported as not installed. The returned Cursor documentation URL is
+`https://cursor.com/docs/cli/overview`.
 
 ---
 
