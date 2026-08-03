@@ -90,7 +90,7 @@ describe("AgentCLIService", () => {
       expect(getProviderDocsUrl("gemini")).toContain("geminicli.com");
       expect(getProviderDocsUrl("antigravity")).toContain("antigravity.google");
       expect(getProviderDocsUrl("opencode")).toContain("opencode.ai");
-      expect(getProviderDocsUrl("cursor")).toBe("https://docs.cursor.com/en/cli/overview");
+      expect(getProviderDocsUrl("cursor")).toBe("https://cursor.com/docs/cli/overview");
     });
   });
 

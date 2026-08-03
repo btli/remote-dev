@@ -74,12 +74,70 @@ commands and documentation links:
 | `gemini` | `npm install -g @google/gemini-cli` | https://geminicli.com/docs/ |
 | `antigravity` | _CLI install currently unavailable — the documented `https://google.dev/antigravity/install` installer URL is 404 (TBD)_ | https://antigravity.google/docs/cli-overview |
 | `opencode` | `npm install -g opencode-ai` | https://opencode.ai/docs/ |
-| `cursor` | `curl https://cursor.com/install -fsS \| bash` | https://docs.cursor.com/en/cli/overview |
+| `cursor` | `curl https://cursor.com/install -fsS \| bash` | https://cursor.com/docs/cli/overview |
 
 > **Package names ≠ binary names.** The npm packages `@openai/codex` and
 > `opencode-ai` install the binaries `codex` and `opencode` respectively (the
 > bare `@openai/codex-cli` / `opencode` package names are 404 on the registry).
 > Antigravity's `agy` CLI has no working published installer at present.
+
+### Cursor TUI quick start
+
+Cursor made **`agent` the primary CLI entrypoint** in January 2026;
+`cursor-agent` remains a backward-compatible alias. Remote Dev deliberately uses
+the primary `agent` command for every Cursor session.
+
+For a local Remote Dev installation, install and authenticate the CLI on the
+host that runs the terminal server:
+
+```bash
+curl https://cursor.com/install -fsS | bash
+
+# Add ~/.local/bin to PATH if the installer is not already visible to your shell.
+export PATH="$HOME/.local/bin:$PATH"
+
+agent --version
+agent login
+agent status
+```
+
+Browser login is the normal interactive path. `CURSOR_API_KEY` (or
+`agent --api-key`) is available for automation, but Remote Dev does not require
+it. The golden dev-env image already installs the Cursor bundle under
+`/opt/cursor-agent`, exposes `/usr/local/bin/agent`, and runs a best-effort
+`agent update` when `AGENT_AUTO_UPDATE=1`.
+
+To use Cursor in the UI:
+
+1. Open **Settings → Agents** and confirm Cursor is shown as installed.
+2. Use a project's **New Agent → Cursor** action, or make Cursor the default
+   provider and use the one-click **New Agent** action.
+3. To reopen an earlier conversation, make Cursor the project's default agent
+   and choose the project's **Resume** action. Remote Dev lists only CLI chats
+   whose stored `cwd` exactly matches that project's working directory.
+
+Per-agent settings can add extra flags. Cursor's `--force` and `--yolo` flags
+skip normal command approvals, so Remote Dev strips them unless **Allow dangerous
+flags** is explicitly enabled for Cursor.
+
+If detection or resume does not work:
+
+- Run `command -v agent` and `agent --help`. Because `agent` is a generic binary
+  name, Remote Dev accepts it only when the help output identifies **Cursor
+  Agent** and advertises `--resume`.
+- Run `agent login` followed by `agent status` for authentication problems.
+- Run `agent ls` to confirm the conversation exists in Cursor's CLI history.
+  Resume discovery reads metadata from
+  `~/.cursor/chats/<workspace-hash>/<chat-id>/meta.json`; set
+  `CURSOR_DATA_DIR` only if that data root was explicitly relocated.
+- `CURSOR_CONFIG_DIR` and XDG configuration relocate CLI settings, not chat
+  history, so changing them will not change where resume discovery looks.
+
+Official references: [CLI overview](https://cursor.com/docs/cli/overview),
+[installation](https://cursor.com/docs/cli/installation),
+[authentication](https://cursor.com/docs/cli/reference/authentication),
+[parameters](https://cursor.com/docs/cli/reference/parameters), and the
+[announcement making `agent` primary](https://cursor.com/changelog/cli-jan-08-2026).
 
 ---
 

@@ -107,6 +107,29 @@ both servers and tmux.
 If the terminal never connects, the most common cause is a `NEXT_PUBLIC_TERMINAL_PORT` that doesn't
 match `TERMINAL_PORT`.
 
+## Optional: Cursor TUI
+
+Local installations launch agent CLIs from the terminal server host's `PATH`.
+To use Cursor, install its CLI and authenticate once as the same OS user that
+runs Remote Dev:
+
+```bash
+curl https://cursor.com/install -fsS | bash
+export PATH="$HOME/.local/bin:$PATH"  # only needed if agent is not already found
+
+agent --version
+agent login
+agent status
+```
+
+Browser login is recommended. `CURSOR_API_KEY` is supported for automation but
+is not required by Remote Dev. After installation, check **Settings → Agents**,
+then launch **New Agent → Cursor** from a project. Container deployments using
+the repository's golden dev-env image already include `agent` system-wide.
+
+For resume behavior, dangerous-flag handling, storage paths, and troubleshooting,
+see the [Cursor TUI quick start](docs/AGENTS.md#cursor-tui-quick-start).
+
 ## Optional: GitHub OAuth
 
 GitHub repository browsing, cloning, and account linking require an OAuth app. Create one at
@@ -135,4 +158,6 @@ Full walkthrough (scopes, per-instance callbacks, testing): [docs/SETUP.md](docs
   [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 - **Multi-instance hosting** — several isolated instances behind one domain:
   [docs/MULTI_INSTANCE.md](docs/MULTI_INSTANCE.md).
+- **Agent CLIs and Cursor TUI** — installation, authentication, provider
+  isolation, and resume behavior: [docs/AGENTS.md](docs/AGENTS.md).
 - **Everything else** — start at the [documentation index](docs/README.md).

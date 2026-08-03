@@ -253,7 +253,7 @@ export function getProviderDocsUrl(
     gemini: "https://geminicli.com/docs/",
     antigravity: "https://antigravity.google/docs/cli-overview",
     opencode: "https://opencode.ai/docs/",
-    cursor: "https://docs.cursor.com/en/cli/overview",
+    cursor: "https://cursor.com/docs/cli/overview",
   };
 
   return urls[provider];
