@@ -883,11 +883,19 @@ export async function readOwnedUsageCredential(
     accountId,
     "access"
   );
+  if (accessToken === null) {
+    await quarantineUsageCredential(accountId, userId);
+    return null;
+  }
   const refreshToken = decryptUsageToken(
     row.usageOauthRefreshEncrypted,
     accountId,
     "refresh"
   );
+  if (refreshToken === null) {
+    await quarantineUsageCredential(accountId, userId);
+    return null;
+  }
   if (!accessToken || !refreshToken) return null;
   return { accessToken, refreshToken, expiresAt: row.usageOauthExpiresAt };
 }
@@ -953,7 +961,7 @@ function decryptUsageToken(
     log.error("Failed to decrypt stored Claude usage OAuth credential", {
       accountId,
       credentialPart,
-      error: error instanceof Error ? error.name : "UnknownError",
+      error: String(error),
     });
     return null;
   }

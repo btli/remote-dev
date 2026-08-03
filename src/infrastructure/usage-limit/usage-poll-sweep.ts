@@ -141,13 +141,15 @@ function recordSuccess(accountId: string): void {
 
 /**
  * Run one proactive poll sweep over all Claude accounts. Best-effort: never
- * throws; logs a per-sweep summary at debug. No-op when the poller is disabled.
+ * throws; logs a visible per-sweep summary, raising it to warn when polling or
+ * credential gaps need attention. No-op when the poller is disabled.
  */
 export async function runUsagePollSweep(): Promise<void> {
   if (!isUsagePollEnabled()) return;
 
   let polled = 0;
   let recorded = 0;
+  let failed = 0;
   let rateLimited = 0;
   let skipped = 0;
   let noCredential = 0;
@@ -203,6 +205,7 @@ export async function runUsagePollSweep(): Promise<void> {
             // Accounts with no stored usage refresh credential were filtered
             // before this worker and never reach failure backoff.
             recordFailure(account.id, Date.now());
+            failed += 1;
             continue;
           }
           if (isUsageLimitRateLimited(result)) {
@@ -230,6 +233,7 @@ export async function runUsagePollSweep(): Promise<void> {
           recorded += 1;
         } catch (error) {
           recordFailure(account.id, Date.now());
+          failed += 1;
           log.warn("Per-account usage poll failed", {
             accountId: account.id,
             error: String(error),
@@ -244,13 +248,19 @@ export async function runUsagePollSweep(): Promise<void> {
       )
     );
 
-    log.debug("Usage poll sweep complete", {
+    const summary = {
       polled,
       recorded,
+      failed,
       rateLimited,
       skipped,
       noCredential,
-    });
+    };
+    if (failed > 0 || noCredential > 0) {
+      log.warn("Usage poll sweep complete", summary);
+    } else {
+      log.info("Usage poll sweep complete", summary);
+    }
   } catch (error) {
     log.error("Usage poll sweep failed", { error: String(error) });
   }

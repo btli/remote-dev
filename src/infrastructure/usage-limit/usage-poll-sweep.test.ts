@@ -36,8 +36,9 @@ interface PollTarget {
 const fetchLimitState = vi.fn<(target: PollTarget) => Promise<unknown>>();
 const trackExecute =
   vi.fn<(input: Record<string, unknown>) => Promise<unknown>>();
-const { logDebug, logWarn, logError } = vi.hoisted(() => ({
+const { logDebug, logInfo, logWarn, logError } = vi.hoisted(() => ({
   logDebug: vi.fn(),
+  logInfo: vi.fn(),
   logWarn: vi.fn(),
   logError: vi.fn(),
 }));
@@ -54,6 +55,7 @@ vi.mock("@/infrastructure/container", () => ({
 vi.mock("@/lib/logger", () => ({
   createLogger: () => ({
     debug: logDebug,
+    info: logInfo,
     warn: logWarn,
     error: logError,
   }),
@@ -123,6 +125,14 @@ describe("runUsagePollSweep", () => {
 
     expect(fetchLimitState).toHaveBeenCalledTimes(3);
     expect(trackExecute).toHaveBeenCalledTimes(3);
+    expect(logInfo).toHaveBeenCalledWith("Usage poll sweep complete", {
+      polled: 3,
+      recorded: 3,
+      failed: 0,
+      rateLimited: 0,
+      skipped: 0,
+      noCredential: 0,
+    });
   });
 
   it("skips and separately counts accounts without a usage credential", async () => {
@@ -140,9 +150,10 @@ describe("runUsagePollSweep", () => {
     });
     const polledIds = fetchLimitState.mock.calls.map((call) => call[0].accountId);
     expect(polledIds).toEqual(["acct-0", "acct-2"]);
-    expect(logDebug).toHaveBeenCalledWith("Usage poll sweep complete", {
+    expect(logWarn).toHaveBeenCalledWith("Usage poll sweep complete", {
       polled: 2,
       recorded: 2,
+      failed: 0,
       rateLimited: 0,
       skipped: 0,
       noCredential: 1,
@@ -212,6 +223,14 @@ describe("runUsagePollSweep", () => {
 
     await runUsagePollSweep();
     expect(fetchLimitState).toHaveBeenCalledTimes(3);
+    expect(logWarn).toHaveBeenCalledWith("Usage poll sweep complete", {
+      polled: 3,
+      recorded: 2,
+      failed: 1,
+      rateLimited: 0,
+      skipped: 0,
+      noCredential: 0,
+    });
 
     vi.clearAllMocks();
     fetchLimitState.mockImplementation(async (t) =>

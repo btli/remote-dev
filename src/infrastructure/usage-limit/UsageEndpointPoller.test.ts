@@ -1,6 +1,16 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+const logger = vi.hoisted(() => ({
+  warn: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
+  debug: vi.fn(),
+  trace: vi.fn(),
+}));
+
+vi.mock("@/lib/logger", () => ({ createLogger: () => logger }));
+
 // ── Mocks (declared before importing the SUT) ──────────────────────────────
 
 vi.mock("@/db", () => ({
@@ -274,6 +284,10 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
 
       expect(result).toBeNull();
       expect(fetchUsageMock).not.toHaveBeenCalled();
+      expect(logger.debug).toHaveBeenCalledWith(
+        "Usage poll skipped because no fresh usage credential was available",
+        { accountId: "acct-1" }
+      );
     });
 
     it("returns null when the adapter reports no data", async () => {
@@ -293,6 +307,10 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
       const result = await makePoller().fetchLimitState(TARGET);
 
       expect(result).toBeNull();
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Usage credential was forbidden by the usage endpoint",
+        { accountId: "acct-1" }
+      );
     });
 
     it("passes a rate-limited outcome through as a typed signal, not null", async () => {

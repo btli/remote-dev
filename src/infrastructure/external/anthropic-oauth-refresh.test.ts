@@ -176,12 +176,16 @@ describe("AnthropicOAuthRefreshService", () => {
     });
   });
 
-  it.each([400, 401])(
-    "quarantines a rejected refresh on HTTP %i without touching session health",
-    async (status) => {
+  it.each([
+    [400, "invalid_grant"],
+    [401, "invalid_grant"],
+    [401, "invalid_client"],
+  ])(
+    "quarantines a dead grant on HTTP %i with OAuth error %s",
+    async (status, oauthError) => {
       const accounts = accountStore();
       const fetchImpl: OAuthRefreshFetch = async () =>
-        response(status, { error: "rejected" });
+        response(status, { error: oauthError });
       const service = new AnthropicOAuthRefreshService(
         accounts,
         fetchImpl,
@@ -193,12 +197,57 @@ describe("AnthropicOAuthRefreshService", () => {
       ).resolves.toBeNull();
       expect(accounts.quarantine).toHaveBeenCalledWith(ACCOUNT_ID, USER_ID);
       expect(accounts.store).not.toHaveBeenCalled();
-      expect(logger.warn).toHaveBeenCalledWith(
+      expect(logger.error).toHaveBeenCalledWith(
         "Usage refresh token rejected; usage tracking disabled until re-enabled",
-        { accountId: ACCOUNT_ID, status }
+        { accountId: ACCOUNT_ID, status, oauthError }
       );
     }
   );
+
+  it.each(["invalid_request", "invalid_client"])(
+    "leaves the credential unchanged for HTTP 400 %s",
+    async (oauthError) => {
+      const accounts = accountStore();
+      const fetchImpl: OAuthRefreshFetch = async () =>
+        response(400, { error: oauthError });
+      const service = new AnthropicOAuthRefreshService(
+        accounts,
+        fetchImpl,
+        () => NOW
+      );
+
+      await expect(
+        service.getFreshUsageAccessToken(ACCOUNT_ID, USER_ID)
+      ).resolves.toBeNull();
+      expect(accounts.quarantine).not.toHaveBeenCalled();
+      expect(accounts.store).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Usage OAuth refresh rejection was transient",
+        { accountId: ACCOUNT_ID, status: 400, oauthError }
+      );
+    }
+  );
+
+  it("leaves the credential unchanged for an HTML HTTP 401 proxy response", async () => {
+    const accounts = accountStore();
+    const fetchImpl: OAuthRefreshFetch = async () =>
+      response(401, "<html>sign in to the proxy</html>");
+    const service = new AnthropicOAuthRefreshService(
+      accounts,
+      fetchImpl,
+      () => NOW
+    );
+
+    await expect(
+      service.getFreshUsageAccessToken(ACCOUNT_ID, USER_ID)
+    ).resolves.toBeNull();
+    expect(accounts.quarantine).not.toHaveBeenCalled();
+    expect(accounts.store).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Usage OAuth refresh rejection was transient",
+      { accountId: ACCOUNT_ID, status: 401, oauthError: null }
+    );
+  });
 
   it.each([429, 500, 503, 418])(
     "leaves credentials unchanged for non-quarantining HTTP %i",
@@ -235,6 +284,36 @@ describe("AnthropicOAuthRefreshService", () => {
     ).resolves.toBeNull();
     expect(accounts.store).not.toHaveBeenCalled();
     expect(accounts.quarantine).not.toHaveBeenCalled();
+  });
+
+  it("logs a rotated credential store failure with its concrete error", async () => {
+    const accounts = accountStore();
+    accounts.store.mockRejectedValueOnce(
+      new Error("rotated credential write failed")
+    );
+    const fetchImpl: OAuthRefreshFetch = async () =>
+      response(200, {
+        access_token: "test-usage-access-after",
+        refresh_token: "test-usage-refresh-after",
+        expires_in: 60,
+      });
+    const service = new AnthropicOAuthRefreshService(
+      accounts,
+      fetchImpl,
+      () => NOW
+    );
+
+    await expect(
+      service.getFreshUsageAccessToken(ACCOUNT_ID, USER_ID)
+    ).resolves.toBeNull();
+    expect(accounts.quarantine).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(
+      "Failed to store refreshed usage OAuth credential",
+      {
+        accountId: ACCOUNT_ID,
+        error: "Error: rotated credential write failed",
+      }
+    );
   });
 
   it("aborts after ten seconds and leaves credentials unchanged", async () => {

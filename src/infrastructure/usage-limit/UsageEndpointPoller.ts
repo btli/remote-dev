@@ -108,7 +108,13 @@ export class UsageEndpointPoller implements UsageLimitGateway {
       }
 
       const token = await this.readAccountToken(accountId, userId);
-      if (!token) return null;
+      if (!token) {
+        log.debug(
+          "Usage poll skipped because no fresh usage credential was available",
+          { accountId }
+        );
+        return null;
+      }
 
       const result = await fetchClaudeUsage(token, kind);
       if (result.outcome === "rate-limited") {
@@ -116,7 +122,12 @@ export class UsageEndpointPoller implements UsageLimitGateway {
         // through typed so the sweep can align to it. [remote-dev-u7df]
         return { rateLimited: true, accountId, retryAt: result.retryAt };
       }
-      if (result.outcome === "forbidden") return null;
+      if (result.outcome === "forbidden") {
+        log.warn("Usage credential was forbidden by the usage endpoint", {
+          accountId,
+        });
+        return null;
+      }
       if (result.outcome !== "snapshot") return null;
 
       logScopedLimits(accountId, result.snapshot);

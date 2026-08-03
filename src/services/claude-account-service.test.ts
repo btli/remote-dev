@@ -999,7 +999,7 @@ describe("readOwnedUsageCredential", () => {
     });
   });
 
-  it("returns null for missing, foreign, incomplete, or malformed credentials", async () => {
+  it("returns null for missing, foreign, or incomplete credentials", async () => {
     seedUsageCredentialRow();
     expect(await readOwnedUsageCredential("missing", USER)).toBeNull();
     expect(
@@ -1008,12 +1008,36 @@ describe("readOwnedUsageCredential", () => {
 
     seedUsageCredentialRow({ usageOauthRefreshEncrypted: null });
     expect(await readOwnedUsageCredential("acct-usage", USER)).toBeNull();
-
-    seedUsageCredentialRow({
-      usageOauthAccessEncrypted: "malformed-ciphertext",
-    });
-    expect(await readOwnedUsageCredential("acct-usage", USER)).toBeNull();
   });
+
+  it.each([
+    "usageOauthAccessEncrypted",
+    "usageOauthRefreshEncrypted",
+  ] as const)(
+    "quarantines every usage column when %s cannot be decrypted",
+    async (malformedColumn) => {
+      const row = seedUsageCredentialRow({
+        [malformedColumn]: "malformed-ciphertext",
+      });
+      const sessionCiphertext = row.oauthTokenEncrypted;
+
+      await expect(
+        readOwnedUsageCredential("acct-usage", USER)
+      ).resolves.toBeNull();
+      expect(row).toMatchObject({
+        usageOauthAccessEncrypted: null,
+        usageOauthRefreshEncrypted: null,
+        usageOauthExpiresAt: null,
+        usageOauthScopes: null,
+        authHealthy: true,
+        oauthTokenEncrypted: sessionCiphertext,
+      });
+      expect(
+        toAccountView(row as Parameters<typeof toAccountView>[0])
+          .usageCredential
+      ).toBe(false);
+    }
+  );
 });
 
 describe("storeInitialUsageCredential", () => {

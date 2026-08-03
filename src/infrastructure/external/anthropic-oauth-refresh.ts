@@ -10,7 +10,10 @@
  * Security and failure policy:
  *   - token material appears only in the HTTPS request and encrypted account
  *     accessors; it is never logged;
- *   - 400/401 means a rejected refresh token and quarantines only usage data;
+ *   - `invalid_grant`, plus `invalid_client` on 401, means a dead credential
+ *     and quarantines only usage data;
+ *   - other 400/401 responses are transient because intermediaries and request
+ *     validation can produce those statuses without invalidating the grant;
  *   - network/timeout, 429, 5xx, malformed, and unexpected responses are
  *     transient/safe failures that leave the stored credential unchanged;
  *   - every account operation remains scoped by account id and user id.
@@ -126,9 +129,9 @@ export class AnthropicOAuthRefreshService {
     }
 
     const pending = this.readOrRefresh(accountId, userId).catch((error) => {
-      log.warn("Usage OAuth credential operation failed", {
+      log.error("Failed to read usage OAuth credential", {
         accountId,
-        error: safeErrorName(error),
+        error: String(error),
       });
       return null;
     });
@@ -189,11 +192,41 @@ export class AnthropicOAuthRefreshService {
       }
 
       if (response.status === 400 || response.status === 401) {
-        log.warn(
+        let body: Record<string, unknown> | null;
+        try {
+          body = await parseJsonBody(response);
+        } catch (error) {
+          log.warn("Usage OAuth refresh request failed transiently", {
+            accountId,
+            error: safeErrorName(error),
+          });
+          return null;
+        }
+        const oauthError = isNonBlankString(body?.error) ? body.error : null;
+        const grantIsDead =
+          oauthError === "invalid_grant" ||
+          (response.status === 401 && oauthError === "invalid_client");
+        if (!grantIsDead) {
+          log.warn("Usage OAuth refresh rejection was transient", {
+            accountId,
+            status: response.status,
+            oauthError,
+          });
+          return null;
+        }
+
+        log.error(
           "Usage refresh token rejected; usage tracking disabled until re-enabled",
-          { accountId, status: response.status }
+          { accountId, status: response.status, oauthError }
         );
-        await this.accounts.quarantine(accountId, userId);
+        try {
+          await this.accounts.quarantine(accountId, userId);
+        } catch (error) {
+          log.error("Failed to quarantine rejected usage OAuth credential", {
+            accountId,
+            error: String(error),
+          });
+        }
         return null;
       }
 
@@ -241,13 +274,21 @@ export class AnthropicOAuthRefreshService {
       const rotatedRefreshToken = isNonBlankString(refreshTokenValue)
         ? refreshTokenValue
         : undefined;
-      await this.accounts.store(accountId, userId, {
-        accessToken,
-        expiresAt: new Date(expiresAtMs),
-        ...(rotatedRefreshToken
-          ? { refreshToken: rotatedRefreshToken }
-          : {}),
-      });
+      try {
+        await this.accounts.store(accountId, userId, {
+          accessToken,
+          expiresAt: new Date(expiresAtMs),
+          ...(rotatedRefreshToken
+            ? { refreshToken: rotatedRefreshToken }
+            : {}),
+        });
+      } catch (error) {
+        log.error("Failed to store refreshed usage OAuth credential", {
+          accountId,
+          error: String(error),
+        });
+        return null;
+      }
       return accessToken;
     } finally {
       clearTimeout(timer);
