@@ -125,6 +125,7 @@ interface TerminalMessageSocket<TMessage> {
   off(event: "message", listener: (message: TMessage) => void): unknown;
   off(event: "close", listener: (code: number, reason: Buffer) => void): unknown;
   off(event: "error", listener: (error: Error) => void): unknown;
+  close(code?: number, reason?: string): unknown;
 }
 
 export interface TerminalSocketHandlers<TMessage> {
@@ -145,6 +146,24 @@ export interface BufferedTerminalMessages<TMessage> {
   getCloseInfo(): TerminalSetupCloseInfo | null;
 }
 
+const TERMINAL_SETUP_MAX_BUFFERED_FRAMES = 256;
+const TERMINAL_SETUP_MAX_BUFFERED_BYTES = 1024 * 1024;
+const TERMINAL_SETUP_OVERFLOW_REASON = "Terminal setup message buffer overflow";
+
+function terminalMessageByteLength(message: unknown): number {
+  if (typeof message === "string") return Buffer.byteLength(message);
+  if (Buffer.isBuffer(message)) return message.byteLength;
+  if (message instanceof ArrayBuffer) return message.byteLength;
+  if (ArrayBuffer.isView(message)) return message.byteLength;
+  if (Array.isArray(message)) {
+    return message.reduce(
+      (total, part) => total + terminalMessageByteLength(part),
+      0,
+    );
+  }
+  return Buffer.byteLength(String(message));
+}
+
 /**
  * Synchronously capture terminal frames while async connection setup runs.
  * Activation swaps in the production handler before replaying the captured
@@ -152,13 +171,44 @@ export interface BufferedTerminalMessages<TMessage> {
  */
 export function bufferTerminalMessages<TMessage>(
   ws: TerminalMessageSocket<TMessage>,
-  setupLog: Pick<typeof log, "error"> = log,
+  setupLog: Pick<typeof log, "error" | "warn"> = log,
 ): BufferedTerminalMessages<TMessage> {
   let pending: TMessage[] | null = [];
+  let pendingPayloadBytes = 0;
   let closed = false;
   let closeInfo: TerminalSetupCloseInfo | null = null;
   const buffer = (message: TMessage): void => {
-    pending?.push(message);
+    if (!pending) return;
+    const messageBytes = terminalMessageByteLength(message);
+    if (
+      pending.length >= TERMINAL_SETUP_MAX_BUFFERED_FRAMES ||
+      pendingPayloadBytes + messageBytes > TERMINAL_SETUP_MAX_BUFFERED_BYTES
+    ) {
+      const frameCount = pending.length;
+      const payloadBytes = pendingPayloadBytes;
+      closed = true;
+      closeInfo = {
+        code: 1009,
+        reason: Buffer.from(TERMINAL_SETUP_OVERFLOW_REASON),
+      };
+      pending = null;
+      removeSetupListeners();
+      setupLog.warn(TERMINAL_SETUP_OVERFLOW_REASON, {
+        frameCount,
+        payloadBytes,
+        rejectedMessageBytes: messageBytes,
+      });
+      try {
+        ws.close(1009, TERMINAL_SETUP_OVERFLOW_REASON);
+      } catch (error) {
+        setupLog.error("Failed to close overflowing terminal setup socket", {
+          error: String(error),
+        });
+      }
+      return;
+    }
+    pending.push(message);
+    pendingPayloadBytes += messageBytes;
   };
   const setupClose = (code: number, reason: Buffer): void => {
     closed = true;
@@ -353,6 +403,10 @@ export interface ClientInputConnectionState {
   clientInstanceId?: string | null;
 }
 
+export interface ClientRecencyConnectionState extends ClientInputConnectionState {
+  lastFocusAt: number;
+}
+
 export interface ClientInstanceRecency {
   genuineFocusAt: number;
   inputAt: number;
@@ -382,6 +436,10 @@ export class ClientInstanceFocusRecency {
 
   getLastInputAt(sessionId: string, clientInstanceId: string): number {
     return this.getRecency(sessionId, clientInstanceId).inputAt;
+  }
+
+  getSessionIds(): string[] {
+    return [...this.sessions.keys()];
   }
 
   recordGenuineFocus(
@@ -469,7 +527,52 @@ export function recordClientInput(
   connection.lastInputRecencyWriteAt = timestamp;
 }
 
-function connectionEngagement(connection: PromotionConnectionState): number {
+/** Persist exact socket-local timestamps before the socket is discarded. */
+export function flushClientInstanceRecency(
+  connection: ClientRecencyConnectionState,
+  instanceRecency: ClientInstanceFocusRecency,
+): void {
+  if (!connection.sessionId || !connection.clientInstanceId) return;
+  const current = instanceRecency.getRecency(
+    connection.sessionId,
+    connection.clientInstanceId,
+  );
+  instanceRecency.recordGenuineFocus(
+    connection.sessionId,
+    connection.clientInstanceId,
+    Math.max(current.genuineFocusAt, connection.lastFocusAt),
+  );
+  instanceRecency.recordInput(
+    connection.sessionId,
+    connection.clientInstanceId,
+    Math.max(current.inputAt, connection.lastInputAt),
+  );
+}
+
+function deriveTmuxSessionName(sessionId: string): string | null {
+  const tmuxSessionName = `rdv-${sessionId}`;
+  return validateSessionName(tmuxSessionName) ? tmuxSessionName : null;
+}
+
+/** Remove stable-instance history once both the sockets and tmux session are gone. */
+export function sweepClientInstanceRecency(
+  instanceRecency: ClientInstanceFocusRecency,
+  getLiveConnectionCount: (sessionId: string) => number,
+  sessionExists: (tmuxSessionName: string) => boolean,
+  sessionNameForId: (sessionId: string) => string | null = deriveTmuxSessionName,
+): void {
+  for (const sessionId of instanceRecency.getSessionIds()) {
+    if (getLiveConnectionCount(sessionId) > 0) continue;
+    const tmuxSessionName = sessionNameForId(sessionId);
+    if (!tmuxSessionName || !sessionExists(tmuxSessionName)) {
+      instanceRecency.clearSession(sessionId);
+    }
+  }
+}
+
+function connectionEngagement(
+  connection: Pick<PromotionConnectionState, "lastFocusAt" | "lastInputAt">,
+): number {
   return Math.max(connection.lastFocusAt, connection.lastInputAt);
 }
 
@@ -514,7 +617,10 @@ export function handleClientFocus(
  * disconnect only cancels the same connection that is currently pending.
  */
 export class PrimaryPromotionCoordinator {
-  private readonly pendingCandidates = new Map<string, string>();
+  private readonly pendingCandidates = new Map<
+    string,
+    { connectionId: string; reason: "genuine" | "reassert" }
+  >();
   private readonly pendingTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
@@ -543,18 +649,16 @@ export class PrimaryPromotionCoordinator {
     const primary = primaryId
       ? this.host.getConnection(primaryId)
       : undefined;
-    if (
+    const sameClientInstance =
       primary?.clientInstanceId !== null &&
-      primary?.clientInstanceId === candidate.clientInstanceId
-    ) {
-      return this.promote(sessionId, connectionId, this.host.now());
-    }
+      primary?.clientInstanceId === candidate.clientInstanceId;
 
     if (reassert) {
-      const pendingCandidate = this.pendingCandidates.get(sessionId);
+      const pendingCandidate = this.pendingCandidates.get(sessionId)?.connectionId;
       if (pendingCandidate && pendingCandidate !== connectionId) return "ignored";
 
       if (
+        !sameClientInstance &&
         primary?.isSocketOpen &&
         primary.isVisible &&
         connectionEngagement(primary) >= connectionEngagement(candidate)
@@ -567,7 +671,12 @@ export class PrimaryPromotionCoordinator {
     const lastPromotionAt = this.host.getLastPromotionAt(sessionId) ?? 0;
     const elapsed = now - lastPromotionAt;
     if (!force && elapsed < this.cooldownMs) {
-      this.defer(sessionId, connectionId, this.cooldownMs - elapsed);
+      this.defer(
+        sessionId,
+        connectionId,
+        this.cooldownMs - elapsed,
+        reassert ? "reassert" : "genuine",
+      );
       return "deferred";
     }
 
@@ -583,7 +692,7 @@ export class PrimaryPromotionCoordinator {
   }
 
   getPendingCandidate(sessionId: string): string | null {
-    return this.pendingCandidates.get(sessionId) ?? null;
+    return this.pendingCandidates.get(sessionId)?.connectionId ?? null;
   }
 
   clearPendingPromotion(sessionId: string): void {
@@ -603,11 +712,27 @@ export class PrimaryPromotionCoordinator {
     this.pendingCandidates.clear();
   }
 
-  private defer(sessionId: string, connectionId: string, delayMs: number): void {
+  private defer(
+    sessionId: string,
+    connectionId: string,
+    delayMs: number,
+    reason: "genuine" | "reassert",
+  ): void {
     const existingTimer = this.pendingTimers.get(sessionId);
     if (existingTimer) clearTimeout(existingTimer);
 
-    this.pendingCandidates.set(sessionId, connectionId);
+    const existingPending = this.pendingCandidates.get(sessionId);
+    const pendingReason =
+      reason === "genuine" ||
+      (existingPending?.connectionId === connectionId &&
+        existingPending.reason === "genuine")
+        ? "genuine"
+        : "reassert";
+    const pendingPromotion = {
+      connectionId,
+      reason: pendingReason,
+    } as const;
+    this.pendingCandidates.set(sessionId, pendingPromotion);
     const timer = setTimeout(() => {
       if (this.pendingTimers.get(sessionId) !== timer) return;
       this.pendingTimers.delete(sessionId);
@@ -615,7 +740,7 @@ export class PrimaryPromotionCoordinator {
       // Only the still-mapped candidate may promote; requestPromotion
       // re-validates it and drops the pending entry when it no longer
       // qualifies (closed socket, hidden panel).
-      if (this.pendingCandidates.get(sessionId) !== connectionId) return;
+      if (this.pendingCandidates.get(sessionId) !== pendingPromotion) return;
       const candidate = this.host.getConnection(connectionId);
       if (!candidate?.isSocketOpen || !candidate.isVisible) {
         this.clearIfCandidate(sessionId, connectionId);
@@ -636,20 +761,25 @@ export class PrimaryPromotionCoordinator {
         !sameClientInstance &&
         primary?.isSocketOpen &&
         primary.isVisible &&
-        // Date.now() can collapse challenger and primary engagement into one
-        // millisecond. Keep the current primary when engagement ties.
-        connectionEngagement(primary) >= connectionEngagement(candidate)
+        (pendingReason === "genuine"
+          ? primary.lastFocusAt >= candidate.lastFocusAt
+          : connectionEngagement(primary) >= connectionEngagement(candidate))
       ) {
         this.clearIfCandidate(sessionId, connectionId);
         return;
       }
-      this.requestPromotion(sessionId, connectionId, false);
+      this.requestPromotion(
+        sessionId,
+        connectionId,
+        false,
+        pendingReason === "reassert",
+      );
     }, Math.max(0, delayMs));
     this.pendingTimers.set(sessionId, timer);
   }
 
   private clearIfCandidate(sessionId: string, connectionId: string): void {
-    if (this.pendingCandidates.get(sessionId) !== connectionId) return;
+    if (this.pendingCandidates.get(sessionId)?.connectionId !== connectionId) return;
     this.clearPendingPromotion(sessionId);
   }
 
@@ -674,6 +804,25 @@ export function clearSessionControllerState(
 ): void {
   sizeController.clearSession(sessionId);
   promotionCoordinator.clearSession(sessionId);
+}
+
+/** Reconcile a recreated same-name tmux session to the current primary size. */
+export function requestRestartPrimaryResize(
+  sizeController: Pick<TmuxSizeController, "requestResize">,
+  sessionId: string,
+  tmuxSessionName: string,
+  primaryConnection:
+    | Pick<TerminalConnection, "lastCols" | "lastRows">
+    | undefined,
+): void {
+  if (!primaryConnection?.lastCols || !primaryConnection.lastRows) return;
+  sizeController.requestResize(
+    sessionId,
+    tmuxSessionName,
+    primaryConnection.lastCols,
+    primaryConnection.lastRows,
+    { force: true },
+  );
 }
 
 // CONTROL_SESSION_SENTINEL (the reserved control-mode sessionId) is imported
@@ -1244,11 +1393,14 @@ function tryPromoteToPrimary(
 
 /**
  * Select the best replacement primary from a session's remaining connections:
- * prefer visible connections, break ties by most recent `lastFocusAt`.
+ * prefer visible connections, then rank by latest focus or input engagement.
  */
 export function pickNextPrimaryConnection(
   conns: ReadonlyArray<
-    Pick<PromotionConnectionState, "connectionId" | "isVisible" | "lastFocusAt">
+    Pick<
+      PromotionConnectionState,
+      "connectionId" | "isVisible" | "lastFocusAt" | "lastInputAt"
+    >
   >,
 ): string | null {
   if (conns.length === 0) return null;
@@ -1256,7 +1408,14 @@ export function pickNextPrimaryConnection(
   const pool = visible.length > 0 ? visible : conns;
   let best = pool[0];
   for (const c of pool) {
-    if (c.lastFocusAt > best.lastFocusAt) best = c;
+    const engagement = connectionEngagement(c);
+    const bestEngagement = connectionEngagement(best);
+    if (
+      engagement > bestEngagement ||
+      (engagement === bestEngagement && c.lastFocusAt > best.lastFocusAt)
+    ) {
+      best = c;
+    }
   }
   return best.connectionId;
 }
@@ -1307,6 +1466,7 @@ function cleanupConnection(connectionId: string): void {
     return;
   }
 
+  flushClientInstanceRecency(conn, clientInstanceFocusRecency);
   primaryPromotions.notifyDisconnect(conn.sessionId, connectionId);
 
   // Remove from session connections and update session-level state
@@ -3531,6 +3691,17 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       .catch((err) => log.error("Liveness sweep failed", { error: String(err) }));
   }, 30_000);
 
+  // Stable client engagement outlives transient socket gaps, but must not
+  // retain an unbounded set of sessions after tmux is killed out-of-band.
+  const clientRecencySweepTimer = setInterval(() => {
+    sweepClientInstanceRecency(
+      clientInstanceFocusRecency,
+      (sessionId) => sessionConnections.get(sessionId)?.size ?? 0,
+      tmuxSessionExists,
+    );
+  }, 10 * 60 * 1000);
+  clientRecencySweepTimer.unref();
+
   wss.on("connection", async (ws, req) => {
     // The browser flushes focus and resize intent from its onopen callback.
     // Capture those frames before any awaited ownership/DB/setup work so a
@@ -3669,6 +3840,16 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             columns: { id: true, userId: true, projectPath: true },
           })) ?? null;
       } catch (error) {
+        if (
+          abortTerminalSetupIfClosed(
+            bufferedMessages,
+            null,
+            () => {},
+            sessionId,
+          )
+        ) {
+          return;
+        }
         // Fail CLOSED: if we cannot verify ownership, do not attach.
         bufferedMessages.discard();
         log.error("tmuxSession ownership lookup failed", {
@@ -3678,6 +3859,17 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         });
         ws.send(JSON.stringify({ type: "error", message: "Authorization check failed" }));
         ws.close(4002, "Authorization check failed");
+        return;
+      }
+
+      if (
+        abortTerminalSetupIfClosed(
+          bufferedMessages,
+          null,
+          () => {},
+          sessionId,
+        )
+      ) {
         return;
       }
 
@@ -4048,6 +4240,9 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             const otherConns = getConnectionsForSession(sessionId).filter(
               (c) => c.connectionId !== connectionId
             );
+            const restartPrimaryConnection = connections.get(
+              sessionPrimaryConnection.get(sessionId) ?? "",
+            );
             try {
               // Destroy PTYs for ALL connections to this session before
               // killing the tmux session, so their onExit handlers see the
@@ -4125,6 +4320,13 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
                   }
                 }
               }
+
+              requestRestartPrimaryResize(
+                tmuxSize,
+                sessionId,
+                tmuxSessionName,
+                restartPrimaryConnection,
+              );
 
               newPty.onData((data) => {
                 if (ws.readyState === WebSocket.OPEN) {

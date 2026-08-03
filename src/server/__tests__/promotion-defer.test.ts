@@ -4,12 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ClientInstanceFocusRecency,
   clearSessionControllerState,
+  flushClientInstanceRecency,
   handleClientFocus,
   pickNextPrimaryConnection,
   PrimaryPromotionCoordinator,
   parseInitialTerminalDimensions,
   recordClientInput,
   resolveClientInstanceId,
+  sweepClientInstanceRecency,
   type PromotionConnectionState,
   type PromotionCoordinatorHost,
 } from "@/server/terminal";
@@ -292,6 +294,27 @@ describe("PrimaryPromotionCoordinator", () => {
     expect(host.primaries.get("s1")).toBe("phone-new");
   });
 
+  it("flushes exact connection-local recency on disconnect so reconnect engagement wins", () => {
+    const oldConnection = connectInstance("phone-old", "phone-instance");
+    oldConnection.lastFocusAt = 1100;
+
+    recordClientInput(oldConnection, () => 1000, instanceRecency);
+    recordClientInput(oldConnection, () => 1500, instanceRecency);
+    expect(instanceRecency.getLastInputAt("s1", "phone-instance")).toBe(1000);
+
+    flushClientInstanceRecency(oldConnection, instanceRecency);
+    host.connections.delete("phone-old");
+    const reconnect = connectInstance("phone-new", "phone-instance");
+    host.connections.get("A")!.lastInputAt = 1250;
+
+    focus("phone-new", { reassert: true });
+    vi.advanceTimersByTime(1000);
+
+    expect(reconnect.lastFocusAt).toBe(1100);
+    expect(reconnect.lastInputAt).toBe(1500);
+    expect(host.primaries.get("s1")).toBe("phone-new");
+  });
+
   it("does not let a focus-fresh unattended reconnect rob an actively typed primary", () => {
     const primary = host.connections.get("A")!;
     primary.lastFocusAt = 500;
@@ -305,7 +328,7 @@ describe("PrimaryPromotionCoordinator", () => {
     expect(coordinator.getPendingCandidate("s1")).toBeNull();
   });
 
-  it("promotes a reconnect over its half-open same-instance primary immediately", () => {
+  it("defers a reconnect over its half-open same-instance primary until cooldown expiry", () => {
     const zombie = host.connections.get("A")!;
     zombie.clientInstanceId = "stable-instance";
     zombie.lastFocusAt = 500;
@@ -317,18 +340,46 @@ describe("PrimaryPromotionCoordinator", () => {
 
     focus("B", { reassert: true });
 
+    expect(host.primaries.get("s1")).toBe("A");
+    expect(coordinator.getPendingCandidate("s1")).toBe("B");
+
+    vi.advanceTimersByTime(1000);
+
     expect(host.primaries.get("s1")).toBe("B");
     expect(coordinator.getPendingCandidate("s1")).toBeNull();
   });
 
-  it("promotes a genuine focus from the primary's newer same-instance socket immediately", () => {
+  it("defers genuine focus from the primary's newer same-instance socket until cooldown expiry", () => {
     host.connections.get("A")!.clientInstanceId = "stable-instance";
     host.connections.get("B")!.clientInstanceId = "stable-instance";
 
     focus("B");
 
+    expect(host.primaries.get("s1")).toBe("A");
+    expect(coordinator.getPendingCandidate("s1")).toBe("B");
+
+    vi.advanceTimersByTime(1000);
+
     expect(host.primaries.get("s1")).toBe("B");
     expect(coordinator.getPendingCandidate("s1")).toBeNull();
+  });
+
+  it("coalesces rapid same-instance flap promotions within one cooldown", () => {
+    host.connections.get("A")!.clientInstanceId = "stable-instance";
+    for (const connectionId of ["B", "C", "D"]) {
+      const connection = visibleOpenConnection(connectionId);
+      connection.clientInstanceId = "stable-instance";
+      host.connections.set(connectionId, connection);
+      focus(connectionId, { reassert: true });
+      vi.advanceTimersByTime(100);
+    }
+
+    expect(host.broadcasts).toHaveLength(0);
+    vi.advanceTimersByTime(700);
+
+    expect(["B", "C", "D"]).toContain(host.primaries.get("s1"));
+    expect(host.broadcasts).toEqual(["s1"]);
+    expect(host.reassertions).toHaveLength(1);
   });
 
   it("inherits genuine focus recency across two connections with the same clientInstanceId", () => {
@@ -424,6 +475,43 @@ describe("PrimaryPromotionCoordinator", () => {
     expect(host.primaries.get("s1")).toBe("B");
   });
 
+  it("lets deferred genuine focus beat a primary that keeps typing", () => {
+    const primary = host.connections.get("A")!;
+    primary.lastFocusAt = 100;
+    primary.lastInputAt = 700;
+    handleClientFocus(
+      host.connections.get("B")!,
+      {},
+      (force, reassert) =>
+        coordinator.requestPromotion("s1", "B", force, reassert),
+      () => 200,
+    );
+
+    primary.lastInputAt = 900;
+    vi.advanceTimersByTime(1000);
+
+    expect(host.primaries.get("s1")).toBe("B");
+    expect(host.broadcasts).toEqual(["s1"]);
+  });
+
+  it("drops a deferred reassert challenger when the primary types more recently", () => {
+    const primary = host.connections.get("A")!;
+    primary.lastFocusAt = 100;
+    primary.lastInputAt = 700;
+    const challenger = host.connections.get("B")!;
+    challenger.lastFocusAt = 200;
+    challenger.lastInputAt = 800;
+
+    focus("B", { reassert: true });
+    expect(coordinator.getPendingCandidate("s1")).toBe("B");
+
+    primary.lastInputAt = 900;
+    vi.advanceTimersByTime(1000);
+
+    expect(host.primaries.get("s1")).toBe("A");
+    expect(host.broadcasts).toHaveLength(0);
+  });
+
   it("retains the current primary when both deferred recency timestamps are zero", () => {
     coordinator.requestPromotion("s1", "B", false);
 
@@ -482,18 +570,36 @@ describe("replacement primary selection", () => {
   it("prefers visible connections and keeps pool order for zero-timestamp ties", () => {
     expect(
       pickNextPrimaryConnection([
-        { connectionId: "A", isVisible: false, lastFocusAt: 0 },
-        { connectionId: "B", isVisible: true, lastFocusAt: 0 },
-        { connectionId: "C", isVisible: true, lastFocusAt: 0 },
+        { connectionId: "A", isVisible: false, lastFocusAt: 0, lastInputAt: 0 },
+        { connectionId: "B", isVisible: true, lastFocusAt: 0, lastInputAt: 0 },
+        { connectionId: "C", isVisible: true, lastFocusAt: 0, lastInputAt: 0 },
       ]),
     ).toBe("B");
 
     expect(
       pickNextPrimaryConnection([
-        { connectionId: "A", isVisible: false, lastFocusAt: 0 },
-        { connectionId: "B", isVisible: false, lastFocusAt: 0 },
+        { connectionId: "A", isVisible: false, lastFocusAt: 0, lastInputAt: 0 },
+        { connectionId: "B", isVisible: false, lastFocusAt: 0, lastInputAt: 0 },
       ]),
     ).toBe("A");
+  });
+
+  it("ranks visible handoff survivors by their latest focus or input engagement", () => {
+    expect(
+      pickNextPrimaryConnection([
+        { connectionId: "B", isVisible: true, lastFocusAt: 100, lastInputAt: 900 },
+        { connectionId: "C", isVisible: true, lastFocusAt: 500, lastInputAt: 0 },
+      ]),
+    ).toBe("B");
+  });
+
+  it("falls back to focus recency when viewer-only engagement ties", () => {
+    expect(
+      pickNextPrimaryConnection([
+        { connectionId: "B", isVisible: false, lastFocusAt: 100, lastInputAt: 900 },
+        { connectionId: "C", isVisible: false, lastFocusAt: 900, lastInputAt: 0 },
+      ]),
+    ).toBe("C");
   });
 });
 
@@ -541,6 +647,25 @@ describe("client instance engagement recency", () => {
     expect(recency.getLastInputAt("s1", "stable-instance")).toBe(2000);
   });
 
+  it("does not let an older disconnect flush regress newer instance recency", () => {
+    const recency = new ClientInstanceFocusRecency();
+    recency.recordGenuineFocus("s1", "stable-instance", 500);
+    recency.recordInput("s1", "stable-instance", 900);
+
+    flushClientInstanceRecency({
+      lastFocusAt: 400,
+      lastInputAt: 800,
+      lastInputRecencyWriteAt: 0,
+      sessionId: "s1",
+      clientInstanceId: "stable-instance",
+    }, recency);
+
+    expect(recency.getRecency("s1", "stable-instance")).toEqual({
+      genuineFocusAt: 500,
+      inputAt: 900,
+    });
+  });
+
   it("caps each session at 16 instances and evicts the oldest engagement", () => {
     const recency = new ClientInstanceFocusRecency();
     recency.recordGenuineFocus("s1", "instance-0", 1);
@@ -560,5 +685,24 @@ describe("client instance engagement recency", () => {
       inputAt: 0,
     });
     expect(recency.getLastGenuineFocusAt("s1", "instance-16")).toBe(17);
+  });
+});
+
+describe("client instance recency orphan sweep", () => {
+  it("clears zero-connection dead-tmux entries and preserves live-tmux entries", () => {
+    const recency = new ClientInstanceFocusRecency();
+    const deadSessionId = "00000000-0000-4000-8000-000000000001";
+    const liveSessionId = "00000000-0000-4000-8000-000000000002";
+    recency.recordInput(deadSessionId, "dead-instance", 100);
+    recency.recordInput(liveSessionId, "live-instance", 200);
+
+    sweepClientInstanceRecency(
+      recency,
+      () => 0,
+      (tmuxSessionName) => tmuxSessionName === `rdv-${liveSessionId}`,
+    );
+
+    expect(recency.getSessionIds()).toEqual([liveSessionId]);
+    expect(recency.getLastInputAt(liveSessionId, "live-instance")).toBe(200);
   });
 });

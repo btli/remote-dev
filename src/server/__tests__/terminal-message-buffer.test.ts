@@ -8,8 +8,19 @@ import {
 } from "@/server/terminal";
 
 class FakeWebSocket extends EventEmitter {
+  readonly closeCalls: Array<{ code?: number; reason?: string }> = [];
+
   emitMessage(type: string): void {
     this.emit("message", Buffer.from(JSON.stringify({ type })));
+  }
+
+  emitRaw(message: Buffer): void {
+    this.emit("message", message);
+  }
+
+  close(code?: number, reason?: string): void {
+    this.closeCalls.push({ code, reason });
+    this.emit("close", code ?? 1000, Buffer.from(reason ?? ""));
   }
 }
 
@@ -95,7 +106,7 @@ describe("terminal connection setup message buffering", () => {
 
   it("catches and logs an error emitted before activation", () => {
     const ws = new FakeWebSocket();
-    const setupLog = { error: vi.fn() };
+    const setupLog = { error: vi.fn(), warn: vi.fn() };
     const bufferedMessages = bufferTerminalMessages(ws, setupLog);
     const error = new Error("socket failed during setup");
 
@@ -111,7 +122,7 @@ describe("terminal connection setup message buffering", () => {
 
   it("transfers close and error handling when activation succeeds", () => {
     const ws = new FakeWebSocket();
-    const setupLog = { error: vi.fn() };
+    const setupLog = { error: vi.fn(), warn: vi.fn() };
     const bufferedMessages = bufferTerminalMessages(ws, setupLog);
     const close = vi.fn();
     const error = vi.fn();
@@ -124,5 +135,53 @@ describe("terminal connection setup message buffering", () => {
     expect(close).toHaveBeenCalledWith(1000, Buffer.from("done"));
     expect(error).toHaveBeenCalledWith(liveError);
     expect(setupLog.error).not.toHaveBeenCalled();
+  });
+
+  it("closes with 1009 and aborts setup cleanly when the frame cap overflows", () => {
+    const ws = new FakeWebSocket();
+    const setupLog = { error: vi.fn(), warn: vi.fn() };
+    const bufferedMessages = bufferTerminalMessages(ws, setupLog);
+    const destroyPty = vi.fn();
+    const pty = { id: "pty-overflow" };
+
+    for (let index = 0; index <= 256; index++) {
+      ws.emitMessage("input");
+    }
+
+    expect(ws.closeCalls).toEqual([{
+      code: 1009,
+      reason: "Terminal setup message buffer overflow",
+    }]);
+    expect(bufferedMessages.wasClosed()).toBe(true);
+    expect(abortTerminalSetupIfClosed(
+      bufferedMessages,
+      pty,
+      destroyPty,
+      "session-overflow",
+    )).toBe(true);
+    expect(destroyPty).toHaveBeenCalledTimes(1);
+    expect(ws.listenerCount("message")).toBe(0);
+    expect(ws.listenerCount("close")).toBe(0);
+    expect(ws.listenerCount("error")).toBe(0);
+    expect(setupLog.warn).toHaveBeenCalledWith(
+      "Terminal setup message buffer overflow",
+      expect.objectContaining({ frameCount: 256 }),
+    );
+  });
+
+  it("closes with 1009 when buffered payload exceeds one MiB", () => {
+    const ws = new FakeWebSocket();
+    const setupLog = { error: vi.fn(), warn: vi.fn() };
+    const bufferedMessages = bufferTerminalMessages(ws, setupLog);
+
+    ws.emitRaw(Buffer.alloc(1024 * 1024));
+    ws.emitRaw(Buffer.from("x"));
+
+    expect(bufferedMessages.wasClosed()).toBe(true);
+    expect(ws.closeCalls.at(-1)?.code).toBe(1009);
+    expect(setupLog.warn).toHaveBeenCalledWith(
+      "Terminal setup message buffer overflow",
+      expect.objectContaining({ payloadBytes: 1024 * 1024 }),
+    );
   });
 });

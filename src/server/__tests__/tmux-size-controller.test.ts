@@ -6,6 +6,7 @@ import {
   TmuxSizeController,
   type TmuxExec,
 } from "@/server/tmux-size-controller";
+import { requestRestartPrimaryResize } from "@/server/terminal";
 
 class FakeTmuxExec {
   readonly calls: Array<{
@@ -113,6 +114,34 @@ describe("TmuxSizeController", () => {
 
     exec.completeNext();
     expect(controller.getAppliedSize("s1")).toEqual({ cols: 120, rows: 40 });
+  });
+
+  it("queues a forced current-primary size after recreation behind a stale in-flight exec", () => {
+    controller.requestResize("s1", "rdv-s1", 80, 24);
+    controller.clearSession("s1");
+
+    requestRestartPrimaryResize(
+      controller,
+      "s1",
+      "rdv-s1",
+      { lastCols: 132, lastRows: 43 },
+    );
+
+    expect(exec.calls).toHaveLength(1);
+    exec.completeNext();
+    expect(exec.calls).toHaveLength(2);
+    expect(exec.calls.at(-1)?.args).toEqual([
+      "resize-window",
+      "-t",
+      "rdv-s1",
+      "-x",
+      "132",
+      "-y",
+      "43",
+    ]);
+
+    exec.completeNext();
+    expect(controller.getAppliedSize("s1")).toEqual({ cols: 132, rows: 43 });
   });
 
   it("a stale callback for an evicted state pumps the current live state", () => {
