@@ -760,6 +760,60 @@ describe("replacement primary selection", () => {
     ).toBe("C");
   });
 
+  it("elects a hidden live generation instead of its visible zombie sibling", () => {
+    expect(
+      pickNextPrimaryConnection([
+        {
+          connectionId: "phone-zombie",
+          connectionSeq: 10,
+          clientInstanceId: "phone-instance",
+          isVisible: true,
+          lastFocusAt: 1000,
+          lastInputAt: 0,
+        },
+        {
+          connectionId: "phone-live",
+          connectionSeq: 11,
+          clientInstanceId: "phone-instance",
+          isVisible: false,
+          lastFocusAt: 100,
+          lastInputAt: 0,
+        },
+      ]),
+    ).toBe("phone-live");
+  });
+
+  it("prefers another visible instance over a hidden live generation's visible zombie", () => {
+    expect(
+      pickNextPrimaryConnection([
+        {
+          connectionId: "phone-zombie",
+          connectionSeq: 10,
+          clientInstanceId: "phone-instance",
+          isVisible: true,
+          lastFocusAt: 1000,
+          lastInputAt: 0,
+        },
+        {
+          connectionId: "phone-live",
+          connectionSeq: 11,
+          clientInstanceId: "phone-instance",
+          isVisible: false,
+          lastFocusAt: 100,
+          lastInputAt: 0,
+        },
+        {
+          connectionId: "challenger",
+          connectionSeq: 12,
+          clientInstanceId: "challenger-instance",
+          isVisible: true,
+          lastFocusAt: 500,
+          lastInputAt: 0,
+        },
+      ]),
+    ).toBe("challenger");
+  });
+
   it("excludes a freshened older-generation zombie before ranking handoff engagement", () => {
     expect(
       pickNextPrimaryConnection([

@@ -1473,23 +1473,23 @@ export function pickNextPrimaryConnection(
   >,
 ): string | null {
   if (conns.length === 0) return null;
-  const visible = conns.filter((c) => c.isVisible);
-  const pool = visible.length > 0 ? visible : conns;
-  const newestConnectionByInstance = new Map<string, (typeof pool)[number]>();
-  for (const connection of pool) {
+  const newestConnectionByInstance = new Map<string, (typeof conns)[number]>();
+  for (const connection of conns) {
     if (connection.clientInstanceId === null) continue;
     const newest = newestConnectionByInstance.get(connection.clientInstanceId);
     if (!newest || connection.connectionSeq > newest.connectionSeq) {
       newestConnectionByInstance.set(connection.clientInstanceId, connection);
     }
   }
-  const eligible = pool.filter(
+  const eligible = conns.filter(
     (connection) =>
       connection.clientInstanceId === null ||
       newestConnectionByInstance.get(connection.clientInstanceId) === connection,
   );
-  let best = eligible[0];
-  for (const c of eligible) {
+  const visible = eligible.filter((connection) => connection.isVisible);
+  const pool = visible.length > 0 ? visible : eligible;
+  let best = pool[0];
+  for (const c of pool) {
     const engagement = connectionEngagement(c);
     const bestEngagement = connectionEngagement(best);
     if (
