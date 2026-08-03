@@ -20,7 +20,7 @@ PostgreSQL backend.
    brew install oven-sh/bun/bun
    ```
 
-2. **tmux** (for session persistence)
+2. **tmux** (for session persistence; **3.4+** for OSC 8 hyperlinks)
    ```bash
    # macOS
    brew install tmux
@@ -42,9 +42,16 @@ PostgreSQL backend.
 
 ```bash
 bun --version    # Should show 1.x.x
-tmux -V          # Should show tmux 3.x
+tmux -V          # tmux 3.4+ enables exact OSC 8 hyperlink preservation
 git --version    # Should show git 2.x
 ```
+
+Remote Dev's persistent terminal sessions work with older tmux releases, but
+**tmux 3.4 is the minimum for the OSC 8 hyperlink path**. Do not read “tmux
+3.x” as a hyperlink guarantee: releases before 3.4 cannot preserve the
+hyperlink metadata that Remote Dev needs across tmux redraw, history, and
+reattach. On those releases, ordinary HTTP(S) URLs still use the compatibility
+link detection described in [TUI and hyperlink diagnostics](#tui-and-hyperlink-diagnostics).
 
 ## Configuration
 
@@ -546,6 +553,69 @@ brew install tmux
 # Ubuntu/Debian
 sudo apt install tmux
 ```
+
+### TUI and hyperlink diagnostics
+
+Remote Dev has two complementary link paths:
+
+- **OSC 8 is the exact path.** Applications that emit OSC 8 provide the full
+  URI as metadata. With tmux **3.4 or newer** and an attached Remote Dev client
+  advertising `hyperlinks`, tmux keeps that metadata through redraw, history,
+  and reattach. This is the preferred path because it does not infer a target
+  from visible text.
+- **The multi-row provider is the required best-effort path for plain TUI
+  text.** TUIs often redraw with cursor positioning, so visually adjacent URL
+  rows need not be terminal soft-wraps. The provider reconstructs adjacent
+  HTTP(S) fragments for those cursor-positioned or hard-row cases. Because a
+  hard-row boundary is ambiguous (a valid URL can end at the edge and unrelated
+  URL-safe text can begin on the next row), every inferred hard-row target must
+  show its complete URL for explicit confirmation before navigation. Exact OSC
+  8 links and genuine terminal soft-wraps do not need that confirmation.
+
+To inspect the client attached to the affected tmux session, run this from that
+client (or target the client explicitly with `-t`):
+
+```bash
+tmux display-message -p '#{client_termname} #{client_termfeatures}'
+```
+
+For a Remote Dev client using the OSC 8-capable path, the output includes
+`hyperlinks` after the terminal name, for example:
+
+```text
+xterm-256color hyperlinks
+```
+
+If `hyperlinks` is absent, tmux will not emit OSC 8 links to that client. Check
+the installed version with `tmux -V`; versions older than 3.4 keep sessions
+working but use the compatibility path above. Do not try to solve this by
+changing `default-terminal` to `xterm-256color` or by enabling
+`allow-passthrough`: neither makes tmux retain native OSC 8 hyperlink state.
+
+To confirm that tmux has hyperlink-capable terminfo support, inspect `Hls`:
+
+```bash
+tmux info | grep -F 'Hls'
+```
+
+For a client with the `hyperlinks` feature, expect an `Hls` capability line
+similar to `Hls: (string) \033]8;...`; it is the sequence tmux uses to set or
+clear a hyperlink annotation. If it is `[missing]` or absent, first check that
+the affected attached client reports `hyperlinks` with the command above. To
+examine metadata already stored for a pane after an application emits an OSC 8
+link, use:
+
+```bash
+tmux capture-pane -p -H -t <pane>
+```
+
+The `-H` output lists hyperlink annotations for the selected pane; an empty
+result means tmux has no stored OSC 8 metadata for those lines. It does not
+rule out a working plain-text, confirmed multi-row link.
+
+See the tmux [`terminal-features`](https://man.openbsd.org/tmux.1#terminal-features)
+and [`capture-pane`](https://man.openbsd.org/tmux.1#capture-pane) documentation
+for the feature and inspection semantics.
 
 ### "Unauthorized" after login
 

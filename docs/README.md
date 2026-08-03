@@ -18,7 +18,7 @@ with the quick links below, or jump to a reference section.
 |-----|-------------|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design: the two-server model, `src/proxy.ts` auth boundary, ~87 services, 81-table dual SQLite/PostgreSQL schema, terminal-type plugins, peer comms, Clean Architecture, state management |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Contributor guide: prerequisites, `bun install` / `bun run dev`, the quality gates, the schema codegen workflow, and the git-worktree bootstrap |
-| [SETUP.md](SETUP.md) | Environment and configuration reference: env vars, GitHub OAuth, multi-instance variables |
+| [SETUP.md](SETUP.md) | Environment and configuration reference: env vars, tmux/OSC 8 hyperlink diagnostics, GitHub OAuth, multi-instance variables |
 | [API.md](API.md) | REST API reference (54 route groups / 198 route files / 318 operations under `src/app/api`) + the WebSocket protocol |
 | [openapi.yaml](openapi.yaml) | OpenAPI specification (machine-readable) |
 
