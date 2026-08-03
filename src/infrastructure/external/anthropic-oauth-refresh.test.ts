@@ -220,6 +220,7 @@ describe("AnthropicOAuthRefreshService", () => {
     const [url, init] = fetchImpl.mock.calls[0];
     expect(url).toBe("https://console.anthropic.com/v1/oauth/token");
     expect(init.method).toBe("POST");
+    expect(init.redirect).toBe("error");
     expect(init.headers).toEqual({ "content-type": "application/json" });
     expect(JSON.parse(init.body)).toEqual({
       grant_type: "refresh_token",

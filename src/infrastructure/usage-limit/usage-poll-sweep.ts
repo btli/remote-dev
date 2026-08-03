@@ -51,6 +51,7 @@ import {
 import { isUsageLimitRateLimited } from "@/application/ports/UsageLimitGateway";
 import { isUsagePollEnabled } from "./poll-config";
 import { createLogger } from "@/lib/logger";
+import { hasStoredUsageCredential } from "@/lib/usage-credential-presence";
 
 const log = createLogger("UsagePollSweep");
 
@@ -165,7 +166,7 @@ export async function runUsagePollSweep(): Promise<void> {
 
     const now = Date.now();
     const due = accounts.filter((a) => {
-      if (a.usageOauthRefreshEncrypted === null) {
+      if (!hasStoredUsageCredential(a.usageOauthRefreshEncrypted)) {
         noCredential += 1;
         return false;
       }

@@ -178,13 +178,21 @@ describe("runUsagePollSweep", () => {
     });
   });
 
-  it("uses strict non-null presence semantics for the usage refresh credential", async () => {
+  it("skips an empty encrypted refresh value as no credential", async () => {
     seedAccounts(1);
     accounts[0].usageOauthRefreshEncrypted = "";
 
     await runUsagePollSweep();
 
-    expect(fetchLimitState).toHaveBeenCalledTimes(1);
+    expect(fetchLimitState).not.toHaveBeenCalled();
+    expect(logWarn).toHaveBeenCalledWith("Usage poll sweep complete", {
+      polled: 0,
+      recorded: 0,
+      failed: 0,
+      rateLimited: 0,
+      skipped: 0,
+      noCredential: 1,
+    });
   });
 
   it("passes the per-window detail through to the use case", async () => {

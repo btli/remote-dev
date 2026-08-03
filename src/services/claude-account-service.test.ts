@@ -265,13 +265,13 @@ describe("toAccountView", () => {
     expect(account.usageCredential).toBe(false);
   });
 
-  it("reports a usage credential when a non-null refresh value is empty", () => {
+  it("reports no usage credential when the encrypted refresh value is empty", () => {
     const account = toAccountView({
       ...baseRow,
       usageOauthRefreshEncrypted: "",
     } as Parameters<typeof toAccountView>[0]);
 
-    expect(account.usageCredential).toBe(true);
+    expect(account.usageCredential).toBe(false);
   });
 });
 
@@ -543,6 +543,52 @@ describe("saveAccountToken", () => {
     );
   });
 
+  it("clears a linked usage credential when an explicit update changes identity", async () => {
+    const first = await saveAccountToken(
+      { userId: USER, token: TOKEN },
+      runnerWith(LOGGED_IN_JSON)
+    );
+    const row = rows.get(first.account.id)!;
+    row.usageOauthAccessEncrypted = encrypt("usage-access");
+    row.usageOauthRefreshEncrypted = encrypt("usage-refresh");
+    row.usageOauthExpiresAt = new Date(90_000);
+    row.usageOauthScopes = '["user:profile"]';
+
+    const updated = await saveAccountToken(
+      { userId: USER, token: OTHER_TOKEN, accountId: first.account.id },
+      runnerWith('{"loggedIn": true, "email": "other@example.com"}')
+    );
+
+    expect(updated.account.emailAddress).toBe("other@example.com");
+    expect(updated.account.usageCredential).toBe(false);
+    expect(row).toMatchObject({
+      usageOauthAccessEncrypted: null,
+      usageOauthRefreshEncrypted: null,
+      usageOauthExpiresAt: null,
+      usageOauthScopes: null,
+    });
+  });
+
+  it("preserves a linked usage credential when an explicit update learns no email", async () => {
+    const first = await saveAccountToken(
+      { userId: USER, token: TOKEN },
+      runnerWith(LOGGED_IN_JSON)
+    );
+    const row = rows.get(first.account.id)!;
+    const usageRefresh = encrypt("usage-refresh");
+    row.usageOauthAccessEncrypted = encrypt("usage-access");
+    row.usageOauthRefreshEncrypted = usageRefresh;
+    row.usageOauthExpiresAt = new Date(90_000);
+    row.usageOauthScopes = '["user:profile"]';
+
+    await saveAccountToken(
+      { userId: USER, token: OTHER_TOKEN, accountId: first.account.id },
+      runnerWith("")
+    );
+
+    expect(row.usageOauthRefreshEncrypted).toBe(usageRefresh);
+  });
+
   it("creates a separate account for a different email", async () => {
     await saveAccountToken({ userId: USER, token: TOKEN }, runnerWith(LOGGED_IN_JSON));
     await saveAccountToken(
@@ -739,6 +785,12 @@ describe("verifyAccount", () => {
       { userId: USER, token: TOKEN },
       runnerWith(LOGGED_IN_JSON)
     );
+    const row = rows.get(account.id)!;
+    const usageRefresh = encrypt("usage-refresh");
+    row.usageOauthAccessEncrypted = encrypt("usage-access");
+    row.usageOauthRefreshEncrypted = usageRefresh;
+    row.usageOauthExpiresAt = new Date(90_000);
+    row.usageOauthScopes = '["user:profile"]';
 
     // Fully offline: neither the CLI nor the network vouches for the token.
     validityProbeMock.mockResolvedValue("indeterminate");
@@ -748,6 +800,34 @@ describe("verifyAccount", () => {
     // Display fields survive so the row doesn't blank out on a transient failure.
     expect(result!.account.emailAddress).toBe("person@example.com");
     expect(result!.account.rateLimitTier).toBe("max");
+    expect(row.usageOauthRefreshEncrypted).toBe(usageRefresh);
+  });
+
+  it("clears a linked usage credential when verification changes identity", async () => {
+    const { account } = await saveAccountToken(
+      { userId: USER, token: TOKEN },
+      runnerWith(LOGGED_IN_JSON)
+    );
+    const row = rows.get(account.id)!;
+    row.usageOauthAccessEncrypted = encrypt("usage-access");
+    row.usageOauthRefreshEncrypted = encrypt("usage-refresh");
+    row.usageOauthExpiresAt = new Date(90_000);
+    row.usageOauthScopes = '["user:profile"]';
+
+    const result = await verifyAccount(
+      account.id,
+      USER,
+      runnerWith('{"loggedIn": true, "email": "other@example.com"}')
+    );
+
+    expect(result!.account.emailAddress).toBe("other@example.com");
+    expect(result!.account.usageCredential).toBe(false);
+    expect(row).toMatchObject({
+      usageOauthAccessEncrypted: null,
+      usageOauthRefreshEncrypted: null,
+      usageOauthExpiresAt: null,
+      usageOauthScopes: null,
+    });
   });
 
   it("marks the account healthy on a network-confirmed token even when the CLI probe fails", async () => {
@@ -1296,6 +1376,7 @@ describe("storeRefreshedUsageCredential", () => {
       "usage-refresh-rotated"
     );
     expect(row.usageOauthExpiresAt).toBe(expiresAt);
+    expect(row.updatedAt).not.toEqual(new Date(0));
   });
 
   it("preserves the stored refresh token when the server does not rotate it", async () => {
@@ -1386,6 +1467,7 @@ describe("quarantineUsageCredential", () => {
       authHealthy: true,
       oauthTokenEncrypted: sessionCiphertext,
     });
+    expect(row.updatedAt).not.toEqual(new Date(0));
   });
 
   it("does not quarantine a foreign account", async () => {

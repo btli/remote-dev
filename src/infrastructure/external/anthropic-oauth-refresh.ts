@@ -77,6 +77,7 @@ export type OAuthRefreshFetch = (
     headers: Record<string, string>;
     body: string;
     signal: AbortSignal;
+    redirect: "error";
   }
 ) => Promise<{
   status: number;
@@ -209,6 +210,7 @@ export class AnthropicOAuthRefreshService {
             client_id: CLAUDE_CODE_CLIENT_ID,
           }),
           signal: controller.signal,
+          redirect: "error",
         });
       } catch (error) {
         log.warn("Usage OAuth refresh request failed transiently", {

@@ -42,6 +42,7 @@ import {
   type TokenValidityProbe,
 } from "@/infrastructure/external/anthropic-token-validity";
 import { createLogger } from "@/lib/logger";
+import { hasStoredUsageCredential } from "@/lib/usage-credential-presence";
 import type {
   ClaudeAccountKind,
   ClaudeAccountSummary,
@@ -377,6 +378,13 @@ export type ClaudeAccountView = ClaudeAccountSummary;
 
 type AccountRow = typeof claudeAccounts.$inferSelect;
 
+const CLEARED_USAGE_CREDENTIAL_COLUMNS = {
+  usageOauthAccessEncrypted: null,
+  usageOauthRefreshEncrypted: null,
+  usageOauthExpiresAt: null,
+  usageOauthScopes: null,
+} as const;
+
 /** Project a DB row into the token-free API view. */
 export function toAccountView(row: AccountRow): ClaudeAccountView {
   return {
@@ -391,7 +399,9 @@ export function toAccountView(row: AccountRow): ClaudeAccountView {
     authHealthy: row.authHealthy,
     lastVerifiedAt: row.lastVerifiedAt ? row.lastVerifiedAt.getTime() : null,
     hasToken: !!row.oauthTokenEncrypted,
-    usageCredential: row.usageOauthRefreshEncrypted !== null,
+    usageCredential: hasStoredUsageCredential(
+      row.usageOauthRefreshEncrypted
+    ),
     profileId: row.profileId ?? null,
     createdAt: row.createdAt.getTime(),
     updatedAt: row.updatedAt.getTime(),
@@ -538,6 +548,7 @@ export async function saveAccountToken(
   const columns = {
     alias: input.alias ?? existing?.alias ?? null,
     ...identityDisplayColumns(identity, existing),
+    ...usageCredentialInvalidationColumns(identity, existing),
     // Network verdict first, CLI as the fallback: Anthropic accepting or
     // rejecting the Bearer token is ground truth for credential liveness,
     // while the CLI probe can fail for environmental reasons (missing binary,
@@ -684,6 +695,7 @@ export async function verifyAccount(
       // Keep the last-known display fields when a probe comes back blank
       // (offline / CLI missing) instead of wiping a working account's UI.
       ...identityDisplayColumns(identity, row),
+      ...usageCredentialInvalidationColumns(identity, row),
       // Network verdict first, CLI as fallback — see saveAccountToken: the
       // network answer is ground truth for credential liveness; the CLI probe
       // can fail environmentally without saying anything about the token.
@@ -713,6 +725,31 @@ function identityDisplayColumns(
       identity.subscriptionType ?? fallback?.rateLimitTier ?? null,
     authMethod: identity.authMethod ?? fallback?.authMethod ?? null,
   };
+}
+
+/**
+ * A usage credential is bound to the row's Claude identity. Any newly probed,
+ * nonblank email that differs from the stored identity invalidates that
+ * binding; a blank probe is inconclusive and preserves the credential.
+ */
+function usageCredentialInvalidationColumns(
+  identity: ClaudeIdentity,
+  fallback: AccountRow | null | undefined
+) {
+  const nextEmail = normalizedIdentityEmail(identity.email);
+  if (
+    !nextEmail ||
+    nextEmail === normalizedIdentityEmail(fallback?.emailAddress ?? null)
+  ) {
+    return {};
+  }
+  return CLEARED_USAGE_CREDENTIAL_COLUMNS;
+}
+
+function normalizedIdentityEmail(value: string | null): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.toLocaleLowerCase("en-US") : null;
 }
 
 /** Mark an account unhealthy and return the UNKNOWN identity projection. */
@@ -878,8 +915,8 @@ export async function readOwnedUsageCredential(
     },
   });
   if (
-    !row?.usageOauthAccessEncrypted ||
-    !row.usageOauthRefreshEncrypted ||
+    !hasStoredUsageCredential(row?.usageOauthAccessEncrypted) ||
+    !hasStoredUsageCredential(row.usageOauthRefreshEncrypted) ||
     !(row.usageOauthExpiresAt instanceof Date) ||
     !Number.isFinite(row.usageOauthExpiresAt.getTime())
   ) {
@@ -947,6 +984,7 @@ export async function storeRefreshedUsageCredential(
       ...(credential.refreshToken !== undefined
         ? { usageOauthRefreshEncrypted: encrypt(credential.refreshToken) }
         : {}),
+      updatedAt: new Date(),
     })
     .where(
       and(
@@ -979,10 +1017,8 @@ export async function quarantineUsageCredential(
   const updated = await db
     .update(claudeAccounts)
     .set({
-      usageOauthAccessEncrypted: null,
-      usageOauthRefreshEncrypted: null,
-      usageOauthExpiresAt: null,
-      usageOauthScopes: null,
+      ...CLEARED_USAGE_CREDENTIAL_COLUMNS,
+      updatedAt: new Date(),
     })
     .where(
       and(
