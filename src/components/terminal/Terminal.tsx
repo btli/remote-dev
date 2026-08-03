@@ -203,7 +203,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const hasConnectedBeforeRef = useRef(false);
   const maxReconnectAttempts = 5;
 
-  visibleRef.current = visible;
   isActiveRef.current = isActive;
 
   /**
@@ -1306,6 +1305,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, terminalType, markIntentionalExit, focusIfPresented]);
 
   useEffect(() => {
+    visibleRef.current = visible;
     syncFocusToServerRef.current?.();
     reconcilerRef.current?.notifyPanelVisibility(visible);
   }, [visible]);

@@ -688,6 +688,7 @@ export class PrimaryPromotionCoordinator {
       primary.clientInstanceId !== null &&
       primary.clientInstanceId === candidate.clientInstanceId &&
       candidate.connectionSeq < primary.connectionSeq;
+    if (olderSameClientInstance) return "ignored";
 
     if (reassert) {
       const pendingCandidate = this.pendingCandidates.get(sessionId)?.connectionId;
@@ -715,8 +716,6 @@ export class PrimaryPromotionCoordinator {
       );
       return "deferred";
     }
-
-    if (!reassert && olderSameClientInstance) return "ignored";
 
     return this.promote(sessionId, connectionId, now);
   }

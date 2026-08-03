@@ -23,7 +23,13 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, render, cleanup, waitFor } from "@testing-library/react";
-import { createRef, StrictMode } from "react";
+import {
+  createRef,
+  startTransition,
+  StrictMode,
+  Suspense,
+  useState,
+} from "react";
 
 import type { TerminalRef } from "./Terminal";
 
@@ -480,6 +486,58 @@ describe("Terminal.refit (remote-dev-u5q5.2)", () => {
       expect(wsInstances.at(-1)?.sentTypes()).toContain("client_blur");
     });
     expect(wsInstances.at(-1)?.sentTypes()).not.toContain("client_focus");
+  });
+
+  it("uses committed panel visibility when a socket opens during a suspended render", async () => {
+    const Terminal = await getTerminal();
+    autoOpenSockets = false;
+    const neverResolves = new Promise<void>(() => {});
+    let speculativeRenderSeen = false;
+
+    function SuspendOnReveal({ visible }: { visible: boolean }) {
+      if (visible) {
+        speculativeRenderSeen = true;
+        throw neverResolves;
+      }
+      return null;
+    }
+
+    function Harness() {
+      const [visible, setVisible] = useState(false);
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => startTransition(() => setVisible(true))}
+          >
+            Reveal
+          </button>
+          <Suspense fallback={null}>
+            <Terminal
+              sessionId="s1"
+              tmuxSessionName="rdv-s1"
+              wsUrl="ws://localhost:0"
+              terminalType="shell"
+              visible={visible}
+            />
+            <SuspendOnReveal visible={visible} />
+          </Suspense>
+        </>
+      );
+    }
+
+    const view = render(<Harness />);
+    await waitFor(() => {
+      expect(wsInstances.at(-1)?.readyState).toBe(MockWebSocket.CONNECTING);
+    });
+    const socket = wsInstances.at(-1)!;
+
+    act(() => view.getByRole("button", { name: "Reveal" }).click());
+    expect(speculativeRenderSeen).toBe(true);
+    act(() => socket.open());
+
+    expect(socket.sentTypes()).toContain("client_blur");
+    expect(socket.sentTypes()).not.toContain("client_focus");
   });
 
   it("sends a genuine focus assertion on the first socket open", async () => {

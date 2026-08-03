@@ -13,6 +13,7 @@ import {
   resolveClientInstanceId,
   sweepClientInstanceRecency,
   tmuxSessionConfirmedAbsent,
+  type PromotionRequestResult,
   type PromotionConnectionState,
   type PromotionCoordinatorHost,
 } from "@/server/terminal";
@@ -116,14 +117,22 @@ describe("PrimaryPromotionCoordinator", () => {
     now: () => number = Date.now,
     recency: ClientInstanceFocusRecency | undefined = undefined,
   ) => {
+    let result: PromotionRequestResult | undefined;
     handleClientFocus(
       host.connections.get(connectionId)!,
       message,
-      (force, reassert) =>
-        coordinator.requestPromotion("s1", connectionId, force, reassert),
+      (force, reassert) => {
+        result = coordinator.requestPromotion(
+          "s1",
+          connectionId,
+          force,
+          reassert,
+        );
+      },
       now,
       recency,
     );
+    return result;
   };
 
   const connectInstance = (
@@ -440,11 +449,35 @@ describe("PrimaryPromotionCoordinator", () => {
     expect(host.broadcasts).toHaveLength(0);
   });
 
-  it("does not give an older same-instance socket the request-time bypass", () => {
+  it("does not let an older same-instance genuine focus replace a pending challenger", () => {
+    const primary = host.connections.get("C")!;
+    primary.clientInstanceId = "stable-instance";
+    primary.connectionSeq = 11;
+    primary.lastFocusAt = Date.now();
+    host.primaries.set("s1", "C");
+
+    const challenger = visibleOpenConnection("D", Date.now() + 1);
+    challenger.clientInstanceId = "challenger-instance";
+    host.connections.set("D", challenger);
+    expect(coordinator.requestPromotion("s1", "D", false)).toBe("deferred");
+    expect(coordinator.getPendingCandidate("s1")).toBe("D");
+
+    const zombie = host.connections.get("B")!;
+    zombie.clientInstanceId = "stable-instance";
+    zombie.connectionSeq = 10;
+    expect(focus("B")).toBe("ignored");
+    expect(coordinator.getPendingCandidate("s1")).toBe("D");
+
+    vi.advanceTimersByTime(1000);
+
+    expect(host.primaries.get("s1")).toBe("D");
+    expect(coordinator.getPendingCandidate("s1")).toBeNull();
+  });
+
+  it("ignores an older same-instance reassert even with fresher engagement", () => {
     const candidate = host.connections.get("B")!;
     candidate.clientInstanceId = "stable-instance";
     candidate.connectionSeq = 10;
-    candidate.lastFocusAt = 500;
     const primary = host.connections.get("C")!;
     primary.clientInstanceId = "stable-instance";
     primary.connectionSeq = 11;
@@ -452,9 +485,9 @@ describe("PrimaryPromotionCoordinator", () => {
     host.primaries.set("s1", "C");
     host.lastPromotionAt.set("s1", Date.now() - 1000);
 
-    expect(coordinator.requestPromotion("s1", "B", false, true)).toBe(
-      "ignored",
-    );
+    expect(focus("B", {}, () => 501)).toBe("ignored");
+    expect(candidate.lastFocusAt).toBe(501);
+    expect(focus("B", { reassert: true })).toBe("ignored");
     expect(host.primaries.get("s1")).toBe("C");
     expect(host.broadcasts).toHaveLength(0);
   });
