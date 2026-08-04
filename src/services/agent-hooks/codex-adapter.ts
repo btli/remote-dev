@@ -50,9 +50,7 @@ function isRemoteDevCommand(value: unknown): boolean {
   );
   const hasPayloadAwarePreToolDispatch =
     command.includes('_RDV_PAYLOAD=$(cat); _RDV_RC=127; ') &&
-    command.includes(
-      `printf '%s' "$_RDV_PAYLOAD" | rdv hook codex pre-tool-use`,
-    );
+    command.includes("rdv hook codex pre-tool-use");
   const isCurrentManagedShape =
     hasCurrentPreamble && (hasDirectDispatch || hasPayloadAwarePreToolDispatch);
   const isLegacyManagedShape = new RegExp(
@@ -189,17 +187,36 @@ function commandHook(event: string, fallbackStatus: string, timeout: number, sou
  * cannot erase request_user_input's waiting classification before curl retry.
  */
 function preToolUseHook(): HookGroup {
-  const attentionClassifier =
+  const fallbackClassifier =
+    'try{' +
     'const p=JSON.parse(require("fs").readFileSync(0,"utf8"));' +
-    'process.exit(["request_user_input","functions.request_user_input","AskUserQuestion"].includes(p.tool_name)?0:1)';
+    'const n=typeof p.tool_name==="string"?p.tool_name:"";' +
+    'const e=["Bash","unified_exec","local_shell","exec_command","functions.exec","functions.exec_command"].includes(n);' +
+    'if(e){console.log(JSON.stringify({hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:"Shell execution is paused because the rdv hook bridge failed and Git identity policy cannot be enforced; retry after Remote Dev is repaired."}}));process.exit(2)}' +
+    'process.exit(["request_user_input","functions.request_user_input","AskUserQuestion"].includes(n)?0:1)' +
+    '}catch(_){console.log(JSON.stringify({hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:"Git identity policy could not safely inspect this tool request because the rdv hook bridge failed."}}));process.exit(2)}';
+  const noRuntimeDenial = JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason:
+        "Git identity policy is unavailable because neither rdv nor a JSON runtime could inspect this tool request.",
+    },
+  });
   const command =
     DELIVERY_ID_PREAMBLE +
-    '_RDV_PAYLOAD=$(cat); _RDV_RC=127; ' +
-    `if command -v rdv >/dev/null 2>&1; then printf '%s' "$_RDV_PAYLOAD" | rdv hook codex pre-tool-use; _RDV_RC=$?; fi; ` +
+    '_RDV_PAYLOAD=$(cat); _RDV_RC=127; _RDV_OUT=; _RDV_HAS_DENIAL=0; ' +
+    `if command -v rdv >/dev/null 2>&1; then _RDV_OUT=$(printf '%s' "$_RDV_PAYLOAD" | rdv hook codex pre-tool-use); _RDV_RC=$?; fi; ` +
+    'if [ -n "$_RDV_OUT" ]; then case "$_RDV_OUT" in ' +
+    '*\'"permissionDecision":"deny"\'*) printf \'%s\\n\' "$_RDV_OUT"; _RDV_HAS_DENIAL=1 ;; ' +
+    '*) if [ "$_RDV_RC" -eq 0 ]; then printf \'%s\\n\' "$_RDV_OUT"; fi ;; esac; fi; ' +
     'if [ "$_RDV_RC" -ne 0 ]; then _RDV_FALLBACK_STATUS=running; _RDV_JSON_RUNTIME=; ' +
     'if command -v bun >/dev/null 2>&1; then _RDV_JSON_RUNTIME=bun; ' +
     'elif command -v node >/dev/null 2>&1; then _RDV_JSON_RUNTIME=node; fi; ' +
-    `if [ -n "$_RDV_JSON_RUNTIME" ]; then if printf '%s' "$_RDV_PAYLOAD" | "$_RDV_JSON_RUNTIME" -e '${attentionClassifier}'; then _RDV_FALLBACK_STATUS=waiting; fi; fi; ` +
+    'if [ "$_RDV_HAS_DENIAL" -eq 0 ]; then ' +
+    `if [ -n "$_RDV_JSON_RUNTIME" ]; then printf '%s' "$_RDV_PAYLOAD" | "$_RDV_JSON_RUNTIME" -e '${fallbackClassifier}'; _RDV_CLASS_RC=$?; ` +
+    'if [ "$_RDV_CLASS_RC" -eq 0 ]; then _RDV_FALLBACK_STATUS=waiting; fi; ' +
+    `else printf '%s\\n' '${noRuntimeDenial}'; fi; fi; ` +
     `${curlStatus("${_RDV_FALLBACK_STATUS}")}; fi # ${CODEX_HOOK_MARKER}`;
   return { hooks: [{ type: "command", command, timeout: 10 }] };
 }

@@ -114,17 +114,24 @@ function runUsageOauthOrphanCleanup(): void {
 async function ensureRdvCli(): Promise<void> {
   try {
     const { stdout } = await execFile("rdv", ["--version"]);
-    log.info("rdv CLI found", { version: stdout.trim() });
+    // Version output alone only proves that *some* rdv binary is on PATH. A
+    // rolling upgrade can leave an older binary that predates Codex hooks and
+    // silently routes every callback into fallback mode.
+    await execFile("rdv", ["hook", "codex", "--help"], { timeout: 10_000 });
+    log.info("rdv CLI found with Codex hook support", { version: stdout.trim() });
   } catch {
-    // rdv not found, try to install from local crate
+    // rdv is missing or stale; try to install the exact local crate.
     const cratePath = resolve(PROJECT_ROOT, "crates", "rdv");
     try {
-      log.info("rdv CLI not found, installing from crates/rdv/...");
+      log.info("rdv CLI missing Codex hook support, installing from crates/rdv/...");
       await execFile("cargo", ["install", "--path", cratePath], { timeout: 300_000 });
       const { stdout } = await execFile("rdv", ["--version"]);
-      log.info("rdv CLI installed", { version: stdout.trim() });
+      await execFile("rdv", ["hook", "codex", "--help"], { timeout: 10_000 });
+      log.info("rdv CLI installed with Codex hook support", { version: stdout.trim() });
     } catch {
-      log.warn("rdv CLI not available (cargo not found or build failed), hooks will use curl fallback");
+      log.warn(
+        "rdv CLI with Codex hook support is unavailable; lifecycle hooks will use the policy-safe curl fallback"
+      );
     }
   }
 }

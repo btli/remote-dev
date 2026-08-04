@@ -280,6 +280,127 @@ esac
     );
   });
 
+  it("fails closed for protected Git commands when the rdv bridge is stale", async () => {
+    const configRoot = await makeConfigRoot();
+    const binDir = join(configRoot, "bin");
+    const curlCapturePath = join(configRoot, "curl-args");
+    await mkdir(binDir, { recursive: true });
+    const scripts: Record<string, string> = {
+      rdv: "#!/bin/sh\ncat >/dev/null\nprintf 'unknown subcommand: codex\\n'\nexit 2\n",
+      uuidgen: "#!/bin/sh\nprintf delivery-policy-fallback\n",
+      tmux: "#!/bin/sh\nexit 1\n",
+      curl: `#!/bin/sh\nprintf '%s\\n' "$*" > "${curlCapturePath}"\n`,
+    };
+    await Promise.all(
+      Object.entries(scripts).map(async ([name, script]) => {
+        const path = join(binDir, name);
+        await writeFile(path, script);
+        await chmod(path, 0o755);
+      }),
+    );
+    await installCodexHooks(configRoot);
+    const parsed = JSON.parse(await readFile(join(configRoot, ".codex", "hooks.json"), "utf8")) as {
+      hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
+    };
+    const command = parsed.hooks.PreToolUse[0]!.hooks[0]!.command;
+    const env = {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      RDV_SESSION_ID: "session-1",
+      RDV_AGENT_GENERATION: "4",
+      RDV_API_KEY: "key-1",
+      RDV_TERMINAL_SOCKET: "",
+      RDV_TERMINAL_PORT: "7777",
+    };
+
+    for (const payload of [
+      { tool_name: "Bash", tool_input: { command: "git push" } },
+      {
+        tool_name: "functions.exec",
+        tool_input:
+          'const result = await tools.exec_command({cmd: "git -C /repo push"}); text(result.output);',
+      },
+    ]) {
+      const result = spawnSync("/bin/sh", ["-c", command], {
+        env,
+        input: JSON.stringify(payload),
+      });
+      expect(result.status).toBe(0);
+      const lines = result.stdout.toString().trim().split("\n");
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).not.toContain("unknown subcommand");
+      const output = JSON.parse(lines.at(-1)!) as {
+        hookSpecificOutput: Record<string, string>;
+      };
+      expect(output.hookSpecificOutput.permissionDecision).toBe("deny");
+      expect(output.hookSpecificOutput.permissionDecisionReason).toContain(
+        "Git identity policy",
+      );
+    }
+
+    const ordinary = spawnSync("/bin/sh", ["-c", command], {
+      env,
+      input: JSON.stringify({
+        tool_name: "mcp__example__forward",
+        tool_input: { value: "ordinary non-shell request" },
+      }),
+    });
+    expect(ordinary.status).toBe(0);
+    expect(ordinary.stdout.toString()).toBe("");
+    expect(await readFile(curlCapturePath, "utf8")).toContain(
+      "status=running&deliveryId=delivery-policy-fallback",
+    );
+  });
+
+  it("does not duplicate a structured denial emitted by a failing rdv bridge", async () => {
+    const configRoot = await makeConfigRoot();
+    const binDir = join(configRoot, "bin");
+    await mkdir(binDir, { recursive: true });
+    const denial = JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: "server policy denied this push",
+      },
+    });
+    const scripts: Record<string, string> = {
+      rdv: `#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '${denial}'\nexit 1\n`,
+      uuidgen: "#!/bin/sh\nprintf delivery-existing-denial\n",
+      tmux: "#!/bin/sh\nexit 1\n",
+      curl: "#!/bin/sh\nexit 0\n",
+    };
+    await Promise.all(
+      Object.entries(scripts).map(async ([name, script]) => {
+        const path = join(binDir, name);
+        await writeFile(path, script);
+        await chmod(path, 0o755);
+      }),
+    );
+    await installCodexHooks(configRoot);
+    const parsed = JSON.parse(await readFile(join(configRoot, ".codex", "hooks.json"), "utf8")) as {
+      hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
+    };
+    const result = spawnSync(
+      "/bin/sh",
+      ["-c", parsed.hooks.PreToolUse[0]!.hooks[0]!.command],
+      {
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+          RDV_SESSION_ID: "session-1",
+          RDV_AGENT_GENERATION: "4",
+          RDV_API_KEY: "key-1",
+          RDV_TERMINAL_SOCKET: "",
+          RDV_TERMINAL_PORT: "7777",
+        },
+        input: JSON.stringify({ tool_name: "Bash", tool_input: { command: "git push" } }),
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.toString().trim().split("\n")).toEqual([denial]);
+  });
+
   it("preserves user hooks and replaces only Remote Dev-owned entries", async () => {
     const configRoot = await makeConfigRoot();
     const codexDir = join(configRoot, ".codex");

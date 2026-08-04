@@ -144,6 +144,14 @@ describe("Claude lifecycle hook installation", () => {
     ["a non-object root", "[]\n"],
     ["a non-object hooks map", '{"hooks":[]}\n'],
     ["a malformed managed hook group", '{"hooks":{"Stop":"user-command"}}\n'],
+    [
+      "a hook group with a non-array handler list",
+      '{"hooks":{"Stop":[{"matcher":"user","hooks":"not-an-array"}]}}\n',
+    ],
+    [
+      "a hook group with a non-object handler",
+      '{"hooks":{"Stop":[{"hooks":["user-command"]}]}}\n',
+    ],
     ["a non-object MCP map", '{"mcpServers":[]}\n'],
   ])("leaves %s untouched and aborts repair", async (_label, original) => {
     const root = await mkdtemp(join(tmpdir(), "rdv-claude-install-"));
@@ -157,5 +165,44 @@ describe("Claude lifecycle hook installation", () => {
       "Claude settings.json",
     );
     await expect(readFile(settingsPath, "utf8")).resolves.toBe(original);
+  });
+
+  it("replaces a nested RDV handler without deleting user handlers in the same group", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rdv-claude-install-"));
+    tempDirs.push(root);
+    const claudeDir = join(root, ".claude");
+    const settingsPath = join(claudeDir, "settings.json");
+    await mkdir(claudeDir);
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        hooks: {
+          Stop: [
+            {
+              matcher: "mixed-user-group",
+              hooks: [
+                { type: "command", command: "run-user-cleanup" },
+                {
+                  type: "command",
+                  command: "if command -v rdv; then rdv hook claude stop; fi",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+
+    await installAgentHooks(root, "claude", {});
+    const settings = JSON.parse(await readFile(settingsPath, "utf8")) as {
+      hooks: { Stop: Array<{ matcher?: string; hooks: Array<{ command: string }> }> };
+    };
+    const userGroup = settings.hooks.Stop.find(
+      (group) => group.matcher === "mixed-user-group",
+    );
+    expect(userGroup?.hooks).toEqual([
+      { type: "command", command: "run-user-cleanup" },
+    ]);
+    expect(JSON.stringify(settings.hooks.Stop)).toContain("rdv hook claude stop");
   });
 });

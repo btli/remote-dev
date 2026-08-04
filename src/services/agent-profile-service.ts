@@ -668,27 +668,31 @@ const RDV_HOOK_DIRECT_MARKER = "rdv hook ";
 const LEGACY_ACTIVITY_HOOK_MARKER = "/internal/agent-status";
 const LEGACY_TODO_HOOK_MARKER = "/internal/agent-todos";
 
-/** Check if a hook entry is an RDV hook by inspecting its command field */
-function isRdvHook(entry: unknown, marker: string): boolean {
+/** Check if one concrete handler is RDV-owned by inspecting its command. */
+function isDirectRdvHook(entry: unknown, markers: string[]): boolean {
   if (typeof entry !== "object" || entry === null) return false;
   const obj = entry as Record<string, unknown>;
-  // Check top-level command field
-  if (typeof obj.command === "string" && obj.command.includes(marker)) return true;
-  // Check nested hooks array (the common structure)
-  if (Array.isArray(obj.hooks)) {
-    return obj.hooks.some(
-      (h: unknown) =>
-        typeof h === "object" && h !== null &&
-        typeof (h as Record<string, unknown>).command === "string" &&
-        ((h as Record<string, unknown>).command as string).includes(marker)
-    );
-  }
-  return false;
+  const command = obj.command;
+  return (
+    typeof command === "string" &&
+    markers.some((marker) => command.includes(marker))
+  );
 }
 
 /** Filter out RDV hooks matching any of the given markers (preserves user hooks) */
 function withoutRdvHooks(arr: unknown[], markers: string[]): unknown[] {
-  return arr.filter((entry) => !markers.some((m) => isRdvHook(entry, m)));
+  return arr.flatMap((entry) => {
+    if (isDirectRdvHook(entry, markers)) return [];
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      return [entry];
+    }
+    const group = entry as Record<string, unknown>;
+    if (!Array.isArray(group.hooks)) return [entry];
+    const hooks = group.hooks.filter((handler) => !isDirectRdvHook(handler, markers));
+    if (hooks.length === group.hooks.length) return [entry];
+    if (hooks.length === 0) return [];
+    return [{ ...group, hooks }];
+  });
 }
 
 /**
@@ -905,8 +909,55 @@ export async function installAgentHooks(
     if (!Array.isArray(groups)) {
       throw new Error(`Claude settings.json hook ${event} must be an array`);
     }
+    for (const [groupIndex, group] of groups.entries()) {
+      if (typeof group !== "object" || group === null || Array.isArray(group)) {
+        throw new Error(
+          `Claude settings.json hook ${event}[${groupIndex}] must be an object`,
+        );
+      }
+      const record = group as Record<string, unknown>;
+      if (record.matcher !== undefined && typeof record.matcher !== "string") {
+        throw new Error(
+          `Claude settings.json hook ${event}[${groupIndex}].matcher must be a string`,
+        );
+      }
+      if (!Array.isArray(record.hooks)) {
+        throw new Error(
+          `Claude settings.json hook ${event}[${groupIndex}].hooks must be an array`,
+        );
+      }
+      for (const [handlerIndex, handler] of record.hooks.entries()) {
+        if (
+          typeof handler !== "object" ||
+          handler === null ||
+          Array.isArray(handler)
+        ) {
+          throw new Error(
+            `Claude settings.json hook ${event}[${groupIndex}].hooks[${handlerIndex}] must be an object`,
+          );
+        }
+        const handlerRecord = handler as Record<string, unknown>;
+        if (typeof handlerRecord.type !== "string") {
+          throw new Error(
+            `Claude settings.json hook ${event}[${groupIndex}].hooks[${handlerIndex}].type must be a string`,
+          );
+        }
+        if (
+          handlerRecord.type === "command" &&
+          typeof handlerRecord.command !== "string"
+        ) {
+          throw new Error(
+            `Claude settings.json hook ${event}[${groupIndex}].hooks[${handlerIndex}].command must be a string`,
+          );
+        }
+      }
+    }
     return groups;
   };
+  // Validate every existing event before mutating any known RDV-managed event.
+  // This keeps launch-time repair byte-preserving for partially malformed user
+  // settings, including events Remote Dev does not currently install.
+  for (const event of Object.keys(existingHooks)) hookGroups(event);
   const hookMarkers = [RDV_HOOK_MARKER, RDV_HOOK_DIRECT_MARKER, LEGACY_ACTIVITY_HOOK_MARKER, LEGACY_TODO_HOOK_MARKER];
 
   const existingPreToolUse = hookGroups("PreToolUse");
