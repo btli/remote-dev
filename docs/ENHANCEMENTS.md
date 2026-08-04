@@ -31,10 +31,10 @@ Status vocabulary:
 |------------|-------|
 | Persistent tmux sessions | Multiple terminals backed by tmux; survive refreshes, disconnects, and server restarts. |
 | Suspend / resume | Detach and reattach with full scrollback. |
-| Multi-agent CLI support (5) | Claude Code, OpenAI Codex, Gemini CLI, Antigravity, OpenCode — installation detection, version checks, and per-provider config templates. Antigravity has no public installer and no session resume. |
-| Agent profiles & isolation | Fully isolated `HOME` + agent config directories per profile: own credentials, git identity, and appearance/theming; per-project profile binding. |
+| Multi-agent CLI support (6) | Claude Code, OpenAI Codex, Gemini CLI, Antigravity, OpenCode, Cursor — installation detection, version checks, and launch metadata. Antigravity has no public installer and no session resume. |
+| Agent profiles & isolation | Profiles overlay provider config, credentials, git identity, SSH, and appearance/theming without replacing `HOME`; Claude config and Cursor conversation history intentionally remain shared. Per-project profile binding is supported. |
 | Live status & exit handling | Agent sessions expose a running/exited/restarting state machine, exit codes, restart counts, and a custom exit screen. |
-| Session resume | Reattach to prior agent sessions for four of five providers (Antigravity relaunches fresh). |
+| Session resume | Automatic resume for Claude, Codex, Gemini, OpenCode, and Cursor. Cursor discovers matching conversations in its project-scoped chat index and relaunches with `agent --resume <id>`; Antigravity relaunches fresh. |
 | Claude usage-limit management | Per-profile 5h/7d limit state, **reactive** limit detection from terminal output, group-inherited primary + fallback pools with auto-rotation, and server-side auto-apply of the resolved profile at session creation. |
 | Recording & playback | Capture on desktop web; play recordings back on any client. |
 | Terminal types | Five session kinds — `shell`, `agent`, `file` (a real CodeMirror editor across many languages, path-jailed), `ssh` (tmux-backed remote shells), and `browser`. The `browser` type is functional but thin — screenshot-based (~1fps poll), click/type/navigate only (tracked under Partial). |
@@ -110,7 +110,7 @@ Works today, but with the specific gaps noted. Do not describe these as finished
 
 | Capability | Where it stands |
 |------------|-----------------|
-| Agent peer messaging | Durable **push + poll** delivery is wired **for Claude Code only** — an `rdv` MCP server is auto-registered and a hook polls as a fallback. Other agents (Codex, Gemini, OpenCode, Antigravity) get no automatic delivery and must pull messages with `rdv peer`. Delivery is **at-least-once with idempotent de-duplication** (not exactly-once). |
+| Agent peer messaging | Durable **push + poll** delivery is wired **for Claude Code only** — an `rdv` MCP server is auto-registered and a hook polls as a fallback. Other agents (Codex, Gemini, OpenCode, Antigravity, Cursor) get no automatic delivery and must pull messages with `rdv peer`. Delivery is **at-least-once with idempotent de-duplication** (not exactly-once). |
 | Session templates | Saves and restores only a session's **name and working directory**. Startup command is dropped; theme/font/icon are saved but never re-applied. |
 | Claude auto-relaunch on limit | Opt-in `auto` relaunch is real; `notify` mode raises a notification but the advertised inline "one-click relaunch" CTA is not wired on the client. |
 | Secrets | **Phase.dev only** (single provider), shelling out to a `phase` CLI. Known issue: profile-scoped secret injection can silently fall back to the environment due to a decrypt bug — flagged to engineering. |

@@ -1,11 +1,18 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+const logWarn = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/logger", () => ({
+  createLogger: () => ({ warn: logWarn }),
+}));
+
 // Mock the fs module the discovery uses for the generic (non-claude) path.
 const readdir = vi.fn();
+const readFile = vi.fn();
 const stat = vi.fn();
 vi.mock("node:fs/promises", () => ({
   readdir: (...args: unknown[]) => readdir(...args),
+  readFile: (...args: unknown[]) => readFile(...args),
   stat: (...args: unknown[]) => stat(...args),
 }));
 
@@ -23,8 +30,10 @@ import {
 
 beforeEach(() => {
   readdir.mockReset();
+  readFile.mockReset();
   stat.mockReset();
   listSessions.mockReset();
+  logWarn.mockReset();
 });
 
 describe("discoverLatestSessionId — generic providers", () => {
@@ -76,6 +85,135 @@ describe("discoverLatestSessionId — generic providers", () => {
     );
     const id = await discoverLatestSessionId("codex", "/proj", { CODEX_HOME: "/c" });
     expect(id).toBe("good-id-1");
+  });
+});
+
+describe("Cursor project-scoped chat-index discovery", () => {
+  it("finds matching conversations across Cursor workspace buckets, newest first", async () => {
+    const projectPath = "/Users/dev/my repo/.worktrees/task";
+    readdir.mockImplementation((path: string) => {
+      if (path === "/cursor-data/chats") {
+        return Promise.resolve(["workspace-a", "workspace-b"]);
+      }
+      if (path === "/cursor-data/chats/workspace-a") {
+        return Promise.resolve([
+          "old-chat",
+          "new-chat",
+          "wrong-cwd",
+          "empty-chat",
+          "unsafe;chat",
+        ]);
+      }
+      if (path === "/cursor-data/chats/workspace-b") {
+        return Promise.resolve(["other-workspace-chat"]);
+      }
+      return Promise.reject(new Error(`unexpected readdir: ${path}`));
+    });
+    readFile.mockImplementation((path: string) => {
+      const metadata = path.includes("new-chat")
+        ? { cwd: projectPath, hasConversation: true, updatedAtMs: 2000 }
+        : path.includes("old-chat")
+          ? { cwd: projectPath, hasConversation: true, updatedAtMs: 1000 }
+          : path.includes("other-workspace-chat")
+            ? { cwd: projectPath, hasConversation: true, updatedAtMs: 1500 }
+            : path.includes("wrong-cwd")
+              ? { cwd: "/another/project", hasConversation: true, updatedAtMs: 3000 }
+              : { cwd: projectPath, hasConversation: false, updatedAtMs: 4000 };
+      return Promise.resolve(JSON.stringify(metadata));
+    });
+
+    const list = await listSessionIds(
+      "cursor",
+      projectPath,
+      { CURSOR_DATA_DIR: "/cursor-data" },
+      3,
+    );
+
+    expect(readdir).toHaveBeenCalledWith("/cursor-data/chats");
+    expect(readFile).toHaveBeenCalledWith(
+      "/cursor-data/chats/workspace-a/new-chat/meta.json",
+      "utf8",
+    );
+    expect(readFile).not.toHaveBeenCalledWith(
+      "/cursor-data/chats/workspace-a/unsafe;chat/meta.json",
+      "utf8",
+    );
+    expect(list.map((entry) => entry.sessionId)).toEqual([
+      "new-chat",
+      "other-workspace-chat",
+      "old-chat",
+    ]);
+    expect(logWarn).not.toHaveBeenCalled();
+  });
+
+  it("warns when every discovered chat uses unreadable or unknown metadata", async () => {
+    readdir.mockImplementation((path: string) =>
+      Promise.resolve(path === "/cursor-data/chats" ? ["opaque-bucket"] : ["chat-1"]),
+    );
+    readFile.mockResolvedValue(JSON.stringify({ project: "/proj", resumable: true }));
+
+    await expect(
+      listSessionIds("cursor", "/proj", { CURSOR_DATA_DIR: "/cursor-data" }),
+    ).resolves.toEqual([]);
+    expect(logWarn).toHaveBeenCalledWith(
+      "Cursor chat metadata was unreadable or had an unknown schema",
+      { candidateCount: 1 },
+    );
+  });
+
+  it("rejects unsafe Cursor chat directory names", async () => {
+    readdir.mockImplementation((path: string) =>
+      Promise.resolve(path === "/cursor-data/chats" ? ["workspace-a"] : ["bad;chat"]),
+    );
+
+    await expect(
+      discoverLatestSessionId("cursor", "/project", {
+        CURSOR_DATA_DIR: "/cursor-data",
+      }),
+    ).resolves.toBeNull();
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it("does not apply shell-id filtering to opaque workspace bucket names", async () => {
+    readdir.mockImplementation((path: string) =>
+      Promise.resolve(path === "/cursor-data/chats" ? ["workspace%2Fhash=+"] : ["safe-chat"]),
+    );
+    readFile.mockResolvedValue(
+      JSON.stringify({ cwd: "/project", hasConversation: true, updatedAtMs: 42 }),
+    );
+
+    await expect(
+      discoverLatestSessionId("cursor", "/project", {
+        CURSOR_DATA_DIR: "/cursor-data",
+      }),
+    ).resolves.toBe("safe-chat");
+    expect(readFile).toHaveBeenCalledWith(
+      "/cursor-data/chats/workspace%2Fhash=+/safe-chat/meta.json",
+      "utf8",
+    );
+  });
+
+  it("falls back from an out-of-range metadata timestamp without dropping valid chats", async () => {
+    readdir.mockImplementation((path: string) =>
+      Promise.resolve(path === "/cursor-data/chats" ? ["workspace"] : ["bad-time", "good"]),
+    );
+    readFile.mockImplementation((path: string) =>
+      Promise.resolve(
+        JSON.stringify({
+          cwd: "/project",
+          hasConversation: true,
+          updatedAtMs: path.includes("bad-time") ? Number.MAX_VALUE : 2000,
+        }),
+      ),
+    );
+    stat.mockResolvedValue({ mtimeMs: 1000 });
+
+    await expect(
+      listSessionIds("cursor", "/project", { CURSOR_DATA_DIR: "/cursor-data" }),
+    ).resolves.toEqual([
+      { sessionId: "good", lastModified: new Date(2000).toISOString() },
+      { sessionId: "bad-time", lastModified: new Date(1000).toISOString() },
+    ]);
   });
 });
 

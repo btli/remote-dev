@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Folder, Github, Terminal, ChevronRight, Loader2, Sparkles, GitBranch, FileBox, Clock, Fingerprint, MessageCircle, Briefcase, Server } from "lucide-react";
+import { Folder, Github, Terminal, ChevronRight, Loader2, Sparkles, GitBranch, FileBox, Clock, Fingerprint, MessageCircle, Briefcase, Server, MousePointer2 } from "lucide-react";
 import { PathInput } from "@/components/common";
 import { ProfileSelector } from "@/components/profiles/ProfileSelector";
 import { ProjectPickerCombobox } from "./ProjectPickerCombobox";
@@ -23,7 +23,14 @@ import { cn } from "@/lib/utils";
 import { RepositoryPicker } from "@/components/github/RepositoryPicker";
 import { BranchPicker } from "@/components/github/BranchPicker";
 import type { GitHubRepository, GitHubBranch } from "@/types/github";
-import { AGENT_PRESETS, WORKTREE_TYPES, type AgentPreset, type WorktreeType } from "@/types/session";
+import {
+  AGENT_PRESETS,
+  LOOP_AGENT_PROVIDERS,
+  WORKTREE_TYPES,
+  type AgentPreset,
+  type AgentProviderType,
+  type WorktreeType,
+} from "@/types/session";
 import {
   Select,
   SelectContent,
@@ -51,7 +58,7 @@ interface NewSessionWizardProps {
     // Terminal type for plugin-based rendering
     terminalType?: "shell" | "agent" | "ssh" | "file" | "loop";
     // Agent-aware session fields
-    agentProvider?: "claude" | "codex" | "gemini" | "opencode" | "none";
+    agentProvider?: AgentProviderType;
     autoLaunchAgent?: boolean;
     agentFlags?: string[];
     worktreeType?: WorktreeType;
@@ -75,7 +82,7 @@ type WizardStep =
   | "save-template"
   | "loop-form"
   | "ssh-form";
-type SessionType = "simple" | "github" | "folder" | "feature" | "template" | "loop" | "ssh";
+type SessionType = "simple" | "agent" | "github" | "folder" | "feature" | "template" | "loop" | "ssh";
 
 export function NewSessionWizard({
   open,
@@ -180,7 +187,7 @@ export function NewSessionWizard({
   const [loopName, setLoopName] = useState("");
   const [loopProjectPath, setLoopProjectPath] = useState("");
   const [loopType, setLoopType] = useState<"conversational" | "monitoring">("conversational");
-  const [loopAgent, setLoopAgent] = useState<"claude" | "codex" | "gemini" | "opencode">("claude");
+  const [loopAgent, setLoopAgent] = useState<(typeof LOOP_AGENT_PROVIDERS)[number]>("claude");
   const [loopIntervalMinutes, setLoopIntervalMinutes] = useState(5);
   const [loopPromptTemplate, setLoopPromptTemplate] = useState("");
 
@@ -274,7 +281,7 @@ export function NewSessionWizard({
 
   const handleTypeSelect = (type: SessionType) => {
     setSessionType(type);
-    if (type === "simple" || type === "folder") {
+    if (type === "simple" || type === "agent" || type === "folder") {
       setStep("simple-form");
     } else if (type === "feature") {
       setStep("feature-form");
@@ -384,10 +391,14 @@ export function NewSessionWizard({
 
     try {
       await onCreate({
-        name: sessionName || "Terminal",
-        projectPath: projectPath || undefined,
+        name: sessionName || (sessionType === "agent" ? "Cursor" : "Terminal"),
+        projectPath:
+          sessionType === "folder" ? projectPath || undefined : undefined,
         profileId: selectedProfileId || undefined,
         projectId: selectedProjectId || undefined,
+        terminalType: sessionType === "agent" ? "agent" : undefined,
+        agentProvider: sessionType === "agent" ? "cursor" : undefined,
+        autoLaunchAgent: sessionType === "agent" ? true : undefined,
       });
       handleClose();
     } catch (err) {
@@ -491,7 +502,7 @@ export function NewSessionWizard({
         worktreeType: featureCreateWorktree ? worktreeType : undefined,
         profileId: selectedProfileId || undefined,
         terminalType: "agent",
-        agentProvider: selectedAgent as "claude" | "codex" | "gemini" | "opencode",
+        agentProvider: selectedAgent as AgentProviderType,
         autoLaunchAgent: true,
       });
       handleClose();
@@ -504,14 +515,17 @@ export function NewSessionWizard({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[500px] bg-popover/95 backdrop-blur-xl border-border">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-hidden sm:max-w-[500px] bg-popover/95 backdrop-blur-xl border-border">
         <DialogHeader>
           <DialogTitle className="text-xl font-semibold text-foreground">
             New Terminal Session
           </DialogTitle>
           <DialogDescription className="text-muted-foreground">
             {step === "choose-type" && "Choose how to start your session"}
-            {step === "simple-form" && "Configure your terminal session"}
+            {step === "simple-form" &&
+              (sessionType === "agent"
+                ? "Configure your Cursor agent session"
+                : "Configure your terminal session")}
             {step === "github-repo" && "Select a GitHub repository"}
             {step === "github-branch" && `Choose a branch for ${selectedRepo?.name}`}
             {step === "github-confirm" && "Review and create your session"}
@@ -523,7 +537,10 @@ export function NewSessionWizard({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="mt-4">
+        <div
+          className="mt-4 min-h-0 overflow-y-auto"
+          data-testid="new-session-scroll"
+        >
           {/* Step 1: Choose Type */}
           {step === "choose-type" && (
             <div className="grid gap-3">
@@ -532,6 +549,12 @@ export function NewSessionWizard({
                 title="Quick Start"
                 description="Open a new terminal in your home directory"
                 onClick={() => handleTypeSelect("simple")}
+              />
+              <SessionTypeCard
+                icon={<MousePointer2 className="w-5 h-5" />}
+                title="Cursor Agent"
+                description="Launch Cursor's agent TUI in this project"
+                onClick={() => handleTypeSelect("agent")}
               />
               <SessionTypeCard
                 icon={<Folder className="w-5 h-5" />}
@@ -647,7 +670,7 @@ export function NewSessionWizard({
                   id="session-name"
                   value={sessionName}
                   onChange={(e) => setSessionName(e.target.value)}
-                  placeholder="Terminal"
+                  placeholder={sessionType === "agent" ? "Cursor" : "Terminal"}
                   className="bg-card/50 border-border focus:border-primary"
                 />
               </div>
@@ -1128,8 +1151,8 @@ export function NewSessionWizard({
               {/* Agent provider */}
               <div className="space-y-2">
                 <Label className="text-sm font-medium">Agent</Label>
-                <div className="grid grid-cols-4 gap-2">
-                  {(["claude", "codex", "gemini", "opencode"] as const).map((agent) => (
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                  {LOOP_AGENT_PROVIDERS.map((agent) => (
                     <button
                       key={agent}
                       type="button"

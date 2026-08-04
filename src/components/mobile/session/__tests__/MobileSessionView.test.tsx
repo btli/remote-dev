@@ -27,8 +27,11 @@ import type { TerminalSession } from "@/types/session";
 
 type StubProps = {
   mobileChrome?: string;
+  mobileInputElement?: HTMLTextAreaElement | null;
   fontSize?: number;
   fontFamily?: string;
+  isActive?: boolean;
+  visible?: boolean;
   onStatusChange?: (s: string) => void;
   onAgentExited?: (code: number | null, at: string) => void;
   onAgentRestarted?: () => void;
@@ -102,11 +105,21 @@ vi.mock("@/components/mobile/session/SmartKeyStrip", () => ({
 
 // MobileInputBar: capture onSubmit so we can simulate a submit.
 let capturedInputBarOnSubmit: ((data: string) => void) | null = null;
+function setCapturedInputBarOnSubmit(
+  onSubmit: (data: string) => void,
+) {
+  capturedInputBarOnSubmit = onSubmit;
+}
 vi.mock("@/components/terminal/MobileInputBar", () => ({
-  MobileInputBar: ({ onSubmit }: { onSubmit: (data: string) => void }) => {
-    capturedInputBarOnSubmit = onSubmit;
-    return <div data-testid="stub-input-bar" />;
-  },
+  MobileInputBar: React.forwardRef<
+    HTMLTextAreaElement,
+    { onSubmit: (data: string) => void }
+  >(function StubMobileInputBar({ onSubmit }, ref) {
+    React.useLayoutEffect(() => {
+      setCapturedInputBarOnSubmit(onSubmit);
+    }, [onSubmit]);
+    return <textarea ref={ref} data-testid="stub-input-bar" />;
+  }),
 }));
 
 // usePinchZoom: expose handlers so we can drive a font-size change.
@@ -231,6 +244,16 @@ describe("MobileSessionView, renderer wiring", () => {
     renderView({ initialFontSize: 14 });
     const stub = screen.getByTestId("stub-terminal-with-keyboard");
     expect(stub.getAttribute("data-mobile-chrome")).toBe("external");
+  });
+
+  it("presents the shared terminal for mobile PWA clipboard eligibility", () => {
+    renderView({ initialFontSize: 14 });
+
+    expect(capturedProps?.isActive).toBe(true);
+    expect(capturedProps?.visible).toBe(true);
+    expect(capturedProps?.mobileInputElement).toBe(
+      screen.getByTestId("stub-input-bar"),
+    );
   });
 
   it("forwards fontSize and fontFamily props to TerminalWithKeyboard", () => {

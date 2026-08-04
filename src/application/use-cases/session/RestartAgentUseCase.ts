@@ -24,9 +24,10 @@ import {
   NoopAgentResumeResolver,
 } from "@/application/ports/AgentResumeResolver";
 import { EntityNotFoundError, InvalidStateTransitionError } from "@/domain/errors/DomainError";
-import { AGENT_PROVIDERS } from "@/types/session";
-import { buildAgentCommand } from "@/lib/terminal-plugins/agent-utils";
+import { AGENT_PROVIDERS, type AgentProviderType } from "@/types/session";
+import { buildAgentCommand, quoteShellArg } from "@/lib/terminal-plugins/agent-utils";
 import { createLogger } from "@/lib/logger";
+import { TmuxEnvironment } from "@/domain/value-objects/TmuxEnvironment";
 
 const log = createLogger("RestartAgent");
 
@@ -41,6 +42,18 @@ export interface RestartAgentOutput {
   /** [hgwo] true when the agent was relaunched with a resume flag/argv. */
   resumed: boolean;
 }
+
+export type AgentProviderExecutableResolver = (
+  provider: Exclude<AgentProviderType, "none">,
+  command: string,
+  env?: NodeJS.ProcessEnv,
+  cwd?: string,
+) => Promise<string | null>;
+
+const rejectUnverifiedGenericProvider: AgentProviderExecutableResolver = async (
+  provider,
+  command,
+) => provider === "cursor" ? null : command;
 
 /**
  * Error thrown when agent restart fails.
@@ -68,7 +81,11 @@ export class RestartAgentUseCase {
     // into resume flags so the conversation comes back, not a fresh agent.
     // Optional + defaults to a no-op resolver so legacy 2-arg construction
     // (and tests) keep the prior fresh-relaunch behavior.
-    private readonly resumeResolver: AgentResumeResolver = new NoopAgentResumeResolver()
+    private readonly resumeResolver: AgentResumeResolver = new NoopAgentResumeResolver(),
+    // Production injects the live executable fingerprint check. Legacy
+    // callers remain source-compatible, but the default fails closed for the
+    // generic Cursor command while allowing provider-specific executable names.
+    private readonly resolveProviderExecutable: AgentProviderExecutableResolver = rejectUnverifiedGenericProvider,
   ) {}
 
   async execute(input: RestartAgentInput): Promise<RestartAgentOutput> {
@@ -83,7 +100,10 @@ export class RestartAgentUseCase {
     }
 
     // Validate it's an agent session
-    if (session.terminalType !== "agent") {
+    if (
+      session.terminalType !== "agent" &&
+      session.terminalType !== "loop"
+    ) {
       throw new RestartAgentError(
         `Session ${input.sessionId} is not an agent session (type: ${session.terminalType})`,
         "NOT_AGENT_SESSION",
@@ -144,11 +164,73 @@ export class RestartAgentUseCase {
       const provider =
         AGENT_PROVIDERS.find((p) => p.id === (session.agentProvider ?? "claude")) ??
         AGENT_PROVIDERS.find((p) => p.id === "claude")!;
-      const resolution = await this.resumeResolver.resolveResume(session);
+      if (provider.id === "none") {
+        throw new Error("Agent session has no runnable provider");
+      }
+
+      const binding = session.typeMetadata?.resumeBinding as
+        | { env?: Record<string, string>; executablePath?: string }
+        | undefined;
+      let tmuxEnv: Record<string, string> = {};
+      try {
+        tmuxEnv = (await this.tmuxGateway.getEnvironment(tmuxName)).toRecord();
+      } catch (error) {
+        log.warn("Failed to read tmux environment before agent restart", {
+          sessionId: input.sessionId,
+          error: String(error),
+        });
+      }
+      const launchEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        ...(binding?.env ?? {}),
+        ...tmuxEnv,
+      };
+      const discoveryEnv = Object.fromEntries(
+        Object.entries(launchEnv).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
+      );
+      const executable = await this.resolveProviderExecutable(
+        provider.id,
+        provider.id === "cursor" && binding?.executablePath
+          ? binding.executablePath
+          : provider.command,
+        launchEnv,
+        session.projectPath ?? process.cwd(),
+      );
+      if (!executable) {
+        throw new Error(`Executable '${provider.command}' is not the Cursor Agent CLI`);
+      }
+
+      // A process-level Cursor data-root override participates in discovery
+      // even when it was not persisted in the original binding. Mirror it into
+      // tmux before relaunch so the resumed CLI reads the same chat index.
+      const cursorDataDir = discoveryEnv.CURSOR_DATA_DIR;
+      if (
+        provider.id === "cursor" &&
+        cursorDataDir &&
+        tmuxEnv.CURSOR_DATA_DIR !== cursorDataDir
+      ) {
+        await this.tmuxGateway.setEnvironment(
+          tmuxName,
+          TmuxEnvironment.create({ CURSOR_DATA_DIR: cursorDataDir }),
+        );
+      }
+
+      const resolution = await this.resumeResolver.resolveResume(session, discoveryEnv);
       resumed = Boolean(resolution);
-      const agentCommand = resolution?.argvOverride
+      const baseAgentCommand = resolution?.argvOverride
         ? resolution.argvOverride.join(" ") // e.g. "codex resume <id>"
-        : buildAgentCommand(provider, resolution?.resumeFlags ?? [], false);
+        : buildAgentCommand(
+            provider,
+            resolution?.resumeFlags ?? [],
+            false,
+            provider.id === "cursor" ? executable : undefined,
+          );
+      const agentCommand =
+        provider.id === "cursor" && cursorDataDir
+          ? `CURSOR_DATA_DIR=${quoteShellArg(cursorDataDir)} ${baseAgentCommand}`
+          : baseAgentCommand;
       log.info("Relaunching agent (HTTP restart)", {
         sessionId: input.sessionId,
         provider: provider.id,

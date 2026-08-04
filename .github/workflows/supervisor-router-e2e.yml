@@ -11,7 +11,7 @@
 #   • a LIVE WebSocket terminal over /<slug>/ws (the §15 M5 exit criterion).
 #
 # Harness: deploy/k8s/supervisor/e2e/ (docker-compose.yml + run.sh + smoke.ts +
-# seed-instances.ts). The instance dev-env image is heavy (5 agent CLIs), so the
+# seed-instances.ts). The instance dev-env image is heavy (6 agent CLIs), so the
 # build dominates wall time; GHA layer cache keeps re-runs fast.
 #
 # SCOPE: build into the LOCAL daemon (`--load`) and smoke-test only — this never

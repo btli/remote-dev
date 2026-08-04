@@ -1156,9 +1156,24 @@ GET  /api/agent-cli/status?provider=…   # [session] installation status of all
 POST /api/agent-cli/status              # [session] verify CLI execution with environment
 ```
 
-Returns version, resolved path, and install instructions for each supported
-agent CLI (Claude Code, Codex, Gemini, OpenCode). The `POST` form runs a live
-verification of a CLI with a given environment.
+`GET` accepts `provider=all` (or no provider) for the full roster, or one of
+`claude`, `codex`, `gemini`, `antigravity`, `opencode`, and `cursor`. It returns
+the resolved command/path, installed state, version when available, install
+instructions for missing CLIs, documentation URL, and required environment
+variables. Unknown providers return `400`.
+
+`POST` accepts `{ provider, env? }` and runs a live execution check. Cursor uses
+the bare `agent` command and has no required environment variables because
+browser authentication is supported; callers may still supply
+`CURSOR_API_KEY` in `env` for headless verification.
+
+Because `agent` is a generic executable name, Remote Dev resolves its exact
+absolute target and fingerprints that executable with `--help`. The output must
+identify Cursor Agent; the retained path is then used for initial launch, HTTP
+restart, and tmux recreate so aliases, functions, or later PATH changes cannot
+swap in a different `agent`. Resume-token support is a separate startup
+diagnostic for CLI version drift. The returned Cursor documentation URL is
+`https://cursor.com/docs/cli/overview`.
 
 ---
 
@@ -1214,7 +1229,7 @@ profile-isolated equivalent). `projectPath` required; `limit` default 20, max 50
 ## Resumable agent sessions (all providers)
 
 ```http
-GET /api/agent/sessions?provider=…&projectPath=…&profileId=…&limit=20
+GET /api/agent/sessions?provider=…&projectPath=…&projectId=…&profileId=…&limit=20
 ```
 
 **[session | key]**. Provider-generic generalization of
@@ -1225,15 +1240,22 @@ Query params:
 
 | Param | Required | Notes |
 |-------|----------|-------|
-| `provider` | yes | One of `claude` \| `codex` \| `gemini` \| `opencode`. `antigravity` and `none` are rejected `400 INVALID_PROVIDER` (no resume support). |
+| `provider` | yes | One of `claude` \| `codex` \| `gemini` \| `opencode` \| `cursor`. `antigravity` and `none` are rejected `400 INVALID_PROVIDER` (no resume support). |
 | `projectPath` | yes | Absolute path of the project directory; otherwise `400 INVALID_PROJECT_PATH`. |
-| `profileId` | no | Agent profile ID; scopes discovery to that profile's isolated CLI home dir. |
+| `projectId` | no | Project UUID used to apply inherited folder environment during discovery. This lets Cursor honor a project-level `CURSOR_DATA_DIR`; callers that omit it use only process-level environment. |
+| `profileId` | no | Agent profile ID; scopes Codex/Gemini/OpenCode discovery to that profile's isolated CLI home. Ignored for Claude and Cursor, whose conversation histories use shared real-home data roots. |
 | `limit` | no | Default 20, clamped to 1–50. |
 
 Response: `{ provider, sessions: ResumableSessionSummary[] }`. Claude entries
 carry rich previews (first message + git branch) from their `.jsonl` history;
-`codex`/`gemini`/`opencode` entries return id + timestamp from disk discovery
-(no preview).
+`codex`/`gemini`/`opencode` entries return id + timestamp from flat-file disk
+discovery (no preview). Cursor also returns id + timestamp by scanning
+`~/.cursor/chats/<workspace-hash>/<chat-id>/meta.json` (or the equivalent under
+`CURSOR_DATA_DIR`) and selecting resumable conversations whose `cwd` matches the
+requested project. `CURSOR_DATA_DIR` may come from the server process or the
+inherited environment for `projectId`; the project value wins. Cursor profile
+config/XDG overlays do not relocate this chat index, so supplying `profileId`
+does not change Cursor discovery.
 
 ---
 

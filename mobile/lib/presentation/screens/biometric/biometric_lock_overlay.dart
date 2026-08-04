@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../application/ports/biometric_port.dart';
+import '../../../application/state/clipboard_access_readiness_provider.dart';
 import '../../../domain/biometric_settings.dart';
 import '../../../infrastructure/biometric/biometric_settings_store.dart';
 import 'biometric_lock_screen.dart';
@@ -72,50 +73,98 @@ class _BiometricLockOverlayState extends ConsumerState<BiometricLockOverlay>
   // cancel/failure the user retries via the button — auto-looping would
   // re-present the sheet the instant they cancel and trap them.
   bool _autoPrompted = false;
+  // Invalidates asynchronous settings decisions whenever lifecycle state
+  // changes. Authentication itself is deliberately not bound to this epoch:
+  // the OS biometric sheet causes its own inactive/resumed churn while the
+  // same valid prompt remains in flight.
+  int _policyGeneration = 0;
+  late final ClipboardAccessReadinessNotifier _clipboardReadiness;
 
   @override
   void initState() {
     super.initState();
+    _clipboardReadiness = ref.read(clipboardAccessReadyProvider.notifier);
+    // Cold start is fail-closed until secure biometric settings resolve.
+    _clipboardReadiness.markUnavailable();
     WidgetsBinding.instance.addObserver(this);
     _checkColdStart();
   }
 
   @override
   void dispose() {
+    _clipboardReadiness.markUnavailable();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
   Future<void> _checkColdStart() async {
-    final settings = await ref.read(biometricSettingsStoreProvider).load();
-    if (!mounted) return;
+    final expectedGeneration = _policyGeneration;
+    BiometricSettings settings;
+    try {
+      settings = await ref.read(biometricSettingsStoreProvider).load();
+    } catch (_) {
+      // Secure settings failures remain fail-closed for clipboard access.
+      return;
+    }
+    if (!_isCurrentPolicyGeneration(expectedGeneration)) return;
     if (settings.enabled && settings.requireOnColdStart) {
-      await _lock();
+      await _lock(expectedGeneration);
+    } else {
+      _markClipboardReadyIfForeground(
+        expectedPolicyGeneration: expectedGeneration,
+      );
     }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _maybeLockOnResume();
+    // Revoke synchronously before any asynchronous grace/settings/auth work.
+    _policyGeneration += 1;
+    _clipboardReadiness.markUnavailable();
+    if (state != AppLifecycleState.resumed) {
+      return;
     }
+    _maybeLockOnResume();
   }
 
   Future<void> _maybeLockOnResume() async {
+    final expectedGeneration = _policyGeneration;
     // Ignore the resume the biometric sheet itself triggers while a prompt is
     // up, and don't re-present over a lock the user is already retrying.
     if (_authInProgress || _locked) return;
-    final settings = await ref.read(biometricSettingsStoreProvider).load();
-    if (!mounted) return;
-    if (!settings.enabled) return;
+    BiometricSettings settings;
+    try {
+      settings = await ref.read(biometricSettingsStoreProvider).load();
+    } catch (_) {
+      return;
+    }
+    if (!_isCurrentPolicyGeneration(expectedGeneration)) return;
+    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      return;
+    }
+    if (!settings.enabled) {
+      _markClipboardReadyIfForeground(
+        expectedPolicyGeneration: expectedGeneration,
+      );
+      return;
+    }
     final elapsed = DateTime.now().difference(_lastUnlock);
     if (elapsed.inSeconds >= settings.gracePeriodSeconds) {
-      await _lock();
+      await _lock(expectedGeneration);
+    } else {
+      _markClipboardReadyIfForeground(
+        expectedPolicyGeneration: expectedGeneration,
+      );
     }
   }
 
   /// Engage the lock and immediately present the OS prompt (once per episode).
-  Future<void> _lock() async {
+  Future<void> _lock(int expectedPolicyGeneration) async {
+    if (!_isCurrentPolicyGeneration(expectedPolicyGeneration)) return;
+    _clipboardReadiness.markUnavailable();
+    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      return;
+    }
     if (!_locked) {
       setState(() {
         _locked = true;
@@ -131,11 +180,13 @@ class _BiometricLockOverlayState extends ConsumerState<BiometricLockOverlay>
 
   Future<void> _authenticate() async {
     if (_authInProgress) return;
+    _clipboardReadiness.markUnavailable();
     _authInProgress = true;
     // Clear any previous error before a retry so the user gets fresh feedback.
     if (_lastError != null) {
       setState(() => _lastError = null);
     }
+    var unlocked = false;
     try {
       final port = ref.read(biometricPortProvider);
       final ok = await port.authenticate();
@@ -147,6 +198,7 @@ class _BiometricLockOverlayState extends ConsumerState<BiometricLockOverlay>
           _lastError = null;
           _autoPrompted = false;
         });
+        unlocked = true;
       } else {
         // Surface silent failures (canceled prompt, not-enrolled, etc.) so the
         // user knows the lock is intentional. We render inline rather than via
@@ -155,6 +207,24 @@ class _BiometricLockOverlayState extends ConsumerState<BiometricLockOverlay>
       }
     } finally {
       _authInProgress = false;
+      if (unlocked) _markClipboardReadyIfForeground();
+    }
+  }
+
+  bool _isCurrentPolicyGeneration(int expected) {
+    return mounted && expected == _policyGeneration;
+  }
+
+  void _markClipboardReadyIfForeground({int? expectedPolicyGeneration}) {
+    if (expectedPolicyGeneration != null &&
+        !_isCurrentPolicyGeneration(expectedPolicyGeneration)) {
+      return;
+    }
+    if (mounted &&
+        !_locked &&
+        !_authInProgress &&
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+      _clipboardReadiness.markReady();
     }
   }
 

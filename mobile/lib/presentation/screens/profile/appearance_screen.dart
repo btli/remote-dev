@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../application/state/appearance_provider.dart';
+import '../../../application/state/clipboard_sync_provider.dart';
 import '../../../domain/appearance_settings.dart';
 
 /// Tokyo Night palette anchors used across the appearance screen.
@@ -19,6 +20,8 @@ class AppearanceScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(appearanceSettingsProvider);
     final notifier = ref.read(appearanceSettingsProvider.notifier);
+    final clipboardSyncEnabled = ref.watch(clipboardSyncProvider);
+    final clipboardSyncNotifier = ref.read(clipboardSyncProvider.notifier);
 
     return Scaffold(
       backgroundColor: _bg,
@@ -58,6 +61,16 @@ class AppearanceScreen extends ConsumerWidget {
             description: 'Blink the terminal cursor.',
             value: settings.cursorBlink,
             onChanged: notifier.setCursorBlink,
+          ),
+          const SizedBox(height: 8),
+          const _SectionHeader(label: 'Clipboard'),
+          _SwitchTile(
+            key: const Key('clipboard.syncEnabled'),
+            icon: Icons.content_paste_go_outlined,
+            label: 'Clipboard sync',
+            description: 'Share clipboard text with the active remote session.',
+            value: clipboardSyncEnabled,
+            onChanged: clipboardSyncNotifier.setEnabled,
           ),
         ],
       ),
@@ -197,15 +210,17 @@ class _TerminalFontSizeTile extends StatelessWidget {
               key: const Key('appearance.terminalFontSize'),
               min: AppearanceSettings.minTerminalFontSize.toDouble(),
               max: AppearanceSettings.maxTerminalFontSize.toDouble(),
-              divisions: AppearanceSettings.maxTerminalFontSize -
+              divisions:
+                  AppearanceSettings.maxTerminalFontSize -
                   AppearanceSettings.minTerminalFontSize, // 13 steps (9→22)
               label: '${value}px',
-              value: value
-                  .clamp(
-                    AppearanceSettings.minTerminalFontSize,
-                    AppearanceSettings.maxTerminalFontSize,
-                  )
-                  .toDouble(),
+              value:
+                  value
+                      .clamp(
+                        AppearanceSettings.minTerminalFontSize,
+                        AppearanceSettings.maxTerminalFontSize,
+                      )
+                      .toDouble(),
               onChanged: (v) => onChanged(v.round()),
             ),
           ),

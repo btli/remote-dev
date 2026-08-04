@@ -27,6 +27,8 @@ interface ResumeSessionModalProps {
   open: boolean;
   onClose: () => void;
   projectPath: string;
+  /** Project whose inherited environment should scope discovery. */
+  projectId?: string;
   /** Which agent's prior sessions to discover. Defaults to Claude. */
   provider?: AgentProviderType;
   profileId?: string;
@@ -38,6 +40,7 @@ export function ResumeSessionModal({
   open,
   onClose,
   projectPath,
+  projectId,
   provider = "claude",
   profileId,
   onResume,
@@ -72,10 +75,11 @@ export function ResumeSessionModal({
           projectPath,
           limit: String(limit),
         });
+        if (projectId) params.set("projectId", projectId);
         if (profileId) params.set("profileId", profileId);
 
         // Generic multi-provider discovery (Claude keeps its rich previews;
-        // codex/gemini/opencode return id + timestamp).
+        // codex/gemini/opencode/cursor return id + timestamp).
         const res = await apiFetch(`/api/agent/sessions?${params}`);
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
@@ -91,7 +95,7 @@ export function ResumeSessionModal({
     };
 
     fetchSessions();
-  }, [open, projectPath, provider, profileId, limit, canResume]);
+  }, [open, projectPath, projectId, provider, profileId, limit, canResume]);
 
   const handleResume = async (session: ResumableSessionSummary) => {
     setResumingId(session.sessionId);

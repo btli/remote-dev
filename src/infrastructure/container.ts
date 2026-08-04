@@ -84,6 +84,7 @@ import {
 
 // Agent Use Cases
 import { RestartAgentUseCase } from "@/application/use-cases/session/RestartAgentUseCase";
+import { resolveVerifiedProviderExecutable } from "@/services/agent-cli-service";
 // [hgwo] Resume resolver for agent session durability (Vault).
 import { AgentResumeResolverImpl } from "@/infrastructure/agent-resume/AgentResumeResolverImpl";
 
@@ -303,7 +304,8 @@ export const agentResumeResolver = new AgentResumeResolverImpl();
 export const restartAgentUseCase = new RestartAgentUseCase(
   sessionRepository,
   tmuxGateway,
-  agentResumeResolver
+  agentResumeResolver,
+  resolveVerifiedProviderExecutable,
 );
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -5,7 +5,7 @@
  *
  * Three stacked groups:
  *   1) Default agent selector — used by the one-click "New Agent" affordance.
- *   2) AgentCLIStatusPanel — install status for all four providers.
+ *   2) AgentCLIStatusPanel — install status for all six providers.
  *   3) Per-provider config cards — extra flags + allow-dangerous toggle.
  *      Stored at user-level; projects can override the whole map.
  */

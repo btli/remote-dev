@@ -9,7 +9,14 @@ export type SessionStatus = "active" | "suspended" | "closed" | "trashed";
 /**
  * Agent provider types for agent-aware sessions
  */
-export type AgentProviderType = "claude" | "codex" | "gemini" | "antigravity" | "opencode" | "none";
+export type AgentProviderType =
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "antigravity"
+  | "opencode"
+  | "cursor"
+  | "none";
 
 /**
  * Worktree type determines the branch name prefix (e.g., feature/, fix/, chore/)
@@ -205,6 +212,15 @@ export const AGENT_PROVIDERS: AgentProviderConfig[] = [
     defaultFlags: [],
   },
   {
+    id: "cursor",
+    name: "Cursor",
+    description: "Cursor's interactive AI coding agent",
+    command: "agent",
+    configFile: "AGENTS.md",
+    defaultFlags: [],
+    dangerousFlags: ["-f", "--force", "--yolo"],
+  },
+  {
     id: "none",
     name: "No Agent",
     description: "Standard terminal session without AI agent",
@@ -215,7 +231,14 @@ export const AGENT_PROVIDERS: AgentProviderConfig[] = [
 ];
 
 // AI Agent presets for feature sessions
-export type AgentPreset = "claude" | "clauded" | "gemini" | "geminy" | "antigravity" | "custom";
+export type AgentPreset =
+  | "claude"
+  | "clauded"
+  | "gemini"
+  | "geminy"
+  | "antigravity"
+  | "cursor"
+  | "custom";
 
 export interface AgentConfig {
   id: AgentPreset;
@@ -230,8 +253,18 @@ export const AGENT_PRESETS: AgentConfig[] = [
   { id: "gemini", label: "Gemini", command: "gemini", description: "Google Gemini AI" },
   { id: "geminy", label: "Geminy", command: "geminy", description: "Gemini daemon mode" },
   { id: "antigravity", label: "Antigravity", command: "agy", description: "Antigravity AI coding agent" },
+  { id: "cursor", label: "Cursor", command: "agent", description: "Cursor AI coding agent" },
   { id: "custom", label: "Custom", command: "", description: "Enter custom command" },
 ];
+
+/** Providers offered by the chat-first loop-session UI. */
+export const LOOP_AGENT_PROVIDERS = [
+  "claude",
+  "codex",
+  "gemini",
+  "opencode",
+  "cursor",
+] as const satisfies readonly Exclude<AgentProviderType, "none" | "antigravity">[];
 
 export interface UpdateSessionInput {
   name?: string;

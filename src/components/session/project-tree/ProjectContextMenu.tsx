@@ -26,6 +26,7 @@ import {
   Trash2,
   Folder,
   FolderOpen,
+  MousePointer2,
   ChevronDown,
   ChevronRight,
   ArrowRightLeft,
@@ -117,10 +118,8 @@ export function ProjectContextMenuContent({
   onMigrate,
   onDelete,
 }: ContentProps) {
-  // Plain-button variant: we don't render a hover-expanded submenu of saved
-  // connections (no Radix sub-menu primitive available), so we expose two
-  // flat affordances tagged with `data-testid` so unit tests can target
-  // them directly.
+  // Plain-button variant: expose the same direct Cursor action as the real
+  // right-click menu, plus testable stand-ins for hover-only submenus.
   return (
     <div role="menu">
       <button role="menuitem" onClick={onNewTerminal}>
@@ -128,6 +127,14 @@ export function ProjectContextMenuContent({
       </button>
       <button role="menuitem" onClick={onNewAgent}>
         <Sparkles className="mr-2 h-4 w-4" /> New Agent
+      </button>
+      <button
+        role="menuitem"
+        data-testid="project-new-agent-cursor"
+        onClick={() => onNewAgentWithProvider("cursor")}
+      >
+        <MousePointer2 className="mr-2 h-4 w-4 text-indigo-500 dark:text-indigo-400" />
+        New Cursor Agent
       </button>
       <button
         role="menuitem"
@@ -328,6 +335,10 @@ export function ProjectContextMenu({
         </ContextMenuItem>
         <ContextMenuItem onSelect={onNewAgent}>
           <Sparkles className="mr-2 h-4 w-4" /> New Agent
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => onNewAgentWithProvider("cursor")}>
+          <MousePointer2 className="mr-2 h-4 w-4 text-indigo-500 dark:text-indigo-400" />
+          New Cursor Agent
         </ContextMenuItem>
         <ContextNewAgentSubmenu
           onSelect={onNewAgentWithProvider}

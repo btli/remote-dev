@@ -303,7 +303,7 @@ export async function setSummary(
  * [x386.4] Poll using durable delivery state instead of a client timestamp.
  * Returns this session's undelivered messages and marks them `delivered` via
  * the `poll` channel. The CLI acks the batch afterwards (`ack-batch`), giving
- * non-MCP providers (Codex/Gemini/OpenCode/Antigravity) the same exactly-once
+ * non-MCP providers (Codex/Gemini/OpenCode/Antigravity/Cursor) the same exactly-once
  * semantics as the MCP push path. The timestamp-based {@link pollMessages} is
  * kept for the chat-room UI / backward compat.
  */

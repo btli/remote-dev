@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { PathInput } from "@/components/common/PathInput";
 import {
   Select,
@@ -14,6 +15,7 @@ import {
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useDebouncedSave } from "@/hooks/useDebouncedSave";
 import { SHELL_OPTIONS } from "@/lib/terminal-options";
+import { useClipboardSyncPreference } from "@/hooks/useClipboardSyncPreference";
 
 export function TerminalSection() {
   const { userSettings, updateUserSettings } = usePreferencesContext();
@@ -48,6 +50,8 @@ function TerminalSectionInner({ userSettings, updateUserSettings }: {
   );
 
   const debouncedSave = useDebouncedSave(updateUserSettings);
+  const [clipboardSyncEnabled, setClipboardSyncEnabled] =
+    useClipboardSyncPreference();
 
   return (
     <div className="space-y-4">
@@ -91,6 +95,30 @@ function TerminalSectionInner({ userSettings, updateUserSettings }: {
             ))}
           </SelectContent>
         </Select>
+      </div>
+
+      {/* Device-local clipboard synchronization */}
+      <div className="pt-4 border-t border-border">
+        <div className="flex items-center justify-between gap-4">
+          <div className="space-y-1">
+            <Label htmlFor="clipboard-sync" className="text-foreground">
+              Clipboard sync
+            </Label>
+            <p
+              id="clipboard-sync-description"
+              className="text-xs text-muted-foreground"
+            >
+              Shares clipboard text with the active remote session. Enable only
+              on a trusted device.
+            </p>
+          </div>
+          <Switch
+            id="clipboard-sync"
+            aria-describedby="clipboard-sync-description"
+            checked={clipboardSyncEnabled}
+            onCheckedChange={setClipboardSyncEnabled}
+          />
+        </div>
       </div>
 
       {/* Scrollback Buffer Settings */}

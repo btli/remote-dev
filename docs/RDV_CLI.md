@@ -15,7 +15,8 @@ skill at [`skills/rdv/SKILL.md`](../skills/rdv/SKILL.md).
 ## Output, build, and discovery
 
 **Output format.** JSON by default; pass the global `--human` flag for tables /
-human-readable output. (A handful of write-only commands print nothing on success.)
+human-readable output. A handful of write-only commands print nothing on success,
+and `rdv clipboard paste` intentionally writes the stored raw text to stdout.
 
 **Build.** `cargo build` (or `cargo install --path crates/rdv`) inside
 `crates/rdv/`. The binary is also auto-installed during server startup and as a step
@@ -69,6 +70,7 @@ Top-level commands from `main.rs`:
 | [`log`](#status-indicators) | Write a per-session structured log entry |
 | [`peer`](#peer) | Communicate with peer agents in the same project |
 | [`channel`](#channel) | Chat channels in the project |
+| [`clipboard`](#clipboard) | Copy or paste plain text for the current session |
 | [`teams`](#teams) | Multi-agent team orchestration |
 | [`crown`](#crown) | Best-of-N run-and-compare (fan-out → judge → auto-PR) |
 | [`delegate`](#delegate) | Delegate an agent run to another instance via the supervisor |
@@ -227,6 +229,49 @@ rdv screen <session-id> [--human]
 Capture another session's current screen content. With `--human`, prints the screen
 text directly; otherwise returns the JSON payload.
 
+## clipboard
+
+Copy plain UTF-8 text from stdin into the current session clipboard, or write the
+current session clipboard to stdout exactly:
+
+```bash
+printf 'hello from the host\n' | rdv clipboard copy
+rdv clipboard paste
+rdv clipboard paste > clipboard.txt
+```
+
+Both commands require `RDV_SESSION_ID` plus a terminal-server address
+(`RDV_TERMINAL_SOCKET` or `RDV_TERMINAL_PORT`). `copy` accepts at most 1 MiB of
+valid UTF-8; `paste` emits the stored bytes without adding a newline. Empty or
+expired clipboards therefore produce empty stdout.
+
+Clipboard sync is off by default on every web/PWA or Flutter client. When enabled,
+only the session's active, visible primary client can publish local clipboard text
+or receive a host write. Browser clipboard permissions and user-gesture rules still
+apply; when a browser blocks an automatic write, Remote Dev presents a user-click
+copy fallback. Subscribing later does not replay a previously stored server
+snapshot—the client receives only eligible writes made while it is subscribed.
+
+Text is held only in terminal-server process memory and expires after 10 minutes
+(or when the session is cleared). It is not sent through the PTY and is not written
+to terminal scrollback, recordings, structured logs, or the database.
+
+Newly created or restarted local shell and agent sessions put generated `pbcopy`
+and `pbpaste` wrappers on `PATH`, so tools such as Claude Code can use the familiar
+commands:
+
+```bash
+printf 'copied by a host tool' | pbcopy
+pbpaste > clipboard.txt
+```
+
+The wrappers and their `PATH` entry are not retroactively injected into an already
+running shell or agent process. Restart or recreate that local session to use the
+bare shim names. An existing process can still use `rdv clipboard copy` / `paste`
+when it already has the required `RDV_SESSION_ID` and terminal address variables.
+SSH sessions are excluded because the host-local wrappers and callback endpoint do
+not exist on the remote SSH machine.
+
 ## Status indicators
 
 Per-session UI indicators (status chips, a progress bar, and structured log lines).
@@ -245,8 +290,8 @@ The first positional argument is always the target `<session-id>`.
 Inter-agent communication scoped to the current project (see [`AGENTS.md`](./AGENTS.md)
 §5). **bd tracks the work; chat tracks awareness.** Delivery uses a durable
 per-recipient inbox, but **automatic** delivery (the `rdv` MCP push + the poll
-hook) is wired only for **Claude Code**. Codex, Gemini, OpenCode, and Antigravity
-agents receive nothing automatically — they must drain their inbox by running
+hook) is wired only for **Claude Code**. Codex, Gemini, OpenCode, Antigravity,
+and Cursor agents receive nothing automatically — they must drain their inbox by running
 `rdv peer messages` themselves. Delivery is **at-least-once with idempotent
 de-duplication**, not exactly-once.
 
@@ -287,7 +332,7 @@ Multi-agent team orchestration — launch and coordinate child agent sessions.
 
 | Subcommand | Purpose |
 |------------|---------|
-| `rdv teams launch [--folder-id <id>] [--count <n>] [--provider <claude\|codex\|gemini>] [--name-prefix <p>] [--project-path <path>]` | Launch N coordinated agent sessions (default count 2, provider `claude`); children are parented to the current session |
+| `rdv teams launch [--folder-id <id>] [--count <n>] [--provider <claude\|codex\|gemini\|opencode\|cursor>] [--name-prefix <p>] [--project-path <path>]` | Launch N coordinated agent sessions (default count 2, provider `claude`); children are parented to the current session |
 | `rdv teams list [--parent-id <id>]` | List agent sessions grouped by parent |
 | `rdv teams wait <parent-id> [--timeout <seconds>]` | Wait for child sessions to finish (default 300 s) |
 | `rdv teams broadcast <parent-id> <text…>` | Send text to all children of a parent |
@@ -313,7 +358,7 @@ supervisor base URL + operator token come from `RDV_SUPERVISOR_URL` /
 
 ```bash
 rdv delegate --to <slug> --project-id <id> --prompt "<text>" \
-  [--provider <claude|codex|gemini|opencode>] [--provision-if-missing]
+  [--provider <claude|codex|gemini|opencode|cursor>] [--provision-if-missing]
 ```
 
 ## migrate

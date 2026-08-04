@@ -44,6 +44,12 @@ const hoisted = vi.hoisted(() => {
     >(),
     claimPortsForSession: vi.fn(async () => undefined),
     releasePortsForSession: vi.fn(async () => undefined),
+    createApiKey: vi.fn(async () => ({ key: "test-api-key" })),
+    createBranchWithWorktree: vi.fn(),
+    resolveVerifiedProviderExecutable: vi.fn(
+      async (_provider: string, command: string): Promise<string | null> => command,
+    ),
+    ensureClipboardShims: vi.fn(() => "/test/rdv/clipboard-bin"),
   };
 });
 
@@ -58,6 +64,7 @@ const dbMocks = {
 };
 const tmuxCreate = hoisted.tmuxCreate;
 const tmuxKill = hoisted.tmuxKill;
+const ensureClipboardShims = hoisted.ensureClipboardShims;
 
 vi.mock("@/db", () => ({
   db: {
@@ -146,7 +153,7 @@ vi.mock("@/server/validate-cwd", () => ({
 
 vi.mock("@/services/worktree-service", () => ({
   isGitRepo: vi.fn(async () => false),
-  createBranchWithWorktree: vi.fn(),
+  createBranchWithWorktree: hoisted.createBranchWithWorktree,
   copyEnvFilesToWorktree: vi.fn(),
   removeWorktree: vi.fn(async () => undefined),
   sanitizeBranchName: (s: string) => s,
@@ -173,8 +180,20 @@ vi.mock("@/services/preferences-service", () => ({
 }));
 
 vi.mock("@/services/api-key-service", () => ({
-  createApiKey: vi.fn(async () => ({ key: "test-api-key" })),
+  createApiKey: hoisted.createApiKey,
 }));
+
+vi.mock("./agent-cli-service", () => ({
+  resolveVerifiedProviderExecutable: hoisted.resolveVerifiedProviderExecutable,
+}));
+
+vi.mock("@/services/clipboard-shims", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/clipboard-shims")>();
+  return {
+    ...actual,
+    ensureClipboardShims: hoisted.ensureClipboardShims,
+  };
+});
 
 // Port lifecycle (A3): claim-on-create reads the registry then claims; the
 // close path releases. Relative specifiers match the dynamic import() the
@@ -301,6 +320,7 @@ describe("SessionService.createSession — plugin dispatch", () => {
     hoisted.state.queryFindManyCalls = 0;
     tmuxCreate.mockClear();
     tmuxKill.mockClear();
+    ensureClipboardShims.mockClear();
 
     // Default: dedup query finds nothing, tab-order query returns empty
     dbMocks.findManyDedup.mockResolvedValue([]);
@@ -318,10 +338,17 @@ describe("SessionService.createSession — plugin dispatch", () => {
     hoisted.claimPortsForSession.mockResolvedValue(undefined);
     hoisted.releasePortsForSession.mockReset();
     hoisted.releasePortsForSession.mockResolvedValue(undefined);
+    hoisted.resolveVerifiedProviderExecutable.mockReset();
+    hoisted.resolveVerifiedProviderExecutable.mockImplementation(
+      async (_provider: string, command: string): Promise<string | null> => command,
+    );
+    hoisted.createApiKey.mockClear();
+    hoisted.createBranchWithWorktree.mockClear();
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("delegates to the plugin: useTmux=false skips tmux, metadata merges plugin + input", async () => {
@@ -402,6 +429,97 @@ describe("SessionService.createSession — plugin dispatch", () => {
     expect(cwd).toBeDefined();
     // Plugin-provided shell command is passed to tmux
     expect(shellCmd).toBe("fake-cli");
+  });
+
+  it("injects clipboard shims into local shell PATH without agent credentials", async () => {
+    vi.stubEnv("TERMINAL_SOCKET", "");
+    vi.stubEnv("SOCKET_PATH", "");
+    vi.stubEnv("TERMINAL_PORT", "6002");
+    vi.stubEnv("PORT", "6001");
+    const plugin = makeFakePlugin("shell", {
+      useTmux: true,
+      environment: { PATH: "/folder/bin:/usr/bin", FOLDER_VALUE: "kept" },
+    });
+    TerminalTypeServerRegistry.register(plugin);
+    TerminalTypeServerRegistry.setDefaultType("shell");
+
+    await createSession("user-1", {
+      ...baseInput(),
+      terminalType: "shell",
+    });
+
+    const [, , , env] = tmuxCreate.mock.calls[0] as unknown as [
+      string,
+      string,
+      string | undefined,
+      Record<string, string>,
+    ];
+    expect(ensureClipboardShims).toHaveBeenCalledOnce();
+    expect(env).toMatchObject({
+      RDV_SESSION_ID: expect.any(String),
+      RDV_TERMINAL_PORT: "6002",
+      PATH: "/test/rdv/clipboard-bin:/folder/bin:/usr/bin",
+      FOLDER_VALUE: "kept",
+    });
+    expect(env.RDV_API_KEY).toBeUndefined();
+    expect(env.RDV_API_PORT).toBeUndefined();
+  });
+
+  it("keeps agent-only credentials on agents while adding clipboard shims", async () => {
+    vi.stubEnv("TERMINAL_SOCKET", "");
+    vi.stubEnv("SOCKET_PATH", "");
+    vi.stubEnv("TERMINAL_PORT", "6002");
+    vi.stubEnv("PORT", "6001");
+    const plugin = makeFakePlugin("agent", {
+      useTmux: true,
+      environment: { PATH: "/agent/bin:/usr/bin" },
+    });
+    TerminalTypeServerRegistry.register(plugin);
+    TerminalTypeServerRegistry.setDefaultType("agent");
+
+    await createSession("user-1", {
+      ...baseInput(),
+      terminalType: "agent",
+      agentProvider: "codex",
+      autoLaunchAgent: true,
+    });
+
+    const [, , , env] = tmuxCreate.mock.calls[0] as unknown as [
+      string,
+      string,
+      string | undefined,
+      Record<string, string>,
+    ];
+    expect(env).toMatchObject({
+      RDV_SESSION_ID: expect.any(String),
+      RDV_TERMINAL_PORT: "6002",
+      RDV_API_KEY: "test-api-key",
+      RDV_API_PORT: "6001",
+      PATH: "/test/rdv/clipboard-bin:/agent/bin:/usr/bin",
+    });
+  });
+
+  it("does not inject host clipboard paths or callback vars into SSH", async () => {
+    const plugin = makeFakePlugin("ssh", {
+      useTmux: true,
+      environment: { TERM: "xterm-256color" },
+    });
+    TerminalTypeServerRegistry.register(plugin);
+    TerminalTypeServerRegistry.setDefaultType("ssh");
+
+    await createSession("user-1", {
+      ...baseInput(),
+      terminalType: "ssh",
+    });
+
+    const [, , , env] = tmuxCreate.mock.calls[0] as unknown as [
+      string,
+      string,
+      string | undefined,
+      Record<string, string>,
+    ];
+    expect(ensureClipboardShims).not.toHaveBeenCalled();
+    expect(env).toEqual({ TERM: "xterm-256color" });
   });
 
   it("does NOT thread any folder-level wrapper command into plugin input (regression for removed startupCommand mechanism)", async () => {
@@ -899,5 +1017,63 @@ describe("SessionService.createSession — server-resolved working dir (remote-d
     // The merged provider is also persisted on the row.
     const inserted = dbState.inserted[0] as { agentProvider: string | null };
     expect(inserted.agentProvider).toBe("claude");
+  });
+
+  it("does not launch a foreign agent executable through a non-agent plugin", async () => {
+    TerminalTypeServerRegistry.clear();
+    TerminalTypeServerRegistry.register(
+      makeFakePlugin("fake", { useTmux: true, shellCommand: null }),
+    );
+    TerminalTypeServerRegistry.setDefaultType("fake");
+    hoisted.resolveVerifiedProviderExecutable.mockResolvedValueOnce(null);
+
+    await expect(
+      createSession("user-1", {
+        ...baseInput(),
+        autoLaunchAgent: true,
+        agentProvider: "cursor",
+        createWorktree: true,
+      }),
+    ).rejects.toMatchObject({ code: "AGENT_CLI_IDENTITY_MISMATCH" });
+
+    expect(hoisted.resolveVerifiedProviderExecutable).toHaveBeenCalledWith(
+      "cursor",
+      "agent",
+      expect.objectContaining({ PATH: expect.any(String) }),
+      "/tmp",
+    );
+    expect(tmuxCreate).not.toHaveBeenCalled();
+    expect(hoisted.createApiKey).not.toHaveBeenCalled();
+    expect(hoisted.createBranchWithWorktree).not.toHaveBeenCalled();
+  });
+
+  it("launches the exact verified Cursor executable instead of bare agent", async () => {
+    TerminalTypeServerRegistry.clear();
+    TerminalTypeServerRegistry.register(
+      makeFakePlugin("fake", { useTmux: true, shellCommand: null }),
+    );
+    TerminalTypeServerRegistry.setDefaultType("fake");
+    hoisted.resolveVerifiedProviderExecutable.mockResolvedValueOnce(
+      "/verified/cursor agent",
+    );
+
+    await createSession("user-1", {
+      ...baseInput(),
+      autoLaunchAgent: true,
+      agentProvider: "cursor",
+    });
+
+    const [, , shellCmd] = tmuxCreate.mock.calls[0] as unknown as [
+      string,
+      string,
+      string,
+    ];
+    expect(shellCmd).toBe("'/verified/cursor agent'");
+
+    const inserted = dbState.inserted[0] as { typeMetadata: string | null };
+    const metadata = JSON.parse(inserted.typeMetadata!);
+    expect(metadata.resumeBinding.executablePath).toBe(
+      "/verified/cursor agent",
+    );
   });
 });

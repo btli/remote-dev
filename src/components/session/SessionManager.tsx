@@ -1390,7 +1390,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     ]
   );
 
-  // Explicit-provider variant for the project context-menu "Pick Agent" submenu.
+  // Explicit-provider variant for project context-menu actions, including the
+  // visible Cursor shortcut and the full "Pick Agent" submenu.
   const handleFolderNewAgentWithProvider = useCallback(
     async (folderId: string, provider: AgentProviderType) => {
       const name = generateSessionName(folderId);
@@ -1500,8 +1501,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // Handler to resume a specific prior agent session, for any resume-capable
   // provider. The resume flags come from the client-safe registry mirror
-  // (`buildResumeAgentFlags`): claude/gemini → `--resume <id>`, opencode →
-  // `--session <id>`, codex → `resume <id>` (a subcommand that the agent plugin
+  // (`buildResumeAgentFlags`): claude/gemini/cursor → `--resume <id>`,
+  // opencode → `--session <id>`, codex → `resume <id>` (a subcommand that the agent plugin
   // appends right after the command). Passing flags lets the agent plugin own
   // command assembly — the legacy string-built `startupCommand` wrapper override
   // (e.g. `jclaude`) was removed.
@@ -2558,6 +2559,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         open={isResumeModalOpen}
         onClose={handleResumeModalClose}
         projectPath={resumeModalProjectPath}
+        projectId={resumeModalFolderId ?? undefined}
         provider={resumeModalProvider}
         profileId={resumeModalProfileId}
         onResume={handleResumeAgentSession}

@@ -20,10 +20,23 @@ import { validateWsToken, getAuthSecret, CONTROL_SESSION_SENTINEL } from "../lib
 import { createLogger } from "../lib/logger.js";
 import { WS_PATH_PREFIX } from "../lib/base-path.js";
 import { TmuxSizeController, type TmuxExec } from "./tmux-size-controller.js";
+import { TmuxAttachArgumentResolver } from "./tmux-hyperlinks.js";
 import {
   PROXY_WS_PATH_PATTERN,
   handleProxyWsUpgrade,
 } from "./proxy-ws-bridge.js";
+import { ClipboardBroker } from "./clipboard-broker.js";
+import { resolveClipboardHttpStreamRequest } from "./clipboard-http.js";
+import {
+  attemptRemoteClipboardWrite,
+  handleClientClipboardWrite,
+  type ClipboardConnectionState,
+} from "./clipboard-protocol.js";
+import {
+  buildClipboardSessionEnv,
+  ensureClipboardShims,
+} from "../services/clipboard-shims.js";
+import { routeTerminalClientFrame } from "./terminal-client-frame.js";
 // [hgwo] provider type for the durable agent-session-id capture endpoint.
 import type { AgentProviderType } from "../types/session.js";
 
@@ -38,11 +51,16 @@ const internalLog = createLogger("InternalAPI");
 const ptyLog = createLogger("PtyControl");
 const peerLog = createLogger("PeerAPI");
 const usageLog = createLogger("UsageLimit");
+const clipboardBroker = new ClipboardBroker();
 
 const execTmux: TmuxExec = (args, callback) => {
   execFile("tmux", args, { cwd: STABLE_SPAWN_CWD }, (error) => callback(error));
 };
 const tmuxSize = new TmuxSizeController(execTmux, log);
+const tmuxAttachArguments = new TmuxAttachArgumentResolver(
+  () => execFileSync("tmux", ["-V"], { cwd: STABLE_SPAWN_CWD }).toString(),
+  log,
+);
 
 /** Retry an async operation up to maxRetries times with exponential backoff (for SQLITE_BUSY) */
 async function retryOnBusy<T>(fn: () => Promise<T>, maxRetries = 2): Promise<T> {
@@ -352,6 +370,8 @@ interface TerminalConnection {
   // Last input timestamp copied to the stable-instance map (writes are throttled).
   lastInputRecencyWriteAt: number;
   isVisible: boolean;
+  // Clipboard messages are opt-in for every WebSocket generation.
+  clipboardSubscribed: boolean;
   // [remote-dev-d5ci] Lightweight control connection: registered in the
   // `connections` map only so broadcasts reach it (sidebar live updates without
   // an attached terminal). It has NO PTY, is NOT in sessionConnections /
@@ -985,6 +1005,38 @@ function getAnyConnectionForSession(sessionId: string): TerminalConnection | und
   return connections.get(firstId);
 }
 
+function clipboardConnectionState(
+  connection: TerminalConnection,
+): ClipboardConnectionState {
+  return {
+    connectionId: connection.connectionId,
+    sessionId: connection.sessionId,
+    clipboardSubscribed: connection.clipboardSubscribed,
+    isVisible: connection.isVisible,
+    isSocketOpen: connection.ws.readyState === WebSocket.OPEN,
+  };
+}
+
+/** Store a CLI-originated write and best-effort deliver it to one primary. */
+function writeRemoteClipboard(
+  sessionId: string,
+  data: string,
+): { revision: number; delivered: boolean } {
+  const primaryId = sessionPrimaryConnection.get(sessionId);
+  const primary = primaryId ? connections.get(primaryId) : undefined;
+  return attemptRemoteClipboardWrite(
+    clipboardBroker,
+    sessionId,
+    data,
+    primary
+      ? {
+          connection: clipboardConnectionState(primary),
+          send: (message) => primary.ws.send(JSON.stringify(message)),
+        }
+      : undefined,
+  );
+}
+
 // Per-session status indicators (key -> StatusIndicator)
 type StatusIndicator = { value: string; icon?: string; color?: string; updatedAt: string };
 const sessionStatusIndicators = new Map<string, Map<string, StatusIndicator>>();
@@ -1581,6 +1633,7 @@ function cleanupConnection(connectionId: string): void {
       clientInstanceFocusRecency.clearSession(conn.sessionId);
       sessionStatusIndicators.delete(conn.sessionId);
       sessionProgressBars.delete(conn.sessionId);
+      clipboardBroker.clearSession(conn.sessionId);
     }
     for (const [claudeId, rdvId] of claudeSessionMap) {
       if (rdvId === conn.sessionId) {
@@ -1695,10 +1748,34 @@ function createTmuxSession(
   cols: number,
   rows: number,
   cwd: string,
-  historyLimit: number = 50000
+  historyLimit: number = 50000,
+  sessionId?: string,
+  terminalType = "shell",
 ): void {
   const args = ["new-session", "-d", "-s", sessionName, "-x", String(cols), "-y", String(rows)];
   args.push("-c", cwd);
+  if (sessionId && terminalType !== "ssh") {
+    try {
+      const shimDir = ensureClipboardShims();
+      const clipboardEnv = buildClipboardSessionEnv({
+        sessionId,
+        terminalType,
+        shimDir,
+        currentPath: process.env.PATH,
+        terminalSocket: process.env.TERMINAL_SOCKET,
+        terminalPort: process.env.TERMINAL_PORT ?? "6002",
+      });
+      for (const [key, value] of Object.entries(clipboardEnv)) {
+        args.push("-e", `${key}=${value}`);
+      }
+    } catch (error) {
+      log.warn("Failed to prepare clipboard shims for tmux session", {
+        sessionId,
+        terminalType,
+        error: String(error),
+      });
+    }
+  }
   execFileSync("tmux", args, { stdio: "pipe", cwd: STABLE_SPAWN_CWD });
 
   // Enable mouse mode for scrolling in alternate screen apps (vim, less, claude code, etc.)
@@ -1740,7 +1817,7 @@ function attachToTmuxSession(
 
   // SECURITY: Spawn tmux directly with array arguments - no shell interpolation
   // Use clean environment to prevent framework internal vars from leaking
-  const ptyProcess = pty.spawn("tmux", ["attach-session", "-t", sessionName], {
+  const ptyProcess = pty.spawn("tmux", tmuxAttachArguments.forSession(sessionName), {
     name: "xterm-256color",
     cols,
     rows,
@@ -1928,6 +2005,36 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       sendJson(res, 403, { error: "Forbidden: localhost only" });
       return true;
     }
+  }
+
+  if (pathname === "/internal/clipboard") {
+    try {
+      const result = await resolveClipboardHttpStreamRequest(
+        {
+          method: req.method,
+          querySessionId: query.sessionId,
+          bodyStream: req.method === "POST" ? req : undefined,
+        },
+        {
+          read: (sessionId) => clipboardBroker.read(sessionId),
+          write: writeRemoteClipboard,
+        },
+      );
+      if (result.contentType === "application/json") {
+        sendJson(res, result.status, result.body);
+      } else {
+        res.writeHead(result.status, { "Content-Type": result.contentType });
+        res.end(result.body);
+      }
+    } catch (error) {
+      // Never attach clipboard text (or a derived hash) to structured logs.
+      internalLog.error("Clipboard request failed", {
+        method: req.method,
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+      sendJson(res, 500, { error: "Clipboard request failed" });
+    }
+    return true;
   }
 
   // Session drain notification for auto-update system
@@ -2808,9 +2915,9 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
 
   // [hgwo] POST /internal/agent-session-id — durably record a provider's native
   // session id so the agent's CONVERSATION can be resumed after process death,
-  // terminal-server restart, or pod restart. Generic across all 5 providers
+  // terminal-server restart, or pod restart. Generic across all six providers
   // (Claude also pushes via the claude-session-map handler above; Codex/Gemini/
-  // OpenCode have no hook and fall back to disk discovery at relaunch).
+  // OpenCode/Cursor have no hook and fall back to disk discovery at relaunch).
   if (pathname === "/internal/agent-session-id" && req.method === "POST") {
     if (!isLocalhostRequest(req)) {
       sendJson(res, 403, { error: "Forbidden: localhost only" });
@@ -3888,6 +3995,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         lastInputAt: 0,
         lastInputRecencyWriteAt: 0,
         isVisible: false,
+        clipboardSubscribed: false,
         isControl: true,
       };
       connections.set(controlConnectionId, controlConnection);
@@ -4035,6 +4143,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       // The tmux lifecycle, not a transient socket gap, owns stable-instance
       // engagement history. A confirmed-missing session starts fresh.
       clientInstanceFocusRecency.clearSession(sessionId);
+      clipboardBroker.clearSession(sessionId);
     }
 
     if (resolved.tier !== "query") {
@@ -4096,7 +4205,15 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
           cwdTier: resolved.tier,
           historyLimit: tmuxHistoryLimit,
         });
-        createTmuxSession(tmuxSessionName, cols, rows, cwd, tmuxHistoryLimit);
+        createTmuxSession(
+          tmuxSessionName,
+          cols,
+          rows,
+          cwd,
+          tmuxHistoryLimit,
+          sessionId,
+          terminalType,
+        );
 
         ptyProcess = attachToTmuxSession(tmuxSessionName, cols, rows);
 
@@ -4144,7 +4261,9 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         // alone does NOT reach here (tmux + agent survive → the attach branch).
         if (isAgentTerminalType(terminalType)) {
           void import("@/server/agent-relaunch")
-            .then(({ relaunchAgentInTmux }) => relaunchAgentInTmux(sessionId, tmuxSessionName))
+            .then(({ relaunchAgentInTmux }) =>
+              relaunchAgentInTmux(sessionId, tmuxSessionName, cwd),
+            )
             .catch((e) =>
               agentLog.error("Relaunch failed on cold-attach", {
                 sessionId, error: String(e),
@@ -4199,6 +4318,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       // socket refreshes stable inheritance immediately.
       lastInputRecencyWriteAt: 0,
       isVisible: true,
+      clipboardSubscribed: false,
     };
 
     // Register connection in both maps
@@ -4253,11 +4373,11 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     });
 
     const handleMessage = (message: RawData): void => {
-      try {
-        const msg = JSON.parse(message.toString());
-
-        switch (msg.type) {
+      routeTerminalClientFrame(message.toString(), {
+        onProtocolMessage: (msg) => {
+          switch (msg.type) {
           case "input":
+            if (typeof msg.data !== "string") break;
             recordClientInput(
               connection,
               Date.now,
@@ -4339,6 +4459,27 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             // Bookkeeping only — do not change primary on blur.
             break;
           }
+          case "clipboard_subscribe": {
+            if (typeof msg.enabled === "boolean") {
+              connection.clipboardSubscribed = msg.enabled;
+            }
+            break;
+          }
+          case "clipboard_write": {
+            // Clipboard data must never fall through to the PTY/scrollback,
+            // including validation failures from an oversized write.
+            try {
+              handleClientClipboardWrite(
+                clipboardBroker,
+                clipboardConnectionState(connection),
+                sessionPrimaryConnection.get(sessionId),
+                { data: msg.data, updateId: msg.updateId },
+              );
+            } catch {
+              // The fixed protocol has no error echo; reject silently.
+            }
+            break;
+          }
           case "detach":
             log.debug("Detaching from tmux session", { connectionId, sessionId, tmuxSessionName });
             cleanupConnection(connectionId);
@@ -4393,15 +4534,19 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
                   primaryPromotions,
                 );
                 clientInstanceFocusRecency.clearSession(sessionId);
+                clipboardBroker.clearSession(sessionId);
               }
               // Re-validate the connect-time cwd — the directory may have been
               // deleted (e.g. a worktree removed) since this WS attached.
+              const recreatedCwd = validatePath(cwd) ?? os.homedir();
               createTmuxSession(
                 tmuxSessionName,
                 connection.lastCols,
                 connection.lastRows,
-                validatePath(cwd) ?? os.homedir(),
+                recreatedCwd,
                 tmuxHistoryLimit,
+                sessionId,
+                terminalType,
               );
 
               const newPty = attachToTmuxSession(tmuxSessionName, connection.lastCols, connection.lastRows);
@@ -4474,7 +4619,9 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
               // stream the relaunched output. Broadcast resumed-vs-fresh once
               // the relaunch resolves so the UI (hgwo.7) can badge it.
               void import("@/server/agent-relaunch")
-                .then(({ relaunchAgentInTmux }) => relaunchAgentInTmux(sessionId, tmuxSessionName))
+                .then(({ relaunchAgentInTmux }) =>
+                  relaunchAgentInTmux(sessionId, tmuxSessionName, recreatedCwd),
+                )
                 .then(({ resumed }) => {
                   broadcastToSession(sessionId, {
                     type: "agent_restarted",
@@ -4488,10 +4635,8 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
                     sessionId, error: String(e),
                   });
                   broadcastToSession(sessionId, {
-                    type: "agent_restarted",
-                    sessionId,
-                    tmuxSessionName,
-                    resumed: false,
+                    type: "error",
+                    message: `Failed to restart agent: ${String(e)}`,
                   });
                 });
             } catch (error) {
@@ -4520,13 +4665,12 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             }
             break;
           }
-        }
-      } catch {
-        // JSON parse error — forward raw text to PTY
-        if (connections.has(connectionId)) {
-          connection.pty?.write(message.toString());
-        }
-      }
+          }
+        },
+        onLegacyInput: (input) => {
+          if (connections.has(connectionId)) connection.pty?.write(input);
+        },
+      });
     };
     bufferedMessages.activate({
       message: handleMessage,
@@ -4604,4 +4748,5 @@ export function shutdownTerminalConnections(): void {
   // full teardown must clear them explicitly.
   sessionStatusIndicators.clear();
   sessionProgressBars.clear();
+  clipboardBroker.clear();
 }

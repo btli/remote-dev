@@ -17,6 +17,12 @@ flutter test       # widget + unit tests
 flutter analyze    # static analysis (lib/ + test/ must be clean)
 ```
 
+## Starting Cursor
+
+From the **Sessions** tab, tap **+**, then **New Cursor Agent**. Choose a
+project and session name, then tap **Create**. The app creates an agent session
+with provider `cursor` and auto-launches Cursor's primary `agent` TUI.
+
 ## Release secrets (for tag-driven builds)
 
 The `mobile-release` GitHub Actions workflow expects these repository secrets:

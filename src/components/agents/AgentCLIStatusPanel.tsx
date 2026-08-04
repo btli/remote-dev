@@ -42,6 +42,7 @@ const PROVIDER_ICONS: Record<string, { icon: string; color: string }> = {
   codex: { icon: "⚡", color: "text-emerald-400" },
   gemini: { icon: "✨", color: "text-blue-400" },
   opencode: { icon: "🔮", color: "text-purple-400" },
+  cursor: { icon: "↖️", color: "text-indigo-400" },
 };
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -49,6 +50,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   codex: "OpenAI Codex",
   gemini: "Gemini CLI",
   opencode: "OpenCode",
+  cursor: "Cursor",
 };
 
 export function AgentCLIStatusPanel() {

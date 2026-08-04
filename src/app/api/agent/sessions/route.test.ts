@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Auth wrapper passes through with a fixed userId.
 vi.mock("@/lib/api", () => ({
@@ -16,11 +16,23 @@ vi.mock("@/lib/agent-resume/session-id-discovery", () => ({
   listResumableSessions: (...args: unknown[]) => listResumableSessions(...args),
 }));
 
+const getProfile = vi.fn();
 vi.mock("@/services/agent-profile-service", () => ({
-  getProfile: vi.fn().mockResolvedValue({ configDir: "/profiles/p1" }),
+  getProfile: (...args: unknown[]) => getProfile(...args),
 }));
 
-beforeEach(() => listResumableSessions.mockReset());
+const getEnvironmentForSession = vi.fn();
+vi.mock("@/services/preferences-service", () => ({
+  getEnvironmentForSession: (...args: unknown[]) => getEnvironmentForSession(...args),
+}));
+
+beforeEach(() => {
+  listResumableSessions.mockReset();
+  getProfile.mockReset().mockResolvedValue({ configDir: "/profiles/p1" });
+  getEnvironmentForSession.mockReset().mockResolvedValue(null);
+});
+
+afterEach(() => vi.unstubAllEnvs());
 
 async function call(url: string) {
   const { GET } = await import("./route");
@@ -68,6 +80,74 @@ describe("GET /api/agent/sessions", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.sessions).toEqual([]);
+  });
+
+  it("accepts Cursor and returns its project-scoped discovery results", async () => {
+    listResumableSessions.mockResolvedValue([
+      { sessionId: "cursor-chat-1", lastModified: "2026-08-03T00:00:00.000Z" },
+    ]);
+    const res = await call(
+      "http://localhost/api/agent/sessions?provider=cursor&projectPath=/tmp/proj",
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      provider: "cursor",
+      sessions: [
+        { sessionId: "cursor-chat-1", lastModified: "2026-08-03T00:00:00.000Z" },
+      ],
+    });
+  });
+
+  it("keeps Cursor discovery on its shared data root when profileId is present", async () => {
+    vi.stubEnv("CURSOR_DATA_DIR", "");
+    listResumableSessions.mockResolvedValue([]);
+
+    const res = await call(
+      "http://localhost/api/agent/sessions?provider=cursor&projectPath=/tmp/proj&profileId=p1",
+    );
+
+    expect(res.status).toBe(200);
+    expect(getProfile).not.toHaveBeenCalled();
+    expect(listResumableSessions).toHaveBeenCalledWith("cursor", "/tmp/proj", {}, 20);
+  });
+
+  it("preserves an operator-supplied Cursor data root", async () => {
+    vi.stubEnv("CURSOR_DATA_DIR", "/srv/cursor-data");
+    listResumableSessions.mockResolvedValue([]);
+
+    const res = await call(
+      "http://localhost/api/agent/sessions?provider=cursor&projectPath=/tmp/proj&profileId=p1",
+    );
+
+    expect(res.status).toBe(200);
+    expect(getProfile).not.toHaveBeenCalled();
+    expect(listResumableSessions).toHaveBeenCalledWith(
+      "cursor",
+      "/tmp/proj",
+      { CURSOR_DATA_DIR: "/srv/cursor-data" },
+      20,
+    );
+  });
+
+  it("uses a folder-level Cursor data root for the project picker", async () => {
+    vi.stubEnv("CURSOR_DATA_DIR", "/srv/default-cursor-data");
+    getEnvironmentForSession.mockResolvedValue({
+      CURSOR_DATA_DIR: "/projects/p1/cursor-data",
+    });
+    listResumableSessions.mockResolvedValue([]);
+
+    const res = await call(
+      "http://localhost/api/agent/sessions?provider=cursor&projectPath=/tmp/proj&projectId=p1",
+    );
+
+    expect(res.status).toBe(200);
+    expect(getEnvironmentForSession).toHaveBeenCalledWith("u1", "p1");
+    expect(listResumableSessions).toHaveBeenCalledWith(
+      "cursor",
+      "/tmp/proj",
+      { CURSOR_DATA_DIR: "/projects/p1/cursor-data" },
+      20,
+    );
   });
 
   it("rejects an invalid provider", async () => {

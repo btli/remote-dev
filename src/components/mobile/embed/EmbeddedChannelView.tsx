@@ -54,6 +54,8 @@ export function EmbeddedChannelView() {
       },
       // No terminal hosted here — accept the call as a no-op.
       setCursorBlink: noop,
+      setClipboardSync: noop,
+      syncClipboard: noop,
       scrollToBottom: noop,
       // No xterm.js grid to re-fit — accept the v4 refit call as a no-op.
       refit: noop,

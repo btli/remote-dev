@@ -20,6 +20,8 @@ let sendInputSpy: ReturnType<typeof vi.fn>;
 let scrollToBottomSpy: ReturnType<typeof vi.fn>;
 let refitSpy: ReturnType<typeof vi.fn>;
 let restartAgentSpy: ReturnType<typeof vi.fn>;
+let setClipboardSyncSpy: ReturnType<typeof vi.fn>;
+let syncClipboardSpy: ReturnType<typeof vi.fn>;
 
 // Captured props handed to the mocked TerminalWithKeyboard. Refs to the
 // latest invocation so tests can drive the parent-supplied callbacks
@@ -36,6 +38,8 @@ const capturedTerminalProps: {
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
   onSessionRestart?: () => Promise<void>;
   onSessionDelete?: (deleteWorktree?: boolean) => Promise<void>;
+  onClipboardUpdate?: (text: string, revision: number) => void;
+  onSelectionChange?: (text: string) => void;
 } = {};
 
 // Mocked TerminalWithKeyboard exposes the fontSize/fontFamily props via
@@ -48,6 +52,8 @@ type StubTerminalProps = {
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
   onSessionRestart?: () => Promise<void>;
   onSessionDelete?: (deleteWorktree?: boolean) => Promise<void>;
+  onClipboardUpdate?: (text: string, revision: number) => void;
+  onSelectionChange?: (text: string) => void;
 };
 
 // Search overlay spies — see openSearch / closeSearch bridge tests.
@@ -66,6 +72,8 @@ vi.mock("@/components/terminal/TerminalWithKeyboard", async () => {
       openSearch: () => void;
       closeSearch: () => void;
       toggleSearch: () => void;
+      setClipboardSync: (enabled: boolean) => void;
+      syncClipboard: (text: string) => void;
     },
     Record<string, unknown>
   >(function MockTerminal(props, ref) {
@@ -78,6 +86,8 @@ vi.mock("@/components/terminal/TerminalWithKeyboard", async () => {
       openSearch: openSearchSpy as unknown as () => void,
       closeSearch: closeSearchSpy as unknown as () => void,
       toggleSearch: vi.fn() as unknown as () => void,
+      setClipboardSync: setClipboardSyncSpy as unknown as (enabled: boolean) => void,
+      syncClipboard: syncClipboardSpy as unknown as (text: string) => void,
     }));
     const p = props as StubTerminalProps;
     // Capture parent-supplied callbacks in an effect so the
@@ -90,11 +100,15 @@ vi.mock("@/components/terminal/TerminalWithKeyboard", async () => {
       capturedTerminalProps.onAgentActivityStatus = p.onAgentActivityStatus;
       capturedTerminalProps.onSessionRestart = p.onSessionRestart;
       capturedTerminalProps.onSessionDelete = p.onSessionDelete;
+      capturedTerminalProps.onClipboardUpdate = p.onClipboardUpdate;
+      capturedTerminalProps.onSelectionChange = p.onSelectionChange;
     }, [
       p.onNotification,
       p.onAgentActivityStatus,
       p.onSessionRestart,
       p.onSessionDelete,
+      p.onClipboardUpdate,
+      p.onSelectionChange,
     ]);
     return React.createElement("div", {
       "data-testid": "terminal-mock",
@@ -169,6 +183,8 @@ beforeEach(() => {
   scrollToBottomSpy = vi.fn();
   refitSpy = vi.fn();
   restartAgentSpy = vi.fn();
+  setClipboardSyncSpy = vi.fn();
+  syncClipboardSpy = vi.fn();
   openSearchSpy = vi.fn();
   closeSearchSpy = vi.fn();
   updateUserSettingsSpy.mockClear();
@@ -178,6 +194,8 @@ beforeEach(() => {
   delete capturedTerminalProps.onAgentActivityStatus;
   delete capturedTerminalProps.onSessionRestart;
   delete capturedTerminalProps.onSessionDelete;
+  delete capturedTerminalProps.onClipboardUpdate;
+  delete capturedTerminalProps.onSelectionChange;
   setMockPrefs({
     currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
   });
@@ -207,7 +225,7 @@ describe("EmbeddedSessionView", () => {
     // v2 added uploadImage + openSearch/closeSearch; v3 extended the
     // onActivity payload union + made the embed emit onActivity; v4 added
     // refit().
-    expect(window.rdvBridge?.version).toBe(4);
+    expect(window.rdvBridge?.version).toBe(5);
   });
 
   it("bridge.refit forwards to the terminal ref (v4)", () => {
@@ -250,6 +268,54 @@ describe("EmbeddedSessionView", () => {
     window.rdvBridge?.input("ls -la\n");
 
     expect(sendInputSpy).toHaveBeenCalledWith("ls -la\n");
+  });
+
+  it("forwards native clipboard sync controls to the terminal", () => {
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    window.rdvBridge?.setClipboardSync(true);
+    window.rdvBridge?.syncClipboard("from phone");
+
+    expect(setClipboardSyncSpy).toHaveBeenCalledWith(true);
+    expect(syncClipboardSpy).toHaveBeenCalledWith("from phone");
+  });
+
+  it("forwards remote clipboard updates to native without using navigator.clipboard", async () => {
+    const callHandler = vi.fn().mockResolvedValue(undefined);
+    window.flutter_inappwebview = { callHandler };
+    const writeText = vi.fn();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    await act(async () => {
+      capturedTerminalProps.onClipboardUpdate?.("from host", 11);
+      await Promise.resolve();
+    });
+
+    expect(callHandler).toHaveBeenCalledWith("onClipboardWrite", {
+      text: "from host",
+      revision: 11,
+    });
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("forwards terminal selection changes through the canonical native event", async () => {
+    const callHandler = vi.fn().mockResolvedValue(undefined);
+    window.flutter_inappwebview = { callHandler };
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    await act(async () => {
+      capturedTerminalProps.onSelectionChange?.("selected text");
+      await Promise.resolve();
+    });
+
+    expect(callHandler).toHaveBeenCalledWith(
+      "onSelectionChange",
+      "selected text",
+    );
   });
 
   it("rdvBridge.setFontSize updates the rendered size immediately and clamps, WITHOUT persisting to shared web prefs", () => {

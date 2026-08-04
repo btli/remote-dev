@@ -10,7 +10,14 @@ export type SessionStatusType = "active" | "suspended" | "closed" | "trashed";
 /**
  * Agent provider types for agent-aware sessions
  */
-export type AgentProviderType = "claude" | "codex" | "gemini" | "antigravity" | "opencode" | "none";
+export type AgentProviderType =
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "antigravity"
+  | "opencode"
+  | "cursor"
+  | "none";
 
 /**
  * Terminal session data transfer object
@@ -130,6 +137,15 @@ export const AGENT_PROVIDERS: AgentProviderConfig[] = [
     command: "opencode",
     configFile: "OPENCODE.md",
     defaultFlags: [],
+  },
+  {
+    id: "cursor",
+    name: "Cursor",
+    description: "Cursor's interactive AI coding agent",
+    command: "agent",
+    configFile: "AGENTS.md",
+    defaultFlags: [],
+    dangerousFlags: ["-f", "--force", "--yolo"],
   },
   {
     id: "none",

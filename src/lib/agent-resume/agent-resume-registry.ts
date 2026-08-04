@@ -8,8 +8,9 @@
  *
  * Asymmetry note: Claude pushes its native session id via the Stop hook (see
  * `crates/rdv/src/commands/hook.rs`) so capture is real-time. Codex / Gemini /
- * OpenCode have no hook system today, so they rely on **disk discovery** at
- * relaunch (newest session file under the provider's profile-isolated home dir).
+ * OpenCode have no hook system today, so they rely on the newest session file
+ * under the provider's profile-scoped home. Cursor likewise uses disk
+ * discovery, but filters the shared CLI chat index by exact project cwd.
  * Antigravity has no confirmed resume mechanism and is treated as no-resume
  * (graceful fresh relaunch).
  *
@@ -96,6 +97,20 @@ export const AGENT_RESUME_REGISTRY: Record<AgentProviderType, ProviderResumeSpec
       idFrom: "filename",
     },
     resume: { kind: "flag", token: "--session" },
+  },
+  cursor: {
+    provider: "cursor",
+    supportsResume: true,
+    detect: { command: "agent", versionArgs: ["--version"] },
+    // Cursor's project-scoped CLI chat index is nested rather than flat;
+    // session-id-discovery.ts handles it with a Cursor-specific scanner.
+    sessionIdSource: {
+      homeEnvVar: "CURSOR_DATA_DIR",
+      defaultHomeSubpath: ".cursor",
+      fileExtensions: [],
+      idFrom: "filename",
+    },
+    resume: { kind: "flag", token: "--resume" },
   },
   antigravity: {
     provider: "antigravity",

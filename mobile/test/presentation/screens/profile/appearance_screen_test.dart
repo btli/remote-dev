@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_dev/application/state/appearance_provider.dart';
+import 'package:remote_dev/application/state/clipboard_sync_provider.dart';
 import 'package:remote_dev/domain/appearance_settings.dart';
 import 'package:remote_dev/presentation/screens/profile/appearance_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,6 +14,9 @@ Future<ProviderContainer> _pump(WidgetTester tester) async {
     overrides: [
       appearanceSettingsProvider.overrideWith(
         (ref) => AppearanceNotifier.test(prefs),
+      ),
+      clipboardSyncProvider.overrideWith(
+        (ref) => ClipboardSyncNotifier.test(prefs),
       ),
     ],
   );
@@ -37,6 +41,11 @@ void main() {
     expect(find.text('Terminal font size'), findsOneWidget);
     expect(find.text('Reduce motion'), findsOneWidget);
     expect(find.text('Cursor blink'), findsOneWidget);
+    expect(find.text('Clipboard sync'), findsOneWidget);
+    expect(
+      find.text('Share clipboard text with the active remote session.'),
+      findsOneWidget,
+    );
     // Two sliders now: font scale + terminal font size.
     expect(find.byType(Slider), findsNWidgets(2));
     expect(find.byKey(const Key('appearance.fontScale')), findsOneWidget);
@@ -44,11 +53,32 @@ void main() {
       find.byKey(const Key('appearance.terminalFontSize')),
       findsOneWidget,
     );
-    expect(find.byType(SwitchListTile), findsNWidgets(2));
+    expect(find.byType(SwitchListTile), findsNWidgets(3));
   });
 
-  testWidgets('terminal font size tile shows the default px label',
-      (tester) async {
+  testWidgets('clipboard sync is accessible, defaults off, and toggles', (
+    tester,
+  ) async {
+    final container = await _pump(tester);
+    addTearDown(container.dispose);
+
+    final finder = find.byKey(const Key('clipboard.syncEnabled'));
+    expect(finder, findsOneWidget);
+    final tile = tester.widget<SwitchListTile>(
+      find.descendant(of: finder, matching: find.byType(SwitchListTile)),
+    );
+    expect(tile.value, isFalse);
+
+    await tester.ensureVisible(finder);
+    await tester.tap(finder);
+    await tester.pumpAndSettle();
+
+    expect(container.read(clipboardSyncProvider), isTrue);
+  });
+
+  testWidgets('terminal font size tile shows the default px label', (
+    tester,
+  ) async {
     final container = await _pump(tester);
     addTearDown(container.dispose);
 
@@ -60,13 +90,13 @@ void main() {
     expect(find.text('12px'), findsWidgets);
   });
 
-  testWidgets('dragging the terminal font size slider updates the setting',
-      (tester) async {
+  testWidgets('dragging the terminal font size slider updates the setting', (
+    tester,
+  ) async {
     final container = await _pump(tester);
     addTearDown(container.dispose);
 
-    final initial =
-        container.read(appearanceSettingsProvider).terminalFontSize;
+    final initial = container.read(appearanceSettingsProvider).terminalFontSize;
     expect(initial, AppearanceSettings.defaultTerminalFontSize);
 
     // Drag right to increase the size.
@@ -108,42 +138,30 @@ void main() {
     expect(cursorBlink.value, isTrue);
   });
 
-  testWidgets('toggling reduce motion writes to provider state',
-      (tester) async {
+  testWidgets('toggling reduce motion writes to provider state', (
+    tester,
+  ) async {
     final container = await _pump(tester);
     addTearDown(container.dispose);
 
-    expect(
-      container.read(appearanceSettingsProvider).reduceMotion,
-      isFalse,
-    );
+    expect(container.read(appearanceSettingsProvider).reduceMotion, isFalse);
 
     await tester.tap(find.byKey(const Key('appearance.reduceMotion')));
     await tester.pumpAndSettle();
 
-    expect(
-      container.read(appearanceSettingsProvider).reduceMotion,
-      isTrue,
-    );
+    expect(container.read(appearanceSettingsProvider).reduceMotion, isTrue);
   });
 
-  testWidgets('toggling cursor blink writes to provider state',
-      (tester) async {
+  testWidgets('toggling cursor blink writes to provider state', (tester) async {
     final container = await _pump(tester);
     addTearDown(container.dispose);
 
-    expect(
-      container.read(appearanceSettingsProvider).cursorBlink,
-      isTrue,
-    );
+    expect(container.read(appearanceSettingsProvider).cursorBlink, isTrue);
 
     await tester.tap(find.byKey(const Key('appearance.cursorBlink')));
     await tester.pumpAndSettle();
 
-    expect(
-      container.read(appearanceSettingsProvider).cursorBlink,
-      isFalse,
-    );
+    expect(container.read(appearanceSettingsProvider).cursorBlink, isFalse);
   });
 
   testWidgets('dragging the slider updates the font scale', (tester) async {
@@ -163,9 +181,6 @@ void main() {
 
     final after = container.read(appearanceSettingsProvider).fontScale;
     expect(after, greaterThan(initial));
-    expect(
-      after,
-      lessThanOrEqualTo(AppearanceSettings.maxFontScale),
-    );
+    expect(after, lessThanOrEqualTo(AppearanceSettings.maxFontScale));
   });
 }

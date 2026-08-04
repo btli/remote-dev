@@ -58,7 +58,7 @@ those primitives; they do not re-implement them.
 | Scheduled agent runs (§1) | **Beta** | API only | Cron, one-time, and fixed-interval launch work; a run is **never marked `completed`**, so run history reads as stuck "running". No UI. |
 | Crown — best-of-N + judge + auto-PR (§3) | **Beta** | API + CLI | Full pipeline + real judge + `gh` auto-PR, but **every run waits the full ~30-min timeout** before judging. No UI. |
 | Supervisor agent-launch + delegation (§6) | **Shipped** | API + CLI | `POST /api/instances/:id/agent`, `POST /api/delegate`, `rdv delegate`. No UI. |
-| Golden dev-env image (§4) | **Shipped** | Image build | Bakes all 5 agent CLIs; opt-out background auto-update. |
+| Golden dev-env image (§4) | **Shipped** | Image build | Bakes all 6 agent CLIs; opt-out background auto-update. |
 | Warm pool (§5) | **Experimental (inert)** | — | `SUPERVISOR_WARM_POOL_SIZE=0` by default; `claimReady` has **no production caller**, so pooled envs are never consumed. |
 | Scale-to-zero (§5) | **Experimental (inert)** | — | The reaper only evaluates **claimed** warm-pool rows → **zero candidates** in practice. |
 | k3s worker machines + capacity control | **Planned** | — | Supervisor Phase 3-4; `/api/nodes` → `501`. |
@@ -242,9 +242,9 @@ for an operator-chosen candidate regardless of the judge's pick.
 ## 4. Golden dev-env image
 
 **Status: Shipped.** The runtime image is a **golden dev-env**: it already bakes
-all 5 agent CLIs (`claude`, `codex`, `gemini`, `opencode`, best-effort `agy`) onto
-the system PATH, plus `sudo` + functional `apt`, `python3`/`venv`/`pipx`, and `gh`,
-with a build-time `command -v` smoke gate.
+all 6 agent CLIs (`claude`, `codex`, `gemini`, `opencode`, Cursor's `agent`,
+best-effort `agy`) onto the system PATH, plus `sudo` + functional `apt`,
+`python3`/`venv`/`pipx`, and `gh`, with a build-time `command -v` smoke gate.
 
 - **Flavor self-identification:** `ARG RDV_IMAGE_FLAVOR=dev-env` → `ENV
   RDV_IMAGE_FLAVOR` so the image self-identifies (the warm pool can confirm a node
@@ -252,9 +252,10 @@ with a build-time `command -v` smoke gate.
   auto-update policy).
 - **Opt-out agent auto-update:** the entrypoint refreshes the baked agent CLIs in
   the background after the servers are up. `AGENT_AUTO_UPDATE` gates it —
-  default `1` (refresh on boot); set `AGENT_AUTO_UPDATE=0` to skip the npm refresh
-  + `agy` retry (fast-boot / pinned-version instances). It runs fully backgrounded
-  so it never delays readiness either way.
+  default `1` (refresh on boot); set `AGENT_AUTO_UPDATE=0` to skip the npm refresh,
+  Cursor's best-effort `agent update`, and the `agy` installer retry (fast-boot /
+  pinned-version instances). It runs fully backgrounded so it never delays
+  readiness either way.
 
 Build: `docker build --build-arg RDV_IMAGE_FLAVOR=dev-env -t rdv-devenv:test .`
 (CI builds on Node 24 to match bun's native ABI).

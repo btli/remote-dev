@@ -1,4 +1,4 @@
-import { Sparkles, Cpu, Code2, LucideIcon } from "lucide-react";
+import { Sparkles, Cpu, Code2, MousePointer2, LucideIcon } from "lucide-react";
 import { AgentProviderType } from "@/types/session";
 
 export interface AgentVisualProps {
@@ -55,6 +55,15 @@ export const AGENT_VISUALS: Record<AgentProviderType, AgentVisualProps | null> =
     collapsedClasses: {
       active: "ring-1 ring-amber-500/40 bg-amber-100 dark:ring-amber-500/50 dark:bg-amber-500/10",
       inactive: "hover:ring-1 hover:ring-amber-500/30",
+    },
+  },
+  cursor: {
+    label: "cursor",
+    icon: MousePointer2,
+    classes: "bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-500/25 dark:shadow-[0_0_8px_rgba(99,102,241,0.15)]",
+    collapsedClasses: {
+      active: "ring-1 ring-indigo-500/40 bg-indigo-100 dark:ring-indigo-500/50 dark:bg-indigo-500/10",
+      inactive: "hover:ring-1 hover:ring-indigo-500/30",
     },
   },
   none: null,

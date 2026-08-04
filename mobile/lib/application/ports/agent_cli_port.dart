@@ -2,7 +2,7 @@
 class InstalledAgent {
   const InstalledAgent({required this.provider, required this.label});
 
-  /// Provider id, e.g. `claude`, `codex`, `gemini`, `opencode`.
+  /// Provider id, e.g. `claude`, `codex`, `gemini`, `opencode`, `cursor`.
   final String provider;
 
   /// Human-readable label shown in pickers, e.g. `Claude Code`.

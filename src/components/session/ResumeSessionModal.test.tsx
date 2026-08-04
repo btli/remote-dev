@@ -23,6 +23,7 @@ const base = {
   open: true,
   onClose: vi.fn(),
   projectPath: "/proj",
+  projectId: "project-1",
   onResume: vi.fn().mockResolvedValue(undefined),
 };
 
@@ -53,6 +54,7 @@ describe("ResumeSessionModal — multi-provider discovery", () => {
     const url = String(apiFetch.mock.calls[0][0]);
     expect(url).toContain("/api/agent/sessions?");
     expect(url).toContain("provider=claude");
+    expect(url).toContain("projectId=project-1");
 
     expect(await screen.findByText("Resume Claude Code Session")).toBeTruthy();
     expect(await screen.findByText("fix the bug")).toBeTruthy();

@@ -3,7 +3,11 @@ mod commands;
 mod config;
 
 use clap::Parser;
-use commands::{agent, browser, channel, context, crown, delegate, group, hook, indicator, migrate, notification, peer, project, screen, send, session, status, system, teams, tmux_compat, worktree};
+use commands::{
+    agent, browser, channel, clipboard, context, crown, delegate, group, hook, indicator, migrate,
+    notification, peer, project, screen, send, session, status, system, teams, tmux_compat,
+    worktree,
+};
 
 #[derive(Parser)]
 #[command(name = "rdv", version, about = "CLI for Remote Dev terminal server")]
@@ -58,6 +62,8 @@ enum Command {
     Peer(peer::PeerArgs),
     /// Manage chat channels in the project folder
     Channel(channel::ChannelArgs),
+    /// Synchronize the current session clipboard
+    Clipboard(clipboard::ClipboardArgs),
     /// Multi-agent team orchestration
     Teams(teams::TeamsArgs),
     /// Best-of-N run-and-compare (Crown)
@@ -97,6 +103,7 @@ async fn main() {
         Command::Log(args) => indicator::run_log(args, &client).await,
         Command::Peer(args) => peer::run(args, &client, cli.human).await,
         Command::Channel(args) => channel::run(args, &client, cli.human).await,
+        Command::Clipboard(args) => clipboard::run(args, &client).await,
         Command::Teams(args) => teams::run(args, &client, cli.human).await,
         Command::Crown(args) => crown::run(args, &client, cli.human).await,
         Command::Delegate(args) => delegate::run(args, cli.human).await,

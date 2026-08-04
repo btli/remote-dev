@@ -37,6 +37,7 @@ const SAFE_ALLOWLIST = new Set([
   "TERM",
   "CLAUDE_CONFIG_DIR",
   "CODEX_HOME",
+  "CURSOR_DATA_DIR",
   "GEMINI_HOME",
   "OPENCODE_HOME",
   "XDG_CONFIG_HOME",
@@ -54,6 +55,7 @@ const SAFE_ALLOWLIST = new Set([
 export function stripSensitiveEnv(env: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(env)) {
+    if (typeof v !== "string") continue;
     if (SAFE_ALLOWLIST.has(k)) {
       out[k] = v;
       continue;
@@ -69,11 +71,13 @@ export function stripSensitiveEnv(env: Record<string, string>): Record<string, s
 export function buildResumeBinding(
   resolution: Pick<ResumeResolution, "provider" | "resumeFlags" | "argvOverride">,
   env: Record<string, string>,
+  executablePath?: string,
 ): ResumeBinding {
   return {
     provider: resolution.provider,
     resumeFlags: resolution.resumeFlags,
     argvOverride: resolution.argvOverride,
+    ...(executablePath ? { executablePath } : {}),
     env: stripSensitiveEnv(env),
     capturedAt: new Date().toISOString(),
   };

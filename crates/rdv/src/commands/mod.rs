@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod browser;
 pub mod channel;
+pub mod clipboard;
 pub mod context;
 pub mod crown; // [oyej] best-of-N run-and-compare
 pub mod delegate; // [oyej] cross-instance delegation
