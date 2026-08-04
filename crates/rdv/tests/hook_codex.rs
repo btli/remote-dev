@@ -299,6 +299,40 @@ fn codex_pre_tool_git_guard_runs_before_stalled_peer_work() {
 }
 
 #[test]
+fn claude_pre_tool_git_guard_runs_before_stalled_peer_work() {
+    let terminal_port = serve_status_then_stalled_digest();
+    let (api_port, api_requests) = serve_blocking_git_guard();
+    let started = Instant::now();
+    let mut command = Command::cargo_bin("rdv").unwrap();
+    command
+        .env_remove("RDV_API_SOCKET")
+        .env_remove("RDV_TERMINAL_SOCKET")
+        .env("RDV_API_PORT", api_port.to_string())
+        .env("RDV_TERMINAL_PORT", terminal_port.to_string())
+        .env("RDV_SESSION_ID", "session-claude-guard-priority")
+        .env("RDV_AGENT_GENERATION", "4")
+        .env("RDV_API_KEY", "rdv_test_callback_key")
+        .args(["hook", "pre-tool-use"])
+        .write_stdin(
+            r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push"}}"#,
+        );
+
+    command
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("Git identity guard"));
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "ancillary peer work must not consume Claude's git guard deadline",
+    );
+
+    let session_request = api_requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(session_request.starts_with("GET /api/sessions/session-claude-guard-priority "));
+    let guard_request = api_requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(guard_request.starts_with("POST /api/projects/project-sensitive/git-guard "));
+}
+
+#[test]
 fn codex_pre_tool_git_guard_fails_closed_when_policy_is_unavailable() {
     let (terminal_port, _terminal_request) = serve_one_request();
     let api_port = serve_unavailable_git_guard(false);

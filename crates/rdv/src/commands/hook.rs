@@ -1255,6 +1255,7 @@ const MAX_HOOK_INPUT_BYTES: u64 = 1024 * 1024;
 const CODEX_GIT_GUARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 const CODEX_ANCILLARY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const CODEX_DIGEST_ACK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+const CLAUDE_ANCILLARY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 const GIT_GUARD_UNAVAILABLE_REASON: &str =
     "Unable to verify Git identity policy; retry when Remote Dev is available.";
 const GIT_GUARD_TIMEOUT_REASON: &str = "Git identity policy lookup timed out; retry the command.";
@@ -1275,24 +1276,36 @@ fn read_hook_payload() -> Result<serde_json::Value, Box<dyn std::error::Error>> 
 
 async fn handle_pre_tool_use_payload(client: &Client, payload: &serde_json::Value) {
     let is_subagent = payload.get("agent_id").is_some();
-    report_status(client, if is_subagent { "subagent" } else { "running" }).await;
-
-    if !is_subagent {
-        print_peer_digest(client).await;
-        broadcast_session_start(client).await;
-        report_proxy_state(client).await;
-    }
-
-    let denial_reason = match check_git_identity_guard(client, payload).await {
-        Ok(reason) => reason,
-        Err(error) => {
+    let (_, guard_result) = tokio::join!(
+        report_status(client, if is_subagent { "subagent" } else { "running" }),
+        tokio::time::timeout(
+            CODEX_GIT_GUARD_TIMEOUT,
+            check_git_identity_guard(client, payload),
+        ),
+    );
+    let denial_reason = match guard_result {
+        Ok(Ok(reason)) => reason,
+        Ok(Err(error)) => {
             eprintln!("warning: Git identity policy lookup failed: {error}");
             Some(GIT_GUARD_UNAVAILABLE_REASON.to_string())
+        }
+        Err(_) => {
+            eprintln!("warning: git identity guard exceeded its hook deadline");
+            Some(GIT_GUARD_TIMEOUT_REASON.to_string())
         }
     };
     if let Some(reason) = denial_reason {
         eprintln!("\u{1f6e1}\u{fe0f}  Git identity guard: {reason}");
         std::process::exit(2);
+    }
+
+    if !is_subagent {
+        let _ = tokio::time::timeout(CLAUDE_ANCILLARY_TIMEOUT, async {
+            print_peer_digest(client).await;
+            broadcast_session_start(client).await;
+            report_proxy_state(client).await;
+        })
+        .await;
     }
 }
 
