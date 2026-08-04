@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
+import {
+  withApiAuth,
+  withAuth,
+  errorResponse,
+  parseJsonBody,
+} from "@/lib/api";
 import { validateProjectPath } from "@/lib/api-validation";
 import * as SessionService from "@/services/session-service";
 import * as WorktreeService from "@/services/worktree-service";
@@ -18,7 +23,7 @@ const log = createLogger("api/sessions");
 /**
  * GET /api/sessions/:id - Get a single session
  */
-export const GET = withAuth(async (_request, { userId, params }) => {
+export const GET = withApiAuth(async (_request, { userId, params }) => {
   const terminalSession = await SessionService.getSessionWithMetadata(
     params!.id,
     userId

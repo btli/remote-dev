@@ -5,7 +5,10 @@ import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildClaudeStatusHookCommand } from "@/services/agent-profile-service";
+import {
+  buildClaudeStatusHookCommand,
+  installAgentHooks,
+} from "@/services/agent-profile-service";
 
 const tempDirs: string[] = [];
 
@@ -131,5 +134,28 @@ describe("Claude lifecycle delivery wrapper", () => {
     });
 
     expect(result.status).toBe(2);
+  });
+});
+
+describe("Claude lifecycle hook installation", () => {
+  it.each([
+    ["malformed JSON", "{\"hooks\":"],
+    ["an empty file", ""],
+    ["a non-object root", "[]\n"],
+    ["a non-object hooks map", '{"hooks":[]}\n'],
+    ["a malformed managed hook group", '{"hooks":{"Stop":"user-command"}}\n'],
+    ["a non-object MCP map", '{"mcpServers":[]}\n'],
+  ])("leaves %s untouched and aborts repair", async (_label, original) => {
+    const root = await mkdtemp(join(tmpdir(), "rdv-claude-install-"));
+    tempDirs.push(root);
+    const claudeDir = join(root, ".claude");
+    const settingsPath = join(claudeDir, "settings.json");
+    await mkdir(claudeDir);
+    await writeFile(settingsPath, original);
+
+    await expect(installAgentHooks(root, "claude", {})).rejects.toThrow(
+      "Claude settings.json",
+    );
+    await expect(readFile(settingsPath, "utf8")).resolves.toBe(original);
   });
 });

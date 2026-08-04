@@ -816,14 +816,35 @@ export async function installAgentHooks(
 
   const settingsPath = join(configDir, ".claude", "settings.json");
 
-  // Read existing settings (if any) to merge hooks
+  // Read existing settings (if any) to merge hooks. Only a genuinely missing
+  // file may start fresh: launch-time repair must never replace unreadable,
+  // malformed, or schema-invalid user configuration with an empty object.
   let existingSettings: Record<string, unknown> = {};
   let rawContent = "";
+  let settingsExist = false;
   try {
     rawContent = await readFile(settingsPath, "utf-8");
-    existingSettings = JSON.parse(rawContent);
-  } catch {
-    // File doesn't exist or is invalid JSON - start fresh
+    settingsExist = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new Error(
+        `Claude settings.json could not be read safely: ${String(error)}`,
+      );
+    }
+  }
+  if (settingsExist) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawContent);
+    } catch (error) {
+      throw new Error(
+        `Claude settings.json contains invalid JSON: ${String(error)}`,
+      );
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error("Claude settings.json root value must be an object");
+    }
+    existingSettings = parsed as Record<string, unknown>;
   }
 
   // Activity status hooks - rdv CLI preferred, curl fallback
@@ -850,8 +871,9 @@ export async function installAgentHooks(
   // SubagentStop hook: a Task subagent finished; parent will resume.
   // Reports status only — must NOT create a notification (avoids fatigue
   // from many subagent completions during a single user turn).
-  // [remote-dev-1aa5c] Tagged source=subagent-stop so the server refuses to let
-  // this "running" overwrite a turn that already ended ('idle'/'ended').
+  // [remote-dev-1aa5c] Tagged source=subagent-stop so this child-completion
+  // update only replaces an active running/subagent state, never waiting,
+  // compacting, idle, error, or ended.
   const subagentStopHook = {
     hooks: [{ type: "command", command: buildClaudeStatusHookCommand("rdv hook subagent-stop", "running", "subagent-stop"), timeout: 5 }],
   };
@@ -869,19 +891,34 @@ export async function installAgentHooks(
 
   // Merge with existing hooks — replace any old RDV hooks (both rdv CLI and legacy curl)
   // with current version, preserving user-defined hooks.
-  const existingHooks = (existingSettings.hooks ?? {}) as Record<string, unknown[]>;
+  const rawHooks = existingSettings.hooks;
+  if (
+    rawHooks !== undefined &&
+    (typeof rawHooks !== "object" || rawHooks === null || Array.isArray(rawHooks))
+  ) {
+    throw new Error("Claude settings.json hooks value must be an object");
+  }
+  const existingHooks = (rawHooks ?? {}) as Record<string, unknown>;
+  const hookGroups = (event: string): unknown[] => {
+    const groups = existingHooks[event];
+    if (groups === undefined) return [];
+    if (!Array.isArray(groups)) {
+      throw new Error(`Claude settings.json hook ${event} must be an array`);
+    }
+    return groups;
+  };
   const hookMarkers = [RDV_HOOK_MARKER, RDV_HOOK_DIRECT_MARKER, LEGACY_ACTIVITY_HOOK_MARKER, LEGACY_TODO_HOOK_MARKER];
 
-  const existingPreToolUse = Array.isArray(existingHooks.PreToolUse) ? existingHooks.PreToolUse : [];
-  const existingPreCompact = Array.isArray(existingHooks.PreCompact) ? existingHooks.PreCompact : [];
-  const existingNotification = Array.isArray(existingHooks.Notification) ? existingHooks.Notification : [];
-  const existingStop = Array.isArray(existingHooks.Stop) ? existingHooks.Stop : [];
-  const existingSubagentStop = Array.isArray(existingHooks.SubagentStop) ? existingHooks.SubagentStop : [];
-  const existingPostToolUse = Array.isArray(existingHooks.PostToolUse) ? existingHooks.PostToolUse : [];
-  const existingSessionEnd = Array.isArray(existingHooks.SessionEnd) ? existingHooks.SessionEnd : [];
+  const existingPreToolUse = hookGroups("PreToolUse");
+  const existingPreCompact = hookGroups("PreCompact");
+  const existingNotification = hookGroups("Notification");
+  const existingStop = hookGroups("Stop");
+  const existingSubagentStop = hookGroups("SubagentStop");
+  const existingPostToolUse = hookGroups("PostToolUse");
+  const existingSessionEnd = hookGroups("SessionEnd");
 
   // Clean up legacy SessionStart RDV hooks from older installations
-  const existingSessionStart = Array.isArray(existingHooks.SessionStart) ? existingHooks.SessionStart : [];
+  const existingSessionStart = hookGroups("SessionStart");
   const cleanedSessionStart = withoutRdvHooks(existingSessionStart, hookMarkers);
 
   // Strip old RDV hooks (if any) and append current version
@@ -905,7 +942,16 @@ export async function installAgentHooks(
 
   // Clean up stale MCP server entries from previous installations.
   // The MCP server backend was removed; leftover entries cause silent connection failures.
-  const mcpServers = (existingSettings.mcpServers ?? {}) as Record<string, unknown>;
+  const rawMcpServers = existingSettings.mcpServers;
+  if (
+    rawMcpServers !== undefined &&
+    (typeof rawMcpServers !== "object" ||
+      rawMcpServers === null ||
+      Array.isArray(rawMcpServers))
+  ) {
+    throw new Error("Claude settings.json mcpServers value must be an object");
+  }
+  const mcpServers = (rawMcpServers ?? {}) as Record<string, unknown>;
   if ("remote-dev" in mcpServers) {
     delete mcpServers["remote-dev"];
   }

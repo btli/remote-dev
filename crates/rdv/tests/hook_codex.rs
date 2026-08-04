@@ -71,8 +71,20 @@ fn read_http_request(stream: &mut TcpStream) -> String {
             break;
         }
         request.extend_from_slice(&chunk[..read]);
-        if request.windows(4).any(|window| window == b"\r\n\r\n") {
-            break;
+        if let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+            let headers = String::from_utf8_lossy(&request[..header_end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+            if request.len() >= header_end + 4 + content_length {
+                break;
+            }
         }
     }
     String::from_utf8_lossy(&request).into_owned()
@@ -121,6 +133,29 @@ fn serve_blocking_git_guard() -> (u16, mpsc::Receiver<String>) {
         }
     });
     (port, receiver)
+}
+
+fn serve_unavailable_git_guard(stall: bool) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock API server");
+    let port = listener.local_addr().unwrap().port();
+    thread::spawn(move || {
+        let (mut session_stream, _) = listener.accept().expect("accept session request");
+        let _ = read_http_request(&mut session_stream);
+        write_json_response(&mut session_stream, r#"{"projectId":"project-sensitive"}"#);
+
+        let (mut guard_stream, _) = listener.accept().expect("accept git guard request");
+        let _ = read_http_request(&mut guard_stream);
+        if stall {
+            thread::sleep(Duration::from_secs(5));
+        } else {
+            guard_stream
+                .write_all(
+                    b"HTTP/1.1 503 Service Unavailable\r\ncontent-type: application/json\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}",
+                )
+                .unwrap();
+        }
+    });
+    port
 }
 
 fn serve_digest_with_stalled_ack() -> (u16, mpsc::Receiver<String>) {
@@ -237,11 +272,12 @@ fn codex_pre_tool_git_guard_runs_before_stalled_peer_work() {
         .env("RDV_API_PORT", api_port.to_string())
         .env("RDV_TERMINAL_PORT", terminal_port.to_string())
         .env("RDV_SESSION_ID", "session-codex-guard-priority")
+        .env("RDV_PROJECT_ID", "project-untrusted-override")
         .env("RDV_AGENT_GENERATION", "4")
         .env("RDV_API_KEY", "rdv_test_callback_key")
         .args(["hook", "codex", "pre-tool-use"])
         .write_stdin(
-            r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push"}}"#,
+            r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git -c user.email=real@example.com -C /repo push"}}"#,
         );
 
     let assertion = command.assert().success();
@@ -256,7 +292,63 @@ fn codex_pre_tool_git_guard_runs_before_stalled_peer_work() {
     let session_request = api_requests.recv_timeout(Duration::from_secs(5)).unwrap();
     assert!(session_request.starts_with("GET /api/sessions/session-codex-guard-priority "));
     let guard_request = api_requests.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert!(guard_request.starts_with("POST /api/folders/project-sensitive/git-guard "));
+    assert!(guard_request.starts_with("POST /api/projects/project-sensitive/git-guard "));
+    assert!(guard_request.contains("authorization: Bearer rdv_test_callback_key"));
+    assert!(guard_request.contains(r#""proposedEmail":"real@example.com""#));
+    assert!(guard_request.contains(r#""operation":"push""#));
+}
+
+#[test]
+fn codex_pre_tool_git_guard_fails_closed_when_policy_is_unavailable() {
+    let (terminal_port, _terminal_request) = serve_one_request();
+    let api_port = serve_unavailable_git_guard(false);
+    let mut command = Command::cargo_bin("rdv").unwrap();
+    command
+        .env_remove("RDV_API_SOCKET")
+        .env_remove("RDV_TERMINAL_SOCKET")
+        .env("RDV_API_PORT", api_port.to_string())
+        .env("RDV_TERMINAL_PORT", terminal_port.to_string())
+        .env("RDV_SESSION_ID", "session-codex-guard-unavailable")
+        .env("RDV_AGENT_GENERATION", "4")
+        .env("RDV_API_KEY", "rdv_test_callback_key")
+        .args(["hook", "codex", "pre-tool-use"])
+        .write_stdin(
+            r#"{"hook_event_name":"PreToolUse","agent_id":"child","tool_name":"Bash","tool_input":{"command":"git push"}}"#,
+        );
+
+    let assertion = command.assert().success();
+    let stdout = String::from_utf8_lossy(&assertion.get_output().stdout);
+    assert!(stdout.contains(r#""permissionDecision":"deny""#));
+    assert!(stdout.contains("Unable to verify Git identity policy"));
+}
+
+#[test]
+fn codex_pre_tool_git_guard_fails_closed_on_policy_timeout() {
+    let (terminal_port, _terminal_request) = serve_one_request();
+    let api_port = serve_unavailable_git_guard(true);
+    let started = Instant::now();
+    let mut command = Command::cargo_bin("rdv").unwrap();
+    command
+        .env_remove("RDV_API_SOCKET")
+        .env_remove("RDV_TERMINAL_SOCKET")
+        .env("RDV_API_PORT", api_port.to_string())
+        .env("RDV_TERMINAL_PORT", terminal_port.to_string())
+        .env("RDV_SESSION_ID", "session-codex-guard-timeout")
+        .env("RDV_AGENT_GENERATION", "4")
+        .env("RDV_API_KEY", "rdv_test_callback_key")
+        .args(["hook", "codex", "pre-tool-use"])
+        .write_stdin(
+            r#"{"hook_event_name":"PreToolUse","agent_id":"child","tool_name":"Bash","tool_input":{"command":"git push"}}"#,
+        );
+
+    let assertion = command.assert().success();
+    let stdout = String::from_utf8_lossy(&assertion.get_output().stdout);
+    assert!(stdout.contains(r#""permissionDecision":"deny""#));
+    assert!(stdout.contains("timed out"));
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "a stalled policy lookup must deny inside the Codex hook deadline",
+    );
 }
 
 #[cfg(unix)]

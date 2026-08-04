@@ -200,10 +200,357 @@ fn shell_command(payload: &serde_json::Value) -> Option<String> {
         .and_then(shell_value)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GitGuardOperation {
+    Commit,
+    Push,
+}
+
+impl GitGuardOperation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Commit => "commit",
+            Self::Push => "push",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GitGuardRequest {
+    operation: GitGuardOperation,
+    proposed_name: Option<String>,
+    proposed_email: Option<String>,
+}
+
+fn assignment(token: &str) -> Option<(&str, &str)> {
+    let (name, value) = token.split_once('=')?;
+    let valid_name = !name.is_empty()
+        && name.chars().enumerate().all(|(index, ch)| {
+            ch == '_' || ch.is_ascii_alphanumeric() && (index > 0 || !ch.is_ascii_digit())
+        });
+    valid_name.then_some((name, value))
+}
+
+fn shell_segment_start(tokens: &[String], before: usize) -> usize {
+    tokens[..before]
+        .iter()
+        .rposition(|token| {
+            matches!(token.as_str(), ";" | "&&" | "||" | "|" | "&" | "(" | ")")
+                || token.ends_with(';')
+                || token.ends_with("&&")
+                || token.ends_with("||")
+        })
+        .map_or(0, |index| index + 1)
+}
+
+fn command_token(token: &str) -> &str {
+    token
+        .trim_matches(|ch: char| matches!(ch, ';' | '&' | '|' | '(' | ')' | '$'))
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(token)
+}
+
+fn allowed_git_prefix(tokens: &[String]) -> bool {
+    if tokens.iter().all(|token| assignment(token).is_some()) {
+        return true;
+    }
+    matches!(
+        tokens
+            .iter()
+            .find(|token| assignment(token).is_none())
+            .map(|token| command_token(token)),
+        Some(
+            "command"
+                | "env"
+                | "sudo"
+                | "doas"
+                | "nohup"
+                | "nice"
+                | "time"
+                | "if"
+                | "then"
+                | "while"
+                | "until"
+                | "do"
+                | "!"
+                | "{"
+        )
+    )
+}
+
+fn separate_shell_operators(command: &str) -> String {
+    let mut output = String::with_capacity(command.len() + 16);
+    let mut single_quoted = false;
+    let mut double_quoted = false;
+    let mut escaped = false;
+    for ch in command.chars() {
+        if escaped {
+            output.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' && !single_quoted {
+            output.push(ch);
+            escaped = true;
+            continue;
+        }
+        if ch == '\'' && !double_quoted {
+            single_quoted = !single_quoted;
+            output.push(ch);
+            continue;
+        }
+        if ch == '"' && !single_quoted {
+            double_quoted = !double_quoted;
+            output.push(ch);
+            continue;
+        }
+        if !single_quoted && !double_quoted && matches!(ch, ';' | '|' | '&' | '(' | ')') {
+            output.push(' ');
+            output.push(ch);
+            output.push(' ');
+        } else {
+            output.push(ch);
+        }
+    }
+    output
+}
+
+fn command_substitution_sources(token: &str) -> Vec<&str> {
+    let mut sources = Vec::new();
+    let mut rest = token;
+    while let Some(start) = rest.find("$(") {
+        let body = &rest[start + 2..];
+        let Some(end) = body.find(')') else {
+            break;
+        };
+        sources.push(&body[..end]);
+        rest = &body[end + 1..];
+    }
+    sources
+}
+
+fn apply_identity_assignment(
+    name: &str,
+    value: &str,
+    proposed_name: &mut Option<String>,
+    proposed_email: &mut Option<String>,
+) {
+    match name {
+        "GIT_AUTHOR_NAME" => *proposed_name = Some(value.to_string()),
+        "GIT_AUTHOR_EMAIL" => *proposed_email = Some(value.to_string()),
+        "GIT_COMMITTER_NAME" if proposed_name.is_none() => {
+            *proposed_name = Some(value.to_string());
+        }
+        "GIT_COMMITTER_EMAIL" if proposed_email.is_none() => {
+            *proposed_email = Some(value.to_string());
+        }
+        _ => {}
+    }
+}
+
+fn apply_git_config(
+    config: &str,
+    proposed_name: &mut Option<String>,
+    proposed_email: &mut Option<String>,
+) {
+    let (name, value) = config.split_once('=').unwrap_or((config, ""));
+    match name.to_ascii_lowercase().as_str() {
+        "user.name" => *proposed_name = Some(value.to_string()),
+        "user.email" => *proposed_email = Some(value.to_string()),
+        _ => {}
+    }
+}
+
+fn looks_like_protected_git(command: &str) -> bool {
+    let words: Vec<String> = command
+        .to_ascii_lowercase()
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && !matches!(ch, '-' | '_'))
+        .filter(|word| !word.is_empty())
+        .map(String::from)
+        .collect();
+    words.iter().enumerate().any(|(index, word)| {
+        matches!(word.as_str(), "git-push" | "git-commit")
+            || word == "git"
+                && words[index + 1..]
+                    .iter()
+                    .any(|candidate| matches!(candidate.as_str(), "push" | "commit"))
+    })
+}
+
+/// Parse protected Git invocations from a shell command without executing it.
+/// Common global options and command-local identity overrides are retained so
+/// the server evaluates the identity the command would actually use.
+fn parse_git_guard_requests(command: &str) -> Result<Vec<GitGuardRequest>, String> {
+    parse_git_guard_requests_inner(command, 0)
+}
+
+fn parse_git_guard_requests_inner(
+    command: &str,
+    recursion_depth: usize,
+) -> Result<Vec<GitGuardRequest>, String> {
+    let normalized_command = separate_shell_operators(command);
+    let Some(tokens) = shlex::split(&normalized_command) else {
+        return if looks_like_protected_git(command) {
+            Err("unable to safely parse protected Git command".to_string())
+        } else {
+            Ok(Vec::new())
+        };
+    };
+    let substitutions: Vec<String> = command_substitution_sources(command)
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let mut requests = Vec::new();
+
+    for (git_index, token) in tokens.iter().enumerate() {
+        let executable = command_token(token);
+        let direct_operation = match executable {
+            "git-push" => Some(GitGuardOperation::Push),
+            "git-commit" => Some(GitGuardOperation::Commit),
+            "git" => None,
+            _ => continue,
+        };
+        let segment_start = shell_segment_start(&tokens, git_index);
+        let prefix = &tokens[segment_start..git_index];
+        if !allowed_git_prefix(prefix) {
+            continue;
+        }
+
+        let mut proposed_name = None;
+        let mut proposed_email = None;
+        for prefix_token in prefix {
+            if let Some((name, value)) = assignment(prefix_token) {
+                apply_identity_assignment(name, value, &mut proposed_name, &mut proposed_email);
+            }
+        }
+
+        if let Some(operation) = direct_operation {
+            requests.push(GitGuardRequest {
+                operation,
+                proposed_name,
+                proposed_email,
+            });
+            continue;
+        }
+
+        let mut index = git_index + 1;
+        let mut operation = None;
+        while index < tokens.len() {
+            let token = tokens[index].as_str();
+            if matches!(token, ";" | "&&" | "||" | "|" | "&" | "(" | ")") {
+                break;
+            }
+            match token {
+                "-C" | "--git-dir" | "--work-tree" | "--namespace" | "--super-prefix"
+                | "--exec-path" => {
+                    index += 1;
+                    if index >= tokens.len() {
+                        return Err(format!("Git option {token} is missing its value"));
+                    }
+                }
+                "-c" => {
+                    index += 1;
+                    let Some(config) = tokens.get(index) else {
+                        return Err("Git option -c is missing its value".to_string());
+                    };
+                    apply_git_config(config, &mut proposed_name, &mut proposed_email);
+                }
+                value if value.starts_with("--config-env=") => {
+                    let config = value.trim_start_matches("--config-env=");
+                    let Some((name, env_name)) = config.split_once('=') else {
+                        return Err("Git --config-env is malformed".to_string());
+                    };
+                    let env_value = prefix
+                        .iter()
+                        .filter_map(|token| assignment(token))
+                        .find_map(|(candidate, value)| (candidate == env_name).then_some(value))
+                        .map(String::from)
+                        .or_else(|| std::env::var(env_name).ok())
+                        .ok_or_else(|| format!("Git --config-env references missing {env_name}"))?;
+                    apply_git_config(
+                        &format!("{name}={env_value}"),
+                        &mut proposed_name,
+                        &mut proposed_email,
+                    );
+                }
+                value
+                    if value.starts_with("--git-dir=")
+                        || value.starts_with("--work-tree=")
+                        || value.starts_with("--namespace=")
+                        || value.starts_with("--super-prefix=")
+                        || value.starts_with("--exec-path=") => {}
+                value if value.starts_with('-') => {}
+                value => {
+                    let subcommand =
+                        value.trim_matches(|ch: char| matches!(ch, ';' | '&' | '|' | '(' | ')'));
+                    operation = match subcommand {
+                        "push" => Some(GitGuardOperation::Push),
+                        "commit" => Some(GitGuardOperation::Commit),
+                        _ => None,
+                    };
+                    break;
+                }
+            }
+            index += 1;
+        }
+        if let Some(operation) = operation {
+            requests.push(GitGuardRequest {
+                operation,
+                proposed_name,
+                proposed_email,
+            });
+        }
+    }
+
+    // Shell wrappers receive their command as one quoted token. Parse that
+    // source recursively so `sh -c`/`bash -lc` cannot hide a protected Git
+    // invocation from the outer hook payload.
+    if recursion_depth < 3 {
+        for substitution in substitutions {
+            requests.extend(parse_git_guard_requests_inner(
+                &substitution,
+                recursion_depth + 1,
+            )?);
+        }
+        for (shell_index, token) in tokens.iter().enumerate() {
+            if !matches!(command_token(token), "sh" | "bash" | "dash" | "zsh") {
+                continue;
+            }
+            let mut index = shell_index + 1;
+            while index < tokens.len() {
+                let option = tokens[index].as_str();
+                if matches!(option, ";" | "|" | "&" | "(" | ")") {
+                    break;
+                }
+                if option.starts_with('-') {
+                    if option.trim_start_matches('-').contains('c') {
+                        let script = tokens.get(index + 1).ok_or_else(|| {
+                            format!("shell option {option} is missing its command")
+                        })?;
+                        requests
+                            .extend(parse_git_guard_requests_inner(script, recursion_depth + 1)?);
+                        break;
+                    }
+                    index += 1;
+                    continue;
+                }
+                break;
+            }
+        }
+    }
+
+    Ok(requests)
+}
+
 /// Inspect a parsed shell tool payload for git pushes of interest.
 fn inspect_bash_payload(payload: &serde_json::Value) -> Option<BashInspection> {
     let command = shell_command(payload)?;
-    let is_git_push = command.contains("git push") || command.contains("git-push");
+    let is_git_push = parse_git_guard_requests(&command).is_ok_and(|requests| {
+        requests
+            .iter()
+            .any(|request| request.operation == GitGuardOperation::Push)
+    });
     // If no explicit branch (bare `git push` or `git push origin`), assume it may target main
     let targets_main = is_git_push
         && extract_branch_from_push(&command).is_none_or(|b| b == "main" || b == "master");
@@ -644,23 +991,24 @@ async fn report_proxy_state(client: &Client) {
 
 // ── Git identity guard ──────────────────────────────────────────────
 
-/// Check if a git command in a sensitive folder would leak identity.
-/// Accepts a pre-parsed PreToolUse payload, inspects for git commit/push commands,
-/// and calls the git-guard API to evaluate identity risk.
-/// Returns the provider-neutral denial reason when the tool use must be blocked.
-async fn check_git_identity_guard(client: &Client, payload: &serde_json::Value) -> Option<String> {
-    let command = shell_command(payload)?;
-
-    // Check if the command is a git commit or git push
-    let is_git_commit = command.contains("git commit") || command.contains("git-commit");
-    let is_git_push = command.contains("git push") || command.contains("git-push");
-    if !is_git_commit && !is_git_push {
-        return None;
+/// Check whether protected Git invocations would leak identity. `Ok(None)` is
+/// reserved for non-Git/allowed commands; lookup and schema failures are errors
+/// so callers can fail closed rather than confusing an outage with approval.
+async fn check_git_identity_guard(
+    client: &Client,
+    payload: &serde_json::Value,
+) -> Result<Option<String>, String> {
+    let Some(command) = shell_command(payload) else {
+        return Ok(None);
+    };
+    let requests = parse_git_guard_requests(&command)?;
+    if requests.is_empty() {
+        return Ok(None);
     }
 
-    let operation = if is_git_push { "push" } else { "commit" };
-
-    let sid = client.session_id()?;
+    let sid = client
+        .session_id()
+        .ok_or_else(|| "missing RDV session identity".to_string())?;
 
     // Get the session's project and folder IDs
     #[derive(serde::Deserialize)]
@@ -671,18 +1019,17 @@ async fn check_git_identity_guard(client: &Client, payload: &serde_json::Value) 
         folder_id: Option<String>,
     }
 
-    let session: SessionInfo = match client.get(&format!("/api/sessions/{sid}")).await {
-        Ok(s) => s,
-        Err(_) => return None,
-    };
+    let session: SessionInfo = client
+        .get(&format!("/api/sessions/{sid}"))
+        .await
+        .map_err(|error| format!("session lookup failed: {error}"))?;
 
-    // Prefer RDV_PROJECT_ID env var, then session.projectId, then fall back to folderId
-    let project_id = std::env::var("RDV_PROJECT_ID")
-        .ok()
-        .or_else(|| session.project_id.clone())
-        .or_else(|| session.folder_id.clone());
-
-    let folder_id = project_id.as_ref()?;
+    // The owner-scoped server lookup is authoritative. Do not trust a profile
+    // or tool environment override to redirect policy to another project.
+    let project_id = session
+        .project_id
+        .or(session.folder_id)
+        .ok_or_else(|| "session has no project identity".to_string())?;
 
     // Read git identity from environment (set by session-service)
     let proposed_name = std::env::var("GIT_AUTHOR_NAME")
@@ -694,48 +1041,44 @@ async fn check_git_identity_guard(client: &Client, payload: &serde_json::Value) 
 
     // Always call the guard API — the server determines if the folder is sensitive
     // even when no identity env vars are set (which is the most dangerous case)
-    let guard_payload = json!({
-        "projectId": folder_id,
-        "folderId": folder_id,
-        "proposedName": proposed_name,
-        "proposedEmail": proposed_email,
-        "operation": operation,
-    });
-
     #[derive(serde::Deserialize)]
     struct GuardResult {
         risk: String,
         reason: Option<String>,
     }
 
-    let result: GuardResult = match client
-        .post_json(
-            &format!("/api/folders/{folder_id}/git-guard"),
-            &guard_payload,
-        )
-        .await
-    {
-        Ok(val) => match serde_json::from_value(val) {
-            Ok(r) => r,
-            Err(_) => return None,
-        },
-        Err(_) => return None,
-    };
+    for request in requests {
+        let guard_payload = json!({
+            "proposedName": request.proposed_name.as_deref().unwrap_or(&proposed_name),
+            "proposedEmail": request.proposed_email.as_deref().unwrap_or(&proposed_email),
+            "operation": request.operation.as_str(),
+        });
+        let value = client
+            .post_json(
+                &format!("/api/projects/{project_id}/git-guard"),
+                &guard_payload,
+            )
+            .await
+            .map_err(|error| format!("policy lookup failed: {error}"))?;
+        let result: GuardResult = serde_json::from_value(value)
+            .map_err(|error| format!("policy response was invalid: {error}"))?;
 
-    match result.risk.as_str() {
-        "block" => Some(
-            result
-                .reason
-                .unwrap_or_else(|| "Git identity policy blocked this commit or push".to_string()),
-        ),
-        "warn" => {
-            if let Some(reason) = &result.reason {
-                eprintln!("\u{26a0}\u{fe0f}  Git identity warning: {reason}");
+        match result.risk.as_str() {
+            "block" => {
+                return Ok(Some(result.reason.unwrap_or_else(|| {
+                    "Git identity policy blocked this commit or push".to_string()
+                })))
             }
-            None
+            "warn" => {
+                if let Some(reason) = &result.reason {
+                    eprintln!("\u{26a0}\u{fe0f}  Git identity warning: {reason}");
+                }
+            }
+            "none" => {}
+            risk => return Err(format!("policy response used unknown risk {risk:?}")),
         }
-        _ => None,
     }
+    Ok(None)
 }
 
 // ── Beads check ────────────────────────────────────────────────────
@@ -912,6 +1255,9 @@ const MAX_HOOK_INPUT_BYTES: u64 = 1024 * 1024;
 const CODEX_GIT_GUARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 const CODEX_ANCILLARY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const CODEX_DIGEST_ACK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+const GIT_GUARD_UNAVAILABLE_REASON: &str =
+    "Unable to verify Git identity policy; retry when Remote Dev is available.";
+const GIT_GUARD_TIMEOUT_REASON: &str = "Git identity policy lookup timed out; retry the command.";
 
 fn read_hook_payload() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let mut bytes = Vec::new();
@@ -937,7 +1283,14 @@ async fn handle_pre_tool_use_payload(client: &Client, payload: &serde_json::Valu
         report_proxy_state(client).await;
     }
 
-    if let Some(reason) = check_git_identity_guard(client, payload).await {
+    let denial_reason = match check_git_identity_guard(client, payload).await {
+        Ok(reason) => reason,
+        Err(error) => {
+            eprintln!("warning: Git identity policy lookup failed: {error}");
+            Some(GIT_GUARD_UNAVAILABLE_REASON.to_string())
+        }
+    };
+    if let Some(reason) = denial_reason {
         eprintln!("\u{1f6e1}\u{fe0f}  Git identity guard: {reason}");
         std::process::exit(2);
     }
@@ -963,10 +1316,14 @@ async fn handle_codex_pre_tool_use_payload(
         ),
     );
     let denial_reason = match guard_result {
-        Ok(reason) => reason,
+        Ok(Ok(reason)) => reason,
+        Ok(Err(error)) => {
+            eprintln!("warning: Git identity policy lookup failed: {error}");
+            Some(GIT_GUARD_UNAVAILABLE_REASON.to_string())
+        }
         Err(_) => {
             eprintln!("warning: git identity guard exceeded its hook deadline");
-            None
+            Some(GIT_GUARD_TIMEOUT_REASON.to_string())
         }
     };
 
@@ -1337,7 +1694,8 @@ mod codex_tests {
 
     use super::{
         codex_action, format_codex_pre_tool_response, format_stop_block, inspect_bash_payload,
-        shell_command, CodexHookAction, StopWireFormat,
+        parse_git_guard_requests, shell_command, CodexHookAction, GitGuardOperation,
+        GitGuardRequest, StopWireFormat,
     };
 
     #[test]
@@ -1445,6 +1803,96 @@ mod codex_tests {
             ),
             None,
         );
+    }
+
+    #[test]
+    fn parses_structured_git_guard_commands_and_inline_identity() {
+        assert_eq!(
+            parse_git_guard_requests("git -C /repo push").unwrap(),
+            vec![GitGuardRequest {
+                operation: GitGuardOperation::Push,
+                proposed_name: None,
+                proposed_email: None,
+            }],
+        );
+        assert_eq!(
+            parse_git_guard_requests(
+                "git -c user.name='Alias Name' -c user.email=alias@example.com commit"
+            )
+            .unwrap(),
+            vec![GitGuardRequest {
+                operation: GitGuardOperation::Commit,
+                proposed_name: Some("Alias Name".to_string()),
+                proposed_email: Some("alias@example.com".to_string()),
+            }],
+        );
+        assert_eq!(
+            parse_git_guard_requests(
+                "GIT_AUTHOR_NAME='Inline Name' GIT_AUTHOR_EMAIL=inline@example.com git\npush"
+            )
+            .unwrap(),
+            vec![GitGuardRequest {
+                operation: GitGuardOperation::Push,
+                proposed_name: Some("Inline Name".to_string()),
+                proposed_email: Some("inline@example.com".to_string()),
+            }],
+        );
+        assert_eq!(
+            parse_git_guard_requests("GIT_AUTHOR_NAME='Alias & Co' git push").unwrap()[0]
+                .proposed_name
+                .as_deref(),
+            Some("Alias & Co"),
+        );
+    }
+
+    #[test]
+    fn finds_protected_git_operations_after_other_shell_commands() {
+        assert_eq!(
+            parse_git_guard_requests("git status && command git -C /repo push; true")
+                .unwrap()
+                .into_iter()
+                .map(|request| request.operation)
+                .collect::<Vec<_>>(),
+            vec![GitGuardOperation::Push],
+        );
+        assert_eq!(
+            parse_git_guard_requests("true;git -C /repo push")
+                .unwrap()
+                .into_iter()
+                .map(|request| request.operation)
+                .collect::<Vec<_>>(),
+            vec![GitGuardOperation::Push],
+        );
+        assert_eq!(
+            parse_git_guard_requests("if git -C /repo push; then echo pushed; fi")
+                .unwrap()
+                .into_iter()
+                .map(|request| request.operation)
+                .collect::<Vec<_>>(),
+            vec![GitGuardOperation::Push],
+        );
+        assert_eq!(
+            parse_git_guard_requests("bash -lc 'git -c user.email=nested@example.com commit'")
+                .unwrap(),
+            vec![GitGuardRequest {
+                operation: GitGuardOperation::Commit,
+                proposed_name: None,
+                proposed_email: Some("nested@example.com".to_string()),
+            }],
+        );
+        assert_eq!(
+            parse_git_guard_requests("printf '%s' \"$(git push)\"")
+                .unwrap()
+                .into_iter()
+                .map(|request| request.operation)
+                .collect::<Vec<_>>(),
+            vec![GitGuardOperation::Push],
+        );
+        assert!(parse_git_guard_requests("printf 'git push'")
+            .unwrap()
+            .is_empty());
+        assert!(parse_git_guard_requests("git status").unwrap().is_empty());
+        assert!(parse_git_guard_requests("git -C 'unterminated push").is_err());
     }
 
     #[test]

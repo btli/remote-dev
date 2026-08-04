@@ -252,6 +252,8 @@ Codex hooks are written to the active `$CODEX_HOME/hooks.json`. Resolve that roo
 
 The PreToolUse handler inspects `tool_name` once rather than installing overlapping “running” and “attention” hook groups, which would race because Codex launches all matching hooks concurrently. `request_user_input` and any verified equivalent question tool map to `attention_required`; `PostToolUse` maps back to `running` after the response.
 
+Protected `git commit` and `git push` invocations are parsed across normal Git global options, shell separators/wrappers, and command-local identity overrides. The authenticated hook resolves its project from the owner-scoped session record and calls the owner-checked project policy endpoint before best-effort peer work. A policy lookup error, invalid response, or deadline expiry denies the protected command; it is never interpreted as approval.
+
 `SessionStart(source=compact)` is normalized as `compaction_finished`, because Codex runs it after compaction before the continuation request.
 
 ### Hook output codecs
