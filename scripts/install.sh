@@ -75,6 +75,12 @@ uninstall() {
     rm -f "$HOME/.config/systemd/user/remote-dev-terminal.service"
     systemctl --user daemon-reload
   elif [[ "$OS" == "Darwin" ]]; then
+    # Current single-owner supervision layout (remote-dev-7fsq)
+    launchctl bootout "gui/$(id -u)/dev.remote.app.prod" 2>/dev/null || true
+    launchctl bootout "gui/$(id -u)/dev.remote.app.watchdog" 2>/dev/null || true
+    rm -f "$HOME/Library/LaunchAgents/dev.remote.app.prod.plist"
+    rm -f "$HOME/Library/LaunchAgents/dev.remote.app.watchdog.plist"
+    # Legacy two-job layout (pre-supervision installs)
     launchctl unload "$HOME/Library/LaunchAgents/dev.remote.app.plist" 2>/dev/null || true
     launchctl unload "$HOME/Library/LaunchAgents/dev.remote.app.terminal.plist" 2>/dev/null || true
     rm -f "$HOME/Library/LaunchAgents/dev.remote.app.plist"
@@ -239,58 +245,25 @@ if [[ "$OS" == "Linux" ]]; then
   echo "  Restart:  systemctl --user restart remote-dev remote-dev-terminal"
 
 elif [[ "$OS" == "Darwin" ]]; then
-  log "Installing launchd services..."
+  # Single-owner supervision (remote-dev-7fsq): ONE launchd job owns the whole
+  # prod stack via `rdv.ts start prod --launchd-child`, plus the watchdog probe
+  # shim. Both plists are rendered + installed transactionally by the canonical
+  # installer — the stale two-job (app + app.terminal) layout is gone [F15].
+  log "Installing launchd supervision via install-supervision..."
 
-  LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
-  mkdir -p "$LAUNCH_AGENTS_DIR"
-
-  # Find Node.js path
-  NODE_PATH=$(which node)
-
-  # Next.js plist
-  sed \
-    -e "s|__INSTALL_DIR__|$INSTALL_DIR|g" \
-    -e "s|__DATA_DIR__|$DATA_DIR|g" \
-    -e "s|/usr/local/bin/node|$NODE_PATH|g" \
-    "$TARBALL_ROOT/service-config/dev.remote.app.plist" \
-    > "$LAUNCH_AGENTS_DIR/dev.remote.app.plist"
-
-  # Terminal plist
-  sed \
-    -e "s|__INSTALL_DIR__|$INSTALL_DIR|g" \
-    -e "s|__DATA_DIR__|$DATA_DIR|g" \
-    -e "s|/usr/local/bin/node|$NODE_PATH|g" \
-    "$TARBALL_ROOT/service-config/dev.remote.app.terminal.plist" \
-    > "$LAUNCH_AGENTS_DIR/dev.remote.app.terminal.plist"
-
-  # Source env vars and add to plists
-  if [[ -f "$ENV_FILE" ]]; then
-    # Read key env vars from .env.local and inject into plist EnvironmentVariables
-    while IFS='=' read -r key value; do
-      [[ -z "$key" || "$key" =~ ^# ]] && continue
-      # Strip quotes
-      value="${value%\"}"
-      value="${value#\"}"
-
-      for plist in dev.remote.app.plist dev.remote.app.terminal.plist; do
-        /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:${key} string ${value}" \
-          "$LAUNCH_AGENTS_DIR/$plist" 2>/dev/null || \
-        /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:${key} ${value}" \
-          "$LAUNCH_AGENTS_DIR/$plist" 2>/dev/null || true
-      done
-    done < "$ENV_FILE"
+  SUPERVISION_INSTALLER="$SCRIPT_DIR/install-supervision.sh"
+  if [[ ! -f "$SUPERVISION_INSTALLER" ]]; then
+    err "install-supervision.sh not found next to install.sh"
+    exit 1
   fi
+  bash "$SUPERVISION_INSTALLER" --project-root "$INSTALL_DIR" --data-dir "$DATA_DIR"
 
-  launchctl load -w "$LAUNCH_AGENTS_DIR/dev.remote.app.terminal.plist"
-  sleep 2
-  launchctl load -w "$LAUNCH_AGENTS_DIR/dev.remote.app.plist"
-
-  ok "Services installed and started"
+  ok "Supervision installed and started"
   echo ""
-  echo "  Status:   launchctl list | grep dev.remote"
+  echo "  Status:   launchctl print gui/\$(id -u)/dev.remote.app.prod"
   echo "  Logs:     tail -f $DATA_DIR/logs/nextjs.log"
-  echo "  Stop:     launchctl unload ~/Library/LaunchAgents/dev.remote.app.plist"
-  echo "  Restart:  launchctl kickstart -k gui/\$(id -u)/dev.remote.app"
+  echo "  Stop:     bun run rdv:stop   (bootout + desired=stopped)"
+  echo "  Restart:  bun run rdv:restart prod   (launchctl kickstart -k)"
 
 else
   warn "Unsupported OS: $OS"

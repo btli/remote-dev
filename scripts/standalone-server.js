@@ -52,11 +52,13 @@ require("next");
 const { startServer } = require("next/dist/server/lib/start-server");
 
 async function main() {
-  // Clean up stale socket if exists
-  if (socketPath && fs.existsSync(socketPath)) {
-    console.log(`Removing stale socket: ${socketPath}`);
-    fs.unlinkSync(socketPath);
-  }
+  // NOTE (remote-dev-7fsq [R2]): this child NEVER unlinks the socket path —
+  // not at startup and not at shutdown. Socket reclaim/cleanup is owned by the
+  // rdv.ts wrapper (which proves ownership via the generation manifest's
+  // recorded dev/ino before unlinking). A blind unlink here is exactly how an
+  // older generation destroyed a newer generation's live socket (the
+  // 2026-08-03 outage). If the path is stale-occupied, the bind below fails
+  // loudly and the wrapper's pre-spawn reclaim is the fix.
 
   if (socketPath) {
     // Socket mode: Start Next.js on internal port, proxy from socket
@@ -143,13 +145,12 @@ async function main() {
       proxyReq.end();
     });
 
-    // Graceful shutdown
+    // Graceful shutdown. The socket path is deliberately left in place — the
+    // wrapper unlinks it only after verifying the dev/ino matches its own
+    // generation manifest ([R2]; see the note at the top of main()).
     const shutdown = (signal) => {
       console.log(`\n${signal} received, shutting down...`);
       proxyServer.close(() => {
-        if (socketPath && fs.existsSync(socketPath)) {
-          fs.unlinkSync(socketPath);
-        }
         process.exit(0);
       });
     };

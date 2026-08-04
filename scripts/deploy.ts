@@ -65,6 +65,28 @@ import {
   type FlockHandle,
   type FlockLog,
 } from "./deploy-flock";
+import {
+  PROD_LABEL,
+  acquireControlLock,
+  bootoutJob,
+  bootstrapJob,
+  clearCustodyJournal,
+  currentGenerationState,
+  custodyJournalOwnedBy,
+  issueDeployRestartToken,
+  launchdJobLoaded,
+  notifyEscalation,
+  probeProdHealthy,
+  readCustodyJournal,
+  realDeps as supervisionDeps,
+  recordActuation,
+  supervisionPaths,
+  SupervisionEvidenceError,
+  waitForGenerationExit,
+  writeCustodyJournal,
+  writeDesiredState,
+  type CustodyJournal,
+} from "./rdv-supervision";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -197,6 +219,13 @@ interface DeployResult {
   error?: string;
   startedAt: string;
   finishedAt?: string;
+  /**
+   * Identity of the deploy process that owns an `in_progress` record. Stamped
+   * on the record left while the final health gate runs, so supervision can
+   * recognize a deploy that died mid-finalization and rewrite the result to
+   * failed — otherwise the CI poll reads "running" forever.
+   */
+  owner?: { pid: number; startTimeNs: string };
 }
 
 function writeDeployResult(result: DeployResult): void {
@@ -257,18 +286,22 @@ function readPid(file: string): number | null {
   return null;
 }
 
+// Fail-closed liveness: ONLY ESRCH proves the process is gone. EPERM (alive
+// but not ours to signal) and any unexpected kill(2) failure mean "cannot
+// prove it is dead" — reporting such a process as stopped would let a deploy
+// migrate under a server it believes it already stopped.
 function isProcessRunning(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException | undefined)?.code !== "ESRCH";
   }
 }
 
-// Liveness probe for the instance-lock holder. Unlike isProcessRunning above
-// (which treats EPERM as "dead"), this mirrors instance-lock.ts's isPidAlive:
-// EPERM means the process EXISTS but is owned by another user, so it is alive.
+// Liveness probe for the instance-lock holder, mirroring instance-lock.ts's
+// isPidAlive: EPERM means the process EXISTS but is owned by another user, so
+// it is alive.
 // We MUST err toward "alive" here so the deploy never deletes a live lock it
 // merely can't signal — wrongly removing a held lock is the failure this
 // ownership check exists to prevent.
@@ -277,8 +310,10 @@ function isLockHolderAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException | undefined)?.code;
-    return code === "EPERM";
+    // Only ESRCH proves absence; EPERM and any unexpected error mean the
+    // holder may well be alive, and removing a live lock is the failure mode
+    // this probe exists to avoid.
+    return (err as NodeJS.ErrnoException | undefined)?.code !== "ESRCH";
   }
 }
 
@@ -359,14 +394,20 @@ function stopCurrentServers(): void {
     }
   }
 
-  // Clear a STALE instance lock (src/lib/instance-lock.ts). A SIGKILLed
-  // terminal server can't release its own lock on the way out, and a leftover
-  // lock would block the restart we're about to trigger via rdv.ts. The deploy
-  // lock already serializes deploys, but a manual out-of-band `rdv:prod` could
-  // hold a live lock — so we mirror releaseInstanceLock()'s defensiveness and
-  // only remove the lock when it's same-host AND its holder PID is dead. A
-  // live-owner lock is preserved (we warn instead). Only deploy.ts clears the
-  // lock; rdv.ts manual start must NOT, so it preserves the double-start guard.
+  clearStaleInstanceLock();
+
+  logDeploy("Servers stopped");
+}
+
+// Clear a STALE instance lock (src/lib/instance-lock.ts). A SIGKILLed
+// terminal server can't release its own lock on the way out, and a leftover
+// lock would block the restart we're about to trigger via rdv.ts. The deploy
+// lock already serializes deploys, but a manual out-of-band `rdv:prod` could
+// hold a live lock — so we mirror releaseInstanceLock()'s defensiveness and
+// only remove the lock when it's same-host AND its holder PID is dead. A
+// live-owner lock is preserved (we warn instead). Only deploy.ts clears the
+// lock; rdv.ts manual start must NOT, so it preserves the double-start guard.
+function clearStaleInstanceLock(): void {
   const instanceLock = join(DATA_DIR, "instance.lock");
   try {
     if (existsSync(instanceLock)) {
@@ -399,8 +440,6 @@ function stopCurrentServers(): void {
   } catch {
     // Ignore
   }
-
-  logDeploy("Servers stopped");
 }
 
 // Note: an in-process `startServers()` used to live here, but the live deploy
@@ -414,15 +453,391 @@ function restartViaRdvAsync(): void {
   // shell config, etc.) — this is the only way to exactly replicate the
   // environment that `nohup bun run rdv:prod` gets when run manually.
   const shell = process.env.SHELL || "/bin/zsh";
+  // The deploy's OWN restart channel [F11]: a fresh random single-use token is
+  // written 0600 and handed ONLY to the child we spawn. rdv.ts refuses a
+  // job-absent foreground start while the deploy lock is live unless the
+  // presented token matches the file — and consumes it on the match, so the
+  // authorization cannot be replayed. The previous design compared an env pid
+  // against the world-readable pid in deploy.lock, which any caller could
+  // reproduce; this one cannot be reproduced by accident. (Same-uid processes
+  // can still READ the token file — see the threat-model note in
+  // rdv-supervision.ts; the hazard being closed is an agent innocently running
+  // `rdv start prod` mid-deploy, not a hostile local user.)
+  const deps = supervisionDeps();
+  const paths = supervisionPaths(process.env);
+  const token = issueDeployRestartToken(deps, paths);
   const proc = spawn({
     cmd: [shell, "-l", "-c", `cd ${PROJECT_ROOT} && exec bun run scripts/rdv.ts start prod`],
     cwd: PROJECT_ROOT,
+    env: { ...process.env, RDV_DEPLOY_RESTART_TOKEN: token },
     stdout: "inherit",
     stderr: "inherit",
   });
   if (proc.pid) {
     logDeploy(`rdv.ts started via login shell (PID: ${proc.pid})`);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Launchd custody (remote-dev-7fsq — Spec v3 §3.5 [F3, R4, R9])
+//
+// While the prod launchd job (`dev.remote.app.prod`, KeepAlive) is loaded, a
+// deploy CANNOT simply kill the servers — launchd would resurrect the OLD
+// build mid-migration. The LaunchdCustody object therefore owns EVERY
+// stop/start transition in this script:
+//
+//   stop():  journal FIRST (crash-safe custody record [R4]) → desired =
+//            maintenance → `launchctl bootout` (stops KeepAlive resurrection)
+//            → wait for the generation to exit (manifest-verified).
+//   start(): `launchctl bootstrap` (per the JOURNAL's priorLoaded — custody
+//            methods never branch on live "job loaded" probes mid-deploy; the
+//            job is *deliberately* unloaded then [R9]).
+//   finalize(): same-process crash-safety in the callers' `finally` [F3]: if
+//            we ever booted out and the journal is still open, bootstrap, set
+//            desired=running, clear the journal.
+//
+// If the deploy PROCESS dies after bootout (SIGKILL — no finally runs), the
+// journal survives: the watchdog's recovery transaction classifies the custody
+// as abandoned (owner pid+startTimeNs dead, deploy lock free, desired !=
+// stopped) and restores per journal (restore-slot → bootstrap → desired =
+// running → escalation notification) [R4, R5].
+//
+// Job-absent installs (priorLoaded=false) keep the pre-supervision behavior:
+// stopCurrentServers() / restartViaRdvAsync().
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** How long finalize() waits for a loaded prod job to actually serve. */
+const FINALIZE_HEALTH_TIMEOUT_MS = 60_000;
+
+interface LaunchdCustody {
+  stop(phase: string, restoreSlot: Slot): Promise<void>;
+  start(): Promise<void>;
+  /** false ⇒ custody could NOT be closed cleanly; the caller must exit non-zero. */
+  finalize(): Promise<boolean>;
+}
+
+function createLaunchdCustody(): LaunchdCustody {
+  const deps = supervisionDeps();
+  const paths = supervisionPaths(process.env);
+  // Resolved ONCE per deploy (before any bootout, when the live probe is still
+  // meaningful); every later transition uses this cached/journaled answer [R9].
+  let priorLoaded: boolean | null = null;
+  // Did THIS process write the journal? Custody may only act on its own
+  // journal [R4] — see ownsJournal below.
+  let journalWrittenBySelf = false;
+  const selfStartTimeNs = deps.procStartTimeNs(process.pid);
+
+  /**
+   * A journal is ACTIONABLE only if this very deploy wrote it. Two deploys can
+   * overlap (A dies after bootout, B starts before the watchdog runs); acting
+   * on A's journal would let B bootstrap unrestored files, write
+   * desired=running and delete A's recovery evidence — turning a recoverable
+   * crash into a silent bad-build deploy.
+   */
+  const ownsJournal = (j: CustodyJournal): boolean =>
+    custodyJournalOwnedBy(j, { pid: process.pid, startTimeNs: selfStartTimeNs });
+
+  const refuseForeignJournal = (j: CustodyJournal): never => {
+    throw new Error(
+      `abandoned custody journal from deploy ${j.ownerPid} (phase ${j.phase}, slot ${j.slot}) — ` +
+        "watchdog recovery or `rdv doctor-supervision` must clear it before another deploy takes custody",
+    );
+  };
+
+  const resolvePriorLoaded = (): boolean => {
+    if (priorLoaded !== null) return priorLoaded;
+    // A surviving journal is authoritative only if WE wrote it; one left by a
+    // crashed earlier deploy is that deploy's recovery evidence and must not
+    // be adopted [R4].
+    const existing = readCustodyJournal(deps, paths);
+    if (existing === "corrupt") {
+      // Corrupt custody evidence: never guess — fail closed [F9].
+      throw new Error(
+        "custody-journal.json is corrupt; refusing to take deploy custody (inspect + remove it manually)",
+      );
+    }
+    if (existing) {
+      if (!ownsJournal(existing)) refuseForeignJournal(existing);
+      priorLoaded = existing.priorLoaded;
+      return priorLoaded;
+    }
+    const loaded = launchdJobLoaded(deps, PROD_LABEL);
+    if (loaded === "unknown") {
+      // Fail closed [F9]: deploying with unknown launchd state risks a
+      // dual-writer resurrection mid-migration.
+      throw new Error(
+        `launchctl state for ${PROD_LABEL} is unknown; refusing to take deploy custody`,
+      );
+    }
+    priorLoaded = loaded;
+    return loaded;
+  };
+
+  return {
+    async stop(phase: string, restoreSlot: Slot): Promise<void> {
+      if (!resolvePriorLoaded()) {
+        // Job-absent install: current behavior.
+        stopCurrentServers();
+        return;
+      }
+      // The generation must be VERIFIABLE before anything destructive: a
+      // dangling/corrupt manifest means the post-bootout exit could never be
+      // confirmed [R3]. Checked BEFORE the journal write + bootout.
+      const preState = currentGenerationState(deps, paths);
+      if (preState.state === "unverifiable") {
+        throw new Error(
+          `generation ${preState.gen} manifest is missing/corrupt; refusing custody stop — ` +
+            "run `rdv doctor-supervision --force-reclaim` first",
+        );
+      }
+      // The deploy's own identity anchors the journal; a fabricated value
+      // would make the owner unverifiable and corrupt the abandoned-custody
+      // classification — fail closed instead [R13].
+      const ownerStartTimeNs = deps.procStartTimeNs(process.pid);
+      if (ownerStartTimeNs === null) {
+        throw new Error(
+          "cannot capture own process start time (sysctl kern.proc.pid); refusing custody stop " +
+            "with an unverifiable journal owner",
+        );
+      }
+      // The control lock covers the custody transition; contention aborts
+      // BEFORE bootout — never a partial transition [R8].
+      const lock = await acquireControlLock(deps, paths);
+      if (!lock) {
+        throw new Error("control lock busy; aborting deploy custody stop before bootout");
+      }
+      try {
+        // JOURNAL FIRST [R4]: if we die at ANY point after this write, the
+        // watchdog can restore prod from the journal.
+        writeCustodyJournal(deps, paths, {
+          ownerPid: process.pid,
+          ownerStartTimeNs,
+          priorLoaded: true,
+          plistPath: paths.prodPlist,
+          slot: restoreSlot,
+          phase,
+          ts: Date.now(),
+        });
+        journalWrittenBySelf = true;
+        writeDesiredState(deps, paths, "maintenance");
+        logDeploy(`launchd custody: bootout ${PROD_LABEL} (phase ${phase})`);
+        if (!bootoutJob(deps, PROD_LABEL)) {
+          // The job may STILL be loaded — running the migration under a live
+          // KeepAlive job is the exact hazard this custody exists to prevent.
+          // finalize() probes the REAL state and closes custody accordingly.
+          throw new Error(`launchctl bootout ${PROD_LABEL} failed; aborting deploy custody stop`);
+        }
+        const outcome = await waitForGenerationExit(deps, paths, 40_000);
+        if (outcome === "timeout" || outcome === "unverifiable") {
+          throw new Error(
+            `generation did not verifiably exit after bootout (${outcome}); ` +
+              "aborting before migration — processes may still be running",
+          );
+        }
+        clearStaleInstanceLock();
+      } finally {
+        lock.release();
+      }
+    },
+
+    async start(): Promise<void> {
+      // The journal's priorLoaded is authoritative mid-deploy [R9]; fall back
+      // to the cached probe result (never a live probe here).
+      const journal = readCustodyJournal(deps, paths);
+      if (journal === "corrupt") {
+        throw new Error("custody-journal.json is corrupt; refusing custody start");
+      }
+      if (journal && !ownsJournal(journal)) refuseForeignJournal(journal);
+      const loaded = journal ? journal.priorLoaded : (priorLoaded ?? false);
+      if (!loaded) {
+        restartViaRdvAsync();
+        return;
+      }
+      const lock = await acquireControlLock(deps, paths);
+      if (!lock) {
+        throw new Error("control lock busy; cannot bootstrap after deploy");
+      }
+      try {
+        logDeploy(`launchd custody: bootstrap ${PROD_LABEL}`);
+        if (!bootstrapJob(deps, paths.prodPlist)) {
+          // Prod is stranded unloaded; the journal survives so finalize()
+          // retries and — failing that — the watchdog's custody-journal
+          // recovery restores it [R4].
+          throw new Error(`launchctl bootstrap ${PROD_LABEL} failed after deploy`);
+        }
+        // Deploy restarts are actuations too [F12]: ledger + escalation math
+        // + the last-restart grace stamp (so the watchdog defers rather than
+        // instantly restarting a warming post-deploy stack).
+        recordActuation(deps, paths, "deploy", "bootstrap");
+      } finally {
+        lock.release();
+      }
+    },
+
+    async finalize(): Promise<boolean> {
+      // NOTE: the restart token is deliberately NOT cleared here. The child
+      // spawned by restartViaRdvAsync consumes it during ITS startup, which
+      // can still be in flight when finalize runs; clearing it would refuse
+      // the deploy's own restart and leave prod down. The token is random,
+      // single-use, only consulted while THIS deploy's lock is live, and
+      // overwritten by the next mint.
+      let journal: CustodyJournal | "corrupt" | null;
+      try {
+        journal = readCustodyJournal(deps, paths);
+      } catch (err) {
+        if (!(err instanceof SupervisionEvidenceError)) throw err;
+        logError(`launchd custody: finalize cannot read custody evidence (${err.message}); journal untouched`);
+        notifyEscalation(deps, paths, `deploy finalize: custody evidence unreadable (${err.message})`);
+        return false;
+      }
+      if (journal === null) return true; // custody never taken (or already closed).
+      if (journal === "corrupt") {
+        // Corrupt custody evidence: keep the file for the operator, never
+        // guess a close-out.
+        logError("launchd custody: finalize found a CORRUPT journal; leaving it in place");
+        notifyEscalation(deps, paths, "deploy finalize: custody-journal.json is corrupt; operator attention required");
+        return false;
+      }
+      // NEVER finalize a journal this deploy did not write [R4]. A journal
+      // from an earlier, crashed deploy is that deploy's recovery evidence;
+      // bootstrapping and clearing it here would erase the record of an
+      // incomplete activation and bring prod up on unrestored files.
+      if (!journalWrittenBySelf || !ownsJournal(journal)) {
+        logError(
+          `launchd custody: finalize found a journal owned by deploy ${journal.ownerPid} (not this ` +
+            `process ${process.pid}) — leaving it untouched for watchdog recovery / doctor-supervision`,
+        );
+        notifyEscalation(
+          deps,
+          paths,
+          `deploy finalize: foreign custody journal (owner pid ${journal.ownerPid}) left intact`,
+        );
+        return false;
+      }
+      // Custody transitions run under the control lock, finalize included
+      // [R8]. If the lock cannot be had, do nothing destructive: keeping the
+      // journal + maintenance leaves the watchdog's custody recovery armed.
+      const lock = await acquireControlLock(deps, paths);
+      if (!lock) {
+        logError(
+          "launchd custody: finalize could not take the control lock; journal retained " +
+            "(watchdog custody recovery will restore prod if we exit)",
+        );
+        return false;
+      }
+      try {
+        if (journal.priorLoaded) {
+          // The deploy is OVER here, so probing the REAL launchd state is the
+          // point (the [R9] mid-deploy probe ban no longer applies): a
+          // nonzero bootout earlier is ambiguous evidence, an internal flag
+          // is not proof — only launchctl is.
+          const loadedNow = launchdJobLoaded(deps, PROD_LABEL);
+          if (loadedNow === "unknown") {
+            logError("launchd custody: finalize cannot determine launchd state; journal retained [F9]");
+            notifyEscalation(deps, paths, "deploy finalize: launchd state unknown; journal retained");
+            return false;
+          }
+          if (!loadedNow) {
+            // Before bootstrapping, the old generation must be verifiably
+            // gone — bootstrapping over known-alive processes recreates the
+            // dual-writer hazard.
+            const outcome = await waitForGenerationExit(deps, paths, 10_000);
+            if (outcome === "timeout" || outcome === "unverifiable") {
+              logError(
+                `launchd custody: finalize — old generation still alive/unverifiable (${outcome}); ` +
+                  "journal retained for watchdog custody recovery",
+              );
+              notifyEscalation(
+                deps,
+                paths,
+                `deploy finalize: old generation ${outcome} with job unloaded; journal retained`,
+              );
+              return false;
+            }
+            logDeploy(`launchd custody: finalize — re-bootstrapping ${PROD_LABEL} after failure`);
+            if (!bootstrapJob(deps, paths.prodPlist)) {
+              // Do NOT delete the crash-recovery evidence: journal + desired=
+              // maintenance stay so the watchdog restores per journal [R4].
+              logError(
+                `launchd custody: finalize bootstrap of ${PROD_LABEL} FAILED; journal retained for ` +
+                  "watchdog custody recovery",
+              );
+              notifyEscalation(deps, paths, "deploy finalize: bootstrap failed; journal retained");
+              return false;
+            }
+            recordActuation(deps, paths, "deploy", "finalize-bootstrap");
+          }
+          // HEALTH GATE before custody is released (spec §3.5.3 order:
+          // bootstrap → health gate → journal clear). "launchd says the job is
+          // loaded" is NOT evidence that prod serves: a rollback whose slot
+          // restoration failed can leave a loaded-but-broken stack, and
+          // clearing the journal here would destroy the only record of the
+          // known-good slot to restore. Unhealthy ⇒ keep the journal (+
+          // maintenance) so the watchdog's custody recovery takes over, and
+          // report failure.
+          //
+          // The probe itself can THROW (SupervisionEvidenceError from a
+          // failing lstat, say). An exception escaping finalize() would skip
+          // the caller's failed-result rewrite and surface as a crash over a
+          // possibly-green record, so an unreadable probe is treated exactly
+          // like an unhealthy one: keep the journal, report failure.
+          const probe = (): boolean => {
+            try {
+              return probeProdHealthy(deps, paths);
+            } catch (err) {
+              logError(`launchd custody: finalize health probe failed to run (${String(err)}); treating as unhealthy`);
+              return false;
+            }
+          };
+          const deadline = Date.now() + FINALIZE_HEALTH_TIMEOUT_MS;
+          let healthy = probe();
+          while (!healthy && Date.now() < deadline) {
+            await Bun.sleep(3000);
+            healthy = probe();
+          }
+          if (!healthy) {
+            logError(
+              `launchd custody: finalize — ${PROD_LABEL} is loaded but NOT healthy after ` +
+                `${Math.round(FINALIZE_HEALTH_TIMEOUT_MS / 1000)}s; journal retained (desired stays ` +
+                "maintenance) so watchdog custody recovery can restore the journaled slot",
+            );
+            notifyEscalation(
+              deps,
+              paths,
+              `deploy finalize: prod loaded but unhealthy; custody journal retained for recovery ` +
+                `(slot ${journal.slot}, phase ${journal.phase})`,
+            );
+            return false;
+          }
+        }
+        // Only after the job is VERIFIABLY loaded AND HEALTHY (or custody
+        // never involved launchd) is custody closed: desired=running + journal
+        // cleared.
+        writeDesiredState(deps, paths, "running");
+        if (!clearCustodyJournal(deps, paths)) {
+          logError("launchd custody: finalize could not remove the custody journal");
+          notifyEscalation(deps, paths, "deploy finalize: custody journal could not be removed");
+          return false;
+        }
+        return true;
+      } catch (err) {
+        // ANY throw in here (unreadable supervision evidence, a failing exec)
+        // means custody was NOT closed. Escaping would skip the caller's
+        // failed-result rewrite and leave the run reported as something other
+        // than the failure it is — so it is caught, the journal is left in
+        // place for watchdog recovery, and we report failure.
+        logError(`launchd custody: finalize failed (${String(err)}); journal retained`);
+        try {
+          notifyEscalation(deps, paths, `deploy finalize failed: ${String(err)}; custody journal retained`);
+        } catch {
+          // escalation is best-effort and must never mask the original failure
+        }
+        return false;
+      } finally {
+        lock.release();
+      }
+    },
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1444,132 +1859,246 @@ function pushToForgejoMirror(): void {
 // runWithDeployFlock releases the flock regardless of which branch returns — so
 // every failure branch here just `return 1` (no inline releaseLock()/exit()).
 async function deploy(): Promise<number> {
-  {
-    const state = readDeployState();
-    const activeSlot = state?.activeSlot || "blue";
-    const inactiveSlot: Slot = activeSlot === "blue" ? "green" : "blue";
-    const previousCommit = state?.activeCommit || getGitCommitFull();
+  // All launchd stop/start transitions go through ONE custody object; the
+  // finalize() run by runWithCustody is the same-process crash-safety net
+  // [F3] AND the gate that decides whether a "successful" deploy really is one.
+  return runWithCustody(createLaunchdCustody(), (custody) => deployBody(custody));
+}
 
-    const requestedCommit = process.env.DEPLOY_REQUESTED_COMMIT || getGitCommitFull();
-    const startedAt = new Date().toISOString();
+/**
+ * Run a deploy/rollback body and then finalize custody. finalize() re-checks
+ * launchd AND probes health before releasing custody, so a body that returned
+ * 0 while prod ended up unhealthy (or while custody could not be closed) is
+ * downgraded to a failure here — a green deploy must never be reported over a
+ * retained recovery journal. Exceptions still propagate after finalize runs.
+ */
+interface RunOutcome {
+  code: number;
+  /**
+   * Publication that may only happen once the stack is VERIFIED healthy —
+   * the active-slot pointer and the terminal `success` result. A consumed
+   * green result cannot be retracted (the webhook may have already polled it)
+   * and a SIGKILL before the health gate would freeze it green forever, so
+   * nothing terminal-and-green is written until finalize() has passed.
+   */
+  onVerified?: () => void;
+}
 
-    // Record a terminal "failed" result for a given stage before we roll back
-    // and exit. Each failure site differs only by stage + error message.
-    const writeFailure = (stage: string, error: string): void =>
+async function runWithCustody(
+  custody: LaunchdCustody,
+  body: (custody: LaunchdCustody) => Promise<RunOutcome>,
+): Promise<number> {
+  let outcome: RunOutcome;
+  try {
+    outcome = await body(custody);
+  } catch (err) {
+    await custody.finalize();
+    throw err;
+  }
+  const finalized = await custody.finalize();
+  if (!finalized) {
+    logError("custody could not be closed cleanly — reporting this run as FAILED");
+    if (outcome.code === 0) {
+      // The body deliberately published nothing terminal; write the failure so
+      // the CI poll sees red rather than a stale in-progress record.
+      const state = readDeployState();
+      const now = new Date().toISOString();
       writeDeployResult({
         status: "failed",
-        requestedCommit,
-        activeCommit: previousCommit,
-        stage,
-        error,
-        startedAt,
-        finishedAt: new Date().toISOString(),
+        requestedCommit: process.env.DEPLOY_REQUESTED_COMMIT || getGitCommitFull(),
+        activeCommit: state?.activeCommit ?? null,
+        stage: "custody-finalize",
+        error:
+          "launchd custody could not be closed (prod not verifiably healthy, or the custody journal " +
+          "was retained for watchdog recovery)",
+        startedAt: now,
+        finishedAt: now,
       });
+    }
+    return outcome.code === 0 ? 1 : outcome.code;
+  }
+  // Verified: publish the active slot + the green result now, and only now.
+  if (outcome.code === 0 && outcome.onVerified) outcome.onVerified();
+  return outcome.code;
+}
 
+async function deployBody(custody: LaunchdCustody): Promise<RunOutcome> {
+  const state = readDeployState();
+  const activeSlot = state?.activeSlot || "blue";
+  const inactiveSlot: Slot = activeSlot === "blue" ? "green" : "blue";
+  const previousCommit = state?.activeCommit || getGitCommitFull();
+
+  const requestedCommit = process.env.DEPLOY_REQUESTED_COMMIT || getGitCommitFull();
+  const startedAt = new Date().toISOString();
+
+  // Record a terminal "failed" result for a given stage before we roll back
+  // and exit. Each failure site differs only by stage + error message.
+  const writeFailure = (stage: string, error: string): void =>
     writeDeployResult({
-      status: "in_progress",
+      status: "failed",
       requestedCommit,
       activeCommit: previousCommit,
-      stage: "start",
-      startedAt,
-    });
-
-    logDeploy(`=== Deploy started ===`);
-    logDeploy(`Active slot: ${activeSlot}, building into: ${inactiveSlot}`);
-
-    // Build into inactive slot
-    if (!buildSlot(inactiveSlot)) {
-      logError("Build failed, aborting deploy");
-      writeFailure("build", "Build failed");
-      return 1;
-    }
-
-    // The commit we actually built/shipped is DEPLOY_SRC's HEAD (origin/master),
-    // NOT PROJECT_ROOT's — PROJECT_ROOT is no longer reset per deploy. Recording
-    // this is what keeps state.json's activeCommit == the pushed SHA so the CI
-    // poll (GET /api/deploy/status) can confirm the right commit went live.
-    const newCommit = getGitCommitFull(DEPLOY_SRC);
-    logDeploy(`Swapping from ${activeSlot} to ${inactiveSlot}...`);
-
-    // Stop current servers, run migration, restart via rdv.ts.
-    // We use rdv.ts instead of starting servers directly because rdv.ts
-    // runs in the user's shell environment with proper locale vars (LC_ALL,
-    // LANG, etc.) required for correct PTY/UTF-8 encoding in node-pty.
-    stopCurrentServers();
-
-    // Run database migration while servers are stopped
-    if (!runMigration()) {
-      logError("Migration failed, restarting via rdv.ts...");
-      writeFailure("migration", "Migration failed");
-      restartViaRdvAsync();
-      await Bun.sleep(5000);
-      return 1;
-    }
-
-    // Activate the freshly-built slot AFTER migration: copy it over the live
-    // serving dir (PROJECT_ROOT/.next/standalone) before restart, so the new
-    // code only goes live once the schema is migrated. The build now happens in
-    // an isolated deploy-src worktree → slot (remote-dev-yxvy), so unlike the
-    // pre-#342 in-place builds the live dir is NOT updated by buildSlot. Without
-    // this copy the restart re-serves the previous build and the deploy ships
-    // stale code while still reporting success (remote-dev-4vmm).
-    if (!restoreSlotToLive(inactiveSlot)) {
-      logError("Failed to activate built slot over live dir, rolling back...");
-      writeFailure("activate", `Could not restore ${inactiveSlot} slot to live dir`);
-      await rollbackTo(activeSlot);
-      return 1;
-    }
-
-    // Restart servers via rdv.ts (known working server startup path)
-    restartViaRdvAsync();
-
-    // Local health check
-    const localHealthy = await healthCheckLocal();
-    if (!localHealthy) {
-      logError("Local health check failed, rolling back...");
-      writeFailure("health-local", "Local health check failed");
-      stopCurrentServers();
-      await rollbackTo(activeSlot);
-      return 1;
-    }
-
-    // External health check
-    const externalHealthy = await healthCheckExternal();
-    if (!externalHealthy) {
-      logError("External health check failed, rolling back...");
-      writeFailure("health-external", "External health check failed");
-      stopCurrentServers();
-      await rollbackTo(activeSlot);
-      return 1;
-    }
-
-    // Update deploy state
-    writeDeployState({
-      activeSlot: inactiveSlot,
-      activeCommit: newCommit,
-      deployedAt: new Date().toISOString(),
-      previousSlot: activeSlot,
-      previousCommit: previousCommit,
-    });
-
-    writeDeployResult({
-      status: "success",
-      requestedCommit,
-      activeCommit: newCommit,
-      stage: "done",
+      stage,
+      error,
       startedAt,
       finishedAt: new Date().toISOString(),
     });
 
-    logDeploy(
-      `=== Deploy successful === (${activeSlot} -> ${inactiveSlot}, commit: ${getGitCommit(DEPLOY_SRC)})`
-    );
+  writeDeployResult({
+    status: "in_progress",
+    requestedCommit,
+    activeCommit: previousCommit,
+    stage: "start",
+    startedAt,
+  });
 
-    // Mirror the just-shipped commit to the in-cluster Forgejo (best-effort;
-    // never fails the green deploy) so the homelab build pipeline clones it.
-    pushToForgejoMirror();
-    return 0;
+  logDeploy(`=== Deploy started ===`);
+  logDeploy(`Active slot: ${activeSlot}, building into: ${inactiveSlot}`);
+
+  // Build into inactive slot
+  if (!buildSlot(inactiveSlot)) {
+    logError("Build failed, aborting deploy");
+    writeFailure("build", "Build failed");
+    return { code: 1 };
   }
+
+  // The commit we actually built/shipped is DEPLOY_SRC's HEAD (origin/master),
+  // NOT PROJECT_ROOT's — PROJECT_ROOT is no longer reset per deploy. Recording
+  // this is what keeps state.json's activeCommit == the pushed SHA so the CI
+  // poll (GET /api/deploy/status) can confirm the right commit went live.
+  const newCommit = getGitCommitFull(DEPLOY_SRC);
+  logDeploy(`Swapping from ${activeSlot} to ${inactiveSlot}...`);
+
+  // Stop current servers under launchd custody (journal-first bootout so
+  // KeepAlive can't resurrect the old build mid-migration [F3, R4]), run the
+  // migration, then restart by handing custody back to launchd. A custody
+  // stop failure ABORTS the deploy before migration — never migrate while
+  // the old job may still be loaded.
+  try {
+    await custody.stop("pre-migration", activeSlot);
+  } catch (err) {
+    logError(`Custody stop failed, aborting deploy: ${String(err)}`);
+    writeFailure("custody-stop", String(err));
+    return { code: 1 };
+  }
+
+  // Run database migration while servers are stopped
+  if (!runMigration()) {
+    logError("Migration failed, restarting servers...");
+    writeFailure("migration", "Migration failed");
+    try {
+      await custody.start();
+    } catch (err) {
+      // finalize() (finally below) retries the bootstrap; the watchdog's
+      // custody recovery is the backstop after that [R4].
+      logError(`Custody start after migration failure also failed: ${String(err)}`);
+    }
+    await Bun.sleep(5000);
+    return { code: 1 };
+  }
+
+  // Activate the freshly-built slot AFTER migration: copy it over the live
+  // serving dir (PROJECT_ROOT/.next/standalone) before restart, so the new
+  // code only goes live once the schema is migrated. The build now happens in
+  // an isolated deploy-src worktree → slot (remote-dev-yxvy), so unlike the
+  // pre-#342 in-place builds the live dir is NOT updated by buildSlot. Without
+  // this copy the restart re-serves the previous build and the deploy ships
+  // stale code while still reporting success (remote-dev-4vmm).
+  if (!restoreSlotToLive(inactiveSlot)) {
+    logError("Failed to activate built slot over live dir, rolling back...");
+    writeFailure("activate", `Could not restore ${inactiveSlot} slot to live dir`);
+    await rollbackTo(activeSlot, custody);
+    return { code: 1 };
+  }
+
+  // Restart servers (launchd bootstrap under custody, or rdv.ts job-absent)
+  try {
+    await custody.start();
+  } catch (err) {
+    logError(`Custody start failed after activation: ${String(err)}`);
+    writeFailure("custody-start", String(err));
+    return { code: 1 }; // finalize() retries the bootstrap; watchdog recovery backstops.
+  }
+
+  // Local health check
+  const localHealthy = await healthCheckLocal();
+  if (!localHealthy) {
+    logError("Local health check failed, rolling back...");
+    writeFailure("health-local", "Local health check failed");
+    try {
+      await custody.stop("rollback-health-local", activeSlot);
+    } catch (err) {
+      logError(`CRITICAL: custody stop for rollback failed: ${String(err)}`);
+      return { code: 1 };
+    }
+    await rollbackTo(activeSlot, custody);
+    return { code: 1 };
+  }
+
+  // External health check
+  const externalHealthy = await healthCheckExternal();
+  if (!externalHealthy) {
+    logError("External health check failed, rolling back...");
+    writeFailure("health-external", "External health check failed");
+    try {
+      await custody.stop("rollback-health-external", activeSlot);
+    } catch (err) {
+      logError(`CRITICAL: custody stop for rollback failed: ${String(err)}`);
+      return { code: 1 };
+    }
+    await rollbackTo(activeSlot, custody);
+    return { code: 1 };
+  }
+
+  // NOTHING terminal-and-green is published here. The active-slot pointer and
+  // the `success` result are the two facts the outside world consumes (the
+  // webhook polls GET /api/deploy/status, and the pointer is what a rollback
+  // and the next deploy read), and at this point the stack has NOT yet passed
+  // the final health gate that runs inside custody.finalize(). Publishing now
+  // would mean: the webhook can observe green during the gate window; a
+  // SIGKILL in that window freezes green permanently; and if finalization
+  // fails and the watchdog restores the previous slot, state.json would still
+  // name the new one. So the poll keeps seeing "in_progress" until verified.
+  const ownerStartTimeNs = supervisionDeps().procStartTimeNs(process.pid);
+  writeDeployResult({
+    status: "in_progress",
+    requestedCommit,
+    activeCommit: previousCommit,
+    stage: "finalize",
+    startedAt,
+    // Owner identity so a deploy that dies in the health-gate window can be
+    // recognized as abandoned rather than leaving a permanent "running".
+    ...(ownerStartTimeNs !== null
+      ? { owner: { pid: process.pid, startTimeNs: ownerStartTimeNs } }
+      : {}),
+  });
+
+  return {
+    code: 0,
+    onVerified: () => {
+      writeDeployState({
+        activeSlot: inactiveSlot,
+        activeCommit: newCommit,
+        deployedAt: new Date().toISOString(),
+        previousSlot: activeSlot,
+        previousCommit: previousCommit,
+      });
+      writeDeployResult({
+        status: "success",
+        requestedCommit,
+        activeCommit: newCommit,
+        stage: "done",
+        startedAt,
+        finishedAt: new Date().toISOString(),
+      });
+      logDeploy(
+        `=== Deploy successful === (${activeSlot} -> ${inactiveSlot}, commit: ${getGitCommit(DEPLOY_SRC)})`
+      );
+      // Mirror the just-shipped commit to the in-cluster Forgejo (best-effort;
+      // never fails the green deploy) so the homelab build pipeline clones it.
+      pushToForgejoMirror();
+    },
+  };
 }
 
 // Restore a slot's known-good build over the live serving dir before restart.
@@ -1587,7 +2116,8 @@ function restoreSlotToLive(slot: Slot): boolean {
   return true;
 }
 
-async function rollbackTo(slot: Slot): Promise<void> {
+/** Returns whether the restarted stack passed its local health check. */
+async function rollbackTo(slot: Slot, custody: LaunchdCustody): Promise<boolean> {
   // Restore the target slot's KNOWN-GOOD build over the live serving dir BEFORE
   // restarting — otherwise the restart re-serves the still-broken build a failed
   // deploy left in PROJECT_ROOT/.next/standalone (remote-dev-j0x5).
@@ -1597,8 +2127,14 @@ async function rollbackTo(slot: Slot): Promise<void> {
     );
   }
 
-  logDeploy(`Rolling back to ${slot}, restarting via rdv.ts...`);
-  restartViaRdvAsync();
+  logDeploy(`Rolling back to ${slot}, restarting servers...`);
+  try {
+    await custody.start();
+  } catch (err) {
+    // Keep going into the health check (it will fail loudly); finalize()
+    // retries the bootstrap and the watchdog recovery backstops [R4].
+    logError(`CRITICAL: custody start during rollback failed: ${String(err)}`);
+  }
   await Bun.sleep(5000);
 
   const localHealthy = await healthCheckLocal();
@@ -1607,6 +2143,7 @@ async function rollbackTo(slot: Slot): Promise<void> {
   } else {
     logError(`CRITICAL: Rollback health check failed! Manual intervention needed.`);
   }
+  return localHealthy;
 }
 
 // The rollback BODY. Runs UNDER an already-held deploy flock (acquired by the
@@ -1623,20 +2160,37 @@ async function rollback(): Promise<number> {
     `Rolling back from ${state.activeSlot} to ${state.previousSlot} (commit: ${state.previousCommit.slice(0, 7)})`
   );
 
-  stopCurrentServers();
-  await rollbackTo(state.previousSlot);
-
-  // Swap state
-  writeDeployState({
-    activeSlot: state.previousSlot,
-    activeCommit: state.previousCommit,
-    deployedAt: new Date().toISOString(),
-    previousSlot: state.activeSlot,
-    previousCommit: state.activeCommit,
+  return runWithCustody(createLaunchdCustody(), async (custody) => {
+    try {
+      await custody.stop("rollback-manual", state.previousSlot);
+    } catch (err) {
+      logError(`Custody stop failed, aborting rollback: ${String(err)}`);
+      return { code: 1 };
+    }
+    const healthy = await rollbackTo(state.previousSlot, custody);
+    if (!healthy) {
+      // A rollback whose health check failed is NOT a completed rollback. The
+      // pointer is deliberately left naming the slot that is (or was) serving
+      // rather than the one we failed to bring up.
+      logError("=== Rollback FAILED health check === (slot pointer unchanged; manual intervention needed)");
+      return { code: 1 };
+    }
+    return {
+      code: 0,
+      // Same rule as a deploy: the slot pointer moves only after custody has
+      // been closed on a verified-healthy stack.
+      onVerified: () => {
+        writeDeployState({
+          activeSlot: state.previousSlot,
+          activeCommit: state.previousCommit,
+          deployedAt: new Date().toISOString(),
+          previousSlot: state.activeSlot,
+          previousCommit: state.activeCommit,
+        });
+        logDeploy(`=== Rollback complete ===`);
+      },
+    };
   });
-
-  logDeploy(`=== Rollback complete ===`);
-  return 0;
 }
 
 function showStatus(): void {

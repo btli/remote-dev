@@ -20,10 +20,12 @@
 		<string>__HOME__</string>
 		<key>DEPLOY_PROJECT_ROOT</key>
 		<string>__PROJECT_ROOT__</string>
+		<key>RDV_DATA_DIR</key>
+		<string>__DATA_DIR__</string>
 	</dict>
 
 	<key>StartInterval</key>
-	<integer>300</integer>
+	<integer>60</integer>
 
 	<key>StandardOutPath</key>
 	<string>__DATA_DIR__/logs/watchdog.log</string>

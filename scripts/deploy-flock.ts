@@ -87,6 +87,7 @@ import {
   unlinkSync,
   existsSync,
   linkSync,
+  constants as fsConstants,
 } from "fs";
 import { dirname, join } from "path";
 import { formatPlainLock, parseLockContent } from "./deploy-lock";
@@ -434,6 +435,115 @@ function makeHandle(
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PURE kernel-flock primitive (remote-dev-7fsq supervision hardening, [R14]).
+//
+// `acquireFlock(path)` is the inode-stable flock(2) mutex WITHOUT any of the
+// deploy.lock legacy behavior: no stale-PID-content backoff, no legacy-JSON
+// parsing, no handoff tokens. File content is INFORMATIONAL ONLY (the holder's
+// pid, so an aborting contender can name the holder) and is NEVER consulted for
+// liveness — the kernel flock alone decides ownership, and the kernel releases
+// it automatically when the holder dies. The lock file is permanent (never
+// unlinked), matching the deploy.lock invariant that keeps the inode stable
+// across acquirers.
+//
+// The legacy PID-content backoff (a live foreign PID under a held flock ⇒
+// "held") stays ONLY in acquireDeployFlock() below — it exists solely for
+// deploy.lock's one-time transition compat with pre-flock writers. The
+// supervision control/foreground locks (scripts/rdv-supervision.ts) use THIS
+// primitive.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A held pure flock. `release()` = LOCK_UN + close ONLY (never unlinks). */
+export interface PureFlockHandle {
+  fd: number;
+  path: string;
+  release(): void;
+}
+
+/**
+ * Acquire a pure kernel flock on `path` (created 0o644 if absent; the inode is
+ * permanent — never unlinked). Returns null on contention (a LIVE holder has
+ * it) or on any unexpected flock error (fail closed: never proceed without the
+ * mutex). Throws FlockUnavailableError if the FFI cannot load.
+ *
+ * Inode stability: after taking the flock we verify fstat(fd) dev/ino against
+ * stat(path); a mismatch means some (legacy/foreign) process replaced the path
+ * under us → drop and retry on the live inode (bounded).
+ */
+export function acquireFlock(path: string, pid: number = process.pid): PureFlockHandle | null {
+  const libc = loadLibc(); // throws FlockUnavailableError if FFI is unavailable
+
+  for (let attempt = 0; attempt < 4; attempt++) {
+    let fd: number;
+    try {
+      fd = openSync(path, fsConstants.O_RDWR | fsConstants.O_CREAT, 0o644);
+    } catch {
+      return null; // cannot even open the lock path → fail closed.
+    }
+
+    if (libc.flock(fd, LOCK_EX | LOCK_NB) !== 0) {
+      try {
+        closeSync(fd);
+      } catch {
+        /* ignore */
+      }
+      // Contention (a live holder: EWOULDBLOCK) and unexpected flock errors
+      // both yield null — never proceed without the mutex (fail closed either
+      // way, so the errno is not consulted; the response is identical).
+      return null;
+    }
+
+    // Inode-stability guard: the path must still name OUR flocked inode.
+    let pathStat: ReturnType<typeof statSync> | null = null;
+    try {
+      pathStat = statSync(path);
+    } catch {
+      pathStat = null;
+    }
+    const fdStat = fstatSync(fd);
+    if (!pathStat || pathStat.dev !== fdStat.dev || pathStat.ino !== fdStat.ino) {
+      try {
+        libc.flock(fd, LOCK_UN);
+      } catch {
+        /* ignore */
+      }
+      try {
+        closeSync(fd);
+      } catch {
+        /* ignore */
+      }
+      continue; // retry on the live inode.
+    }
+
+    // Informational pid (write-before-truncate, same delimiter discipline).
+    // Readers may DISPLAY this; nothing ever treats it as a liveness signal.
+    writePidInPlace(fd, pid);
+
+    let released = false;
+    return {
+      fd,
+      path,
+      release() {
+        if (released) return;
+        released = true;
+        try {
+          libc.flock(fd, LOCK_UN);
+        } catch {
+          /* ignore */
+        }
+        try {
+          closeSync(fd);
+        } catch {
+          /* already closed */
+        }
+      },
+    };
+  }
+
+  return null; // exhausted inode-stability retries → treat as held.
+}
+
 export interface AcquireFlockOptions {
   lockFile: string;
   pid: number;
@@ -706,6 +816,9 @@ export function isPidAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    return (err as NodeJS.ErrnoException | undefined)?.code === "EPERM";
+    // ONLY ESRCH proves absence. EPERM (foreign-owned) and any unexpected
+    // kill(2) failure keep the answer at "alive" — a lock holder wrongly
+    // judged dead gets its lock stolen.
+    return (err as NodeJS.ErrnoException | undefined)?.code !== "ESRCH";
   }
 }
