@@ -31,6 +31,7 @@ describe("AgentCLIService", () => {
       expect(getCLICommand("antigravity")).toBe("agy");
       expect(getCLICommand("opencode")).toBe("opencode");
       expect(getCLICommand("cursor")).toBe("agent");
+      expect(getCLICommand("kimi")).toBe("kimi");
     });
 
     it("returns null for 'all' provider", () => {
@@ -49,6 +50,7 @@ describe("AgentCLIService", () => {
 
     it("does not add an identity requirement to provider-specific executable names", () => {
       expect(matchesProviderIdentity("codex", "")).toBe(true);
+      expect(matchesProviderIdentity("kimi", "")).toBe(true);
     });
 
     it("fingerprints the executable resolved from the supplied PATH", async () => {
@@ -170,6 +172,12 @@ describe("AgentCLIService", () => {
         "curl https://cursor.com/install -fsS | bash",
       );
     });
+
+    it("returns installation instructions for kimi", () => {
+      const instructions = getInstallInstructions("kimi");
+      expect(instructions).toContain("npm install -g");
+      expect(instructions).toContain("@moonshot-ai/kimi-code");
+    });
   });
 
   describe("getProviderDocsUrl", () => {
@@ -180,6 +188,7 @@ describe("AgentCLIService", () => {
       expect(getProviderDocsUrl("antigravity")).toContain("antigravity.google");
       expect(getProviderDocsUrl("opencode")).toContain("opencode.ai");
       expect(getProviderDocsUrl("cursor")).toBe("https://cursor.com/docs/cli/overview");
+      expect(getProviderDocsUrl("kimi")).toBe("https://www.kimi.com/code/docs/en/");
     });
   });
 
@@ -212,6 +221,11 @@ describe("AgentCLIService", () => {
     it("does not require CURSOR_API_KEY because browser login is supported", () => {
       expect(getRequiredEnvVars("cursor")).toEqual([]);
       expect(checkRequiredEnvVars("cursor", {})).toEqual({ valid: true, missing: [] });
+    });
+
+    it("requires no env vars for kimi (OAuth login or config.toml API key)", () => {
+      expect(getRequiredEnvVars("kimi")).toEqual([]);
+      expect(checkRequiredEnvVars("kimi", {})).toEqual({ valid: true, missing: [] });
     });
   });
 

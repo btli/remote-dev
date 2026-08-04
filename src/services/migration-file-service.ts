@@ -12,7 +12,7 @@
  *     profileIdRemaps). `.cache` always excluded; `.ssh/` only with
  *     includeSshKeys.
  *   - "agent-settings" — a CURATED copy of host-level agent config from
- *     $HOME (claude/codex/gemini/opencode), credentials gated by
+ *     $HOME (claude/codex/gemini/opencode/kimi), credentials gated by
  *     includeAgentCreds.
  *
  * All subprocess calls go through src/lib/exec (execFile — argument arrays,
@@ -269,13 +269,14 @@ async function listUntrackedFiles(workingDir: string, cap = 10_000): Promise<str
 }
 
 /** The host agent-settings base directories (shared by build + extract). */
-export function agentSettingsDirs(): Record<"claude" | "codex" | "gemini" | "opencode", string> {
+export function agentSettingsDirs(): Record<"claude" | "codex" | "gemini" | "opencode" | "kimi", string> {
   const home = homedir();
   return {
     claude: process.env.CLAUDE_CONFIG_DIR || join(home, ".claude"),
     codex: join(home, ".codex"),
     gemini: join(home, ".gemini"),
     opencode: join(home, ".config", "opencode"),
+    kimi: process.env.KIMI_CODE_HOME || join(home, ".kimi-code"),
   };
 }
 
@@ -286,6 +287,8 @@ const CODEX_CRED_ITEMS = ["auth.json"];
 const GEMINI_ITEMS = ["settings.json", "GEMINI.md", "ANTIGRAVITY.md", "config"];
 const GEMINI_ALWAYS_EXCLUDE = new Set(["tmp", "antigravity-cli", "history"]);
 const OPENCODE_EXCLUDE = new Set(["logs", "node_modules"]);
+const KIMI_ITEMS = ["AGENTS.md", "session_index.jsonl"];
+const KIMI_CRED_ITEMS = ["config.toml"];
 const INFO_CAP = 200;
 
 /**
@@ -363,6 +366,13 @@ async function stageAgentSettings(
     });
     if (copied > 0) note("opencode", `(${copied} files)`);
     else await rm(dest, { recursive: true, force: true });
+  }
+
+  // kimi — docs + session index only (transcripts stay behind, like every
+  // other provider); config.toml can hold an API key, so it rides the same
+  // includeAgentCreds gate as codex's auth.json.
+  for (const item of [...KIMI_ITEMS, ...(includeAgentCreds ? KIMI_CRED_ITEMS : [])]) {
+    await copyItem("kimi", dirs.kimi, item);
   }
 
   if (total > info.length) {
@@ -691,7 +701,9 @@ export async function sizePreview(
             ? [...CODEX_ITEMS, ...CODEX_CRED_ITEMS]
             : provider === "gemini"
               ? GEMINI_ITEMS
-              : ["."];
+              : provider === "kimi"
+                ? [...KIMI_ITEMS, ...KIMI_CRED_ITEMS]
+                : ["."];
       for (const item of items) {
         agentSettingsBytes += await duBytes(join(base, item), 800);
       }

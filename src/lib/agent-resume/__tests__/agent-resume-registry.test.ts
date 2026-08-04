@@ -14,6 +14,7 @@ const ALL_PROVIDERS: AgentProviderType[] = [
   "antigravity",
   "opencode",
   "cursor",
+  "kimi",
   "none",
 ];
 
@@ -53,8 +54,17 @@ describe("AGENT_RESUME_REGISTRY", () => {
     expect(spec.sessionIdSource.defaultHomeSubpath).toBe(".cursor");
   });
 
+  it("uses kimi --session and the KIMI_CODE_HOME data root", () => {
+    const spec = getResumeSpec("kimi");
+    expect(spec.supportsResume).toBe(true);
+    expect(spec.detect).toEqual({ command: "kimi", versionArgs: ["--version"] });
+    expect(spec.resume).toEqual({ kind: "flag", token: "--session" });
+    expect(spec.sessionIdSource.homeEnvVar).toBe("KIMI_CODE_HOME");
+    expect(spec.sessionIdSource.defaultHomeSubpath).toBe(".kimi-code");
+  });
+
   it("exposes a sessionIdSource and detect for resumable providers", () => {
-    for (const p of ["claude", "codex", "gemini", "opencode", "cursor"] as AgentProviderType[]) {
+    for (const p of ["claude", "codex", "gemini", "opencode", "cursor", "kimi"] as AgentProviderType[]) {
       const spec = getResumeSpec(p);
       expect(spec.detect.command).toBeTruthy();
       expect(spec.sessionIdSource).toBeDefined();

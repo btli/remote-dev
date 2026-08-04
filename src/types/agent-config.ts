@@ -494,5 +494,9 @@ export function getDefaultConfig(agentType: AgentConfigType): AgentJsonConfig {
       return DEFAULT_OPENCODE_CONFIG;
     case "codex":
       return DEFAULT_CODEX_CLI_CONFIG;
+    // Kimi is AGENTS.md-based with no dedicated JSON config type; reuse the
+    // codex default shape (mirrors antigravity → gemini).
+    case "kimi":
+      return DEFAULT_CODEX_CLI_CONFIG;
   }
 }

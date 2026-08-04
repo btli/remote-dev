@@ -16,7 +16,7 @@ a summary of agent-to-agent peer communication.
 
 ## 1. Supported providers
 
-There are **six** agent providers (the `all` sentinel is a UI/template convenience,
+There are **seven** agent providers (the `all` sentinel is a UI/template convenience,
 not a runnable provider).
 
 | Provider id | CLI command | Config file | Config dir (rel. to `HOME`) | Required env | Isolation env var |
@@ -27,6 +27,7 @@ not a runnable provider).
 | `antigravity` | `agy` | `ANTIGRAVITY.md` | `.gemini` (shares Gemini's dir) | `GOOGLE_API_KEY` | `ANTIGRAVITY_HOME` |
 | `opencode` | `opencode` | `OPENCODE.md` | `.config/opencode` | _none required_ | `OPENCODE_HOME` |
 | `cursor` | `agent` | project-root `AGENTS.md` / `.cursor/rules` | `.cursor` (or XDG config) | _none required_ | generic `XDG_CONFIG_HOME` only |
+| `kimi` | `kimi` | `AGENTS.md` (global + project-root) | `.kimi-code` | _none required_ | _none — real home, like Claude_ |
 
 > **Claude is deliberately NOT config-dir isolated** [remote-dev-n4x4.6].
 > `ProfileIsolation` emits no `CLAUDE_CONFIG_DIR`, so every Claude session uses
@@ -37,6 +38,11 @@ not a runnable provider).
 > variable must stay **unset** rather than be pointed at `$HOME/.claude`: Claude
 > Code derives its macOS Keychain service name from the setting, so any explicit
 > value lands in a different credential namespace.
+>
+> **Kimi follows the same model**: `ProfileIsolation` emits no `KIMI_CODE_HOME`,
+> so every Kimi session uses the real `~/.kimi-code` (or an operator/folder-level
+> `KIMI_CODE_HOME`) even when a profile is bound — hook installation, resume
+> discovery, and relaunch all resolve that one home.
 
 Notes confirmed against source:
 
@@ -55,9 +61,15 @@ Notes confirmed against source:
   `~/.cursor` unless `CURSOR_DATA_DIR` is explicitly set. There is no Cursor
   profile JSON editor because no compatible Cursor JSON settings schema is
   modeled here.
+- **`kimi`** has **no required env var** — authentication is OAuth (`kimi login`,
+  device-code flow) or an API key in `config.toml`, so
+  `getRequiredEnvVars("kimi")` returns `[]`. Its data root is `KIMI_CODE_HOME`
+  (default `~/.kimi-code`); sessions live at `sessions/<workDirKey>/<sessionId>/`
+  with a top-level `session_index.jsonl`, and Kimi reads `AGENTS.md` both
+  globally (`$KIMI_CODE_HOME/AGENTS.md`) and at the project root.
 
 Runtime display names (`AGENT_PROVIDERS`): Claude Code, OpenAI Codex, Gemini CLI,
-Antigravity CLI, OpenCode, Cursor.
+Antigravity CLI, OpenCode, Cursor, Kimi Code.
 
 > The codex config file is literally named `AGENTS.md`. That is unrelated to *this*
 > documentation file (`docs/AGENTS.md`).
@@ -75,10 +87,12 @@ commands and documentation links:
 | `antigravity` | _CLI install currently unavailable — the documented `https://google.dev/antigravity/install` installer URL is 404 (TBD)_ | https://antigravity.google/docs/cli-overview |
 | `opencode` | `npm install -g opencode-ai` | https://opencode.ai/docs/ |
 | `cursor` | `curl https://cursor.com/install -fsS \| bash` | https://cursor.com/docs/cli/overview |
+| `kimi` | `npm install -g @moonshot-ai/kimi-code` | https://www.kimi.com/code/docs/en/ |
 
 > **Package names ≠ binary names.** The npm packages `@openai/codex` and
 > `opencode-ai` install the binaries `codex` and `opencode` respectively (the
 > bare `@openai/codex-cli` / `opencode` package names are 404 on the registry).
+> `@moonshot-ai/kimi-code` likewise installs the `kimi` binary.
 > Antigravity's `agy` CLI has no working published installer at present.
 
 ### Cursor TUI quick start
@@ -110,14 +124,12 @@ it. The golden dev-env image already installs the Cursor bundle under
 To use Cursor in the UI:
 
 1. Open **Settings → Agents** and confirm Cursor is shown as installed.
-2. On desktop, right-click a project and choose **New Cursor Agent**. Cursor
-   also remains available under **Pick Agent**, or you can make it the default
-   provider and use the one-click **New Agent** action.
-3. On the mobile PWA, tap **New**, then **Cursor Agent**. In the native Flutter
-   app, tap **+**, then **New Cursor Agent**. Both mobile shortcuts preselect an
-   agent session with provider `cursor` and launch the `agent` TUI. Select a
-   project before creating it; the PWA session name is optional, while the
-   Flutter app requires one.
+2. On desktop, right-click a project and choose **Pick Agent ▸ → Cursor**, or
+   make Cursor the default provider and use the one-click **New Agent** action.
+   (The dedicated **New Cursor Agent** context-menu shortcut was removed;
+   Cursor, like every provider, launches through the generic pickers.)
+3. On mobile, start a new session and pick Cursor from the Type → Agent provider
+   dropdown.
 4. To reopen an earlier conversation, make Cursor the project's default agent
    and choose the project's **Resume** action. Remote Dev lists only CLI chats
    whose stored `cwd` exactly matches that project's working directory.
@@ -152,6 +164,82 @@ Official references: [CLI overview](https://cursor.com/docs/cli/overview),
 [authentication](https://cursor.com/docs/cli/reference/authentication),
 [parameters](https://cursor.com/docs/cli/reference/parameters), and the
 [announcement making `agent` primary](https://cursor.com/changelog/cli-jan-08-2026).
+
+### Kimi CLI quick start
+
+Kimi is Moonshot AI's **Kimi Code CLI** (command **`kimi`**). Remote Dev
+launches it with bare `kimi` for every Kimi session.
+
+For a local Remote Dev installation, install and authenticate the CLI on the
+host that runs the terminal server:
+
+```bash
+npm install -g @moonshot-ai/kimi-code
+
+kimi --version
+kimi login   # OAuth device-code flow
+```
+
+Authentication is OAuth (`kimi login`) or an API key in `config.toml`; no
+environment variable is required. The golden dev-env image already installs
+`kimi` system-wide via npm and refreshes it with the other npm-installed agent
+CLIs when `AGENT_AUTO_UPDATE=1`.
+
+To use Kimi in the UI:
+
+1. Open **Settings → Agents** and confirm Kimi is shown as installed.
+2. On desktop, right-click a project and choose **Pick Agent ▸ → Kimi**, or
+   make Kimi the default provider and use the one-click **New Agent** action.
+3. On mobile, start a new session and pick Kimi from the Type → Agent provider
+   dropdown.
+4. To reopen an earlier conversation, make Kimi the project's default agent and
+   choose the project's **Resume** action. Remote Dev reads
+   `$KIMI_CODE_HOME/session_index.jsonl` (default
+   `~/.kimi-code/session_index.jsonl`) and lists only sessions whose `workDir`
+   exactly matches that project's working directory; relaunch runs
+   `kimi --session <id>`, re-injecting `KIMI_CODE_HOME` when the session was
+   bound to one.
+
+Per-agent settings can add extra flags. Kimi's `-y`/`--yolo` (plus hidden
+aliases `--yes`, `--auto-approve`) and `--auto` flags skip human approvals, so
+Remote Dev treats them as dangerous and strips them unless **Allow dangerous
+flags** is explicitly enabled for Kimi.
+
+**Lifecycle hooks.** Kimi joins Claude as a hooked provider: Remote Dev writes
+rdv-managed `[[hooks]]` rules into `$KIMI_CODE_HOME/config.toml` so each Kimi
+event reports through the existing `rdv hook kimi <event>` → activity-status
+pipeline. User-authored `[[hooks]]` rules are preserved verbatim; only the
+rdv-managed blocks (marked with a `# rdv-managed` header) are replaced, and
+writes use only the four fields Kimi allows (`event`, `matcher`, `command`,
+`timeout`). Event→status mapping:
+
+| Kimi event | rdv command | Status |
+|---|---|---|
+| `SessionStart` | `rdv hook kimi session-start` | `running` |
+| `UserPromptSubmit` | `rdv hook kimi prompt-submit` | `running` |
+| `PreToolUse` | `rdv hook kimi pre-tool-use` | `running` |
+| `SubagentStart` | `rdv hook kimi subagent-start` | `subagent` |
+| `SubagentStop` | `rdv hook kimi subagent-stop` | `running` (tagged `source=subagent-stop` so it cannot resurrect a turn that already ended) |
+| `PermissionRequest` | `rdv hook kimi permission-request` | `waiting` |
+| `PreCompact` | `rdv hook kimi compacting` | `compacting` |
+| `PostCompact` | `rdv hook kimi running` | `running` |
+| `Stop` | `rdv hook kimi stop` | `idle` |
+| `Interrupt` | `rdv hook kimi interrupt` | `idle` |
+| `StopFailure` | `rdv hook kimi stop-failure` | `error` |
+| `SessionEnd` | `rdv hook kimi session-end` | `ended` |
+
+If detection or resume does not work:
+
+- Run `command -v kimi` and `kimi --version` to confirm the CLI is on `PATH`.
+- Run `kimi login` for authentication problems.
+- Resume discovery reads `session_index.jsonl` under the Kimi data root; set
+  `KIMI_CODE_HOME` only if that data root was explicitly relocated from
+  `~/.kimi-code`.
+
+Official references: [Kimi Code docs](https://www.kimi.com/code/docs/en/),
+[`kimi` command reference](https://www.kimi.com/code/docs/en/kimi-code-cli/reference/kimi-command.html),
+[data locations](https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/data-locations.html),
+and [hooks](https://www.kimi.com/code/docs/en/kimi-code-cli/customization/hooks.html).
 
 ---
 
@@ -194,7 +282,7 @@ interface in [`src/types/agent.ts`](../src/types/agent.ts)):
 | Var | Role |
 |-----|------|
 | `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` | Redirect config/data/cache into the profile dir; Cursor honors XDG config, but its conversation index remains in the shared `~/.cursor/chats` data root |
-| `CODEX_HOME`, `GEMINI_HOME`, `ANTIGRAVITY_HOME`, `OPENCODE_HOME` | Per-provider config roots. **`CLAUDE_CONFIG_DIR` is deliberately absent** — Claude shares the real `~/.claude`; identity comes from an injected `CLAUDE_CODE_OAUTH_TOKEN` [remote-dev-n4x4.6] |
+| `CODEX_HOME`, `GEMINI_HOME`, `ANTIGRAVITY_HOME`, `OPENCODE_HOME` | Per-provider config/data roots. **`CLAUDE_CONFIG_DIR` and `KIMI_CODE_HOME` are deliberately absent** — Claude shares the real `~/.claude` (identity comes from an injected `CLAUDE_CODE_OAUTH_TOKEN` [remote-dev-n4x4.6]) and Kimi likewise always uses the real `~/.kimi-code`, even for profile-bound sessions |
 | `GIT_CONFIG_GLOBAL`, `GIT_SSH_COMMAND` | Point git at the profile's `.gitconfig` / SSH key |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY` | Injected per provider |
 
@@ -339,7 +427,7 @@ API (see [`API.md`](./API.md)):
 `AgentCLIService` ([`agent-cli-service.ts`](../src/services/agent-cli-service.ts))
 verifies whether each agent CLI is installed and resolves its version.
 
-- **`GET /api/agent-cli/status`** returns the status of all six providers:
+- **`GET /api/agent-cli/status`** returns the status of all seven providers:
   `{ statuses[], installedCount, totalCount }`, where each status carries
   `{ provider, installed, version?, command, path?, error? }`.
 - Detection runs `which <command>` to find the binary, then tries `<command>
@@ -376,11 +464,13 @@ provider).
   missed (compaction, brief disconnect), driven by a durable per-session cursor.
   The PreToolUse hook additionally drains the inbox as a poll fallback. This is
   the only provider with hands-off delivery.
-- **Codex, Gemini, OpenCode, Antigravity, Cursor — manual pull.** These providers have
-  **no MCP server and no hooks**, so nothing is pushed to them. They must poll
-  their own inbox by running `rdv peer messages` (which reads the same durable
-  cursor and auto-acks the batch it returns). Until an agent calls it, queued
-  messages simply wait in the durable inbox — there is no automatic delivery.
+- **Codex, Gemini, OpenCode, Antigravity, Cursor, Kimi — manual pull.** These
+  providers have **no `rdv` MCP server**, so nothing is pushed to them. Kimi's
+  lifecycle hooks report activity status only; they do not drain the inbox.
+  These agents must poll their own inbox by running `rdv peer messages` (which
+  reads the same durable cursor and auto-acks the batch it returns). Until an
+  agent calls it, queued messages simply wait in the durable inbox — there is
+  no automatic delivery.
 - **At-least-once, not exactly-once.** Delivery is **at-least-once with
   idempotent de-duplication**: an in-process dedup set (capped at 500 ids,
   `peer-server.ts`) plus the durable cursor prevent re-surfacing, but a
@@ -453,6 +543,7 @@ cold-attach recreate).
 | `gemini` | ✅ | `gemini --resume <id>` (flag) | newest checkpoint under `$GEMINI_HOME` (default `~/.gemini/tmp`) | Disk discovery at relaunch |
 | `opencode` | ✅ | `opencode --session <id>` (flag) | newest session under `$OPENCODE_HOME` (default `~/.local/share/opencode`) | Disk discovery at relaunch |
 | `cursor` | ✅ | `agent --resume <id>` (flag) | `~/.cursor/chats/<workspace-hash>/<chat-id>/meta.json` (or `$CURSOR_DATA_DIR/chats/...`), filtered by `meta.cwd` and `hasConversation` | Project-scoped chat-index discovery at relaunch |
+| `kimi` | ✅ | `kimi --session <id>` (flag) | `$KIMI_CODE_HOME/session_index.jsonl` (default `~/.kimi-code/session_index.jsonl`), filtered by `workDir` | Project-scoped session-index discovery at relaunch |
 | `antigravity` | ❌ | — (no confirmed resume flag) | — | — — relaunches **fresh** (UI marks "Fresh (resume unsupported)") |
 
 Notes:
@@ -460,7 +551,7 @@ Notes:
 - **Codex resume is a subcommand, not a flag** — the registry models this with a
   `resume: { kind: "subcommand" }` template that produces a full argv override
   (`["codex","resume","<id>"]`) rather than appended flags.
-- **Flag spelling is version-dependent** for gemini/opencode/cursor. `verifyResumeFlag()`
+- **Flag spelling is version-dependent** for gemini/opencode/cursor/kimi. `verifyResumeFlag()`
   probes the installed CLI's `--help` at startup diagnostics and logs a `warn`
   if the token is missing, so drift is detectable without changing the resolver
   (adjust the registry only).
@@ -470,7 +561,11 @@ Notes:
   `~/.cursor/chats/<workspace-hash>/<chat-id>/meta.json` index, includes only
   entries whose `cwd` matches the requested project and whose
   `hasConversation` value is true, and respects `CURSOR_DATA_DIR` when set.
-  Cursor's config-dir/XDG settings do not relocate this data. A separately
+  Cursor's config-dir/XDG settings do not relocate this data. Kimi reads its
+  top-level `$KIMI_CODE_HOME/session_index.jsonl` (default
+  `~/.kimi-code/session_index.jsonl`) — one JSON record per line with
+  `sessionId`, `sessionDir`, and `workDir` — keeps records whose `workDir`
+  matches the requested project, and skips malformed lines. A separately
   pushed native id, when available, is stored in
   `typeMetadata.agentSessionId`; native ids are never part of the resume binding.
 - **Durable resume binding:** at create time a sanitized resume binding
@@ -483,7 +578,9 @@ Notes:
   `~/.cursor/chats` unless `CURSOR_DATA_DIR` was supplied by the server process
   or inherited project environment. The retained Cursor executable is
   re-fingerprinted before use and fails closed if it no longer identifies as
-  Cursor Agent. Secrets are never persisted; the agent re-resolves API keys
+  Cursor Agent. `KIMI_CODE_HOME` joins the resume-binding safe allowlist, so a
+  bound Kimi data root is re-injected on relaunch exactly like
+  `CURSOR_DATA_DIR`. Secrets are never persisted; the agent re-resolves API keys
   from its own profile credential store.
 
 ---

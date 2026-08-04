@@ -187,7 +187,9 @@ export function ResumeSessionModal({
                       ) : (
                         <Clock className="w-3 h-3" />
                       )}
-                      {formatRelativeTime(session.lastModified)}
+                      {session.lastModified
+                        ? formatRelativeTime(session.lastModified)
+                        : "unknown"}
                     </span>
                   </div>
 

@@ -7,7 +7,7 @@ import type { AppearanceMode, ColorSchemeId } from "./appearance";
 /**
  * Supported AI coding agent providers.
  */
-export type AgentProvider = "claude" | "codex" | "gemini" | "antigravity" | "opencode" | "all";
+export type AgentProvider = "claude" | "codex" | "gemini" | "antigravity" | "opencode" | "kimi" | "all";
 
 /**
  * Whether a profile's provider can run Claude Code (and therefore carries a
@@ -325,6 +325,7 @@ export const PROVIDER_DISPLAY_NAMES: Record<AgentProvider, string> = {
   gemini: "Gemini CLI",
   antigravity: "Antigravity CLI",
   opencode: "OpenCode",
+  kimi: "Kimi",
   all: "All Providers",
 };
 
@@ -340,6 +341,7 @@ export const PROVIDER_CONFIG_FILES: Record<
   gemini: "GEMINI.md",
   antigravity: "ANTIGRAVITY.md",
   opencode: "OPENCODE.md",
+  kimi: "AGENTS.md",
 };
 
 /**
@@ -351,6 +353,7 @@ export const PROVIDER_CLI_COMMANDS: Record<AgentProvider, string> = {
   gemini: "gemini",
   antigravity: "agy",
   opencode: "opencode",
+  kimi: "kimi",
   all: "",
 };
 
@@ -363,5 +366,6 @@ export const PROVIDER_CONFIG_DIRS: Record<AgentProvider, string> = {
   gemini: ".gemini",
   antigravity: ".gemini",
   opencode: ".config/opencode",
+  kimi: ".kimi-code",
   all: "",
 };

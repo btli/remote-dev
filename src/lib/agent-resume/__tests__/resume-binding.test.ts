@@ -15,6 +15,7 @@ describe("stripSensitiveEnv", () => {
       GITHUB_AUTH: "auth-val",
       CODEX_HOME: "/p/.codex",
       CURSOR_DATA_DIR: "/p/.cursor",
+      KIMI_CODE_HOME: "/p/.kimi-code",
       XDG_CONFIG_HOME: "/p/xdg",
     };
     const out = stripSensitiveEnv(env);
@@ -29,6 +30,7 @@ describe("stripSensitiveEnv", () => {
     expect(out.HOME).toBe("/home/u");
     expect(out.CODEX_HOME).toBe("/p/.codex");
     expect(out.CURSOR_DATA_DIR).toBe("/p/.cursor");
+    expect(out.KIMI_CODE_HOME).toBe("/p/.kimi-code");
     expect(out.XDG_CONFIG_HOME).toBe("/p/xdg");
   });
 

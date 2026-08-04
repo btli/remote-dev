@@ -135,8 +135,8 @@ function installMocks() {
   }));
 
   // --- profile: getProfile resolves ONLY ids in `ownedProfiles` (an unowned /
-  // stale pin → null). installAgentHooks / validateAgentHooks run only on the
-  // claude path (ensureAgentConfig), so stub them too. ---
+  // stale pin → null). installAgentHooks / validateAgentHooks run on the
+  // claude and kimi paths (ensureAgentConfig), so stub them too. ---
   vi.doMock("@/services/agent-profile-service", () => ({
     getProfile: vi.fn(async (profileId: string) => {
       const p = ownedProfiles[profileId];

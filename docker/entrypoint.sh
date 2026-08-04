@@ -229,7 +229,8 @@ echo "[entrypoint] kicking off background agent-CLI auto-update + provisioning (
                 @anthropic-ai/claude-code \
                 @openai/codex \
                 @google/gemini-cli \
-                opencode-ai
+                opencode-ai \
+                @moonshot-ai/kimi-code
             # Cursor's official installer lives as a multi-file bundle under
             # /opt/cursor-agent. Its updater is best-effort inside this already
             # non-fatal background block; HOME points it back at that bundle.

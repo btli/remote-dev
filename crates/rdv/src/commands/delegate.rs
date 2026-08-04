@@ -24,7 +24,7 @@ pub struct DelegateArgs {
     /// The task prompt for the delegated agent run
     #[arg(long)]
     prompt: String,
-    /// Agent provider (claude, codex, gemini, opencode, cursor)
+    /// Agent provider (claude, codex, gemini, opencode, cursor, kimi)
     #[arg(long, default_value = "claude")]
     provider: String,
     /// Provision the target instance if it does not exist yet

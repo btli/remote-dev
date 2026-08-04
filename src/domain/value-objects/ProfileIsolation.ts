@@ -11,16 +11,22 @@
  * - Agent configs are isolated to profile-specific directories
  * - Most modern tools respect XDG variables
  *
- * CLAUDE IS DELIBERATELY EXCLUDED [remote-dev-n4x4.6]
- * ---------------------------------------------------
+ * CLAUDE AND KIMI ARE DELIBERATELY EXCLUDED [remote-dev-n4x4.6]
+ * -------------------------------------------------------------
  * This VO emits `CODEX_HOME` / `GEMINI_HOME` / `ANTIGRAVITY_HOME` /
- * `OPENCODE_CONFIG_DIR` but NOT `CLAUDE_CONFIG_DIR`, and there is no option to
- * turn it back on. Claude identity is now a per-process credential
+ * `OPENCODE_CONFIG_DIR` but NOT `CLAUDE_CONFIG_DIR` / `KIMI_CODE_HOME`, and there is no option to
+ * turn them back on. Claude identity is now a per-process credential
  * (`CLAUDE_CODE_OAUTH_TOKEN`, injected by session-service from the selected
  * `claude_account`), layered over the user's REAL `~/.claude` so every account
  * shares one config: the same skills, `CLAUDE.md`, MCP servers, settings and
  * agents. Isolating the config dir per profile would defeat that and would let
  * account rotation land back in a stale profile-specific context.
+ *
+ * Kimi follows the same model: kimi sessions always use the real kimi home
+ * (`$KIMI_CODE_HOME` or `~/.kimi-code`), regardless of any bound profile, so
+ * `KIMI_CODE_HOME` must stay UNSET here. Hooks are installed into the real
+ * home by session-service; a per-profile `.kimi-code` would never be read by
+ * the CLI.
  *
  * It must end up UNSET rather than blanked or re-pointed at `$HOME/.claude`:
  * Claude Code derives its macOS Keychain service name from the SETTING, so any
@@ -240,10 +246,12 @@ export class ProfileIsolation {
 
     // Agent-specific config directories.
     //
-    // NOTE: Claude is absent ON PURPOSE — see the "CLAUDE IS DELIBERATELY
-    // EXCLUDED" note in the file header. Claude sessions share the user's real
-    // `~/.claude` and differ only by the injected `CLAUDE_CODE_OAUTH_TOKEN`, so
-    // `CLAUDE_CONFIG_DIR` must stay UNSET. Do not add it back here.
+    // NOTE: Claude AND Kimi are absent ON PURPOSE — see the "CLAUDE AND KIMI
+    // ARE DELIBERATELY EXCLUDED" note in the file header. Claude sessions share
+    // the user's real `~/.claude` and differ only by the injected
+    // `CLAUDE_CODE_OAUTH_TOKEN`, and Kimi sessions always use the real kimi
+    // home, so `CLAUDE_CONFIG_DIR` / `KIMI_CODE_HOME` must stay UNSET. Do not
+    // add them back here.
     if (this.provider === "all" || this.provider === "codex") {
       env.CODEX_HOME = this.getCodexHome();
     }

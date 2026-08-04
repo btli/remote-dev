@@ -17,6 +17,7 @@ export type AgentProviderType =
   | "antigravity"
   | "opencode"
   | "cursor"
+  | "kimi"
   | "none";
 
 /**
@@ -146,6 +147,15 @@ export const AGENT_PROVIDERS: AgentProviderConfig[] = [
     configFile: "AGENTS.md",
     defaultFlags: [],
     dangerousFlags: ["-f", "--force", "--yolo"],
+  },
+  {
+    id: "kimi",
+    name: "Kimi",
+    description: "Moonshot AI's Kimi Code CLI agent",
+    command: "kimi",
+    configFile: "AGENTS.md",
+    defaultFlags: [],
+    dangerousFlags: ["-y", "--yolo", "--yes", "--auto-approve", "--auto"],
   },
   {
     id: "none",

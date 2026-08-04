@@ -1,6 +1,6 @@
 # Remote Dev
 
-A modern, web-based terminal workspace for AI-assisted development. Run persistent terminal sessions in your browser, organize them into projects, and drive multiple AI coding agents — Claude Code, Codex, Gemini, Antigravity, OpenCode, and Cursor — from one place, on desktop or mobile.
+A modern, web-based terminal workspace for AI-assisted development. Run persistent terminal sessions in your browser, organize them into projects, and drive multiple AI coding agents — Claude Code, Codex, Gemini, Antigravity, OpenCode, Cursor, and Kimi — from one place, on desktop or mobile.
 
 [![Version][version-badge]][version-link]
 [![License][license-badge]][license-link]
@@ -49,10 +49,10 @@ Each capability below is tagged with its maturity so you know exactly what to ex
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Six agents, one workspace | Shipped | First-class Claude Code, OpenAI Codex, Gemini CLI, Antigravity, OpenCode, and Cursor (`agent`), with dedicated Cursor quick starts on desktop, the mobile PWA, and Flutter. Antigravity has no public installer and no session resume. |
+| Seven agents, one workspace | Shipped | First-class Claude Code, OpenAI Codex, Gemini CLI, Antigravity, OpenCode, Cursor (`agent`), and Kimi Code (`kimi`), launched via Pick Agent ▸ on desktop and the provider dropdown on mobile. Antigravity has no public installer and no session resume. |
 | Agent profiles & isolation | Shipped | Profiles overlay provider config, git identity, SSH, and theming without replacing `HOME`; Claude config and Cursor conversation history intentionally remain shared. |
 | Live status & exit handling | Shipped | Agent sessions report running/idle/waiting state and show a restart screen on exit. |
-| Session resume | Shipped | Automatic resume for Claude, Codex, Gemini, OpenCode, and Cursor. Cursor discovers matching conversations in its project-scoped chat index and relaunches with `agent --resume <id>`; Antigravity relaunches fresh. |
+| Session resume | Shipped | Automatic resume for Claude, Codex, Gemini, OpenCode, Cursor, and Kimi. Cursor discovers matching conversations in its project-scoped chat index and relaunches with `agent --resume <id>`; Kimi discovers sessions in its project-scoped `session_index.jsonl` and relaunches with `kimi --session <id>`; Antigravity relaunches fresh. |
 | Claude usage-limit management | Shipped | Per-profile 5h/7d limit state, reactive limit detection from output, group-inherited primary + fallback pools with auto-rotation, and server-side auto-apply at session creation. |
 | Peer messaging | Beta | Durable push + poll delivery **for Claude Code**; other agents pull messages with `rdv peer`. At-least-once delivery with idempotent de-duplication. |
 | Claude auto-relaunch on limit | Beta | Opt-in `auto` relaunch works; `notify` mode raises a notification (no inline one-click relaunch button yet). |
@@ -215,7 +215,7 @@ For the deep dive, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture and design |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Contributor setup, quality gates, and the schema codegen + worktree workflow |
 | [docs/API.md](docs/API.md) | REST API reference (see also [docs/openapi.yaml](docs/openapi.yaml)) |
-| [docs/AGENTS.md](docs/AGENTS.md) | Multi-agent CLI support, including Cursor `agent` installation, authentication, resume, profiles, and isolation |
+| [docs/AGENTS.md](docs/AGENTS.md) | Multi-agent CLI support, including Cursor `agent` and Kimi `kimi` installation, authentication, resume, profiles, and isolation |
 | [docs/AUTOMATION.md](docs/AUTOMATION.md) | Scheduled/triggered runs, Crown, and the supervisor |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production blue/green deploys and the deploy webhook |
 | [docs/MULTI_INSTANCE.md](docs/MULTI_INSTANCE.md) | Hosting multiple isolated instances via `RDV_BASE_PATH` |

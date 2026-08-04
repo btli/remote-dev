@@ -79,4 +79,14 @@ describe("SessionMetadataBar", () => {
     );
     expect(screen.getByText("cursor")).toBeTruthy();
   });
+
+  it("renders Kimi's agent chip for a Kimi TUI session", async () => {
+    const { SessionMetadataBar } = await import("../SessionMetadataBar");
+    render(
+      <SessionMetadataBar
+        session={{ ...session, agentProvider: "kimi" } as TerminalSession}
+      />,
+    );
+    expect(screen.getByText("kimi")).toBeTruthy();
+  });
 });

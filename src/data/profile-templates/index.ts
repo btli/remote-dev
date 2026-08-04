@@ -24,6 +24,9 @@ export interface ProfileTemplate {
     gemini: GeminiCLIConfig;
     opencode: OpenCodeConfig;
     codex: CodexCLIConfig;
+    // No kimi config: kimi profiles can't be created — kimi always uses its
+    // real home ($KIMI_CODE_HOME or ~/.kimi-code), so a per-profile kimi
+    // section would be unreachable.
   };
 }
 

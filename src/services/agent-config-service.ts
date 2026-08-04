@@ -276,6 +276,7 @@ export function getConfigTypeForProvider(
     gemini: "GEMINI.md",
     antigravity: "ANTIGRAVITY.md",
     opencode: "OPENCODE.md",
+    kimi: "AGENTS.md",
   };
   return mapping[provider];
 }

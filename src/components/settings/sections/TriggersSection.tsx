@@ -48,7 +48,7 @@ const KIND_OPTIONS: { value: TriggerKind; label: string }[] = [
   { value: "ci_failed", label: "CI failed" },
 ];
 
-const PROVIDER_OPTIONS = ["claude", "codex", "gemini", "opencode", "cursor"];
+const PROVIDER_OPTIONS = ["claude", "codex", "gemini", "opencode", "cursor", "kimi"];
 
 export function TriggersSection() {
   const { activeNode } = useProjectTree();

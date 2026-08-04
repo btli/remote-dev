@@ -10,9 +10,10 @@
  * `crates/rdv/src/commands/hook.rs`) so capture is real-time. Codex / Gemini /
  * OpenCode have no hook system today, so they rely on the newest session file
  * under the provider's profile-scoped home. Cursor likewise uses disk
- * discovery, but filters the shared CLI chat index by exact project cwd.
- * Antigravity has no confirmed resume mechanism and is treated as no-resume
- * (graceful fresh relaunch).
+ * discovery, but filters the shared CLI chat index by exact project cwd. Kimi
+ * also uses disk discovery, filtering its top-level session_index.jsonl by
+ * the project workDir. Antigravity has no confirmed resume mechanism and is
+ * treated as no-resume (graceful fresh relaunch).
  *
  * Provider flag spelling is version-dependent. `verifyResumeFlag()` probes the
  * installed CLI's `--help` at startup diagnostics to catch drift; if a token is
@@ -111,6 +112,20 @@ export const AGENT_RESUME_REGISTRY: Record<AgentProviderType, ProviderResumeSpec
       idFrom: "filename",
     },
     resume: { kind: "flag", token: "--resume" },
+  },
+  kimi: {
+    provider: "kimi",
+    supportsResume: true,
+    detect: { command: "kimi", versionArgs: ["--version"] },
+    // Kimi's top-level session_index.jsonl maps sessions to workDirs;
+    // session-id-discovery.ts handles it with a Kimi-specific scanner.
+    sessionIdSource: {
+      homeEnvVar: "KIMI_CODE_HOME",
+      defaultHomeSubpath: ".kimi-code",
+      fileExtensions: [],
+      idFrom: "filename",
+    },
+    resume: { kind: "flag", token: "--session" },
   },
   antigravity: {
     provider: "antigravity",

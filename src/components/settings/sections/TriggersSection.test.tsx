@@ -35,5 +35,6 @@ describe("TriggersSection", () => {
     await user.click(providerSelect);
 
     expect(await screen.findByRole("option", { name: "cursor" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "kimi" })).toBeTruthy();
   });
 });

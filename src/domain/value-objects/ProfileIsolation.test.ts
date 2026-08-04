@@ -191,6 +191,27 @@ describe("ProfileIsolation", () => {
       }
     });
 
+    // Kimi follows the same model: kimi sessions always use the real kimi home
+    // ($KIMI_CODE_HOME or ~/.kimi-code), even when profile-bound, so the VO
+    // must never relocate it.
+    it("NEVER emits KIMI_CODE_HOME, for any provider", () => {
+      for (const provider of [
+        "all",
+        "claude",
+        "codex",
+        "gemini",
+        "antigravity",
+        "opencode",
+      ] as const) {
+        const env = ProfileIsolation.create({
+          profileDir,
+          realHome,
+          provider,
+        }).toEnvironment();
+        expect(env.has("KIMI_CODE_HOME")).toBe(false);
+      }
+    });
+
     it("emits NOTHING for provider 'claude' beyond the shared XDG/git vars", () => {
       const isolation = ProfileIsolation.create({
         profileDir,

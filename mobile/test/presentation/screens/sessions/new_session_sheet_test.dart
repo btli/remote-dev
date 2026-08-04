@@ -97,11 +97,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('New session'), findsOneWidget);
     expect(find.text('Name'), findsOneWidget);
-    expect(find.text('New Cursor Agent'), findsOneWidget);
     expect(find.text('Create'), findsOneWidget);
   });
 
-  testWidgets('Cursor quick start creates an auto-launched agent session',
+  testWidgets('Type=Agent + provider dropdown creates an auto-launched agent session',
       (tester) async {
     final api = _MockApi();
     when(
@@ -136,7 +135,20 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('New Cursor Agent'));
+    // Switching Type to Agent defaults to the preferred provider (claude).
+    await tester.tap(_dropdownWithLabel('Type'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Agent').last);
+    await tester.pumpAndSettle();
+    expect(
+      tester.state<FormFieldState<String>>(_dropdownWithLabel('Agent')).value,
+      'claude',
+    );
+
+    // Pick cursor explicitly from the provider dropdown.
+    await tester.tap(_dropdownWithLabel('Agent'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cursor').last);
     await tester.pumpAndSettle();
     expect(
       tester.state<FormFieldState<String>>(_dropdownWithLabel('Agent')).value,
@@ -163,41 +175,7 @@ void main() {
     ).called(1);
   });
 
-  testWidgets('Cursor shortcut replaces an existing Claude selection',
-      (tester) async {
-    final api = _MockApi();
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: _overrides(
-          api,
-          installedAgents: const [
-            InstalledAgent(provider: 'claude', label: 'Claude Code'),
-            InstalledAgent(provider: 'cursor', label: 'Cursor'),
-          ],
-        ),
-        child: const MaterialApp(home: Scaffold(body: NewSessionSheet())),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.tap(_dropdownWithLabel('Type'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Agent').last);
-    await tester.pumpAndSettle();
-    expect(
-      tester.state<FormFieldState<String>>(_dropdownWithLabel('Agent')).value,
-      'claude',
-    );
-
-    await tester.tap(find.text('New Cursor Agent'));
-    await tester.pumpAndSettle();
-    expect(
-      tester.state<FormFieldState<String>>(_dropdownWithLabel('Agent')).value,
-      'cursor',
-    );
-  });
-
-  testWidgets('Cursor shortcut reports when the agent CLI is not installed',
+  testWidgets('Type=Agent with no installed agents shows an empty state',
       (tester) async {
     final api = _MockApi();
     await tester.pumpWidget(
@@ -208,17 +186,15 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('New Cursor Agent'));
+    await tester.tap(_dropdownWithLabel('Type'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Agent').last);
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Cursor Agent CLI is not installed on this server'),
-      findsOneWidget,
-    );
     expect(find.text('No agents installed'), findsOneWidget);
   });
 
-  testWidgets('stale Cursor refresh cannot replace a newer agent choice',
+  testWidgets('stale default-pick cannot override a newer Type switch',
       (tester) async {
     final api = _MockApi();
     final agentCli = _PendingRefreshAgentCli();
@@ -230,9 +206,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('New Cursor Agent'));
+    // Switch to Agent: the default-pick awaits the pending list.
+    await tester.tap(_dropdownWithLabel('Type'));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.tap(find.text('Agent').last);
     await tester.pump();
     expect(agentCli.calls, 1);
+    // Switch away and back: bumps the selection generation twice, so the
+    // first default-pick is stale by the time the list resolves.
     await tester.tap(_dropdownWithLabel('Type'));
     await tester.pump(const Duration(seconds: 1));
     await tester.tap(find.text('Shell').last);
@@ -248,13 +229,14 @@ void main() {
     ]);
     await tester.pumpAndSettle();
 
+    // Only the newest default-pick applies; the preferred provider wins.
     expect(
       tester.state<FormFieldState<String>>(_dropdownWithLabel('Agent')).value,
       'claude',
     );
   });
 
-  testWidgets('Cursor quick start is scrollable on a compact phone viewport',
+  testWidgets('agent flow is scrollable on a compact phone viewport',
       (tester) async {
     tester.view.physicalSize = const Size(390, 480);
     tester.view.devicePixelRatio = 1.0;
@@ -277,7 +259,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('New Cursor Agent'));
+    await tester.tap(_dropdownWithLabel('Type'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Agent').last);
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);

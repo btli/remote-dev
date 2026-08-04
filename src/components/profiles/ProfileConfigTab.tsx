@@ -31,7 +31,10 @@ interface ProfileConfigTabProps {
   provider: AgentProvider;
 }
 
-type AgentConfigType = Exclude<AgentProvider, "all">;
+// Kimi is intentionally excluded: kimi profiles cannot be created and kimi
+// sessions always use the real ~/.kimi-code home, so per-profile kimi config
+// is out of scope.
+type AgentConfigType = Exclude<AgentProvider, "all" | "kimi">;
 
 const ALL_AGENT_TYPES: AgentConfigType[] = ["claude", "gemini", "opencode", "codex", "antigravity"];
 
@@ -239,8 +242,10 @@ function SingleAgentConfig({ profileId, agentType }: SingleAgentConfigProps) {
 export function ProfileConfigTab({ profileId, provider }: ProfileConfigTabProps) {
   const [activeAgent, setActiveAgent] = useState<AgentConfigType>("claude");
 
-  // Single agent mode - render directly
-  if (provider !== "all") {
+  // Single agent mode - render directly. Kimi is excluded from AgentConfigType
+  // (per-profile kimi config is out of scope); kimi profiles cannot be created,
+  // so the `provider !== "kimi"` guard only satisfies the type union.
+  if (provider !== "all" && provider !== "kimi") {
     return <SingleAgentConfig profileId={profileId} agentType={provider} />;
   }
 

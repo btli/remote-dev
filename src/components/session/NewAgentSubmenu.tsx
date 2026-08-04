@@ -49,6 +49,7 @@ const PROVIDER_ICON_COLORS: Record<Exclude<AgentProviderType, "none">, string> =
   antigravity: "text-pink-500 dark:text-pink-400",
   opencode: "text-amber-500 dark:text-amber-400",
   cursor: "text-indigo-500 dark:text-indigo-400",
+  kimi: "text-blue-500 dark:text-blue-400",
 };
 
 // ---------------------------------------------------------------------------
@@ -108,6 +109,7 @@ const ALL_PROVIDERS: Array<Exclude<AgentProviderType, "none">> = [
   "antigravity",
   "opencode",
   "cursor",
+  "kimi",
 ];
 
 async function fetchOnce(): Promise<void> {

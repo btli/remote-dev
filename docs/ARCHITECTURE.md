@@ -19,7 +19,7 @@ Remote Dev (v0.3.18) is a web-based terminal interface built with **Next.js 16**
 
 - Multiple persistent terminal sessions via tmux
 - Multi-GitHub-account integration with per-project account binding and worktree support
-- Multi-agent CLI support (Claude Code, Codex, Gemini, Antigravity, OpenCode, Cursor) with isolated profiles
+- Multi-agent CLI support (Claude Code, Codex, Gemini, Antigravity, OpenCode, Cursor, Kimi) with isolated profiles
 - Two-level project group + project organization with preference inheritance
 - Session recording (desktop capture) and playback; reusable session templates
 - Project tasks, channels, and inter-agent peer messaging (durable delivery for Claude Code; other agents pull via `rdv peer`)
@@ -568,9 +568,10 @@ pulls its inbox on demand.
   terminal server pushes events over a Unix socket (`/tmp/rdv-mcp-{sessionId}.sock`)
   to that MCP server, which relays them to the agent via `sendLoggingMessage()`; a
   poll hook is the fallback path.
-- **All other agents (Codex, Gemini, Antigravity, OpenCode, Cursor) — pull only.** They are
+- **All other agents (Codex, Gemini, Antigravity, OpenCode, Cursor, Kimi) — pull only.** They are
   not auto-wired for push/poll delivery; they read peer messages by running
-  `rdv peer` (via Bash) themselves.
+  `rdv peer` (via Bash) themselves. (Kimi's lifecycle hooks report activity
+  status only; they do not drain the peer inbox.)
 - **Delivery is at-least-once with idempotent de-duplication** (a bounded in-memory
   dedup cache), not exactly-once. Read operations (list peers, read channels) always
   go through the `rdv` CLI.
@@ -737,10 +738,13 @@ hand-rolled Traefik path).
 
 ### Multi-agent CLIs & profiles
 
-Six runtime providers are supported (Claude Code, Codex, Gemini, Antigravity,
-OpenCode, Cursor), each with its own CLI command and launch metadata. Five use
+Seven runtime providers are supported (Claude Code, Codex, Gemini, Antigravity,
+OpenCode, Cursor, Kimi), each with its own CLI command and launch metadata. Five use
 the profile-configuration model; Cursor uses the generic XDG overlay and
-project-root instructions. See [`docs/AGENTS.md`](./AGENTS.md).
+project-root instructions. Claude and Kimi are the hooked providers — their
+lifecycle hooks report activity status (`running`/`subagent`/`compacting`/
+`waiting`/`idle`/`error`/`ended`) through the `rdv hook` →
+`POST /internal/agent-status` pipeline. See [`docs/AGENTS.md`](./AGENTS.md).
 
 ### Electron desktop app
 

@@ -16,6 +16,7 @@ export type AgentProviderType =
   | "antigravity"
   | "opencode"
   | "cursor"
+  | "kimi"
   | "none";
 
 /**
@@ -221,6 +222,15 @@ export const AGENT_PROVIDERS: AgentProviderConfig[] = [
     dangerousFlags: ["-f", "--force", "--yolo"],
   },
   {
+    id: "kimi",
+    name: "Kimi",
+    description: "Moonshot AI's Kimi Code CLI agent",
+    command: "kimi",
+    configFile: "AGENTS.md",
+    defaultFlags: [],
+    dangerousFlags: ["-y", "--yolo", "--yes", "--auto-approve", "--auto"],
+  },
+  {
     id: "none",
     name: "No Agent",
     description: "Standard terminal session without AI agent",
@@ -238,6 +248,7 @@ export type AgentPreset =
   | "geminy"
   | "antigravity"
   | "cursor"
+  | "kimi"
   | "custom";
 
 export interface AgentConfig {
@@ -254,6 +265,7 @@ export const AGENT_PRESETS: AgentConfig[] = [
   { id: "geminy", label: "Geminy", command: "geminy", description: "Gemini daemon mode" },
   { id: "antigravity", label: "Antigravity", command: "agy", description: "Antigravity AI coding agent" },
   { id: "cursor", label: "Cursor", command: "agent", description: "Cursor AI coding agent" },
+  { id: "kimi", label: "Kimi", command: "kimi", description: "Kimi Code CLI agent" },
   { id: "custom", label: "Custom", command: "", description: "Enter custom command" },
 ];
 
@@ -264,6 +276,7 @@ export const LOOP_AGENT_PROVIDERS = [
   "gemini",
   "opencode",
   "cursor",
+  "kimi",
 ] as const satisfies readonly Exclude<AgentProviderType, "none" | "antigravity">[];
 
 export interface UpdateSessionInput {

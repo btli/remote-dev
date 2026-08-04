@@ -95,7 +95,7 @@ const enter = () => execFileCalls.find((a) => a.includes("send-keys") && a.inclu
 const setEnv = (k: string) =>
   execFileCalls.find((a) => a.includes("set-environment") && a.includes(k));
 
-const RESUMABLE = ["claude", "codex", "gemini", "opencode", "cursor"] as const;
+const RESUMABLE = ["claude", "codex", "gemini", "opencode", "cursor", "kimi"] as const;
 
 describe.each(RESUMABLE)("durability for %s", (provider) => {
   it("terminal-server restart: relaunches RESUMED when tmux is gone (stored id)", async () => {

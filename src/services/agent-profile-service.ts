@@ -21,7 +21,8 @@ import {
   triggerConfigs,
 } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
-import { mkdir, writeFile, readFile, access } from "node:fs/promises";
+import { mkdir, writeFile, readFile, access, rename, stat, chmod } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { runtimeJoin as join, runtimeDirname as dirname } from "@/lib/dynamic-fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -63,6 +64,9 @@ const PROVIDER_CONFIG_FILES: Array<{
   { provider: "codex", dir: ".codex", filename: "AGENTS.md", displayName: "OpenAI Codex" },
   { provider: "gemini", dir: ".gemini", filename: "GEMINI.md", displayName: "Gemini CLI" },
   { provider: "antigravity", dir: ".gemini", filename: "ANTIGRAVITY.md", displayName: "Antigravity CLI" },
+  // No kimi entry: like claude, kimi always uses its real home
+  // ($KIMI_CODE_HOME or ~/.kimi-code), so a profile-dir `.kimi-code/AGENTS.md`
+  // would never be read.
   {
     provider: "opencode",
     dir: join(".config", "opencode"),
@@ -491,7 +495,10 @@ export async function getProfileEnvironment(
   const isolation = ProfileIsolation.create({
     profileDir: configDir,
     realHome: homedir(),
-    provider: profile.provider,
+    // Kimi, like Claude, is deliberately NOT relocated by ProfileIsolation
+    // (both always use their real home) — it emits no provider-specific var,
+    // so it maps onto the same no-op branch as claude.
+    provider: profile.provider === "kimi" ? "claude" : profile.provider,
     sshKeyPath: gitIdentity?.sshKeyPath,
     gitIdentity: gitIdentity
       ? { name: gitIdentity.userName, email: gitIdentity.userEmail }
@@ -721,7 +728,8 @@ function curlForStatus(status: string, source?: string): string {
 
 /**
  * Install hooks into the agent's settings file.
- * Currently supports Claude Code only (hooks in .claude/settings.json).
+ * Supports Claude Code (hooks in .claude/settings.json) and Kimi Code
+ * (hooks in <kimi-home>/config.toml [[hooks]] rules).
  *
  * Uses rdv CLI when available, falls back to curl for environments
  * where the Rust binary isn't installed.
@@ -737,8 +745,13 @@ export async function installAgentHooks(
   provider: AgentProvider,
   rdvEnv?: Record<string, string>
 ): Promise<void> {
-  // Only Claude Code supports hooks currently
-  if (provider !== "claude") return;
+  // Only Claude Code and Kimi Code support hooks currently
+  if (provider !== "claude" && provider !== "kimi") return;
+
+  if (provider === "kimi") {
+    await installKimiHooks(configDir);
+    return;
+  }
 
   const settingsPath = join(configDir, ".claude", "settings.json");
 
@@ -877,6 +890,158 @@ export async function installAgentHooks(
   await cleanStaleMcpJson(join(configDir, ".claude", ".mcp.json"));
 }
 
+// ============================================================================
+// Kimi Code hooks (config.toml [[hooks]] rules)
+// ============================================================================
+
+/**
+ * Header comment emitted directly above every rdv-managed [[hooks]] block.
+ * Acts as an ownership marker so reinstalls can replace our blocks wholesale
+ * without touching user-authored rules.
+ */
+const KIMI_RDV_MANAGED_HEADER = "# rdv-managed";
+
+/**
+ * Kimi lifecycle event → rdv hook event / reported status.
+ * Spec: docs/plans/2026-08-04-kimi-agent-provider-spec.md (Lifecycle hooks).
+ * Only Kimi's four allowed fields are written: event, command, timeout
+ * (matcher is omitted — every rule fires unconditionally).
+ */
+const KIMI_HOOK_EVENTS: Array<{
+  event: string;
+  rdvEvent: string;
+  status: string;
+  source?: string;
+  timeout: number;
+}> = [
+  { event: "SessionStart", rdvEvent: "session-start", status: "running", timeout: 5 },
+  { event: "UserPromptSubmit", rdvEvent: "prompt-submit", status: "running", timeout: 5 },
+  { event: "PreToolUse", rdvEvent: "pre-tool-use", status: "running", timeout: 5 },
+  { event: "SubagentStart", rdvEvent: "subagent-start", status: "subagent", timeout: 5 },
+  // [remote-dev-1aa5c] source=subagent-stop keeps the server-side ordering
+  // guard: this "running" must not resurrect a turn that already ended.
+  { event: "SubagentStop", rdvEvent: "subagent-stop", status: "running", source: "subagent-stop", timeout: 5 },
+  { event: "PermissionRequest", rdvEvent: "permission-request", status: "waiting", timeout: 5 },
+  { event: "PreCompact", rdvEvent: "compacting", status: "compacting", timeout: 10 },
+  { event: "PostCompact", rdvEvent: "running", status: "running", timeout: 5 },
+  { event: "Stop", rdvEvent: "stop", status: "idle", timeout: 10 },
+  { event: "StopFailure", rdvEvent: "stop-failure", status: "error", timeout: 10 },
+  { event: "Interrupt", rdvEvent: "interrupt", status: "idle", timeout: 5 },
+  { event: "SessionEnd", rdvEvent: "session-end", status: "ended", timeout: 10 },
+];
+
+/** Render the rdv-managed [[hooks]] blocks (header comment + one table per event). */
+function kimiManagedBlocks(): string {
+  return KIMI_HOOK_EVENTS.map(({ event, rdvEvent, status, source, timeout }) => {
+    const command = rdvOrCurlCommand(`rdv hook kimi ${rdvEvent}`, curlForStatus(status, source));
+    return [
+      KIMI_RDV_MANAGED_HEADER,
+      "[[hooks]]",
+      `event = "${event}"`,
+      // JSON.stringify yields a valid TOML basic string (double-quoted,
+      // backslash-escaped) for arbitrary shell content.
+      `command = ${JSON.stringify(command)}`,
+      `timeout = ${timeout}`,
+    ].join("\n");
+  }).join("\n\n");
+}
+
+/**
+ * Remove every rdv-managed [[hooks]] block from config.toml content.
+ * Line-oriented (never a full TOML re-serialization): a block is ours when it
+ * carries the KIMI_RDV_MANAGED_HEADER comment and/or its command contains an
+ * rdv hook marker. All other lines — user hooks, other tables, comments,
+ * malformed content — are preserved verbatim.
+ */
+function stripKimiManagedBlocks(content: string): string {
+  const lines = content.split("\n");
+  // A boundary starts a new TOML table or a new managed block; a block's
+  // extent runs until the next boundary so its trailing blank lines are
+  // removed with it.
+  const isBoundary = (line: string): boolean => {
+    const t = line.trim();
+    return t.startsWith("[") || t === KIMI_RDV_MANAGED_HEADER;
+  };
+  const kept: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const t = lines[i].trim();
+    const isManagedHeader = t === KIMI_RDV_MANAGED_HEADER;
+    const isHookTable = t === "[[hooks]]";
+    if (!isManagedHeader && !isHookTable) {
+      kept.push(lines[i]);
+      i++;
+      continue;
+    }
+    // A managed header owns the [[hooks]] table immediately below it.
+    let end = i + 1;
+    if (isManagedHeader) {
+      if (lines[i + 1]?.trim() === "[[hooks]]") {
+        end = i + 2;
+        while (end < lines.length && !isBoundary(lines[end])) end++;
+      }
+      // else: stray header comment — the block is the comment alone.
+    } else {
+      while (end < lines.length && !isBoundary(lines[end])) end++;
+    }
+    const blockText = lines.slice(i, end).join("\n");
+    const managed =
+      isManagedHeader ||
+      blockText.includes(RDV_HOOK_MARKER) ||
+      blockText.includes(RDV_HOOK_DIRECT_MARKER) ||
+      blockText.includes(LEGACY_ACTIVITY_HOOK_MARKER);
+    if (!managed) kept.push(...lines.slice(i, end));
+    i = end;
+  }
+  return kept.join("\n");
+}
+
+/**
+ * Install rdv activity hooks into Kimi's config.toml (<kimiHome>/config.toml,
+ * where kimiHome is $KIMI_CODE_HOME or ~/.kimi-code — passed in resolved).
+ *
+ * rdv-managed [[hooks]] blocks are replaced wholesale; user-authored blocks
+ * and all other config content are preserved verbatim. The write is atomic
+ * (tmp + rename) and skipped entirely when nothing would change.
+ */
+async function installKimiHooks(kimiHome: string): Promise<void> {
+  const configPath = join(kimiHome, "config.toml");
+
+  let existing = "";
+  try {
+    existing = await readFile(configPath, "utf-8");
+  } catch {
+    // File doesn't exist (or is unreadable) — start fresh.
+  }
+
+  const stripped = stripKimiManagedBlocks(existing).replace(/\n+$/, "");
+  const blocks = kimiManagedBlocks();
+  const newContent = stripped ? `${stripped}\n\n${blocks}\n` : `${blocks}\n`;
+
+  // No-op when content is unchanged (reinstall/upgrade idempotency).
+  if (newContent === existing) return;
+
+  await mkdir(kimiHome, { recursive: true });
+  // Unique tmp path per invocation: concurrent session creates share a pid,
+  // so a pid-only suffix would race on one tmp path.
+  const tmpPath = `${configPath}.rdv-tmp-${process.pid}-${randomUUID()}`;
+  // config.toml can hold an API key — create the tmp file 0600 from the
+  // start so the secret-bearing content is never world/group-readable, then
+  // preserve the existing file's mode through the rewrite; a brand-new file
+  // stays 0600.
+  let existingMode: number | null = null;
+  try {
+    existingMode = (await stat(configPath)).mode & 0o777;
+  } catch {
+    // File doesn't exist — the 0600 creation mode stands.
+  }
+  await writeFile(tmpPath, newContent, { mode: 0o600 });
+  if (existingMode !== null) {
+    await chmod(tmpPath, existingMode);
+  }
+  await rename(tmpPath, configPath);
+}
+
 /** Remove stale MCP server entries from an .mcp.json file if present. */
 async function cleanStaleMcpJson(mcpJsonPath: string): Promise<void> {
   try {
@@ -910,7 +1075,7 @@ export async function validateAgentHooks(
   sessionId: string,
   env: Record<string, string>
 ): Promise<{ valid: boolean; repaired: boolean; error?: string }> {
-  if (provider !== "claude") return { valid: true, repaired: false };
+  if (provider !== "claude" && provider !== "kimi") return { valid: true, repaired: false };
 
   // Check if rdv is available (hooks use curl fallback if not)
   const versionCheck = await execFileNoThrow("rdv", ["--version"], { timeout: 3000 });

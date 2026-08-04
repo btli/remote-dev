@@ -58,7 +58,7 @@ those primitives; they do not re-implement them.
 | Scheduled agent runs (§1) | **Beta** | API only | Cron, one-time, and fixed-interval launch work; a run is **never marked `completed`**, so run history reads as stuck "running". No UI. |
 | Crown — best-of-N + judge + auto-PR (§3) | **Beta** | API + CLI | Full pipeline + real judge + `gh` auto-PR, but **every run waits the full ~30-min timeout** before judging. No UI. |
 | Supervisor agent-launch + delegation (§6) | **Shipped** | API + CLI | `POST /api/instances/:id/agent`, `POST /api/delegate`, `rdv delegate`. No UI. |
-| Golden dev-env image (§4) | **Shipped** | Image build | Bakes all 6 agent CLIs; opt-out background auto-update. |
+| Golden dev-env image (§4) | **Shipped** | Image build | Bakes all 7 agent CLIs; opt-out background auto-update. |
 | Warm pool (§5) | **Experimental (inert)** | — | `SUPERVISOR_WARM_POOL_SIZE=0` by default; `claimReady` has **no production caller**, so pooled envs are never consumed. |
 | Scale-to-zero (§5) | **Experimental (inert)** | — | The reaper only evaluates **claimed** warm-pool rows → **zero candidates** in practice. |
 | k3s worker machines + capacity control | **Planned** | — | Supervisor Phase 3-4; `/api/nodes` → `501`. |
@@ -242,8 +242,8 @@ for an operator-chosen candidate regardless of the judge's pick.
 ## 4. Golden dev-env image
 
 **Status: Shipped.** The runtime image is a **golden dev-env**: it already bakes
-all 6 agent CLIs (`claude`, `codex`, `gemini`, `opencode`, Cursor's `agent`,
-best-effort `agy`) onto the system PATH, plus `sudo` + functional `apt`,
+all 7 agent CLIs (`claude`, `codex`, `gemini`, `opencode`, Cursor's `agent`,
+`kimi`, best-effort `agy`) onto the system PATH, plus `sudo` + functional `apt`,
 `python3`/`venv`/`pipx`, and `gh`, with a build-time `command -v` smoke gate.
 
 - **Flavor self-identification:** `ARG RDV_IMAGE_FLAVOR=dev-env` → `ENV

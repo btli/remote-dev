@@ -273,6 +273,70 @@ describe("relaunchAgentInTmux — resume", () => {
       "CURSOR_DATA_DIR='/srv/cursor-data' '/verified/cursor-agent'",
     );
   });
+
+  it("relaunches kimi RESUMED with kimi --session <stored id> and submits with C-m", async () => {
+    mockAgentRow(fullRow({
+      id: "kimi-1",
+      terminalType: "agent",
+      agentProvider: "kimi",
+      projectPath: "/p",
+      typeMetadata: JSON.stringify({ agentSessionId: { kimi: "01JZK2ABC" } }),
+    }));
+    const { relaunchAgentInTmux } = await import("../agent-relaunch");
+    const { resumed } = await relaunchAgentInTmux("kimi-1", "tmux-k");
+
+    expect(resumed).toBe(true);
+    expect(sendKeysArgs()).toEqual(["send-keys", "-t", "tmux-k", "-l", "kimi --session 01JZK2ABC"]);
+    expect(enterArgs()).toEqual(["send-keys", "-t", "tmux-k", "C-m"]);
+  });
+
+  it("relaunches a kimi loop row after tmux recreation", async () => {
+    mockAgentRow(fullRow({
+      id: "kimi-loop",
+      terminalType: "loop",
+      agentProvider: "kimi",
+      projectPath: "/p",
+      typeMetadata: JSON.stringify({ agentSessionId: { kimi: "loop-sess" } }),
+    }));
+
+    const { relaunchAgentInTmux } = await import("../agent-relaunch");
+    const result = await relaunchAgentInTmux("kimi-loop", "tmux-loop");
+
+    expect(result).toEqual({ resumed: true });
+    expect(sendKeysArgs()![4]).toBe("kimi --session loop-sess");
+  });
+
+  it("re-injects a binding-carried KIMI_CODE_HOME before relaunching kimi", async () => {
+    mockAgentRow(fullRow({
+      id: "kimi-2",
+      terminalType: "agent",
+      agentProvider: "kimi",
+      projectPath: "/p",
+      typeMetadata: JSON.stringify({
+        agentSessionId: { kimi: "sess-7" },
+        resumeBinding: { env: { KIMI_CODE_HOME: "/profiles/k/.kimi-code" } },
+      }),
+    }));
+    const { relaunchAgentInTmux } = await import("../agent-relaunch");
+    await relaunchAgentInTmux("kimi-2", "tmux-k");
+
+    const envCall = setEnvArgs("KIMI_CODE_HOME");
+    expect(envCall).toEqual([
+      "set-environment",
+      "-t",
+      "tmux-k",
+      "KIMI_CODE_HOME",
+      "/profiles/k/.kimi-code",
+    ]);
+    // env injection must precede the send-keys launch
+    const envIdx = execFileCalls.indexOf(envCall!);
+    const sendIdx = execFileCalls.indexOf(sendKeysArgs()!);
+    expect(envIdx).toBeGreaterThanOrEqual(0);
+    expect(envIdx).toBeLessThan(sendIdx);
+    expect(sendKeysArgs()![4]).toBe(
+      "KIMI_CODE_HOME='/profiles/k/.kimi-code' kimi --session sess-7",
+    );
+  });
 });
 
 describe("relaunchAgentInTmux — pod-restart env re-injection (hgwo.5)", () => {

@@ -260,7 +260,8 @@ RUN npm install -g \
         @anthropic-ai/claude-code \
         @openai/codex \
         @google/gemini-cli \
-        opencode-ai
+        opencode-ai \
+        @moonshot-ai/kimi-code
 
 # Cursor CLI (`agent`). The official installer lays down a multi-file bundle
 # below HOME, so keep that bundle intact under a dedicated, world-readable
@@ -314,7 +315,7 @@ RUN curl -fsSL https://raw.githubusercontent.com/gastownhall/beads/main/scripts/
 # build flaky. `agy` is intentionally EXCLUDED: its installer is currently
 # unavailable (see above), so gating on it would fail every build.
 RUN command -v claude && command -v codex && command -v gemini \
-    && command -v opencode && command -v agent \
+    && command -v opencode && command -v agent && command -v kimi \
     && command -v bd && command -v dolt
 
 # [oyej] Golden dev-env image flavor (epic remote-dev-oyej.7). The runtime stage

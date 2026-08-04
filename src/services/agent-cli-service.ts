@@ -304,6 +304,9 @@ bun install -g opencode-ai`,
 
     cursor: `# Install Cursor CLI
 curl https://cursor.com/install -fsS | bash`,
+
+    kimi: `# Install Kimi Code CLI
+npm install -g @moonshot-ai/kimi-code`,
   };
 
   return instructions[provider];
@@ -322,6 +325,7 @@ export function getProviderDocsUrl(
     antigravity: "https://antigravity.google/docs/cli-overview",
     opencode: "https://opencode.ai/docs/",
     cursor: "https://cursor.com/docs/cli/overview",
+    kimi: "https://www.kimi.com/code/docs/en/",
   };
 
   return urls[provider];
@@ -387,6 +391,7 @@ export function getRequiredEnvVars(
     antigravity: ["GOOGLE_API_KEY"],
     opencode: [], // OpenCode supports multiple providers, configured in its own config
     cursor: [], // Browser login is supported; CURSOR_API_KEY is optional
+    kimi: [], // OAuth (`kimi login`) or API key in config.toml; no env var required
   };
 
   return envVars[provider];

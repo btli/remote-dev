@@ -25,7 +25,7 @@ enum TeamsCommand {
         /// Number of agent sessions to create
         #[arg(long, default_value = "2")]
         count: usize,
-        /// Agent provider (claude, codex, gemini, opencode, cursor)
+        /// Agent provider (claude, codex, gemini, opencode, cursor, kimi)
         #[arg(long, default_value = "claude")]
         provider: String,
         /// Name prefix for sessions

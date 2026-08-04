@@ -15,6 +15,7 @@ const ALL_PROVIDERS: AgentProviderType[] = [
   "antigravity",
   "opencode",
   "cursor",
+  "kimi",
   "none",
 ];
 
@@ -40,6 +41,7 @@ describe("providerSupportsResume", () => {
     expect(providerSupportsResume("gemini")).toBe(true);
     expect(providerSupportsResume("opencode")).toBe(true);
     expect(providerSupportsResume("cursor")).toBe(true);
+    expect(providerSupportsResume("kimi")).toBe(true);
     expect(providerSupportsResume("antigravity")).toBe(false);
     expect(providerSupportsResume("none")).toBe(false);
   });
@@ -51,6 +53,7 @@ describe("buildResumeAgentFlags", () => {
     expect(buildResumeAgentFlags("gemini", "abc")).toEqual(["--resume", "abc"]);
     expect(buildResumeAgentFlags("opencode", "abc")).toEqual(["--session", "abc"]);
     expect(buildResumeAgentFlags("cursor", "chat-123")).toEqual(["--resume", "chat-123"]);
+    expect(buildResumeAgentFlags("kimi", "01JZK2A")).toEqual(["--session", "01JZK2A"]);
   });
 
   it("builds the subcommand pair for codex (appended after the command)", () => {

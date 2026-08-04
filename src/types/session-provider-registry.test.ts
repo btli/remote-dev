@@ -62,3 +62,52 @@ describe("Cursor agent provider metadata", () => {
     expect(LOOP_AGENT_PROVIDERS).toContain("cursor");
   });
 });
+
+describe("Kimi agent provider metadata", () => {
+  it("launches the Kimi TUI with bare kimi and filters its bypass flags", () => {
+    const kimi = AGENT_PROVIDERS.find((provider) => provider.id === "kimi");
+
+    expect(kimi).toMatchObject({
+      id: "kimi",
+      name: "Kimi",
+      command: "kimi",
+      configFile: "AGENTS.md",
+      defaultFlags: [],
+      dangerousFlags: ["-y", "--yolo", "--yes", "--auto-approve", "--auto"],
+    });
+    expect(buildAgentCommand(kimi!)).toBe("kimi");
+    expect(
+      buildAgentCommand(kimi!, [
+        "-y",
+        "-y=true",
+        "--yolo",
+        "--yolo=true",
+        "--yes",
+        "--auto-approve",
+        "--auto",
+        "--auto=true",
+        "--model",
+        "fast",
+      ]),
+    ).toBe("kimi --model fast");
+    // Dangerous flags pass through when explicitly allowed.
+    expect(buildAgentCommand(kimi!, ["--yolo"], true)).toBe("kimi --yolo");
+  });
+
+  it("keeps the shared domain registry in sync", () => {
+    expect(DOMAIN_AGENT_PROVIDERS.find((provider) => provider.id === "kimi")).toMatchObject({
+      id: "kimi",
+      command: "kimi",
+      configFile: "AGENTS.md",
+      dangerousFlags: ["-y", "--yolo", "--yes", "--auto-approve", "--auto"],
+    });
+  });
+
+  it("offers Kimi in the feature-session agent presets", () => {
+    expect(AGENT_PRESETS.find((preset) => preset.id === "kimi")).toMatchObject({
+      command: "kimi",
+      label: "Kimi",
+    });
+    expect(LOOP_AGENT_PROVIDERS).toContain("kimi");
+  });
+});

@@ -5,7 +5,7 @@ const checkRequiredEnvVars = vi.fn(() => ({ valid: true, missing: [] }));
 const verifyCLIExecution = vi.fn(async () => ({ success: true }));
 
 vi.mock("@/services/agent-cli-service", () => ({
-  AGENT_CLI_PROVIDERS: ["claude", "codex", "gemini", "antigravity", "opencode", "cursor"],
+  AGENT_CLI_PROVIDERS: ["claude", "codex", "gemini", "antigravity", "opencode", "cursor", "kimi"],
   checkCLIStatus: vi.fn(),
   checkAllCLIStatus: vi.fn(),
   getInstallInstructions: vi.fn(),
@@ -39,5 +39,21 @@ describe("POST /api/agent-cli/status", () => {
     expect(await response.json()).toEqual({ success: true });
     expect(checkRequiredEnvVars).toHaveBeenCalledWith("cursor", expect.any(Object));
     expect(verifyCLIExecution).toHaveBeenCalledWith("cursor", {});
+  });
+
+  it("accepts Kimi without requiring any environment variables", async () => {
+    const { POST } = await import("./route");
+    const response = await POST(
+      new Request("http://localhost/api/agent-cli/status", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: "kimi", env: {} }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ success: true });
+    expect(checkRequiredEnvVars).toHaveBeenCalledWith("kimi", expect.any(Object));
+    expect(verifyCLIExecution).toHaveBeenCalledWith("kimi", {});
   });
 });

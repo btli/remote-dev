@@ -59,6 +59,7 @@ const OPTIONS: MigrationOptions = {
 let fixtureRoot: string;
 let savedHome: string | undefined;
 let savedClaudeConfigDir: string | undefined;
+let savedKimiCodeHome: string | undefined;
 
 function write(relPath: string, content = "x"): void {
   const full = join(fixtureRoot, relPath);
@@ -81,7 +82,9 @@ describe("MigrationFileService", () => {
     process.env.RDV_DATA_DIR = join(fixtureRoot, "data");
     savedHome = process.env.HOME;
     savedClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    savedKimiCodeHome = process.env.KIMI_CODE_HOME;
     delete process.env.CLAUDE_CONFIG_DIR;
+    delete process.env.KIMI_CODE_HOME;
   });
 
   afterEach(() => {
@@ -90,6 +93,11 @@ describe("MigrationFileService", () => {
       process.env.CLAUDE_CONFIG_DIR = savedClaudeConfigDir;
     } else {
       delete process.env.CLAUDE_CONFIG_DIR;
+    }
+    if (savedKimiCodeHome !== undefined) {
+      process.env.KIMI_CODE_HOME = savedKimiCodeHome;
+    } else {
+      delete process.env.KIMI_CODE_HOME;
     }
     delete process.env.RDV_DATA_DIR;
     rmSync(fixtureRoot, { recursive: true, force: true });
@@ -210,6 +218,10 @@ describe("MigrationFileService", () => {
     write("home/.gemini/oauth_creds.json", "SECRET");
     write("home/.config/opencode/config.json", "{}");
     write("home/.config/opencode/logs/run.log", "junk");
+    write("home/.kimi-code/config.toml", "x=1");
+    write("home/.kimi-code/session_index.jsonl", "{}");
+    write("home/.kimi-code/sessions/proj/sess-1/transcript.jsonl", "{}");
+    write("home/.kimi-code/not-curated.bin", "nope");
 
     const withCreds = await buildArchives({
       jobId: "job-as1",
@@ -230,6 +242,11 @@ describe("MigrationFileService", () => {
     expect(listing.some((p) => p.includes("gemini/history"))).toBe(false);
     expect(listing).toContain("agent-settings/opencode/config.json");
     expect(listing.some((p) => p.includes("opencode/logs"))).toBe(false);
+    expect(listing).toContain("agent-settings/kimi/config.toml");
+    expect(listing).toContain("agent-settings/kimi/session_index.jsonl");
+    // Transcripts are never shipped (same as every other provider).
+    expect(listing.some((p) => p.includes("kimi/sessions"))).toBe(false);
+    expect(listing).not.toContain("agent-settings/kimi/not-curated.bin");
     expect(withCreds.info.some((i) => i.includes("claude/settings.json"))).toBe(true);
 
     const noCreds = await buildArchives({
@@ -242,6 +259,10 @@ describe("MigrationFileService", () => {
     expect(noCredsListing).not.toContain("agent-settings/codex/auth.json");
     expect(noCredsListing).not.toContain("agent-settings/gemini/oauth_creds.json");
     expect(noCredsListing).toContain("agent-settings/codex/config.toml");
+    // kimi's config.toml can hold an API key — gated like codex's auth.json.
+    expect(noCredsListing).not.toContain("agent-settings/kimi/config.toml");
+    expect(noCredsListing).toContain("agent-settings/kimi/session_index.jsonl");
+    expect(noCredsListing.some((p) => p.includes("kimi/sessions"))).toBe(false);
   });
 
   // [remote-dev-n4x4.6] Claude sessions no longer set CLAUDE_CONFIG_DIR, so the

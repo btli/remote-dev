@@ -14,6 +14,7 @@ describe("RestartAgentUseCase — resume", () => {
   const agentSession = (
     provider = "claude",
     terminalType: "agent" | "loop" = "agent",
+    typeMetadata?: Record<string, unknown>,
   ) =>
     Session.create({
       id: "123e4567-e89b-12d3-a456-426614174000",
@@ -22,6 +23,7 @@ describe("RestartAgentUseCase — resume", () => {
       projectPath: "/home/user/project",
       terminalType,
       agentProvider: provider as "claude",
+      ...(typeMetadata ? { typeMetadata } : {}),
     }).markAgentExited(0);
 
   beforeEach(() => {
@@ -229,6 +231,123 @@ describe("RestartAgentUseCase — resume", () => {
     expect(injected.toRecord()).toEqual({ CURSOR_DATA_DIR: "/operator/cursor-data" });
     expect((tmux.setEnvironment as Mock).mock.invocationCallOrder[0]).toBeLessThan(
       (tmux.sendKeys as Mock).mock.invocationCallOrder[0],
+    );
+  });
+
+  it("resumes Kimi with kimi --session <id> through the generic path (no fingerprinting)", async () => {
+    const session = agentSession("kimi");
+    (repo.findById as Mock).mockResolvedValue(session);
+    (resolver.resolveResume as Mock).mockResolvedValue({
+      provider: "kimi",
+      nativeSessionId: "01JZK2ABC",
+      resumeFlags: ["--session", "01JZK2ABC"],
+      argvOverride: null,
+    });
+    // No executable resolver injected: the default gates only Cursor's generic
+    // `agent` command and passes provider-specific names like `kimi` through.
+    const useCase = new RestartAgentUseCase(repo, tmux, resolver);
+
+    const out = await useCase.execute({
+      sessionId: "123e4567-e89b-12d3-a456-426614174000",
+      userId: "user-123",
+    });
+
+    expect(resolver.resolveResume).toHaveBeenCalledWith(session, expect.any(Object));
+    expect(tmux.sendKeys).toHaveBeenCalledWith(expect.any(String), "kimi --session 01JZK2ABC");
+    expect(out.resumed).toBe(true);
+  });
+
+  it("restarts a Kimi loop session with a bare kimi command", async () => {
+    (repo.findById as Mock).mockResolvedValue(agentSession("kimi", "loop"));
+    (resolver.resolveResume as Mock).mockResolvedValue(null);
+    const useCase = new RestartAgentUseCase(repo, tmux, resolver);
+
+    await useCase.execute({
+      sessionId: "123e4567-e89b-12d3-a456-426614174000",
+      userId: "user-123",
+    });
+
+    expect(tmux.sendKeys).toHaveBeenCalledWith(expect.any(String), "kimi");
+  });
+
+  it("passes a binding-carried KIMI_CODE_HOME to Kimi resume discovery and relaunch", async () => {
+    (tmux.getEnvironment as Mock).mockResolvedValue({
+      toRecord: () => ({ PATH: "/session/bin" }),
+    });
+    const session = agentSession("kimi", "agent", {
+      resumeBinding: { env: { KIMI_CODE_HOME: "/profiles/k/.kimi-code" } },
+    });
+    (repo.findById as Mock).mockResolvedValue(session);
+    (resolver.resolveResume as Mock).mockResolvedValue({
+      provider: "kimi",
+      nativeSessionId: "01JZK2ABC",
+      resumeFlags: ["--session", "01JZK2ABC"],
+      argvOverride: null,
+    });
+    const useCase = new RestartAgentUseCase(repo, tmux, resolver);
+
+    await useCase.execute({
+      sessionId: "123e4567-e89b-12d3-a456-426614174000",
+      userId: "user-123",
+    });
+
+    expect(resolver.resolveResume).toHaveBeenCalledWith(
+      session,
+      expect.objectContaining({ KIMI_CODE_HOME: "/profiles/k/.kimi-code" }),
+    );
+    // Binding env is mirrored into tmux BEFORE the relaunch, then shell-quoted
+    // onto the command — same shape agent-relaunch.ts produces for this row.
+    expect(tmux.setEnvironment).toHaveBeenCalledOnce();
+    const [, injected] = (tmux.setEnvironment as Mock).mock.calls[0];
+    expect(injected.toRecord()).toEqual({
+      KIMI_CODE_HOME: "/profiles/k/.kimi-code",
+    });
+    expect((tmux.setEnvironment as Mock).mock.invocationCallOrder[0]).toBeLessThan(
+      (tmux.sendKeys as Mock).mock.invocationCallOrder[0],
+    );
+    expect(tmux.sendKeys).toHaveBeenCalledWith(
+      expect.any(String),
+      "KIMI_CODE_HOME='/profiles/k/.kimi-code' kimi --session 01JZK2ABC",
+    );
+  });
+
+  it("lets a live tmux CURSOR_DATA_DIR win over a stale resume-binding value", async () => {
+    // Tmux-wins (matches discoveryEnv precedence): the binding's stale data
+    // root must not clobber the live session value — no set-environment for
+    // the var, and the command prefix carries the LIVE value.
+    (tmux.getEnvironment as Mock).mockResolvedValue({
+      toRecord: () => ({
+        PATH: "/session/bin",
+        CURSOR_DATA_DIR: "/live/cursor-data",
+      }),
+    });
+    const session = agentSession("cursor", "agent", {
+      resumeBinding: { env: { CURSOR_DATA_DIR: "/stale/binding-data" } },
+    });
+    (repo.findById as Mock).mockResolvedValue(session);
+    (resolver.resolveResume as Mock).mockResolvedValue(null);
+    const useCase = new RestartAgentUseCase(
+      repo,
+      tmux,
+      resolver,
+      vi.fn().mockResolvedValue("/verified/cursor-agent"),
+    );
+
+    await useCase.execute({
+      sessionId: "123e4567-e89b-12d3-a456-426614174000",
+      userId: "user-123",
+    });
+
+    // Discovery already saw the live value (tmux wins in launchEnv).
+    expect(resolver.resolveResume).toHaveBeenCalledWith(
+      session,
+      expect.objectContaining({ CURSOR_DATA_DIR: "/live/cursor-data" }),
+    );
+    // Nothing to inject: tmux already carries the var.
+    expect(tmux.setEnvironment).not.toHaveBeenCalled();
+    expect(tmux.sendKeys).toHaveBeenCalledWith(
+      expect.any(String),
+      "CURSOR_DATA_DIR='/live/cursor-data' '/verified/cursor-agent'",
     );
   });
 });

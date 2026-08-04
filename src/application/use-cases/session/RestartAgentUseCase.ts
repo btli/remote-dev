@@ -26,6 +26,7 @@ import {
 import { EntityNotFoundError, InvalidStateTransitionError } from "@/domain/errors/DomainError";
 import { AGENT_PROVIDERS, type AgentProviderType } from "@/types/session";
 import { buildAgentCommand, quoteShellArg } from "@/lib/terminal-plugins/agent-utils";
+import { stripSensitiveEnv } from "@/lib/agent-resume/resume-binding";
 import { createLogger } from "@/lib/logger";
 import { TmuxEnvironment } from "@/domain/value-objects/TmuxEnvironment";
 
@@ -202,18 +203,41 @@ export class RestartAgentUseCase {
         throw new Error(`Executable '${provider.command}' is not the Cursor Agent CLI`);
       }
 
+      // Re-inject the durable binding's sanitized env into tmux BEFORE
+      // relaunch so the agent process inherits the profile-isolated CLI home
+      // that holds the resume files — mirrors agent-relaunch.ts (the tmux
+      // session may have lost the binding's env after a pod restart).
+      const relaunchEnv: Record<string, string> = { ...(binding?.env ?? {}) };
       // A process-level Cursor data-root override participates in discovery
-      // even when it was not persisted in the original binding. Mirror it into
-      // tmux before relaunch so the resumed CLI reads the same chat index.
-      const cursorDataDir = discoveryEnv.CURSOR_DATA_DIR;
+      // even when it was not persisted in the original binding. Mirror it the
+      // same way so the resumed CLI reads the same chat index.
       if (
         provider.id === "cursor" &&
-        cursorDataDir &&
-        tmuxEnv.CURSOR_DATA_DIR !== cursorDataDir
+        discoveryEnv.CURSOR_DATA_DIR &&
+        !relaunchEnv.CURSOR_DATA_DIR
       ) {
+        relaunchEnv.CURSOR_DATA_DIR = discoveryEnv.CURSOR_DATA_DIR;
+      }
+      const safeRelaunchEnv = stripSensitiveEnv(relaunchEnv);
+      // Tmux-wins, consistent with discoveryEnv above: when the LIVE tmux
+      // session already carries a var, that value is authoritative — a stale
+      // resume-binding value must never clobber it (no set-environment, and
+      // the command prefix below uses the live value). Only vars tmux lacks
+      // are injected (binding value / process-level fill).
+      const envToInject: Record<string, string> = {};
+      const effectiveRelaunchEnv: Record<string, string> = {};
+      for (const [key, value] of Object.entries(safeRelaunchEnv)) {
+        if (tmuxEnv[key] !== undefined) {
+          effectiveRelaunchEnv[key] = tmuxEnv[key];
+        } else {
+          envToInject[key] = value;
+          effectiveRelaunchEnv[key] = value;
+        }
+      }
+      if (Object.keys(envToInject).length > 0) {
         await this.tmuxGateway.setEnvironment(
           tmuxName,
-          TmuxEnvironment.create({ CURSOR_DATA_DIR: cursorDataDir }),
+          TmuxEnvironment.create(envToInject),
         );
       }
 
@@ -227,10 +251,17 @@ export class RestartAgentUseCase {
             false,
             provider.id === "cursor" ? executable : undefined,
           );
-      const agentCommand =
-        provider.id === "cursor" && cursorDataDir
-          ? `CURSOR_DATA_DIR=${quoteShellArg(cursorDataDir)} ${baseAgentCommand}`
-          : baseAgentCommand;
+      // tmux set-environment only affects future panes/processes; this restart
+      // types into a shell that already exists. Prefix the same allowlisted,
+      // shell-quoted assignments so the agent process actually inherits them.
+      // effectiveRelaunchEnv is tmux-wins: live tmux values where present,
+      // binding/process values only for vars tmux lacked (and just injected).
+      const envPrefix = Object.entries(effectiveRelaunchEnv)
+        .map(([key, value]) => `${key}=${quoteShellArg(value)}`)
+        .join(" ");
+      const agentCommand = envPrefix
+        ? `${envPrefix} ${baseAgentCommand}`
+        : baseAgentCommand;
       log.info("Relaunching agent (HTTP restart)", {
         sessionId: input.sessionId,
         provider: provider.id,

@@ -43,6 +43,7 @@ const PROVIDER_ICONS: Record<string, { icon: string; color: string }> = {
   gemini: { icon: "✨", color: "text-blue-400" },
   opencode: { icon: "🔮", color: "text-purple-400" },
   cursor: { icon: "↖️", color: "text-indigo-400" },
+  kimi: { icon: "🌙", color: "text-blue-400" },
 };
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -51,6 +52,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   gemini: "Gemini CLI",
   opencode: "OpenCode",
   cursor: "Cursor",
+  kimi: "Kimi",
 };
 
 export function AgentCLIStatusPanel() {

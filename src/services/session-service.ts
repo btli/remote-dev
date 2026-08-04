@@ -2,6 +2,7 @@
  * SessionService - Manages terminal session lifecycle and persistence
  */
 import * as os from "node:os";
+import { join } from "node:path";
 import { db } from "@/db";
 import { terminalSessions, githubRepositories, apiKeys } from "@/db/schema";
 import { eq, and, asc, desc, inArray } from "drizzle-orm";
@@ -893,11 +894,17 @@ export async function createSessionWithDedupFlag(
     // [remote-dev-n4x4.6] Hooks must land where the agent will actually READ
     // them. Claude sessions no longer set `CLAUDE_CONFIG_DIR`, so Claude reads
     // the real `~/.claude` — installing into the profile dir would write hooks
-    // that never fire. Other providers keep their per-profile config dir.
+    // that never fire. Kimi follows the same model: it always reads its real
+    // home ($KIMI_CODE_HOME or ~/.kimi-code), even when profile-bound.
+    // Other providers keep their per-profile config dir.
     const configDir =
       effectiveAgentProvider === "claude"
         ? process.env.HOME
-        : (profile?.configDir ?? process.env.HOME);
+        : effectiveAgentProvider === "kimi"
+          // The session runs with the folder env, so a folder-level
+          // KIMI_CODE_HOME decides which home the CLI reads — install there.
+          ? resolveKimiHome({ ...(folderEnv ?? {}), ...rdvEnv })
+          : (profile?.configDir ?? process.env.HOME);
     if (configDir) {
       // Previously this also sniffed `startupCommand` for an inline `HOME=`
       // override (e.g. `HOME=/foo claude`) so hooks could be installed in
@@ -1744,19 +1751,39 @@ export async function resumeSession(
   // were installed.
   if (supportsAgentLifecycle(session)) {
     const agentProvider = (session.agentProvider ?? "claude") as AgentProviderType;
+    // The live tmux session runs with the folder env (injected at creation),
+    // so it is the session environment that carries a folder-level
+    // KIMI_CODE_HOME — hooks must land in the same home the CLI reads.
+    // Read once here and reused for the clipboard PATH refresh below.
+    let liveSessionEnv: Record<string, string> = {};
+    try {
+      liveSessionEnv = await TmuxService.getSessionEnvironment(
+        session.tmuxSessionName,
+      );
+    } catch (error) {
+      log.warn("Failed to read tmux session env on resume", {
+        sessionId,
+        error: String(error),
+      });
+    }
     // [remote-dev-n4x4.6] Claude reads the real `~/.claude` (its
     // `CLAUDE_CONFIG_DIR` is deliberately unset), so refresh hooks THERE.
-    // Other providers keep their per-profile config dir.
-    // Note: when a non-Claude session has a profileId but the profile row is
-    // gone, configDir stays undefined so ensureAgentConfig is skipped — do not
-    // coalesce to HOME (that would install hooks in the wrong place).
+    // Kimi follows the same model — it always reads its real home
+    // ($KIMI_CODE_HOME or ~/.kimi-code), even when profile-bound, so it never
+    // consults the profile configDir. Other providers keep their per-profile
+    // config dir.
+    // Note: when a non-Claude/non-Kimi session has a profileId but the profile
+    // row is gone, configDir stays undefined so ensureAgentConfig is skipped —
+    // do not coalesce to HOME (that would install hooks in the wrong place).
     const configDir =
       agentProvider === "claude"
         ? process.env.HOME
-        : session.profileId
-          ? (await AgentProfileService.getProfile(session.profileId, userId))
-              ?.configDir
-          : process.env.HOME;
+        : agentProvider === "kimi"
+          ? resolveKimiHome(liveSessionEnv)
+          : session.profileId
+            ? (await AgentProfileService.getProfile(session.profileId, userId))
+                ?.configDir
+            : process.env.HOME;
 
     // Refresh RDV + GitHub account env vars on resume (may be missing on older
     // sessions, or stale if the folder's account binding or OAuth token changed)
@@ -1849,9 +1876,10 @@ export async function resumeSession(
       let clipboardResumeEnv: Record<string, string> = {};
       if (session.terminalType !== "ssh") {
         try {
-          const currentSessionEnv = await TmuxService.getSessionEnvironment(
-            session.tmuxSessionName,
-          );
+          // Reuses the live env read from the top of this block (the tmux
+          // session env does not change in between — setSessionEnvironment
+          // below runs after this).
+          const currentSessionEnv = liveSessionEnv;
           const shimDir = ensureClipboardShims();
           clipboardResumeEnv = buildClipboardSessionEnv({
             sessionId,
@@ -2122,6 +2150,26 @@ function buildAgentCommand(
 }
 
 /**
+ * Resolve the Kimi Code home directory (its config.toml lives directly inside).
+ * Kimi, like Claude, ALWAYS uses its real home ($KIMI_CODE_HOME or
+ * ~/.kimi-code), regardless of any bound profile — it is deliberately not
+ * relocated per profile (mirrors the Claude model; see the "CLAUDE AND KIMI
+ * ARE DELIBERATELY EXCLUDED" note in ProfileIsolation).
+ *
+ * Precedence mirrors resume discovery (/api/agent/sessions): a session-level
+ * (folder env) KIMI_CODE_HOME wins over the operator's process env — the tmux
+ * session runs with the folder env, so hooks must land in the home the CLI
+ * will actually read. An empty string falls through to the next source.
+ */
+function resolveKimiHome(sessionEnv?: Record<string, string>): string {
+  return (
+    sessionEnv?.KIMI_CODE_HOME ||
+    process.env.KIMI_CODE_HOME ||
+    join(os.homedir(), ".kimi-code")
+  );
+}
+
+/**
  * Install agent activity hooks in the agent's config.
  * Used by both createSession and resumeSession to keep agent config current.
  * Failures are logged but do not block session creation/resume.
@@ -2133,7 +2181,7 @@ async function ensureAgentConfig(
   sessionId: string,
   rdvEnv?: Record<string, string>
 ): Promise<void> {
-  if (provider !== "claude") return;
+  if (provider !== "claude" && provider !== "kimi") return;
 
   await Promise.all(
     [...configDirs].map((dir) =>

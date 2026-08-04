@@ -58,6 +58,11 @@ enum HookCommand {
         #[arg(long)]
         reason: Option<String>,
     },
+    /// Unified handler for Kimi Code lifecycle hooks
+    Kimi {
+        /// Hook event: session-start, prompt-submit, pre-tool-use, subagent-start, subagent-stop, permission-request, compacting, running, stop, stop-failure, interrupt, session-end
+        event: String,
+    },
 }
 
 // ── Bash inspection ─────────────────────────────────────────────────
@@ -159,6 +164,34 @@ async fn report_status_with_source(client: &Client, status: &str, source: Option
     }
     if let Err(e) = client.post_empty_with_query("/internal/agent-status", &query).await {
         eprintln!("warning: failed to report {status} status: {e}");
+    }
+}
+
+/// [remote-dev-mv99] Map a Kimi Code lifecycle hook event to the agent status
+/// (and optional `source` tag) it should report. Pure so tests can pin the
+/// mapping behaviorally — a source-text assertion can't catch a swapped
+/// status. Returns `None` for unknown events.
+///
+/// Event→status mapping from the kimi provider spec:
+///   SessionStart/UserPromptSubmit/PreToolUse/running → running,
+///   SubagentStart → subagent,
+///   SubagentStop → running tagged source=subagent-stop ([remote-dev-1aa5c],
+///   so it can't resurrect a turn that already ended),
+///   PermissionRequest → waiting, PreCompact → compacting,
+///   Stop/Interrupt → idle, StopFailure → error, SessionEnd → ended.
+fn kimi_event_status(event: &str) -> Option<(&'static str, Option<&'static str>)> {
+    match event {
+        "session-start" | "prompt-submit" | "pre-tool-use" | "running" => {
+            Some(("running", None))
+        }
+        "subagent-start" => Some(("subagent", None)),
+        "subagent-stop" => Some(("running", Some("subagent-stop"))),
+        "permission-request" => Some(("waiting", None)),
+        "compacting" => Some(("compacting", None)),
+        "stop" | "interrupt" => Some(("idle", None)),
+        "stop-failure" => Some(("error", None)),
+        "session-end" => Some(("ended", None)),
+        _ => None,
     }
 }
 
@@ -877,6 +910,25 @@ pub async fn run(
                 }
             }
         }
+        HookCommand::Kimi { event } => {
+            // Kimi Code lifecycle hooks (config.toml [[hooks]] rules). Every
+            // event drains stdin (Kimi pipes a JSON payload) and only reports
+            // status — a Kimi hook must never emit blocking output or exit 2.
+            let Some((status, source)) = kimi_event_status(&event) else {
+                eprintln!("error: unknown kimi hook event: {event}");
+                std::process::exit(1);
+            };
+            drain_stdin();
+            match source {
+                // [remote-dev-1aa5c] A subagent-stop "running" is source-tagged
+                // so it can't resurrect a turn that already ended.
+                Some(src) => report_status_with_source(client, status, Some(src)).await,
+                // [remote-dev-mv99] Kimi stop/interrupt report idle and exit 0 —
+                // NEVER blocking output, NEVER exit 2. Claude's beads
+                // continuation codec is Claude-specific and does not apply.
+                None => report_status(client, status).await,
+            }
+        }
     }
     Ok(())
 }
@@ -944,6 +996,119 @@ mod stop_tests {
         assert!(
             belt.contains(r#"report_status_with_source(client, "running", Some("subagent-stop"))"#),
             "Stop-handler safety belt must tag source=subagent-stop"
+        );
+    }
+}
+
+#[cfg(test)]
+mod kimi_tests {
+    use super::kimi_event_status;
+
+    /// Extract the `HookCommand::Kimi` arm body from the source so tests can
+    /// assert on the kimi handler in isolation (bounded at the end of `run`,
+    /// before the test modules, so assertions can't match test-code strings).
+    fn kimi_arm() -> String {
+        let src = include_str!("hook.rs");
+        let start = src
+            .find("HookCommand::Kimi { event } =>")
+            .expect("Kimi arm exists");
+        let end = src[start..]
+            .find("\n    Ok(())")
+            .map(|i| start + i)
+            .expect("Kimi arm bounded by end of run()");
+        src[start..end].to_string()
+    }
+
+    /// [remote-dev-mv99] Pin the event→status mapping from the kimi provider
+    /// spec BEHAVIORALLY against kimi_event_status: SessionStart/
+    /// UserPromptSubmit/PreToolUse/running → running, SubagentStart → subagent,
+    /// SubagentStop → running tagged source=subagent-stop ([remote-dev-1aa5c]),
+    /// PermissionRequest → waiting, PreCompact → compacting, Stop/Interrupt →
+    /// idle, StopFailure → error, SessionEnd → ended. Asserting the function's
+    /// return values (not source text) is what catches a swapped mapping.
+    #[test]
+    fn kimi_event_status_mapping() {
+        for event in ["session-start", "prompt-submit", "pre-tool-use", "running"] {
+            assert_eq!(
+                kimi_event_status(event),
+                Some(("running", None)),
+                "{event} must report running"
+            );
+        }
+        assert_eq!(
+            kimi_event_status("subagent-start"),
+            Some(("subagent", None)),
+            "subagent-start must report subagent"
+        );
+        assert_eq!(
+            kimi_event_status("subagent-stop"),
+            Some(("running", Some("subagent-stop"))),
+            "subagent-stop must report running tagged source=subagent-stop"
+        );
+        assert_eq!(
+            kimi_event_status("permission-request"),
+            Some(("waiting", None)),
+            "permission-request must report waiting"
+        );
+        assert_eq!(
+            kimi_event_status("compacting"),
+            Some(("compacting", None)),
+            "compacting must report compacting"
+        );
+        for event in ["stop", "interrupt"] {
+            assert_eq!(
+                kimi_event_status(event),
+                Some(("idle", None)),
+                "{event} must report idle"
+            );
+        }
+        assert_eq!(
+            kimi_event_status("stop-failure"),
+            Some(("error", None)),
+            "stop-failure must report error"
+        );
+        assert_eq!(
+            kimi_event_status("session-end"),
+            Some(("ended", None)),
+            "session-end must report ended"
+        );
+        // Unknown events are rejected (the command arm exits 1 like claude's).
+        assert_eq!(kimi_event_status("bogus-event"), None);
+        assert_eq!(kimi_event_status(""), None);
+    }
+
+    /// [remote-dev-mv99] Kimi `stop` must NEVER block: no beads continuation
+    /// codec (Claude-specific), no stdout output, no exit(2). It reports idle
+    /// and exits 0. If this test fails, a Kimi session will hang on turn end.
+    /// Source-level guard runs `.contains` on the whole arm — no byte-offset
+    /// slicing, so no non-char-boundary panic hazard.
+    #[test]
+    fn kimi_stop_never_blocks() {
+        // Behavior: stop/interrupt map to a plain status report (idle).
+        assert_eq!(kimi_event_status("stop"), Some(("idle", None)));
+        assert_eq!(kimi_event_status("interrupt"), Some(("idle", None)));
+
+        let arm = kimi_arm();
+        assert!(
+            arm.contains("kimi_event_status"),
+            "kimi arm must route through kimi_event_status"
+        );
+        assert!(
+            !arm.contains("check_beads_unfinished"),
+            "kimi stop must not run the beads continuation check"
+        );
+        assert!(
+            !arm.contains("handle_stop"),
+            "kimi stop must not reuse the Claude stop handler"
+        );
+        assert!(
+            !arm.contains("exit(2)"),
+            "kimi hooks must never exit 2 (blocking)"
+        );
+        // No stdout writes — eprintln! (stderr, used for unknown events) is fine.
+        assert!(
+            !arm.replace("eprintln!", "").contains("println!"),
+            "kimi hooks must not write to stdout"
         );
     }
 }

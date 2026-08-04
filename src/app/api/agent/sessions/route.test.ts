@@ -150,6 +150,74 @@ describe("GET /api/agent/sessions", () => {
     );
   });
 
+  it("accepts Kimi and returns its project-scoped discovery results", async () => {
+    listResumableSessions.mockResolvedValue([
+      { sessionId: "01JZK2ABC", lastModified: "2026-08-04T00:00:00.000Z" },
+    ]);
+    const res = await call(
+      "http://localhost/api/agent/sessions?provider=kimi&projectPath=/tmp/proj",
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      provider: "kimi",
+      sessions: [
+        { sessionId: "01JZK2ABC", lastModified: "2026-08-04T00:00:00.000Z" },
+      ],
+    });
+  });
+
+  it("keeps Kimi discovery on its default home when profileId is present", async () => {
+    vi.stubEnv("KIMI_CODE_HOME", "");
+    listResumableSessions.mockResolvedValue([]);
+
+    const res = await call(
+      "http://localhost/api/agent/sessions?provider=kimi&projectPath=/tmp/proj&profileId=p1",
+    );
+
+    expect(res.status).toBe(200);
+    expect(getProfile).not.toHaveBeenCalled();
+    expect(listResumableSessions).toHaveBeenCalledWith("kimi", "/tmp/proj", {}, 20);
+  });
+
+  it("preserves an operator-supplied Kimi code home", async () => {
+    vi.stubEnv("KIMI_CODE_HOME", "/srv/kimi-code");
+    listResumableSessions.mockResolvedValue([]);
+
+    const res = await call(
+      "http://localhost/api/agent/sessions?provider=kimi&projectPath=/tmp/proj&profileId=p1",
+    );
+
+    expect(res.status).toBe(200);
+    expect(getProfile).not.toHaveBeenCalled();
+    expect(listResumableSessions).toHaveBeenCalledWith(
+      "kimi",
+      "/tmp/proj",
+      { KIMI_CODE_HOME: "/srv/kimi-code" },
+      20,
+    );
+  });
+
+  it("uses a folder-level Kimi code home for the project picker", async () => {
+    vi.stubEnv("KIMI_CODE_HOME", "/srv/default-kimi-code");
+    getEnvironmentForSession.mockResolvedValue({
+      KIMI_CODE_HOME: "/projects/p1/kimi-code",
+    });
+    listResumableSessions.mockResolvedValue([]);
+
+    const res = await call(
+      "http://localhost/api/agent/sessions?provider=kimi&projectPath=/tmp/proj&projectId=p1",
+    );
+
+    expect(res.status).toBe(200);
+    expect(getEnvironmentForSession).toHaveBeenCalledWith("u1", "p1");
+    expect(listResumableSessions).toHaveBeenCalledWith(
+      "kimi",
+      "/tmp/proj",
+      { KIMI_CODE_HOME: "/projects/p1/kimi-code" },
+      20,
+    );
+  });
+
   it("rejects an invalid provider", async () => {
     const res = await call("http://localhost/api/agent/sessions?provider=bogus&projectPath=/tmp/proj");
     expect(res.status).toBe(400);

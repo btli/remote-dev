@@ -57,7 +57,7 @@ Top-level commands from `main.rs`:
 | [`agent`](#agent) | Manage AI agent sessions |
 | [`group`](#group) | Manage project groups (containers) |
 | [`project`](#project) | Manage projects (leaves: sessions/tasks/channels) |
-| [`hook`](#hook) | Handle Claude Code lifecycle hooks |
+| [`hook`](#hook) | Handle agent lifecycle hooks (Claude Code, Kimi) |
 | [`status`](#status) | System dashboard / report agent status |
 | [`system`](#system) | Updates and service control |
 | [`context`](#context) | Show the current session's context |
@@ -142,8 +142,9 @@ Manage projects (leaf nodes that own sessions, tasks, and channels).
 
 ## hook
 
-Handle Claude Code lifecycle hooks. These are wired into a profile's
-`.claude/settings.json` automatically; you rarely call them by hand.
+Handle agent lifecycle hooks. Claude Code hooks are wired into a profile's
+`.claude/settings.json` automatically; Kimi hooks are written as `[[hooks]]`
+rules into `$KIMI_CODE_HOME/config.toml`. You rarely call them by hand.
 
 | Subcommand | Purpose |
 |------------|---------|
@@ -157,6 +158,7 @@ Handle Claude Code lifecycle hooks. These are wired into a profile's
 | `rdv hook notify <event> [--body <msg>]` | Send a notification for a lifecycle event |
 | `rdv hook validate` | Validate hooks: check server connectivity + auto-repair |
 | `rdv hook claude <event> [--agent <name>] [--reason <r>]` | Unified Claude hook dispatcher (e.g. `session-start`, `stop`, `notification`, `compacting`, `prompt-submit`, `post-tool-use`, `session-end`) |
+| `rdv hook kimi <event>` | Unified Kimi hook dispatcher mirroring the Claude arm (`session-start`, `prompt-submit`, `pre-tool-use`, `subagent-start`, `subagent-stop`, `permission-request`, `compacting`, `running`, `stop`, `interrupt`, `stop-failure`, `session-end`) |
 
 ## status
 
@@ -291,7 +293,7 @@ Inter-agent communication scoped to the current project (see [`AGENTS.md`](./AGE
 §5). **bd tracks the work; chat tracks awareness.** Delivery uses a durable
 per-recipient inbox, but **automatic** delivery (the `rdv` MCP push + the poll
 hook) is wired only for **Claude Code**. Codex, Gemini, OpenCode, Antigravity,
-and Cursor agents receive nothing automatically — they must drain their inbox by running
+Cursor, and Kimi agents receive nothing automatically — they must drain their inbox by running
 `rdv peer messages` themselves. Delivery is **at-least-once with idempotent
 de-duplication**, not exactly-once.
 
@@ -332,7 +334,7 @@ Multi-agent team orchestration — launch and coordinate child agent sessions.
 
 | Subcommand | Purpose |
 |------------|---------|
-| `rdv teams launch [--folder-id <id>] [--count <n>] [--provider <claude\|codex\|gemini\|opencode\|cursor>] [--name-prefix <p>] [--project-path <path>]` | Launch N coordinated agent sessions (default count 2, provider `claude`); children are parented to the current session |
+| `rdv teams launch [--folder-id <id>] [--count <n>] [--provider <claude\|codex\|gemini\|opencode\|cursor\|kimi>] [--name-prefix <p>] [--project-path <path>]` | Launch N coordinated agent sessions (default count 2, provider `claude`); children are parented to the current session |
 | `rdv teams list [--parent-id <id>]` | List agent sessions grouped by parent |
 | `rdv teams wait <parent-id> [--timeout <seconds>]` | Wait for child sessions to finish (default 300 s) |
 | `rdv teams broadcast <parent-id> <text…>` | Send text to all children of a parent |
@@ -358,7 +360,7 @@ supervisor base URL + operator token come from `RDV_SUPERVISOR_URL` /
 
 ```bash
 rdv delegate --to <slug> --project-id <id> --prompt "<text>" \
-  [--provider <claude|codex|gemini|opencode|cursor>] [--provision-if-missing]
+  [--provider <claude|codex|gemini|opencode|cursor|kimi>] [--provision-if-missing]
 ```
 
 ## migrate

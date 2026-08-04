@@ -17,11 +17,13 @@ flutter test       # widget + unit tests
 flutter analyze    # static analysis (lib/ + test/ must be clean)
 ```
 
-## Starting Cursor
+## Starting an agent session
 
-From the **Sessions** tab, tap **+**, then **New Cursor Agent**. Choose a
-project and session name, then tap **Create**. The app creates an agent session
-with provider `cursor` and auto-launches Cursor's primary `agent` TUI.
+From the **Sessions** tab, tap **+**, set **Type** to **Agent**, then pick a
+provider from the **Agent** dropdown (the list shows the agent CLIs installed
+on the server, e.g. Claude Code, Cursor, Kimi). Choose a project and session
+name, then tap **Create**. The app creates an agent session with the selected
+provider and auto-launches its TUI.
 
 ## Release secrets (for tag-driven builds)
 

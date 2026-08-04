@@ -3,21 +3,22 @@
  *
  * [hgwo] Multi-provider resumable-session discovery. Generalizes the
  * Claude-only `/api/agent/claude-sessions` route to every resume-capable
- * provider (claude, codex, gemini, opencode, cursor) by delegating to the
+ * provider (claude, codex, gemini, opencode, cursor, kimi) by delegating to the
  * per-provider discovery (`session-id-discovery.ts`). Claude keeps its rich
  * `.jsonl` previews (first message + git branch); codex/gemini/opencode return
- * id + timestamp from flat-file disk discovery, while Cursor filters its
- * nested CLI chat index by project path (no cheap preview). Antigravity (no
- * resume) is rejected as an invalid provider, the same as `none`.
+ * id + timestamp from flat-file disk discovery, Cursor filters its nested CLI
+ * chat index by project path, and Kimi filters its top-level
+ * session_index.jsonl by workDir (neither has a cheap preview). Antigravity
+ * (no resume) is rejected as an invalid provider, the same as `none`.
  *
  * Response: `{ provider, sessions: ResumableSessionSummary[] }`.
  *
  * Query params:
- *   provider     - One of claude|codex|gemini|opencode|cursor (required)
+ *   provider     - One of claude|codex|gemini|opencode|cursor|kimi (required)
  *   projectPath  - Absolute path of the project directory (required)
  *   projectId    - Project UUID for folder environment resolution (optional)
  *   profileId    - Agent profile ID for profile-isolated config (optional;
- *                  ignored for Claude and Cursor shared history)
+ *                  ignored for Claude, Cursor, and Kimi shared/indexed history)
  *   limit        - Max sessions to return (default: 20, max: 50)
  */
 
@@ -36,6 +37,7 @@ const VALID_PROVIDERS: AgentProviderType[] = [
   "gemini",
   "opencode",
   "cursor",
+  "kimi",
 ];
 
 export const GET = withApiAuth(async (request, { userId }) => {
@@ -70,10 +72,15 @@ export const GET = withApiAuth(async (request, { userId }) => {
   // Cursor is also excluded: profile XDG/config isolation does not relocate
   // its chat index, which remains under ~/.cursor/chats unless the process was
   // launched with an explicit CURSOR_DATA_DIR (not emitted by profiles).
+  // Kimi is excluded the same way: discovery reads the session_index.jsonl
+  // under KIMI_CODE_HOME (default ~/.kimi-code), which profile configDir
+  // injection would mispoint.
   const env: Record<string, string> =
     provider === "cursor" && process.env.CURSOR_DATA_DIR
       ? { CURSOR_DATA_DIR: process.env.CURSOR_DATA_DIR }
-      : {};
+      : provider === "kimi" && process.env.KIMI_CODE_HOME
+        ? { KIMI_CODE_HOME: process.env.KIMI_CODE_HOME }
+        : {};
   if (provider === "cursor" && projectId) {
     const folderEnv = await getEnvironmentForSession(userId, projectId);
     if (folderEnv?.CURSOR_DATA_DIR) {
@@ -82,7 +89,15 @@ export const GET = withApiAuth(async (request, { userId }) => {
       env.CURSOR_DATA_DIR = folderEnv.CURSOR_DATA_DIR;
     }
   }
-  if (profileId && provider !== "claude" && provider !== "cursor") {
+  if (provider === "kimi" && projectId) {
+    const folderEnv = await getEnvironmentForSession(userId, projectId);
+    if (folderEnv?.KIMI_CODE_HOME) {
+      // Same precedence rule as the Cursor data root above: picker discovery
+      // must read the same Kimi home the launched session writes to.
+      env.KIMI_CODE_HOME = folderEnv.KIMI_CODE_HOME;
+    }
+  }
+  if (profileId && provider !== "claude" && provider !== "cursor" && provider !== "kimi") {
     const profile = await AgentProfileService.getProfile(profileId, userId);
     if (profile) {
       const spec = getResumeSpec(provider);

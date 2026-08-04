@@ -28,6 +28,7 @@ const PROVIDER_COLORS: Record<AgentProvider, string> = {
   gemini: "bg-blue-500/20 text-blue-300 border-blue-500/30",
   antigravity: "bg-pink-500/20 text-pink-300 border-pink-500/30",
   opencode: "bg-orange-500/20 text-orange-300 border-orange-500/30",
+  kimi: "bg-cyan-500/20 text-cyan-300 border-cyan-500/30",
   all: "bg-muted/50 text-muted-foreground border-border",
 };
 

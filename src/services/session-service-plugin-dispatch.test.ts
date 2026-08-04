@@ -37,6 +37,9 @@ const hoisted = vi.hoisted(() => {
     getResolvedPreferences: vi.fn(async () => ({
       defaultWorkingDirectory: "/tmp",
     })),
+    getEnvironmentForSession: vi.fn(
+      async () => ({}) as Promise<Record<string, string>>,
+    ),
     getPortsForFolder: vi.fn<
       (folderId: string, userId: string) => Promise<
         Array<{ port: number; variableName: string; projectId: string | null }>
@@ -50,6 +53,13 @@ const hoisted = vi.hoisted(() => {
       async (_provider: string, command: string): Promise<string | null> => command,
     ),
     ensureClipboardShims: vi.fn(() => "/test/rdv/clipboard-bin"),
+    getProfile: vi.fn<(profileId: string, userId: string) => Promise<Row | null>>(
+      async () => null,
+    ),
+    installAgentHooks: vi.fn(async () => undefined),
+    validateAgentHooks: vi.fn(async () => ({ valid: true })),
+    tmuxSessionExists: vi.fn(async () => true),
+    tmuxGetSessionEnvironment: vi.fn(async () => ({}) as Promise<Record<string, string>>),
   };
 });
 
@@ -137,6 +147,8 @@ vi.mock("@/services/tmux-service", () => ({
   generateSessionName: (id: string) => `rdv-${id}`,
   createSession: hoisted.tmuxCreate,
   killSession: hoisted.tmuxKill,
+  sessionExists: hoisted.tmuxSessionExists,
+  getSessionEnvironment: hoisted.tmuxGetSessionEnvironment,
   setSessionEnvironment: vi.fn(async () => undefined),
   setHook: vi.fn(async () => undefined),
   TmuxServiceError: class TmuxServiceError extends Error {},
@@ -165,17 +177,17 @@ vi.mock("@/services/github-service", () => ({
 }));
 
 vi.mock("@/services/agent-profile-service", () => ({
-  getProfile: vi.fn(async () => null),
+  getProfile: hoisted.getProfile,
   getProfileEnvironment: vi.fn(async () => null),
   resolveEffectiveHome: vi.fn(async () => null),
-  installAgentHooks: vi.fn(async () => undefined),
-  validateAgentHooks: vi.fn(async () => ({ valid: true })),
+  installAgentHooks: hoisted.installAgentHooks,
+  validateAgentHooks: hoisted.validateAgentHooks,
 }));
 
 vi.mock("@/services/preferences-service", () => ({
   getResolvedPreferences: hoisted.getResolvedPreferences,
   getFolderPreferences: vi.fn(async () => null),
-  getEnvironmentForSession: vi.fn(async () => ({})),
+  getEnvironmentForSession: hoisted.getEnvironmentForSession,
   getFolderGitIdentity: vi.fn(async () => ({ env: {} })),
 }));
 
@@ -245,6 +257,7 @@ import {
   createSession,
   createSessionWithDedupFlag,
   closeSession,
+  resumeSession,
   SessionServiceError,
 } from "./session-service";
 
@@ -1074,6 +1087,237 @@ describe("SessionService.createSession — server-resolved working dir (remote-d
     const metadata = JSON.parse(inserted.typeMetadata!);
     expect(metadata.resumeBinding.executablePath).toBe(
       "/verified/cursor agent",
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Kimi hook dispatch (remote-dev-mv99).
+//
+// Kimi joins Claude on the lifecycle-hook path: createSession and
+// resumeSession must run ensureAgentConfig → installAgentHooks for kimi,
+// targeting the real kimi home ($KIMI_CODE_HOME or ~/.kimi-code) — NOT the
+// plain HOME dir used by claude, and never a profile dir: like claude, kimi
+// always reads its real home, even when profile-bound.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("SessionService — kimi hook dispatch (remote-dev-mv99)", () => {
+  beforeEach(() => {
+    TerminalTypeServerRegistry.clear();
+    // onSessionExit marks the plugin as agent-lifecycle-capable, which is the
+    // gate resumeSession uses before refreshing hooks (supportsAgentLifecycle).
+    TerminalTypeServerRegistry.register({
+      ...makeFakePlugin("agent", { useTmux: true, shellCommand: null }),
+      onSessionExit: vi.fn(),
+    } as TerminalTypeServerPlugin);
+    TerminalTypeServerRegistry.setDefaultType("agent");
+
+    dbState.inserted = [];
+    dbState.closeSessionRow = null;
+    hoisted.state.queryFindManyCalls = 0;
+    tmuxCreate.mockClear();
+    hoisted.installAgentHooks.mockClear();
+    hoisted.validateAgentHooks.mockClear();
+    hoisted.getProfile.mockReset();
+    hoisted.getProfile.mockResolvedValue(null);
+    hoisted.tmuxSessionExists.mockClear();
+
+    dbMocks.findManyDedup.mockResolvedValue([]);
+    dbMocks.findManyTabOrder.mockResolvedValue([]);
+    dbMocks.insertReturning.mockImplementation(async (values) => [
+      makeDbRow(values as Row),
+    ]);
+    hoisted.getResolvedPreferences.mockResolvedValue({
+      defaultWorkingDirectory: "/tmp",
+    });
+    hoisted.getEnvironmentForSession.mockReset();
+    hoisted.getEnvironmentForSession.mockResolvedValue({});
+    hoisted.tmuxGetSessionEnvironment.mockReset();
+    hoisted.tmuxGetSessionEnvironment.mockResolvedValue({});
+    hoisted.getPortsForFolder.mockReset();
+    hoisted.getPortsForFolder.mockResolvedValue([]);
+    hoisted.claimPortsForSession.mockReset();
+    hoisted.claimPortsForSession.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it("createSession installs kimi hooks into $KIMI_CODE_HOME and launches `kimi`", async () => {
+    vi.stubEnv("KIMI_CODE_HOME", "/test/kimi-home");
+
+    await createSession("user-1", {
+      ...baseInput(),
+      terminalType: "agent",
+      agentProvider: "kimi",
+      autoLaunchAgent: true,
+    });
+
+    // Hook install fires for kimi with the resolved kimi home (not HOME).
+    expect(hoisted.installAgentHooks).toHaveBeenCalledTimes(1);
+    expect(hoisted.installAgentHooks).toHaveBeenCalledWith(
+      "/test/kimi-home",
+      "kimi",
+      expect.objectContaining({ RDV_SESSION_ID: expect.any(String) }),
+    );
+
+    // Launch path: the kimi provider's command reaches tmux.
+    const [, , shellCmd] = tmuxCreate.mock.calls[0] as unknown as [
+      string,
+      string,
+      string,
+    ];
+    expect(shellCmd).toBe("kimi");
+    const inserted = dbState.inserted[0] as { agentProvider: string | null };
+    expect(inserted.agentProvider).toBe("kimi");
+  });
+
+  it("createSession falls back to ~/.kimi-code when KIMI_CODE_HOME is unset", async () => {
+    vi.stubEnv("KIMI_CODE_HOME", "");
+
+    await createSession("user-1", {
+      ...baseInput(),
+      terminalType: "agent",
+      agentProvider: "kimi",
+      autoLaunchAgent: true,
+    });
+
+    expect(hoisted.installAgentHooks).toHaveBeenCalledTimes(1);
+    const [configDir, provider] = hoisted.installAgentHooks.mock.calls[0] as unknown as [
+      string,
+      string,
+    ];
+    expect(provider).toBe("kimi");
+    expect(configDir.endsWith("/.kimi-code")).toBe(true);
+  });
+
+  it("createSession installs hooks into a folder-level KIMI_CODE_HOME (folder env beats process env)", async () => {
+    // The tmux session runs with the folder env, so a project-level
+    // KIMI_CODE_HOME decides which home the CLI reads — hooks must land
+    // there, not in the operator's process-env home (mirrors discovery).
+    vi.stubEnv("KIMI_CODE_HOME", "/process/kimi-home");
+    hoisted.getEnvironmentForSession.mockResolvedValue({
+      KIMI_CODE_HOME: "/folder/kimi-home",
+    });
+
+    await createSession("user-1", {
+      ...baseInput(),
+      terminalType: "agent",
+      agentProvider: "kimi",
+      autoLaunchAgent: true,
+    });
+
+    expect(hoisted.installAgentHooks).toHaveBeenCalledTimes(1);
+    expect(hoisted.installAgentHooks).toHaveBeenCalledWith(
+      "/folder/kimi-home",
+      "kimi",
+      expect.objectContaining({ RDV_SESSION_ID: expect.any(String) }),
+    );
+  });
+
+  it("createSession still skips hook install for providers without hooks", async () => {
+    await createSession("user-1", {
+      ...baseInput(),
+      terminalType: "agent",
+      agentProvider: "codex",
+      autoLaunchAgent: true,
+    });
+
+    expect(hoisted.installAgentHooks).not.toHaveBeenCalled();
+  });
+
+  it("resumeSession refreshes kimi hooks in the kimi home (no profile)", async () => {
+    vi.stubEnv("KIMI_CODE_HOME", "/test/kimi-home");
+    dbState.closeSessionRow = makeDbRow({
+      id: "sess-kimi",
+      terminalType: "agent",
+      agentProvider: "kimi",
+      status: "suspended",
+      profileId: null,
+    });
+
+    await resumeSession("sess-kimi", "user-1");
+
+    expect(hoisted.installAgentHooks).toHaveBeenCalledTimes(1);
+    expect(hoisted.installAgentHooks).toHaveBeenCalledWith(
+      "/test/kimi-home",
+      "kimi",
+      expect.objectContaining({ RDV_SESSION_ID: "sess-kimi" }),
+    );
+  });
+
+  it("resumeSession installs hooks into a folder-level KIMI_CODE_HOME from the live session env", async () => {
+    // The live tmux session carries the folder env from creation; a
+    // folder-level KIMI_CODE_HOME there beats the operator's process env so
+    // refreshed hooks land in the home the running CLI actually reads.
+    vi.stubEnv("KIMI_CODE_HOME", "/process/kimi-home");
+    hoisted.tmuxGetSessionEnvironment.mockResolvedValue({
+      KIMI_CODE_HOME: "/folder/kimi-home",
+    });
+    dbState.closeSessionRow = makeDbRow({
+      id: "sess-kimi-folderenv",
+      terminalType: "agent",
+      agentProvider: "kimi",
+      status: "suspended",
+      profileId: null,
+    });
+
+    await resumeSession("sess-kimi-folderenv", "user-1");
+
+    expect(hoisted.installAgentHooks).toHaveBeenCalledTimes(1);
+    expect(hoisted.installAgentHooks).toHaveBeenCalledWith(
+      "/folder/kimi-home",
+      "kimi",
+      expect.objectContaining({ RDV_SESSION_ID: "sess-kimi-folderenv" }),
+    );
+  });
+
+  it("resumeSession installs into the real kimi home even when profile-bound", async () => {
+    // Kimi follows the claude model: it always reads its real home, so a bound
+    // profile does NOT relocate hook installation to <profileDir>/.kimi-code.
+    vi.stubEnv("KIMI_CODE_HOME", "/test/kimi-home");
+    hoisted.getProfile.mockResolvedValue({ configDir: "/profiles/p1" });
+    dbState.closeSessionRow = makeDbRow({
+      id: "sess-kimi-profile",
+      terminalType: "agent",
+      agentProvider: "kimi",
+      status: "suspended",
+      profileId: "p1",
+    });
+
+    await resumeSession("sess-kimi-profile", "user-1");
+
+    expect(hoisted.installAgentHooks).toHaveBeenCalledTimes(1);
+    expect(hoisted.installAgentHooks).toHaveBeenCalledWith(
+      "/test/kimi-home",
+      "kimi",
+      expect.objectContaining({ RDV_SESSION_ID: "sess-kimi-profile" }),
+    );
+  });
+
+  it("resumeSession still installs into the real kimi home when the bound profile row is gone", async () => {
+    // Kimi never consults the profile for its config dir, so an orphaned
+    // profileId is irrelevant — hooks land in the real home regardless.
+    // (The skip-on-missing-profile rule only applies to providers that DO use
+    // the per-profile config dir.)
+    vi.stubEnv("KIMI_CODE_HOME", "/test/kimi-home");
+    hoisted.getProfile.mockResolvedValue(null);
+    dbState.closeSessionRow = makeDbRow({
+      id: "sess-kimi-orphan",
+      terminalType: "agent",
+      agentProvider: "kimi",
+      status: "suspended",
+      profileId: "deleted-profile",
+    });
+
+    await resumeSession("sess-kimi-orphan", "user-1");
+
+    expect(hoisted.installAgentHooks).toHaveBeenCalledTimes(1);
+    expect(hoisted.installAgentHooks).toHaveBeenCalledWith(
+      "/test/kimi-home",
+      "kimi",
+      expect.objectContaining({ RDV_SESSION_ID: "sess-kimi-orphan" }),
     );
   });
 });

@@ -63,6 +63,18 @@ describe("AgentResumeResolverImpl", () => {
     });
   });
 
+  it("uses a stored Kimi session id as --session flags", async () => {
+    const res = await r.resolveResume(
+      sess({ agentProvider: "kimi", typeMetadata: { agentSessionId: { kimi: "01JZK2ABC" } } }),
+    );
+    expect(res).toEqual({
+      provider: "kimi",
+      nativeSessionId: "01JZK2ABC",
+      resumeFlags: ["--session", "01JZK2ABC"],
+      argvOverride: null,
+    });
+  });
+
   it("returns null for antigravity (no resume support)", async () => {
     expect(await r.resolveResume(sess({ agentProvider: "antigravity" }))).toBeNull();
   });

@@ -1390,8 +1390,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     ]
   );
 
-  // Explicit-provider variant for project context-menu actions, including the
-  // visible Cursor shortcut and the full "Pick Agent" submenu.
+  // Explicit-provider variant for the project context menu's generic
+  // "Pick Agent" submenu.
   const handleFolderNewAgentWithProvider = useCallback(
     async (folderId: string, provider: AgentProviderType) => {
       const name = generateSessionName(folderId);

@@ -1,7 +1,7 @@
 /**
  * Agent Profile Configuration Service
  *
- * Manages JSON configurations for AI coding agents (Claude Code, Gemini CLI, OpenCode, Codex).
+ * Manages JSON configurations for AI coding agents (Claude Code, Gemini CLI, OpenCode, Codex, Kimi).
  * Configurations are stored per-profile and can be exported/imported.
  *
  * This is separate from agent-config-service.ts which handles markdown configs (CLAUDE.md).
@@ -29,6 +29,9 @@ type ConfigTypeMap = {
   antigravity: GeminiCLIConfig;
   opencode: OpenCodeConfig;
   codex: CodexCLIConfig;
+  // Kimi has no dedicated JSON config type; like codex it is AGENTS.md-based,
+  // so it reuses the CodexCLIConfig shape (see ProfileConfigTab).
+  kimi: CodexCLIConfig;
 };
 
 export class AgentProfileConfigService {

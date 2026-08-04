@@ -13,6 +13,7 @@ class AgentCliApi implements AgentCliPort {
     'gemini': 'Gemini CLI',
     'opencode': 'OpenCode',
     'cursor': 'Cursor',
+    'kimi': 'Kimi',
   };
 
   @override

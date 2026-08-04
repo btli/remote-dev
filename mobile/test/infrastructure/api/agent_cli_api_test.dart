@@ -22,4 +22,21 @@ void main() {
     expect(installed.single.provider, 'cursor');
     expect(installed.single.label, 'Cursor');
   });
+
+  test('maps an installed Kimi CLI to its picker label', () async {
+    final client = _MockClient();
+    when(() => client.get('/api/agent-cli/status')).thenAnswer(
+      (_) async => {
+        'statuses': [
+          {'provider': 'kimi', 'installed': true, 'command': 'kimi'},
+        ],
+      },
+    );
+
+    final installed = await AgentCliApi(client).listInstalled();
+
+    expect(installed, hasLength(1));
+    expect(installed.single.provider, 'kimi');
+    expect(installed.single.label, 'Kimi');
+  });
 }

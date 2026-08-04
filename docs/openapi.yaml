@@ -1548,7 +1548,7 @@ paths:
       summary: Get CLI installation status
       description: Returns all runnable agent CLIs by default. Cursor resolves and fingerprints the exact absolute executable selected for `agent`; launch and relaunch retain that verified path, while resume-token support is diagnosed separately.
       parameters:
-        - { name: provider, in: query, schema: { type: string, enum: [all, claude, codex, gemini, antigravity, opencode, cursor], default: all } }
+        - { name: provider, in: query, schema: { type: string, enum: [all, claude, codex, gemini, antigravity, opencode, cursor, kimi], default: all } }
       responses:
         '200': { description: CLI status, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
         '400': { description: Invalid provider, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
@@ -1563,7 +1563,7 @@ paths:
               type: object
               required: [provider]
               properties:
-                provider: { type: string, enum: [claude, codex, gemini, antigravity, opencode, cursor] }
+                provider: { type: string, enum: [claude, codex, gemini, antigravity, opencode, cursor, kimi] }
                 env: { type: object, additionalProperties: { type: string }, description: Optional environment used only for the live verification }
       responses:
         '200': { description: Verification result, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
@@ -1622,12 +1622,13 @@ paths:
       summary: List resumable agent sessions (provider-generic)
       description: >-
         Provider-generic generalization of /api/agent/claude-sessions covering
-        every resume-capable provider (claude, codex, gemini, opencode, cursor).
+        every resume-capable provider (claude, codex, gemini, opencode, cursor,
+        kimi).
       parameters:
-        - { name: provider, in: query, required: true, schema: { type: string, enum: [claude, codex, gemini, opencode, cursor] } }
+        - { name: provider, in: query, required: true, schema: { type: string, enum: [claude, codex, gemini, opencode, cursor, kimi] } }
         - { name: projectPath, in: query, required: true, schema: { type: string } }
-        - { name: projectId, in: query, schema: { type: string, format: uuid }, description: "Applies inherited project environment during discovery, including project-level CURSOR_DATA_DIR" }
-        - { name: profileId, in: query, schema: { type: string }, description: "Scopes Codex/Gemini/OpenCode discovery to a profile; ignored for Claude and Cursor shared histories" }
+        - { name: projectId, in: query, schema: { type: string, format: uuid }, description: "Applies inherited project environment during discovery, including project-level CURSOR_DATA_DIR / KIMI_CODE_HOME" }
+        - { name: profileId, in: query, schema: { type: string }, description: "Scopes Codex/Gemini/OpenCode discovery to a profile; ignored for Claude, Cursor, and Kimi shared histories" }
         - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 50 } }
       responses:
         '200': { description: Sessions, content: { application/json: { schema: { type: object, additionalProperties: true } } } }

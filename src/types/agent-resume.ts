@@ -20,15 +20,17 @@ export type AgentSessionIdMap = Partial<Record<AgentProviderType, string>>;
  * Provider-agnostic resumable-session summary surfaced by the multi-provider
  * resume picker (`/api/agent/sessions`).
  *
- * `sessionId` + `lastModified` are always present (every discoverable provider
- * yields at least these). `firstUserMessage` / `gitBranch` are best-effort
- * previews — Claude populates them from its `.jsonl` headers; the disk-discovery
- * providers (codex/gemini/opencode/cursor) leave them undefined and the UI
- * degrades to showing just the id + timestamp.
+ * `sessionId` is always present. `lastModified` is present under normal
+ * conditions but may be omitted when no usable timestamp exists anywhere
+ * (e.g. kimi rows whose session dir and index file are both unstat-able) —
+ * consumers must treat it as optional. `firstUserMessage` / `gitBranch` are
+ * best-effort previews — Claude populates them from its `.jsonl` headers; the
+ * disk-discovery providers (codex/gemini/opencode/cursor/kimi) leave them
+ * undefined and the UI degrades to showing just the id + timestamp.
  */
 export interface ResumableSessionSummary {
   sessionId: string;
-  lastModified: string; // ISO
+  lastModified?: string; // ISO; omitted when no usable timestamp exists
   firstUserMessage?: string;
   gitBranch?: string;
 }

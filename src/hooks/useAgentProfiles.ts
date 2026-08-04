@@ -94,6 +94,7 @@ export function useAgentProfiles(): UseAgentProfilesResult {
         opencode: undefined,
         codex: undefined,
         antigravity: undefined,
+        kimi: undefined,
       };
 
       for (const config of configsData.configs || []) {

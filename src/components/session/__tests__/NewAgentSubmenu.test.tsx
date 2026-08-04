@@ -39,14 +39,14 @@ describe("useAgentCLIStatusLazy", () => {
     vi.unstubAllGlobals();
   });
 
-  it("fetches once on first mount and projects all six providers", async () => {
+  it("fetches once on first mount and projects all seven providers", async () => {
     const { result } = renderHook(() => useAgentCLIStatusLazy());
     await waitFor(() => {
       expect(result.current.statuses).not.toBeNull();
     });
-    // Always returns rows for all six providers, even those missing from
+    // Always returns rows for all seven providers, even those missing from
     // the API response (those default to installed=false).
-    expect(result.current.statuses).toHaveLength(6);
+    expect(result.current.statuses).toHaveLength(7);
     const claude = result.current.statuses!.find((s) => s.provider === "claude");
     expect(claude?.installed).toBe(true);
     expect(claude?.version).toBe("1.2.3");
@@ -54,6 +54,8 @@ describe("useAgentCLIStatusLazy", () => {
     expect(gemini?.installed).toBe(false);
     const cursor = result.current.statuses!.find((s) => s.provider === "cursor");
     expect(cursor).toMatchObject({ installed: false, command: "agent" });
+    const kimi = result.current.statuses!.find((s) => s.provider === "kimi");
+    expect(kimi).toMatchObject({ installed: false, command: "kimi" });
     expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
   });
 
@@ -65,7 +67,7 @@ describe("useAgentCLIStatusLazy", () => {
     const beforeSecondMount = fetchMock.mock.calls.length;
 
     const { result: b } = renderHook(() => useAgentCLIStatusLazy());
-    expect(b.current.statuses).toHaveLength(6);
+    expect(b.current.statuses).toHaveLength(7);
     expect(fetchMock).toHaveBeenCalledTimes(beforeSecondMount);
   });
 
@@ -101,7 +103,7 @@ describe("useAgentCLIStatusLazy", () => {
     await waitFor(() => {
       expect(result.current.error).not.toBeNull();
     });
-    expect(result.current.statuses).toHaveLength(6);
+    expect(result.current.statuses).toHaveLength(7);
     expect(result.current.statuses?.every((s) => !s.installed)).toBe(true);
     expect(result.current.error).toMatch(/HTTP 500/);
   });
