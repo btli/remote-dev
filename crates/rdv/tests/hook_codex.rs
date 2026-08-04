@@ -118,14 +118,15 @@ fn serve_status_then_stalled_digest() -> u16 {
 }
 
 fn serve_blocking_git_guard() -> (u16, mpsc::Receiver<String>) {
+    serve_git_guard(r#"{"risk":"block","reason":"wrong identity"}"#)
+}
+
+fn serve_git_guard(guard_response: &'static str) -> (u16, mpsc::Receiver<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock API server");
     let port = listener.local_addr().unwrap().port();
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
-        for body in [
-            r#"{"projectId":"project-sensitive"}"#,
-            r#"{"risk":"block","reason":"wrong identity"}"#,
-        ] {
+        for body in [r#"{"projectId":"project-sensitive"}"#, guard_response] {
             let (mut stream, _) = listener.accept().expect("accept git guard request");
             let request = read_http_request(&mut stream);
             sender.send(request).unwrap();
@@ -294,8 +295,34 @@ fn codex_pre_tool_git_guard_runs_before_stalled_peer_work() {
     let guard_request = api_requests.recv_timeout(Duration::from_secs(5)).unwrap();
     assert!(guard_request.starts_with("POST /api/projects/project-sensitive/git-guard "));
     assert!(guard_request.contains("authorization: Bearer rdv_test_callback_key"));
-    assert!(guard_request.contains(r#""proposedEmail":"real@example.com""#));
+    assert!(guard_request.contains(r#""proposedAuthorEmail":"real@example.com""#));
+    assert!(guard_request.contains(r#""proposedCommitterEmail":"real@example.com""#));
     assert!(guard_request.contains(r#""operation":"push""#));
+}
+
+#[test]
+fn codex_pre_tool_denies_identity_warnings_before_a_commit_can_leak() {
+    let (terminal_port, _terminal_request) = serve_one_request();
+    let (api_port, _api_requests) =
+        serve_git_guard(r#"{"risk":"warn","reason":"commit identity cannot be proven safe"}"#);
+    let mut command = Command::cargo_bin("rdv").unwrap();
+    command
+        .env_remove("RDV_API_SOCKET")
+        .env_remove("RDV_TERMINAL_SOCKET")
+        .env("RDV_API_PORT", api_port.to_string())
+        .env("RDV_TERMINAL_PORT", terminal_port.to_string())
+        .env("RDV_SESSION_ID", "session-codex-guard-warning")
+        .env("RDV_AGENT_GENERATION", "4")
+        .env("RDV_API_KEY", "rdv_test_callback_key")
+        .args(["hook", "codex", "pre-tool-use"])
+        .write_stdin(
+            r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git commit -m test"}}"#,
+        );
+
+    let assertion = command.assert().success();
+    let stdout = String::from_utf8_lossy(&assertion.get_output().stdout);
+    assert!(stdout.contains(r#""permissionDecision":"deny""#));
+    assert!(stdout.contains("commit identity cannot be proven safe"));
 }
 
 #[test]

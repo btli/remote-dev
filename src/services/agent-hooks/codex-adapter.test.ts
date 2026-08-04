@@ -624,6 +624,18 @@ esac
     expect(await readFile(path, "utf8")).toBe("{ user-owned-invalid-json\n");
   });
 
+  it("refuses to replace a non-array user value for a managed event", async () => {
+    const configRoot = await makeConfigRoot();
+    const codexDir = join(configRoot, ".codex");
+    const path = join(codexDir, "hooks.json");
+    const original = '{"hooks":{"Stop":{"command":"user-stop"}}}\n';
+    await mkdir(codexDir, { recursive: true });
+    await writeFile(path, original);
+
+    await expect(installCodexHooks(configRoot)).rejects.toThrow(/Stop.*array/i);
+    expect(await readFile(path, "utf8")).toBe(original);
+  });
+
   it("uninstalls only Remote Dev-owned entries and preserves user config", async () => {
     const configRoot = await makeConfigRoot();
     const path = join(configRoot, ".codex", "hooks.json");
@@ -647,5 +659,30 @@ esac
       { matcher: "user", hooks: [{ type: "command", command: "user-hook" }] },
     ]);
     expect((await stat(path)).mode & 0o777).toBe(0o600);
+  });
+
+  it("preserves non-array future and user event values during uninstall", async () => {
+    const configRoot = await makeConfigRoot();
+    const codexDir = join(configRoot, ".codex");
+    const path = join(codexDir, "hooks.json");
+    await mkdir(codexDir, { recursive: true });
+    await writeFile(
+      path,
+      JSON.stringify({
+        hooks: {
+          Stop: { command: "user-stop" },
+          FutureEvent: { extension: true },
+        },
+      }),
+    );
+
+    await uninstallCodexHooks(configRoot);
+    const parsed = JSON.parse(await readFile(path, "utf8")) as {
+      hooks: Record<string, unknown>;
+    };
+    expect(parsed.hooks).toEqual({
+      Stop: { command: "user-stop" },
+      FutureEvent: { extension: true },
+    });
   });
 });

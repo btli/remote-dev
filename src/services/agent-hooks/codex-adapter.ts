@@ -16,7 +16,7 @@ interface HookGroup {
   hooks: CommandHook[];
 }
 
-type HookMap = Record<string, unknown[]>;
+type HookMap = Record<string, unknown>;
 
 /** Default-on after the local Codex hook smoke; set to 0 for instant rollback. */
 export function codexHooksEnabled(
@@ -255,7 +255,11 @@ export function mergeCodexHooks(existing: Record<string, unknown>): Record<strin
   const existingHooks = (rawHooks ?? {}) as HookMap;
   const mergedHooks: HookMap = { ...existingHooks };
   for (const [event, group] of Object.entries(desiredHooks())) {
-    const current = Array.isArray(existingHooks[event]) ? existingHooks[event] : [];
+    const existingEvent = existingHooks[event];
+    if (existingEvent !== undefined && !Array.isArray(existingEvent)) {
+      throw new Error(`Codex hooks.json event ${event} must be an array`);
+    }
+    const current = existingEvent ?? [];
     mergedHooks[event] = mergeRemoteDevGroup(current, group);
   }
 
@@ -376,8 +380,12 @@ export async function uninstallCodexHooks(
   const hooks = (existing.hooks ?? {}) as HookMap;
   const cleanedHooks: HookMap = {};
   for (const [event, groups] of Object.entries(hooks)) {
-    const cleaned = Array.isArray(groups) ? withoutRemoteDevHooks(groups) : groups;
-    if (Array.isArray(cleaned) && cleaned.length > 0) cleanedHooks[event] = cleaned;
+    if (!Array.isArray(groups)) {
+      cleanedHooks[event] = groups;
+      continue;
+    }
+    const cleaned = withoutRemoteDevHooks(groups);
+    if (cleaned.length > 0) cleanedHooks[event] = cleaned;
   }
   const cleaned = { ...existing, hooks: cleanedHooks };
   if (JSON.stringify(cleaned) === JSON.stringify(existing)) {

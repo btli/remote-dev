@@ -8,8 +8,10 @@ import { getFolderGitIdentity } from "@/services/preferences-service";
 import { ProjectService } from "@/services/project-service";
 
 const guardSchema = z.object({
-  proposedName: z.string().max(512),
-  proposedEmail: z.string().max(512),
+  proposedAuthorName: z.string().max(512),
+  proposedAuthorEmail: z.string().max(512),
+  proposedCommitterName: z.string().max(512),
+  proposedCommitterEmail: z.string().max(512),
   operation: z.enum(["commit", "push"]),
 });
 
@@ -38,12 +40,34 @@ export const POST = withApiAuth(async (request, { userId, params }) => {
     isSensitive: resolved.isSensitive,
     boundAccountLogin: null,
   });
-  return NextResponse.json(
-    GitIdentityGuard.evaluate(
-      identity,
-      parsed.data.proposedName,
-      parsed.data.proposedEmail,
-      parsed.data.operation,
-    ),
-  );
+  const evaluations = [
+    {
+      role: "author",
+      result: GitIdentityGuard.evaluate(
+        identity,
+        parsed.data.proposedAuthorName,
+        parsed.data.proposedAuthorEmail,
+        parsed.data.operation,
+      ),
+    },
+    {
+      role: "committer",
+      result: GitIdentityGuard.evaluate(
+        identity,
+        parsed.data.proposedCommitterName,
+        parsed.data.proposedCommitterEmail,
+        parsed.data.operation,
+      ),
+    },
+  ] as const;
+  const risk = evaluations.some(({ result }) => result.risk === "block")
+    ? "block"
+    : evaluations.some(({ result }) => result.risk === "warn")
+      ? "warn"
+      : "none";
+  const reason = evaluations
+    .filter(({ result }) => result.risk !== "none" && result.reason)
+    .map(({ role, result }) => `${role}: ${result.reason}`)
+    .join(" ") || null;
+  return NextResponse.json({ risk, reason });
 });

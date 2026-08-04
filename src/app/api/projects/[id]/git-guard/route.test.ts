@@ -43,8 +43,10 @@ beforeEach(() => {
 describe("POST /api/projects/[id]/git-guard", () => {
   it("evaluates an owned project's resolved identity", async () => {
     const response = await post({
-      proposedName: "Real Name",
-      proposedEmail: "real@example.com",
+      proposedAuthorName: "Real Name",
+      proposedAuthorEmail: "real@example.com",
+      proposedCommitterName: "Real Name",
+      proposedCommitterEmail: "real@example.com",
       operation: "push",
     });
 
@@ -60,8 +62,10 @@ describe("POST /api/projects/[id]/git-guard", () => {
     getProject.mockResolvedValue({ userId: "user-2" });
 
     const response = await post({
-      proposedName: "Real Name",
-      proposedEmail: "real@example.com",
+      proposedAuthorName: "Real Name",
+      proposedAuthorEmail: "real@example.com",
+      proposedCommitterName: "Real Name",
+      proposedCommitterEmail: "real@example.com",
       operation: "push",
     });
 
@@ -74,5 +78,21 @@ describe("POST /api/projects/[id]/git-guard", () => {
 
     expect(response.status).toBe(400);
     expect(getFolderGitIdentity).not.toHaveBeenCalled();
+  });
+
+  it("blocks a mismatched committer even when the author is the configured alias", async () => {
+    const response = await post({
+      proposedAuthorName: "Pseudonym",
+      proposedAuthorEmail: "alias@example.com",
+      proposedCommitterName: "Real Name",
+      proposedCommitterEmail: "real@example.com",
+      operation: "push",
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      risk: "block",
+      reason: expect.stringContaining("committer"),
+    });
   });
 });

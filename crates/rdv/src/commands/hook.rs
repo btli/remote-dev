@@ -208,6 +208,7 @@ fn shell_command(payload: &serde_json::Value) -> Option<String> {
 fn javascript_exec_commands(source: &str) -> Result<Vec<String>, String> {
     let bytes = source.as_bytes();
     let mut commands = Vec::new();
+    let mut dispatch_count = 0;
     let mut index = 0;
 
     while index < bytes.len() {
@@ -241,7 +242,12 @@ fn javascript_exec_commands(source: &str) -> Result<Vec<String>, String> {
         {
             index += 1;
         }
-        if &source[start..index] != "cmd" {
+        let identifier = &source[start..index];
+        if identifier == "exec_command" {
+            dispatch_count += 1;
+            continue;
+        }
+        if identifier != "cmd" {
             continue;
         }
         while index < bytes.len() && bytes[index].is_ascii_whitespace() {
@@ -260,10 +266,26 @@ fn javascript_exec_commands(source: &str) -> Result<Vec<String>, String> {
             );
         }
         let (next, value) = skip_javascript_string(bytes, index)?;
+        let mut expression_end = next;
+        while expression_end < bytes.len() && bytes[expression_end].is_ascii_whitespace() {
+            expression_end += 1;
+        }
+        if !matches!(bytes.get(expression_end), Some(b',' | b'}')) {
+            return Err(
+                "functions.exec cmd must be one complete, non-concatenated string literal"
+                    .to_string(),
+            );
+        }
         commands.push(value);
         index = next;
     }
 
+    if dispatch_count != commands.len() {
+        return Err(
+            "functions.exec shell dispatches do not each have one inspectable literal cmd"
+                .to_string(),
+        );
+    }
     if commands.is_empty() && looks_like_protected_git(source) {
         return Err(
             "functions.exec contains a protected Git command outside a literal cmd field"
@@ -367,8 +389,34 @@ impl GitGuardOperation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct GitGuardRequest {
     operation: GitGuardOperation,
-    proposed_name: Option<String>,
-    proposed_email: Option<String>,
+    proposed_author_name: Option<String>,
+    proposed_author_email: Option<String>,
+    proposed_committer_name: Option<String>,
+    proposed_committer_email: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct GitIdentityOverrides {
+    author_name: Option<String>,
+    author_email: Option<String>,
+    committer_name: Option<String>,
+    committer_email: Option<String>,
+    author_name_from_env: bool,
+    author_email_from_env: bool,
+    committer_name_from_env: bool,
+    committer_email_from_env: bool,
+}
+
+impl GitIdentityOverrides {
+    fn request(&self, operation: GitGuardOperation) -> GitGuardRequest {
+        GitGuardRequest {
+            operation,
+            proposed_author_name: self.author_name.clone(),
+            proposed_author_email: self.author_email.clone(),
+            proposed_committer_name: self.committer_name.clone(),
+            proposed_committer_email: self.committer_email.clone(),
+        }
+    }
 }
 
 fn assignment(token: &str) -> Option<(&str, &str)> {
@@ -401,52 +449,57 @@ fn command_token(token: &str) -> &str {
 }
 
 fn allowed_git_prefix(tokens: &[String]) -> bool {
-    if tokens.iter().all(|token| assignment(token).is_some()) {
-        return true;
-    }
-    matches!(
-        tokens
-            .iter()
-            .find(|token| assignment(token).is_none())
-            .map(|token| command_token(token)),
-        Some(
-            "command"
-                | "exec"
-                | "env"
-                | "sudo"
-                | "doas"
-                | "nohup"
-                | "nice"
-                | "time"
-                | "if"
-                | "then"
-                | "while"
-                | "until"
-                | "do"
-                | "!"
-                | "{"
-        )
-    )
+    apply_prefix_identity(tokens, &mut GitIdentityOverrides::default()).is_ok()
 }
 
-fn clear_identity_variable(
-    name: &str,
-    proposed_name: &mut Option<String>,
-    proposed_email: &mut Option<String>,
-) {
+fn clear_identity_variable(name: &str, identity: &mut GitIdentityOverrides) {
     match name {
-        "GIT_AUTHOR_NAME" | "GIT_COMMITTER_NAME" => *proposed_name = Some(String::new()),
-        "GIT_AUTHOR_EMAIL" | "GIT_COMMITTER_EMAIL" => *proposed_email = Some(String::new()),
+        "GIT_AUTHOR_NAME" => {
+            identity.author_name = Some(String::new());
+            identity.author_name_from_env = false;
+        }
+        "GIT_AUTHOR_EMAIL" => {
+            identity.author_email = Some(String::new());
+            identity.author_email_from_env = false;
+        }
+        "GIT_COMMITTER_NAME" => {
+            identity.committer_name = Some(String::new());
+            identity.committer_name_from_env = false;
+        }
+        "GIT_COMMITTER_EMAIL" => {
+            identity.committer_email = Some(String::new());
+            identity.committer_email_from_env = false;
+        }
         _ => {}
     }
 }
 
 fn apply_prefix_identity(
     prefix: &[String],
-    proposed_name: &mut Option<String>,
-    proposed_email: &mut Option<String>,
+    identity: &mut GitIdentityOverrides,
 ) -> Result<(), String> {
-    let mut inside_env = false;
+    #[derive(Clone, Copy)]
+    enum Wrapper {
+        Command,
+        Env,
+        Exec,
+        Nice,
+        Nohup,
+        Time,
+    }
+
+    fn clear_all(identity: &mut GitIdentityOverrides) {
+        for name in [
+            "GIT_AUTHOR_NAME",
+            "GIT_AUTHOR_EMAIL",
+            "GIT_COMMITTER_NAME",
+            "GIT_COMMITTER_EMAIL",
+        ] {
+            clear_identity_variable(name, identity);
+        }
+    }
+
+    let mut wrapper = None;
     let mut index = 0;
     while index < prefix.len() {
         let token = prefix[index].as_str();
@@ -456,38 +509,65 @@ fn apply_prefix_identity(
                 "cannot verify Git identity through privilege wrapper {executable}"
             ));
         }
-        if executable == "env" && assignment(token).is_none() {
-            inside_env = true;
-            index += 1;
-            continue;
-        }
+
         if let Some((name, value)) = assignment(token) {
-            apply_identity_assignment(name, value, proposed_name, proposed_email);
+            if !matches!(wrapper, None | Some(Wrapper::Env)) {
+                return Err(format!(
+                    "cannot safely model assignment {name} after an execution wrapper"
+                ));
+            }
+            apply_identity_assignment(name, value, identity);
             index += 1;
             continue;
         }
-        if inside_env {
-            match token {
+
+        wrapper = match executable {
+            "command" => Some(Wrapper::Command),
+            "env" => Some(Wrapper::Env),
+            "exec" => Some(Wrapper::Exec),
+            "nice" => Some(Wrapper::Nice),
+            "nohup" => Some(Wrapper::Nohup),
+            "time" => Some(Wrapper::Time),
+            "if" | "then" | "while" | "until" | "do" | "!" | "{" => None,
+            _ => wrapper,
+        };
+        if matches!(
+            executable,
+            "command"
+                | "env"
+                | "exec"
+                | "nice"
+                | "nohup"
+                | "time"
+                | "if"
+                | "then"
+                | "while"
+                | "until"
+                | "do"
+                | "!"
+                | "{"
+        ) {
+            index += 1;
+            continue;
+        }
+
+        match wrapper {
+            Some(Wrapper::Env) => match token {
                 "-i" | "--ignore-environment" => {
-                    *proposed_name = Some(String::new());
-                    *proposed_email = Some(String::new());
+                    clear_all(identity);
                 }
                 "-u" | "--unset" => {
                     index += 1;
                     let name = prefix.get(index).ok_or_else(|| {
                         format!("environment option {token} is missing its variable")
                     })?;
-                    clear_identity_variable(name, proposed_name, proposed_email);
+                    clear_identity_variable(name, identity);
                 }
                 value if value.starts_with("-u") && value.len() > 2 => {
-                    clear_identity_variable(&value[2..], proposed_name, proposed_email);
+                    clear_identity_variable(&value[2..], identity);
                 }
                 value if value.starts_with("--unset=") => {
-                    clear_identity_variable(
-                        value.trim_start_matches("--unset="),
-                        proposed_name,
-                        proposed_email,
-                    );
+                    clear_identity_variable(value.trim_start_matches("--unset="), identity);
                 }
                 "-C" | "--chdir" => {
                     index += 1;
@@ -496,13 +576,77 @@ fn apply_prefix_identity(
                     }
                 }
                 value if value.starts_with("--chdir=") => {}
-                "--" => inside_env = false,
+                "--" => {}
                 value if value.starts_with('-') => {
                     return Err(format!(
                         "cannot safely model environment wrapper option {value}"
                     ));
                 }
-                _ => {}
+                value => {
+                    return Err(format!(
+                        "cannot safely model executable {value} between env and Git"
+                    ));
+                }
+            },
+            Some(Wrapper::Exec) => match token {
+                "-c" => clear_all(identity),
+                "-a" => {
+                    index += 1;
+                    if index >= prefix.len() {
+                        return Err("exec option -a is missing its name".to_string());
+                    }
+                }
+                "-l" | "--" => {}
+                value => {
+                    return Err(format!("cannot safely model exec wrapper token {value}"));
+                }
+            },
+            Some(Wrapper::Nice) => match token {
+                "-n" | "--adjustment" => {
+                    index += 1;
+                    if index >= prefix.len() {
+                        return Err(format!("nice option {token} is missing its value"));
+                    }
+                }
+                "--" => {}
+                value
+                    if value.starts_with("--adjustment=")
+                        || value
+                            .strip_prefix('-')
+                            .is_some_and(|number| number.parse::<i8>().is_ok()) => {}
+                value => {
+                    return Err(format!("cannot safely model nice wrapper token {value}"));
+                }
+            },
+            Some(Wrapper::Time) => match token {
+                "-f" | "--format" | "-o" | "--output" => {
+                    index += 1;
+                    if index >= prefix.len() {
+                        return Err(format!("time option {token} is missing its value"));
+                    }
+                }
+                "-a" | "--append" | "-p" | "--portability" | "-v" | "--verbose" | "--" => {}
+                value if value.starts_with("--format=") || value.starts_with("--output=") => {}
+                value => {
+                    return Err(format!("cannot safely model time wrapper token {value}"));
+                }
+            },
+            Some(Wrapper::Command) => match token {
+                "-p" | "-v" | "-V" | "--" => {}
+                value => {
+                    return Err(format!("cannot safely model command wrapper token {value}"));
+                }
+            },
+            Some(Wrapper::Nohup) => match token {
+                "--" | "--help" | "--version" => {}
+                value => {
+                    return Err(format!("cannot safely model nohup wrapper token {value}"));
+                }
+            },
+            None => {
+                return Err(format!(
+                    "cannot safely model execution prefix token {token}"
+                ));
             }
         }
         index += 1;
@@ -636,34 +780,47 @@ fn command_substitution_sources(command: &str) -> Result<Vec<String>, String> {
     Ok(sources)
 }
 
-fn apply_identity_assignment(
-    name: &str,
-    value: &str,
-    proposed_name: &mut Option<String>,
-    proposed_email: &mut Option<String>,
-) {
+fn apply_identity_assignment(name: &str, value: &str, identity: &mut GitIdentityOverrides) {
     match name {
-        "GIT_AUTHOR_NAME" => *proposed_name = Some(value.to_string()),
-        "GIT_AUTHOR_EMAIL" => *proposed_email = Some(value.to_string()),
-        "GIT_COMMITTER_NAME" if proposed_name.is_none() => {
-            *proposed_name = Some(value.to_string());
+        "GIT_AUTHOR_NAME" => {
+            identity.author_name = Some(value.to_string());
+            identity.author_name_from_env = true;
         }
-        "GIT_COMMITTER_EMAIL" if proposed_email.is_none() => {
-            *proposed_email = Some(value.to_string());
+        "GIT_AUTHOR_EMAIL" => {
+            identity.author_email = Some(value.to_string());
+            identity.author_email_from_env = true;
+        }
+        "GIT_COMMITTER_NAME" => {
+            identity.committer_name = Some(value.to_string());
+            identity.committer_name_from_env = true;
+        }
+        "GIT_COMMITTER_EMAIL" => {
+            identity.committer_email = Some(value.to_string());
+            identity.committer_email_from_env = true;
         }
         _ => {}
     }
 }
 
-fn apply_git_config(
-    config: &str,
-    proposed_name: &mut Option<String>,
-    proposed_email: &mut Option<String>,
-) {
+fn apply_git_config(config: &str, identity: &mut GitIdentityOverrides) {
     let (name, value) = config.split_once('=').unwrap_or((config, ""));
     match name.to_ascii_lowercase().as_str() {
-        "user.name" => *proposed_name = Some(value.to_string()),
-        "user.email" => *proposed_email = Some(value.to_string()),
+        "user.name" => {
+            if !identity.author_name_from_env {
+                identity.author_name = Some(value.to_string());
+            }
+            if !identity.committer_name_from_env {
+                identity.committer_name = Some(value.to_string());
+            }
+        }
+        "user.email" => {
+            if !identity.author_email_from_env {
+                identity.author_email = Some(value.to_string());
+            }
+            if !identity.committer_email_from_env {
+                identity.committer_email = Some(value.to_string());
+            }
+        }
         _ => {}
     }
 }
@@ -769,25 +926,26 @@ fn looks_like_protected_git(command: &str) -> bool {
         .filter(|word| !word.is_empty())
         .map(String::from)
         .collect();
-    words.iter().enumerate().any(|(index, word)| {
-        matches!(word.as_str(), "git-push" | "git-commit")
-            || word == "git"
-                && words[index + 1..]
-                    .iter()
-                    .any(|candidate| matches!(candidate.as_str(), "push" | "commit"))
-    })
+    words
+        .iter()
+        .any(|word| matches!(word.as_str(), "git-push" | "git-commit"))
+        || words.iter().any(|word| word == "git")
+            && words
+                .iter()
+                .any(|word| matches!(word.as_str(), "push" | "commit"))
 }
 
 /// Parse protected Git invocations from a shell command without executing it.
 /// Common global options and command-local identity overrides are retained so
 /// the server evaluates the identity the command would actually use.
 fn parse_git_guard_requests(command: &str) -> Result<Vec<GitGuardRequest>, String> {
-    parse_git_guard_requests_inner(command, 0)
+    parse_git_guard_requests_inner(command, 0, GitIdentityOverrides::default())
 }
 
 fn parse_git_guard_requests_inner(
     command: &str,
     recursion_depth: usize,
+    inherited_identity: GitIdentityOverrides,
 ) -> Result<Vec<GitGuardRequest>, String> {
     let normalized_command = separate_shell_operators(command);
     let Some(tokens) = shlex::split(&normalized_command) else {
@@ -811,19 +969,20 @@ fn parse_git_guard_requests_inner(
         let segment_start = shell_segment_start(&tokens, git_index);
         let prefix = &tokens[segment_start..git_index];
         if !allowed_git_prefix(prefix) {
+            if looks_like_protected_git(command) {
+                return Err(
+                    "protected Git invocation uses an execution wrapper the hook cannot model safely"
+                        .to_string(),
+                );
+            }
             continue;
         }
 
-        let mut proposed_name = None;
-        let mut proposed_email = None;
-        apply_prefix_identity(prefix, &mut proposed_name, &mut proposed_email)?;
+        let mut identity = inherited_identity.clone();
+        apply_prefix_identity(prefix, &mut identity)?;
 
         if let Some(operation) = direct_operation {
-            requests.push(GitGuardRequest {
-                operation,
-                proposed_name,
-                proposed_email,
-            });
+            requests.push(identity.request(operation));
             continue;
         }
 
@@ -849,7 +1008,7 @@ fn parse_git_guard_requests_inner(
                     let Some(config) = tokens.get(index) else {
                         return Err("Git option -c is missing its value".to_string());
                     };
-                    apply_git_config(config, &mut proposed_name, &mut proposed_email);
+                    apply_git_config(config, &mut identity);
                     if let Some(alias) = git_alias(config) {
                         aliases.push(alias);
                     }
@@ -866,11 +1025,7 @@ fn parse_git_guard_requests_inner(
                         .map(String::from)
                         .or_else(|| std::env::var(env_name).ok())
                         .ok_or_else(|| format!("Git --config-env references missing {env_name}"))?;
-                    apply_git_config(
-                        &format!("{name}={env_value}"),
-                        &mut proposed_name,
-                        &mut proposed_email,
-                    );
+                    apply_git_config(&format!("{name}={env_value}"), &mut identity);
                 }
                 value
                     if value.starts_with("--git-dir=")
@@ -903,16 +1058,11 @@ fn parse_git_guard_requests_inner(
                                 .strip_prefix('!')
                                 .map(String::from)
                                 .unwrap_or_else(|| format!("git {expansion}"));
-                            expanded_alias_requests =
-                                parse_git_guard_requests_inner(&alias_source, recursion_depth + 1)?;
-                            for request in &mut expanded_alias_requests {
-                                if request.proposed_name.is_none() {
-                                    request.proposed_name = proposed_name.clone();
-                                }
-                                if request.proposed_email.is_none() {
-                                    request.proposed_email = proposed_email.clone();
-                                }
-                            }
+                            expanded_alias_requests = parse_git_guard_requests_inner(
+                                &alias_source,
+                                recursion_depth + 1,
+                                identity.clone(),
+                            )?;
                             None
                         }
                     };
@@ -922,11 +1072,7 @@ fn parse_git_guard_requests_inner(
             index += 1;
         }
         if let Some(operation) = operation {
-            requests.push(GitGuardRequest {
-                operation,
-                proposed_name,
-                proposed_email,
-            });
+            requests.push(identity.request(operation));
         }
         requests.extend(expanded_alias_requests);
     }
@@ -939,12 +1085,23 @@ fn parse_git_guard_requests_inner(
             requests.extend(parse_git_guard_requests_inner(
                 &substitution,
                 recursion_depth + 1,
+                inherited_identity.clone(),
             )?);
         }
         for (shell_index, token) in tokens.iter().enumerate() {
             if !matches!(command_token(token), "sh" | "bash" | "dash" | "zsh") {
                 continue;
             }
+            let segment_start = shell_segment_start(&tokens, shell_index);
+            let prefix = &tokens[segment_start..shell_index];
+            if !allowed_git_prefix(prefix) {
+                if looks_like_protected_git(command) {
+                    return Err("protected Git shell wrapper cannot be modeled safely".to_string());
+                }
+                continue;
+            }
+            let mut shell_identity = inherited_identity.clone();
+            apply_prefix_identity(prefix, &mut shell_identity)?;
             let mut index = shell_index + 1;
             while index < tokens.len() {
                 let option = tokens[index].as_str();
@@ -956,8 +1113,11 @@ fn parse_git_guard_requests_inner(
                         let script = tokens.get(index + 1).ok_or_else(|| {
                             format!("shell option {option} is missing its command")
                         })?;
-                        requests
-                            .extend(parse_git_guard_requests_inner(script, recursion_depth + 1)?);
+                        requests.extend(parse_git_guard_requests_inner(
+                            script,
+                            recursion_depth + 1,
+                            shell_identity.clone(),
+                        )?);
                         break;
                     }
                     index += 1;
@@ -972,8 +1132,13 @@ fn parse_git_guard_requests_inner(
             }
             let segment_start = shell_segment_start(&tokens, eval_index);
             if !allowed_git_prefix(&tokens[segment_start..eval_index]) {
+                if looks_like_protected_git(command) {
+                    return Err("protected Git eval wrapper cannot be modeled safely".to_string());
+                }
                 continue;
             }
+            let mut eval_identity = inherited_identity.clone();
+            apply_prefix_identity(&tokens[segment_start..eval_index], &mut eval_identity)?;
             let script = tokens[eval_index + 1..]
                 .iter()
                 .take_while(|token| {
@@ -989,6 +1154,7 @@ fn parse_git_guard_requests_inner(
             requests.extend(parse_git_guard_requests_inner(
                 &script,
                 recursion_depth + 1,
+                eval_identity,
             )?);
         }
     } else if substitutions
@@ -998,6 +1164,12 @@ fn parse_git_guard_requests_inner(
         return Err("command substitution exceeds inspection depth".to_string());
     }
 
+    if requests.is_empty() && looks_like_protected_git(command) {
+        return Err(
+            "protected Git text appears in an execution form the hook cannot model safely"
+                .to_string(),
+        );
+    }
     Ok(requests)
 }
 
@@ -1497,12 +1669,10 @@ async fn check_git_identity_guard(
         .ok_or_else(|| "session has no project identity".to_string())?;
 
     // Read git identity from environment (set by session-service)
-    let proposed_name = std::env::var("GIT_AUTHOR_NAME")
-        .or_else(|_| std::env::var("GIT_COMMITTER_NAME"))
-        .unwrap_or_default();
-    let proposed_email = std::env::var("GIT_AUTHOR_EMAIL")
-        .or_else(|_| std::env::var("GIT_COMMITTER_EMAIL"))
-        .unwrap_or_default();
+    let proposed_author_name = std::env::var("GIT_AUTHOR_NAME").unwrap_or_default();
+    let proposed_author_email = std::env::var("GIT_AUTHOR_EMAIL").unwrap_or_default();
+    let proposed_committer_name = std::env::var("GIT_COMMITTER_NAME").unwrap_or_default();
+    let proposed_committer_email = std::env::var("GIT_COMMITTER_EMAIL").unwrap_or_default();
 
     // Always call the guard API — the server determines if the folder is sensitive
     // even when no identity env vars are set (which is the most dangerous case)
@@ -1514,8 +1684,10 @@ async fn check_git_identity_guard(
 
     for request in requests {
         let guard_payload = json!({
-            "proposedName": request.proposed_name.as_deref().unwrap_or(&proposed_name),
-            "proposedEmail": request.proposed_email.as_deref().unwrap_or(&proposed_email),
+            "proposedAuthorName": request.proposed_author_name.as_deref().unwrap_or(&proposed_author_name),
+            "proposedAuthorEmail": request.proposed_author_email.as_deref().unwrap_or(&proposed_author_email),
+            "proposedCommitterName": request.proposed_committer_name.as_deref().unwrap_or(&proposed_committer_name),
+            "proposedCommitterEmail": request.proposed_committer_email.as_deref().unwrap_or(&proposed_committer_email),
             "operation": request.operation.as_str(),
         });
         let value = client
@@ -1535,9 +1707,9 @@ async fn check_git_identity_guard(
                 })))
             }
             "warn" => {
-                if let Some(reason) = &result.reason {
-                    eprintln!("\u{26a0}\u{fe0f}  Git identity warning: {reason}");
-                }
+                return Ok(Some(result.reason.unwrap_or_else(|| {
+                    "Git identity policy could not prove this commit or push is safe".to_string()
+                })))
             }
             "none" => {}
             risk => return Err(format!("policy response used unknown risk {risk:?}")),
@@ -2295,6 +2467,16 @@ mod codex_tests {
             "tool_input": "const command = \"git push\"; await run(command);"
         }))
         .is_err());
+        assert!(shell_commands(&json!({
+            "tool_name": "functions.exec",
+            "tool_input": "await tools.exec_command({cmd: \"git \" + \"push\"});"
+        }))
+        .is_err());
+        assert!(shell_commands(&json!({
+            "tool_name": "functions.exec",
+            "tool_input": "const cmd = [\"g\" + \"it\", \"pu\" + \"sh\"].join(\" \" ); await tools.exec_command({cmd});"
+        }))
+        .is_err());
     }
 
     #[test]
@@ -2303,8 +2485,10 @@ mod codex_tests {
             parse_git_guard_requests("git -C /repo push").unwrap(),
             vec![GitGuardRequest {
                 operation: GitGuardOperation::Push,
-                proposed_name: None,
-                proposed_email: None,
+                proposed_author_name: None,
+                proposed_author_email: None,
+                proposed_committer_name: None,
+                proposed_committer_email: None,
             }],
         );
         assert_eq!(
@@ -2314,8 +2498,10 @@ mod codex_tests {
             .unwrap(),
             vec![GitGuardRequest {
                 operation: GitGuardOperation::Commit,
-                proposed_name: Some("Alias Name".to_string()),
-                proposed_email: Some("alias@example.com".to_string()),
+                proposed_author_name: Some("Alias Name".to_string()),
+                proposed_author_email: Some("alias@example.com".to_string()),
+                proposed_committer_name: Some("Alias Name".to_string()),
+                proposed_committer_email: Some("alias@example.com".to_string()),
             }],
         );
         assert_eq!(
@@ -2325,15 +2511,33 @@ mod codex_tests {
             .unwrap(),
             vec![GitGuardRequest {
                 operation: GitGuardOperation::Push,
-                proposed_name: Some("Inline Name".to_string()),
-                proposed_email: Some("inline@example.com".to_string()),
+                proposed_author_name: Some("Inline Name".to_string()),
+                proposed_author_email: Some("inline@example.com".to_string()),
+                proposed_committer_name: None,
+                proposed_committer_email: None,
             }],
         );
         assert_eq!(
             parse_git_guard_requests("GIT_AUTHOR_NAME='Alias & Co' git push").unwrap()[0]
-                .proposed_name
+                .proposed_author_name
                 .as_deref(),
             Some("Alias & Co"),
+        );
+        let split_identity = parse_git_guard_requests(
+            "GIT_AUTHOR_NAME=Alias GIT_AUTHOR_EMAIL=alias@example.com GIT_COMMITTER_NAME='Real Name' GIT_COMMITTER_EMAIL=real@example.com git commit",
+        )
+        .unwrap();
+        assert_eq!(
+            split_identity[0].proposed_author_name.as_deref(),
+            Some("Alias")
+        );
+        assert_eq!(
+            split_identity[0].proposed_committer_name.as_deref(),
+            Some("Real Name")
+        );
+        assert_eq!(
+            split_identity[0].proposed_committer_email.as_deref(),
+            Some("real@example.com")
         );
     }
 
@@ -2368,8 +2572,10 @@ mod codex_tests {
                 .unwrap(),
             vec![GitGuardRequest {
                 operation: GitGuardOperation::Commit,
-                proposed_name: None,
-                proposed_email: Some("nested@example.com".to_string()),
+                proposed_author_name: None,
+                proposed_author_email: Some("nested@example.com".to_string()),
+                proposed_committer_name: None,
+                proposed_committer_email: Some("nested@example.com".to_string()),
             }],
         );
         assert_eq!(
@@ -2412,9 +2618,11 @@ mod codex_tests {
                 .collect::<Vec<_>>(),
             vec![GitGuardOperation::Push],
         );
-        assert!(parse_git_guard_requests("printf 'git push'")
-            .unwrap()
-            .is_empty());
+        assert!(parse_git_guard_requests("printf 'git push'").is_err());
+        assert!(parse_git_guard_requests("printf 'push\\n' | xargs git").is_err());
+        assert!(parse_git_guard_requests("git push && printf 'push\\n' | xargs git").is_err());
+        assert!(parse_git_guard_requests("command xargs git push").is_err());
+        assert!(parse_git_guard_requests("custom-wrapper git push").is_err());
         assert!(parse_git_guard_requests("git status").unwrap().is_empty());
         assert!(parse_git_guard_requests("git ship").is_err());
         assert!(parse_git_guard_requests("git -C 'unterminated push").is_err());
@@ -2426,18 +2634,58 @@ mod codex_tests {
             parse_git_guard_requests("env -i git commit").unwrap(),
             vec![GitGuardRequest {
                 operation: GitGuardOperation::Commit,
-                proposed_name: Some(String::new()),
-                proposed_email: Some(String::new()),
+                proposed_author_name: Some(String::new()),
+                proposed_author_email: Some(String::new()),
+                proposed_committer_name: Some(String::new()),
+                proposed_committer_email: Some(String::new()),
             }],
         );
         assert_eq!(
             parse_git_guard_requests("env -u GIT_AUTHOR_EMAIL git push").unwrap()[0]
-                .proposed_email
+                .proposed_author_email
                 .as_deref(),
             Some(""),
         );
+        assert_eq!(
+            parse_git_guard_requests("env -i bash -c 'git commit'").unwrap(),
+            vec![GitGuardRequest {
+                operation: GitGuardOperation::Commit,
+                proposed_author_name: Some(String::new()),
+                proposed_author_email: Some(String::new()),
+                proposed_committer_name: Some(String::new()),
+                proposed_committer_email: Some(String::new()),
+            }],
+        );
+        assert_eq!(
+            parse_git_guard_requests("command env -i git commit").unwrap(),
+            vec![GitGuardRequest {
+                operation: GitGuardOperation::Commit,
+                proposed_author_name: Some(String::new()),
+                proposed_author_email: Some(String::new()),
+                proposed_committer_name: Some(String::new()),
+                proposed_committer_email: Some(String::new()),
+            }],
+        );
+        assert_eq!(
+            parse_git_guard_requests("exec -c git commit").unwrap(),
+            vec![GitGuardRequest {
+                operation: GitGuardOperation::Commit,
+                proposed_author_name: Some(String::new()),
+                proposed_author_email: Some(String::new()),
+                proposed_committer_name: Some(String::new()),
+                proposed_committer_email: Some(String::new()),
+            }],
+        );
+        assert_eq!(
+            parse_git_guard_requests("GIT_COMMITTER_EMAIL=real@example.com eval 'git commit'")
+                .unwrap()[0]
+                .proposed_committer_email
+                .as_deref(),
+            Some("real@example.com"),
+        );
         assert!(parse_git_guard_requests("sudo git push").is_err());
         assert!(parse_git_guard_requests("doas git commit").is_err());
+        assert!(parse_git_guard_requests("sudo sh -c 'git push'").is_err());
     }
 
     #[test]
