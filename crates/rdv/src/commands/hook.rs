@@ -836,8 +836,9 @@ async fn handle_stop(
         .unwrap_or("Stop");
     if hook_event == "SubagentStop" || payload.get("agent_id").is_some() {
         // Parent is still active; do not flip to idle and do not notify.
-        // [remote-dev-1aa5c] Tag the source so a subagent-stop "running" can't
-        // resurrect a turn that already ended ('idle'/'ended').
+        // [remote-dev-1aa5c] Tag the source so this late child-completion event
+        // only replaces an active running/subagent state, never waiting,
+        // compacting, idle, error, or ended.
         deliver_status_for_wire(client, "running", Some("subagent-stop"), wire_format).await?;
         return Ok(());
     }
@@ -908,6 +909,9 @@ async fn handle_stop(
 }
 
 const MAX_HOOK_INPUT_BYTES: u64 = 1024 * 1024;
+const CODEX_GIT_GUARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+const CODEX_ANCILLARY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+const CODEX_DIGEST_ACK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
 
 fn read_hook_payload() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let mut bytes = Vec::new();
@@ -944,36 +948,61 @@ async fn handle_codex_pre_tool_use_payload(
     payload: &serde_json::Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let is_subagent = payload.get("agent_id").is_some();
-    // Status delivery failure must not bypass policy enforcement. Preserve it
-    // for the wrapper's curl fallback, but finish the guard and emit any
-    // structured denial first.
-    let status_result = deliver_status_with_source(
-        client,
-        if is_subagent { "subagent" } else { "running" },
-        None,
-    )
-    .await;
+    // Policy enforcement has an independent deadline and runs alongside the
+    // bounded lifecycle write. Peer digest/check-in work is intentionally not
+    // in this budget: a wedged ancillary endpoint must never bypass the guard.
+    let (status_result, guard_result) = tokio::join!(
+        deliver_status_with_source(
+            client,
+            if is_subagent { "subagent" } else { "running" },
+            None,
+        ),
+        tokio::time::timeout(
+            CODEX_GIT_GUARD_TIMEOUT,
+            check_git_identity_guard(client, payload),
+        ),
+    );
+    let denial_reason = match guard_result {
+        Ok(reason) => reason,
+        Err(_) => {
+            eprintln!("warning: git identity guard exceeded its hook deadline");
+            None
+        }
+    };
 
-    let policy_work = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        let digest = if is_subagent {
-            PeerDigestOutput::default()
-        } else {
+    // Emit denials before any best-effort peer work. This keeps policy output
+    // available even when peer coordination endpoints are slow or unavailable.
+    if let Some(reason) = denial_reason.as_deref() {
+        if let Some(response) = format_codex_pre_tool_response(None, Some(reason)) {
+            println!("{response}");
+            let _ = std::io::stdout().flush();
+        }
+        return status_result;
+    }
+
+    let digest = if is_subagent {
+        PeerDigestOutput::default()
+    } else {
+        tokio::time::timeout(CODEX_ANCILLARY_TIMEOUT, async {
             let digest = collect_peer_digest(client).await;
             broadcast_session_start(client).await;
             report_proxy_state(client).await;
             digest
-        };
-        let denial_reason = check_git_identity_guard(client, payload).await;
-        (digest, denial_reason)
-    })
-    .await;
-    let (digest, denial_reason) = policy_work.unwrap_or_default();
+        })
+        .await
+        .unwrap_or_default()
+    };
     let context = (!digest.context.is_empty()).then_some(digest.context.as_str());
-    if let Some(response) = format_codex_pre_tool_response(context, denial_reason.as_deref()) {
+    if let Some(response) = format_codex_pre_tool_response(context, None) {
         println!("{response}");
         let _ = std::io::stdout().flush();
-        // Ack only after the structured context has been written for Codex.
-        acknowledge_peer_digest(client, &digest).await;
+        // Ack only after the structured context has been written for Codex,
+        // and never let a stuck acknowledgement hold the calling hook open.
+        let _ = tokio::time::timeout(
+            CODEX_DIGEST_ACK_TIMEOUT,
+            acknowledge_peer_digest(client, &digest),
+        )
+        .await;
     }
     status_result
 }
@@ -1061,8 +1090,9 @@ pub async fn run(
             // A Task subagent finished — the parent agent is about to resume.
             // Report "running" (parent will pick up) and create no notification.
             // Drain stdin to avoid blocking the pipe.
-            // [remote-dev-1aa5c] Tag the source so a subagent-stop "running" can't
-            // resurrect a turn that already ended ('idle'/'ended').
+            // [remote-dev-1aa5c] Tag the source so this late child-completion
+            // event only replaces an active running/subagent state, never
+            // waiting, compacting, idle, error, or ended.
             drain_stdin();
             report_status_with_source(client, "running", Some("subagent-stop")).await;
         }
@@ -1231,9 +1261,9 @@ mod stop_tests {
     }
 
     /// [remote-dev-1aa5c] Both subagent-stop report paths must tag the source so
-    /// the server refuses to let their "running" resurrect a turn that already
-    /// ended. Asserted at source level: (1) the dedicated SubagentStop arm, and
-    /// (2) the Stop-handler safety belt for older Claude Code versions.
+    /// the server only lets their "running" replace an active running/subagent
+    /// state, never waiting, compacting, idle, error, or ended. Asserted at
+    /// source level for the dedicated arm and the older-client safety belt.
     #[test]
     fn subagent_stop_paths_tag_source() {
         let src = include_str!("hook.rs");
@@ -1252,7 +1282,7 @@ mod stop_tests {
         let belt_start = src
             .find(r#"if hook_event == "SubagentStop""#)
             .expect("stop-handler safety belt exists");
-        let belt = &src[belt_start..belt_start + 400];
+        let belt = &src[belt_start..belt_start + 700];
         assert!(
             belt.contains("deliver_status_for_wire(") && belt.contains(r#"Some("subagent-stop")"#),
             "Stop-handler safety belt must tag source=subagent-stop"
