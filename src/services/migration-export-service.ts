@@ -183,6 +183,7 @@ export async function buildDbBundle(
     warnings.push("Agent settings excluded by option (includeAgentSettings=false)");
   }
 
+  // claude_account, including OAuth columns, is intentionally not migrated: credentials are host- and AUTH_SECRET-bound and must be re-added at the destination.
   // Project secrets config — decrypted for transport (destination re-encrypts).
   let projectSecrets: BundleSecretsConfig | null = null;
   if (options.includeAgentCreds) {

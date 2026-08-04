@@ -1154,8 +1154,8 @@ paths:
       summary: List the caller's Claude accounts
       description: >-
         A Claude account is one subscription, independent of any agent profile.
-        The stored OAuth token is encrypted at rest and NEVER returned — only
-        `hasToken` reports whether one exists.
+        Session and usage credentials are separate, encrypted at rest, and
+        never returned. `hasToken` and `usageCredential` report presence only.
       responses:
         '200': { description: Accounts, content: { application/json: { schema: { type: object, properties: { accounts: { type: array, items: { $ref: '#/components/schemas/ClaudeAccount' } } } } } } }
     post:
@@ -1293,6 +1293,105 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: "Token not printed yet (code TOKEN_NOT_READY), the session could not be read (CAPTURE_FAILED), or the captured token is under 100 chars — clipped by the pane width — and was refused rather than stored; the session stays open for a retry or the paste fallback (TOKEN_TRUNCATED, remote-dev-307w)", content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /api/claude-accounts/usage-setup-session:
+    post:
+      tags: [ClaudeLimits]
+      summary: Start isolated OAuth sign-in for Claude usage tracking
+      description: >-
+        Creates an owner-scoped shell session under a private scratch Claude
+        config and starts `claude auth login`. The account must already belong
+        to the caller. Complete the browser URL and paste-code flow in the
+        terminal, then call /api/claude-accounts/usage-capture. The returned
+        command is a safely quoted manual fallback when commandSent is false.
+        If an open usage setup session already exists for this caller/account,
+        it is recovered instead of creating another scratch directory. API-key
+        accounts are unsupported. This flow does not modify the setup-token
+        used for session injection.
+      security:
+        - apiKey: []
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClaudeUsageSetupSessionRequest' }
+      responses:
+        '200':
+          description: Existing open usage sign-in session recovered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClaudeUsageSetupSessionResponse' }
+        '201':
+          description: Private usage sign-in session prepared
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClaudeUsageSetupSessionResponse' }
+        '400': { description: Body is invalid, either id is missing/blank/not a string, or the account is an unsupported api_key account (code USAGE_TRACKING_UNSUPPORTED_ACCOUNT_KIND), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Account is missing or belongs to another user, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /api/claude-accounts/usage-capture:
+    post:
+      tags: [ClaudeLimits]
+      summary: Capture and attach an account's Claude usage credential
+      description: >-
+        Finishes an isolated usage sign-in. The owner-scoped session metadata,
+        not request-body account or path values, selects the target account and
+        scratch config. The credential must carry `user:profile`, and a known
+        login email must match the target row. Success stores only encrypted
+        usage credentials and returns the token-free account projection plus
+        explicit validation, cleanup, and scheduled-polling outcomes. Cleanup
+        best-effort removes scratch credentials, clears terminal scrollback,
+        and closes the setup session.
+      security:
+        - apiKey: []
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClaudeUsageCaptureRequest' }
+      responses:
+        '200':
+          description: Usage credential attached to the existing account
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClaudeUsageCaptureResponse' }
+        '400': { description: "Invalid body/session id, a session without usage-flow provenance (code NOT_A_USAGE_SETUP_SESSION), or incomplete trusted metadata (code INVALID_USAGE_SETUP_SESSION)", content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Session/account is missing or belongs to another user, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409':
+          description: Sign-in is unfinished, lacks usage scope, targets another account, or capture failed safely
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClaudeUsageCaptureConflict' }
+  /api/claude-accounts/usage-abort:
+    post:
+      tags: [ClaudeLimits]
+      summary: Cancel and clean an unfinished Claude usage sign-in
+      description: >-
+        Best-effort cancellation using only an owner-scoped usage setup
+        session. The scratch path is read from trusted session metadata. The
+        server deletes or confirms absence of the derived credential before
+        removing the scratch directory, then clears scrollback and closes the
+        session. The web dialog does not wait for this request before closing.
+      security:
+        - apiKey: []
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClaudeUsageAbortRequest' }
+      responses:
+        '200':
+          description: Cancellation attempted; false means one or more cleanup steps failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClaudeUsageAbortResponse' }
+        '400': { description: "Invalid body/session id, a session without usage-flow provenance (code NOT_A_USAGE_SETUP_SESSION), or incomplete trusted metadata (code INVALID_USAGE_SETUP_SESSION)", content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Session is missing or belongs to another user, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '500': { description: Cleanup could not start safely (code ABORT_FAILED), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /api/profiles/select:
     get:
       tags: [ClaudeLimits]
@@ -2738,12 +2837,14 @@ components:
         all: { type: boolean }
     ClaudeAccount:
       type: object
+      required: [id, alias, accountKind, emailAddress, organizationId, organizationName, rateLimitTier, authMethod, authHealthy, lastVerifiedAt, hasToken, usageCredential, profileId, createdAt, updatedAt]
       description: >-
         One Claude subscription (or API key), independent of any agent profile.
-        A session selects it by having CLAUDE_CODE_OAUTH_TOKEN injected into its
-        env, so N accounts share one Claude config dir. The stored token is
-        encrypted at rest and never appears in a response — `hasToken` only
-        reports whether one exists.
+        A session selects it through a long-lived setup-token injected as
+        CLAUDE_CODE_OAUTH_TOKEN. Proactive usage polling uses a separate OAuth
+        access/refresh credential carrying user:profile. Both credential sets
+        are encrypted at rest and never appear in a response; `hasToken` and
+        `usageCredential` report presence only.
       properties:
         id: { type: string }
         alias: { type: string, nullable: true, description: User-facing label; the UI falls back to the email }
@@ -2755,10 +2856,55 @@ components:
         authMethod: { type: string, nullable: true, description: "Verbatim `authMethod` from `claude auth status --json`; an OPEN set (none | claude.ai | oauth_token | …)" }
         authHealthy: { type: boolean, description: Whether the last identity probe reported loggedIn true }
         lastVerifiedAt: { type: integer, nullable: true, description: Epoch-ms of the last identity probe }
-        hasToken: { type: boolean, description: Whether an encrypted OAuth token is stored }
+        hasToken: { type: boolean, description: Whether an encrypted session setup-token is stored }
+        usageCredential: { type: boolean, description: Whether an encrypted OAuth refresh credential for usage polling is stored; presence only, never token contents or validity }
         profileId: { type: string, nullable: true, description: Legacy origin profile, when the account was migrated from one. NOT an identity. }
         createdAt: { type: integer }
         updatedAt: { type: integer }
+    ClaudeUsageSetupSessionRequest:
+      type: object
+      required: [projectId, accountId]
+      properties:
+        projectId: { type: string, pattern: '\S', description: Project in which to create the temporary shell session }
+        accountId: { type: string, pattern: '\S', description: Existing caller-owned Claude account that will receive the usage credential }
+    ClaudeUsageSetupSessionResponse:
+      type: object
+      required: [sessionId, command, commandSent, recovered, instructions]
+      properties:
+        sessionId: { type: string }
+        command: { type: string, nullable: true, description: Safely quoted command to run manually if automatic terminal entry failed; null when an existing session was recovered }
+        commandSent: { type: boolean, nullable: true, description: Whether the server successfully entered the command into the terminal; null when an existing session was recovered }
+        recovered: { type: boolean, description: True when the server returned an already-open setup session instead of creating one }
+        instructions: { type: array, items: { type: string } }
+    ClaudeUsageCaptureRequest:
+      type: object
+      required: [sessionId]
+      properties:
+        sessionId: { type: string, pattern: '\S', description: Owner-scoped session returned by the usage setup endpoint; other request properties carry no account/path authority }
+    ClaudeUsageCaptureResponse:
+      type: object
+      required: [account, usageValidated, cleanupComplete, pollEnabled]
+      properties:
+        account: { $ref: '#/components/schemas/ClaudeAccount' }
+        usageValidated: { type: boolean, description: True only when capture also wrote an immediate usage snapshot; false can mean validation was indeterminate or the snapshot write did not succeed even though the credential was stored }
+        cleanupComplete: { type: boolean, description: True only when credential deletion or confirmed absence, scratch-directory removal, terminal scrollback clearing, and setup-session closure all completed; false means the credential was stored but at least one cleanup step failed }
+        pollEnabled: { type: boolean, description: Whether scheduled usage polling is currently enabled; false means an immediate validation snapshot may exist but no scheduled refresh runs and readings can go stale until RDV_CLAUDE_USAGE_POLL_ENABLED=true }
+    ClaudeUsageCaptureConflict:
+      type: object
+      required: [error, code]
+      properties:
+        error: { type: string }
+        code: { type: string, enum: [CREDENTIALS_NOT_READY, MISSING_SCOPE, ACCOUNT_MISMATCH, CAPTURE_FAILED] }
+    ClaudeUsageAbortRequest:
+      type: object
+      required: [sessionId]
+      properties:
+        sessionId: { type: string, pattern: '\S', description: Owner-scoped session returned by the usage setup endpoint; other request properties carry no path authority }
+    ClaudeUsageAbortResponse:
+      type: object
+      required: [cleanupComplete]
+      properties:
+        cleanupComplete: { type: boolean, description: True only when derived credential deletion or confirmed absence, scratch-directory removal, scrollback clearing, and session closure all completed }
     ClaudeAccountSaveResult:
       type: object
       properties:

@@ -8,11 +8,12 @@
  * 5h / 7d usage bars, live reset countdown, status badge, pool memberships, and
  * per-row Verify / Rename / Remove / "Mark available" actions.
  *
- * Driven by a single `GET /api/claude/usage` fetch (→ `data.accounts`); live
- * `profile_limit_changed` updates are overlaid from ProfileContext's
- * `limitStates` map, which is account-keyed (no refetch needed), and a
- * lightweight clock ticks the countdowns. Reachable from Settings → Claude
- * Accounts.
+ * Driven by a single `GET /api/claude/usage` fetch (→ `data.accounts`). Each
+ * request records the account-keyed ProfileContext values visible when it
+ * starts: the successful REST snapshot supersedes those unchanged cache
+ * entries, while any concurrent or later `profile_limit_changed` / manual
+ * override object retains live precedence. A lightweight clock ticks the
+ * countdowns. Reachable from Settings → Claude Accounts.
  *
  * A single "Add account" action at the top opens {@link AddAccountDialog} —
  * there is no per-profile login button and no Sync step anywhere.
@@ -21,37 +22,55 @@
  * at "Add account"; all states "unknown"/available → bars at 0 / muted badges.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Plus, RefreshCw, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api-fetch";
 import { useProfileContext } from "@/contexts/ProfileContext";
 import type {
+  ClaudeAccountSummary,
   ClaudeUsageAccount,
   LimitStateBlock,
 } from "@/types/claude-limits";
 import { ClaudeAccountRow } from "./ClaudeAccountRow";
 import { AddAccountDialog } from "./AddAccountDialog";
+import { UsageTrackingDialog } from "./UsageTrackingDialog";
 
 /** Re-tick the reset countdowns this often (ms). */
 const CLOCK_INTERVAL_MS = 30_000;
 
+interface UsageSnapshot {
+  accounts: ClaudeUsageAccount[];
+  /** Context values observed when this REST request began, keyed by account. */
+  contextBaseline: ReadonlyMap<string, LimitStateBlock>;
+}
+
 export function ClaudeAccountsDashboard() {
   const {
     getAccountLimitState,
+    limitStates,
     markAccountAvailable,
     pools,
     refreshPools,
     refreshAccounts,
   } = useProfileContext();
 
-  const [usage, setUsage] = useState<ClaudeUsageAccount[] | null>(null);
+  const [usageSnapshot, setUsageSnapshot] = useState<UsageSnapshot | null>(
+    null
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [addOpen, setAddOpen] = useState(false);
+  const [usageTarget, setUsageTarget] =
+    useState<ClaudeAccountSummary | null>(null);
+  const [usageOpen, setUsageOpen] = useState(false);
+  const limitStatesRef = useRef(limitStates);
+  limitStatesRef.current = limitStates;
+  const usage = usageSnapshot?.accounts ?? null;
 
   const load = useCallback(async () => {
+    const contextBaseline = limitStatesRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -60,7 +79,10 @@ export function ClaudeAccountsDashboard() {
         throw new Error(`Failed to load usage (${response.status})`);
       }
       const data = await response.json();
-      setUsage((data.accounts as ClaudeUsageAccount[]) ?? []);
+      setUsageSnapshot({
+        accounts: (data.accounts as ClaudeUsageAccount[]) ?? [],
+        contextBaseline,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load usage");
     } finally {
@@ -87,13 +109,39 @@ export function ClaudeAccountsDashboard() {
     void refreshAccounts();
   }, [load, refreshAccounts]);
 
-  // Resolve the effective limit state for an account: prefer the live cache
-  // (updated by the WS event) over the snapshot fetched here, so a
-  // `profile_limit_changed` push reflects immediately.
+  const openUsageTracking = useCallback((account: ClaudeAccountSummary) => {
+    setAddOpen(false);
+    setUsageTarget(account);
+    setUsageOpen(true);
+  }, []);
+
+  const handleAddOpenChange = useCallback((open: boolean) => {
+    setAddOpen(open);
+    if (open) {
+      setUsageOpen(false);
+      setUsageTarget(null);
+    }
+  }, []);
+
+  const handleUsageOpenChange = useCallback((open: boolean) => {
+    setUsageOpen(open);
+    if (!open) setUsageTarget(null);
+  }, []);
+
+  // A successful REST result invalidates the cache objects that were present
+  // when its request began. ProfileContext replaces state objects immutably,
+  // so a different per-account reference proves a WS/manual update happened
+  // during or after that request and must retain precedence.
   const resolveLimitState = useCallback(
-    (account: ClaudeUsageAccount): LimitStateBlock =>
-      getAccountLimitState(account.id) ?? account.limitState,
-    [getAccountLimitState]
+    (account: ClaudeUsageAccount): LimitStateBlock => {
+      const contextState = getAccountLimitState(account.id);
+      const baselineState =
+        usageSnapshot?.contextBaseline.get(account.id) ?? null;
+      return contextState !== baselineState
+        ? (contextState ?? account.limitState)
+        : account.limitState;
+    },
+    [getAccountLimitState, usageSnapshot]
   );
 
   // A manual override (markAccountAvailable) updates ProfileContext's
@@ -152,6 +200,7 @@ export function ClaudeAccountsDashboard() {
               now={now}
               pools={pools}
               onMarkAvailable={markAccountAvailable}
+              onEnableUsage={openUsageTracking}
               onChanged={reload}
             />
           ))}
@@ -174,9 +223,18 @@ export function ClaudeAccountsDashboard() {
 
       <AddAccountDialog
         open={addOpen}
-        onOpenChange={setAddOpen}
+        onOpenChange={handleAddOpenChange}
         onAdded={reload}
+        onEnableUsage={openUsageTracking}
       />
+      {usageTarget && (
+        <UsageTrackingDialog
+          account={usageTarget}
+          open={usageOpen}
+          onOpenChange={handleUsageOpenChange}
+          onCompleted={reload}
+        />
+      )}
     </div>
   );
 }

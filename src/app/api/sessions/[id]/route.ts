@@ -11,6 +11,7 @@ import { getFolderPreferences } from "@/services/preferences-service";
 import { broadcastSidebarChanged } from "@/lib/broadcast";
 import type { UpdateSessionInput, SessionStatus } from "@/types/session";
 import { createLogger } from "@/lib/logger";
+import { CLAUDE_USAGE_SETUP_SESSION_MARKER } from "@/services/claude-account-service";
 
 const log = createLogger("api/sessions");
 
@@ -44,6 +45,42 @@ export const PATCH = withAuth(async (request, { userId, params }) => {
   }>(request);
   if ("error" in result) return result.error;
   const body = result.data;
+
+  const metadataPatch = isRecord(body.typeMetadataPatch)
+    ? body.typeMetadataPatch
+    : null;
+  if (
+    metadataPatch &&
+    Object.hasOwn(metadataPatch, CLAUDE_USAGE_SETUP_SESSION_MARKER)
+  ) {
+    return errorResponse(
+      "Claude usage setup metadata is server-managed",
+      400,
+      "PROTECTED_SESSION_METADATA"
+    );
+  }
+
+  // accountId/scratchDir remain ordinary plugin metadata on ordinary
+  // sessions. Once the durable server-owned marker is stored, however, those
+  // two keys are capture authority and public PATCH must not rebind them. Read
+  // the current owner-scoped session rather than trusting request state so the
+  // protection survives process restarts.
+  const mutatesUsageBinding =
+    metadataPatch !== null &&
+    (Object.hasOwn(metadataPatch, "accountId") ||
+      Object.hasOwn(metadataPatch, "scratchDir"));
+  if (mutatesUsageBinding) {
+    const existing = await SessionService.getSession(params!.id, userId);
+    if (
+      existing?.typeMetadata?.[CLAUDE_USAGE_SETUP_SESSION_MARKER] === true
+    ) {
+      return errorResponse(
+        "Claude usage setup binding is server-managed",
+        400,
+        "PROTECTED_SESSION_METADATA"
+      );
+    }
+  }
 
   const updates: UpdateSessionInput = {};
 
@@ -271,3 +308,7 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
     throw error;
   }
 });
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

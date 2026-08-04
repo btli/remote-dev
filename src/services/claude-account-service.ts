@@ -42,6 +42,7 @@ import {
   type TokenValidityProbe,
 } from "@/infrastructure/external/anthropic-token-validity";
 import { createLogger } from "@/lib/logger";
+import { hasStoredUsageCredential } from "@/lib/usage-credential-presence";
 import type {
   ClaudeAccountKind,
   ClaudeAccountSummary,
@@ -55,6 +56,11 @@ const log = createLogger("ClaudeAccountService");
  */
 export const CLAUDE_SETUP_TOKEN_COMMAND = "claude setup-token";
 
+// Current CLI exposes `claude auth login`, which enters auth directly and
+// avoids general interactive onboarding; the usage route still pre-seeds
+// `.claude.json` defensively before invoking this command.
+export const CLAUDE_USAGE_OAUTH_LOGIN_COMMAND = "claude auth login";
+
 /** The env var that selects the account for a `claude` process. */
 export const CLAUDE_OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
 
@@ -65,6 +71,15 @@ export const CLAUDE_OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
  * at an unrelated terminal. [remote-dev-n4x4.7]
  */
 export const CLAUDE_SETUP_SESSION_MARKER = "rdvClaudeSetupSession";
+
+/**
+ * Provenance marker for the isolated claude.ai login session used only to
+ * capture a `user:profile`-scoped usage credential. Keeping this distinct from
+ * {@link CLAUDE_SETUP_SESSION_MARKER} prevents either capture endpoint from
+ * reading credentials produced by the other flow.
+ */
+export const CLAUDE_USAGE_SETUP_SESSION_MARKER =
+  "rdvClaudeUsageSetupSession";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Identity (`claude auth status --json`)
@@ -298,6 +313,45 @@ export async function probeIdentity(
   }
 }
 
+/**
+ * Probe identity from an isolated Claude config directory.
+ *
+ * Unlike {@link probeIdentity}, this deliberately supplies no token in the
+ * environment: Claude Code must resolve only the credential associated with
+ * the literal scratch `CLAUDE_CONFIG_DIR`. All ambient auth variables are
+ * blanked so a server credential cannot shadow that scratch identity. The
+ * probe is best-effort and shares {@link parseAuthStatus}'s tolerant parser.
+ */
+export async function probeScratchIdentity(
+  scratchDir: string,
+  runner: ClaudeCliRunner = defaultCliRunner
+): Promise<ClaudeIdentity> {
+  try {
+    const { stdout, stderr, exitCode } = await runner(
+      ["auth", "status", "--json"],
+      {
+        CLAUDE_CONFIG_DIR: scratchDir,
+        [CLAUDE_OAUTH_TOKEN_ENV]: "",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_AUTH_TOKEN: "",
+      }
+    );
+    const identity = parseAuthStatus(stdout || stderr);
+    log.debug("Probed scratch Claude identity", {
+      exitCode,
+      loggedIn: identity.loggedIn,
+      authMethod: identity.authMethod ?? "unknown",
+      hasEmail: identity.email !== null,
+    });
+    return identity;
+  } catch (error) {
+    log.warn("Scratch Claude identity probe failed", {
+      error: String(error),
+    });
+    return { ...UNKNOWN_IDENTITY };
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Account CRUD
 // ─────────────────────────────────────────────────────────────────────────────
@@ -324,6 +378,13 @@ export type ClaudeAccountView = ClaudeAccountSummary;
 
 type AccountRow = typeof claudeAccounts.$inferSelect;
 
+const CLEARED_USAGE_CREDENTIAL_COLUMNS = {
+  usageOauthAccessEncrypted: null,
+  usageOauthRefreshEncrypted: null,
+  usageOauthExpiresAt: null,
+  usageOauthScopes: null,
+} as const;
+
 /** Project a DB row into the token-free API view. */
 export function toAccountView(row: AccountRow): ClaudeAccountView {
   return {
@@ -338,6 +399,9 @@ export function toAccountView(row: AccountRow): ClaudeAccountView {
     authHealthy: row.authHealthy,
     lastVerifiedAt: row.lastVerifiedAt ? row.lastVerifiedAt.getTime() : null,
     hasToken: !!row.oauthTokenEncrypted,
+    usageCredential: hasStoredUsageCredential(
+      row.usageOauthRefreshEncrypted
+    ),
     profileId: row.profileId ?? null,
     createdAt: row.createdAt.getTime(),
     updatedAt: row.updatedAt.getTime(),
@@ -484,6 +548,7 @@ export async function saveAccountToken(
   const columns = {
     alias: input.alias ?? existing?.alias ?? null,
     ...identityDisplayColumns(identity, existing),
+    ...usageCredentialInvalidationColumns(identity, existing),
     // Network verdict first, CLI as the fallback: Anthropic accepting or
     // rejecting the Bearer token is ground truth for credential liveness,
     // while the CLI probe can fail for environmental reasons (missing binary,
@@ -630,6 +695,7 @@ export async function verifyAccount(
       // Keep the last-known display fields when a probe comes back blank
       // (offline / CLI missing) instead of wiping a working account's UI.
       ...identityDisplayColumns(identity, row),
+      ...usageCredentialInvalidationColumns(identity, row),
       // Network verdict first, CLI as fallback — see saveAccountToken: the
       // network answer is ground truth for credential liveness; the CLI probe
       // can fail environmentally without saying anything about the token.
@@ -659,6 +725,39 @@ function identityDisplayColumns(
       identity.subscriptionType ?? fallback?.rateLimitTier ?? null,
     authMethod: identity.authMethod ?? fallback?.authMethod ?? null,
   };
+}
+
+/**
+ * A usage credential is bound to the row's Claude identity. Any newly probed,
+ * nonblank email that differs from the stored identity invalidates that
+ * binding; a blank probe is inconclusive and preserves the credential.
+ */
+function usageCredentialInvalidationColumns(
+  identity: ClaudeIdentity,
+  fallback: AccountRow | null | undefined
+) {
+  const nextEmail = normalizeClaudeIdentityEmail(identity.email);
+  if (
+    !nextEmail ||
+    nextEmail === normalizeClaudeIdentityEmail(fallback?.emailAddress ?? null)
+  ) {
+    return {};
+  }
+  return CLEARED_USAGE_CREDENTIAL_COLUMNS;
+}
+
+/**
+ * The single comparison form for a Claude identity email: trimmed and
+ * case-folded, with blank treated as "unknown" rather than as a value. Shared
+ * so credential-binding checks here and in the usage capture flow cannot drift
+ * into disagreeing about whether two logins are the same account.
+ */
+export function normalizeClaudeIdentityEmail(
+  value: string | null
+): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.toLocaleLowerCase("en-US") : null;
 }
 
 /** Mark an account unhealthy and return the UNKNOWN identity projection. */
@@ -720,6 +819,251 @@ export async function deleteAccount(
   await db.delete(claudeAccounts).where(ownedBy(accountId, userId));
   log.info("Deleted Claude account", { accountId });
   return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Usage OAuth credential boundary
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The minimal decrypted credential refresh needs. Keeping this type here makes
+ * the account service the sole owner of persistence and encryption details;
+ * infrastructure callers never import Drizzle or receive session credentials.
+ */
+export interface OwnedUsageCredential {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: Date;
+  /** Opaque CAS token; callers may only return it to store/quarantine. */
+  revision: UsageCredentialRevision;
+}
+
+/** Exact encrypted values selected alongside one decrypted credential. */
+export interface UsageCredentialRevision {
+  readonly accessCiphertext: string;
+  readonly refreshCiphertext: string;
+}
+
+/**
+ * Complete credential captured from Claude Code's isolated login. The open
+ * scope set and provider display strings are stored without narrowing them to
+ * enums so future Claude Code additions remain usable.
+ */
+export interface InitialUsageCredential {
+  accessToken: string;
+  refreshToken: string;
+  /** Epoch milliseconds, matching Claude Code's credential payload. */
+  expiresAt: number;
+  scopes: string[];
+  subscriptionType: string | null;
+  rateLimitTier: string | null;
+}
+
+/**
+ * Attach the first usage credential to one existing, owner-scoped account.
+ *
+ * This operation never inserts a row and includes both account id and user id
+ * in the mutation predicate. The session credential and its health columns
+ * are intentionally absent from the SET clause: usage polling and session
+ * authentication are independent credential classes. A fresh token-free view
+ * is returned after the write; an absent/foreign account resolves to null.
+ */
+export async function storeInitialUsageCredential(
+  accountId: string,
+  userId: string,
+  credential: InitialUsageCredential,
+  identity: ClaudeIdentity,
+  now: Date = new Date()
+): Promise<ClaudeAccountView | null> {
+  const existing = await findOwnedRow(accountId, userId);
+  if (!existing) return null;
+
+  const identityColumns = identityDisplayColumns(identity, existing);
+  const credentialTier =
+    nonBlank(credential.rateLimitTier) ??
+    nonBlank(credential.subscriptionType);
+
+  await db
+    .update(claudeAccounts)
+    .set({
+      usageOauthAccessEncrypted: encrypt(credential.accessToken),
+      usageOauthRefreshEncrypted: encrypt(credential.refreshToken),
+      usageOauthExpiresAt: new Date(credential.expiresAt),
+      usageOauthScopes: JSON.stringify(credential.scopes),
+      ...identityColumns,
+      rateLimitTier: credentialTier ?? identityColumns.rateLimitTier,
+      updatedAt: now,
+    })
+    .where(ownedBy(accountId, userId));
+
+  const refreshed = await findOwnedRow(accountId, userId);
+  return refreshed ? toAccountView(refreshed) : null;
+}
+
+function nonBlank(value: string | null): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+/**
+ * Read a complete usage credential by account id AND owner. Foreign, missing,
+ * partial, invalid-expiry, and undecryptable rows all collapse to null. This
+ * intentionally never falls back to `oauthTokenEncrypted`: setup-tokens lack
+ * the `user:profile` scope required by the usage endpoint.
+ */
+export async function readOwnedUsageCredential(
+  accountId: string,
+  userId: string
+): Promise<OwnedUsageCredential | null> {
+  const row = await db.query.claudeAccounts.findFirst({
+    where: ownedBy(accountId, userId),
+    columns: {
+      usageOauthAccessEncrypted: true,
+      usageOauthRefreshEncrypted: true,
+      usageOauthExpiresAt: true,
+    },
+  });
+  if (
+    !hasStoredUsageCredential(row?.usageOauthAccessEncrypted) ||
+    !hasStoredUsageCredential(row.usageOauthRefreshEncrypted) ||
+    !(row.usageOauthExpiresAt instanceof Date) ||
+    !Number.isFinite(row.usageOauthExpiresAt.getTime())
+  ) {
+    return null;
+  }
+
+  const accessToken = decryptUsageToken(
+    row.usageOauthAccessEncrypted,
+    accountId,
+    "access"
+  );
+  const revision: UsageCredentialRevision = {
+    accessCiphertext: row.usageOauthAccessEncrypted,
+    refreshCiphertext: row.usageOauthRefreshEncrypted,
+  };
+  if (accessToken === null) {
+    await quarantineUsageCredential(accountId, userId, revision);
+    return null;
+  }
+  const refreshToken = decryptUsageToken(
+    row.usageOauthRefreshEncrypted,
+    accountId,
+    "refresh"
+  );
+  if (refreshToken === null) {
+    await quarantineUsageCredential(accountId, userId, revision);
+    return null;
+  }
+  // Decryption can succeed and still hand back an empty string. That is not a
+  // usable credential, but it is also not the tamper signal a decrypt failure
+  // is, so it resolves to null without quarantining the row.
+  if (!accessToken || !refreshToken) return null;
+  return {
+    accessToken,
+    refreshToken,
+    expiresAt: row.usageOauthExpiresAt,
+    revision,
+  };
+}
+
+export interface RefreshedUsageCredential {
+  accessToken: string;
+  expiresAt: Date;
+  /** Omitted when Anthropic did not rotate the current refresh token. */
+  refreshToken?: string;
+}
+
+/**
+ * Store a successful OAuth refresh under one ownership- and revision-scoped
+ * compare-and-swap mutation. Both selected ciphertexts participate: matching
+ * only the refresh token would let concurrent responses overwrite a newer
+ * access token when Anthropic did not rotate the refresh token.
+ *
+ * Omitting `refreshToken` deliberately omits that column from the SET clause,
+ * preserving its existing encrypted value byte-for-byte.
+ */
+export async function storeRefreshedUsageCredential(
+  accountId: string,
+  userId: string,
+  credential: RefreshedUsageCredential,
+  expectedRevision: UsageCredentialRevision
+): Promise<boolean> {
+  const updated = await db
+    .update(claudeAccounts)
+    .set({
+      usageOauthAccessEncrypted: encrypt(credential.accessToken),
+      usageOauthExpiresAt: credential.expiresAt,
+      ...(credential.refreshToken !== undefined
+        ? { usageOauthRefreshEncrypted: encrypt(credential.refreshToken) }
+        : {}),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        ownedBy(accountId, userId),
+        eq(
+          claudeAccounts.usageOauthAccessEncrypted,
+          expectedRevision.accessCiphertext
+        ),
+        eq(
+          claudeAccounts.usageOauthRefreshEncrypted,
+          expectedRevision.refreshCiphertext
+        )
+      )
+    )
+    .returning({ id: claudeAccounts.id });
+  return updated.length > 0;
+}
+
+/**
+ * Quarantine a rejected usage refresh token by nulling ONLY the four usage
+ * columns when the exact selected ciphertext pair is still current. Session
+ * health and `oauthTokenEncrypted` are a separate credential class and must
+ * remain untouched.
+ */
+export async function quarantineUsageCredential(
+  accountId: string,
+  userId: string,
+  expectedRevision: UsageCredentialRevision
+): Promise<boolean> {
+  const updated = await db
+    .update(claudeAccounts)
+    .set({
+      ...CLEARED_USAGE_CREDENTIAL_COLUMNS,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        ownedBy(accountId, userId),
+        eq(
+          claudeAccounts.usageOauthAccessEncrypted,
+          expectedRevision.accessCiphertext
+        ),
+        eq(
+          claudeAccounts.usageOauthRefreshEncrypted,
+          expectedRevision.refreshCiphertext
+        )
+      )
+    )
+    .returning({ id: claudeAccounts.id });
+  return updated.length > 0;
+}
+
+/** Decrypt a usage token without ever placing token material in a log line. */
+function decryptUsageToken(
+  encrypted: string,
+  accountId: string,
+  credentialPart: "access" | "refresh"
+): string | null {
+  try {
+    return decrypt(encrypted);
+  } catch (error) {
+    log.error("Failed to decrypt stored Claude usage OAuth credential", {
+      accountId,
+      credentialPart,
+      error: String(error),
+    });
+    return null;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

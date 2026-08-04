@@ -227,7 +227,8 @@ servers, settings and agents for all of them — and selects its account by havi
 `CLAUDE_CODE_OAUTH_TOKEN` injected into its process env. That env var picks the
 account per-process independently of `CLAUDE_CONFIG_DIR`, so N accounts run in
 parallel with no credential swapping, locking, or restarts. The token is stored
-encrypted (AES-256-GCM) on the account row and never leaves the server.
+encrypted (AES-256-GCM) on the account row and never leaves the server. This is
+the session setup-token; the independent usage credential is described below.
 
 Because the limit belongs to the subscription, usage-limit state
 (`claude_usage_limit_state`: 5h/7d window utilization + reset times) and
@@ -256,18 +257,32 @@ phrase (`ReactiveOutputDetector`), and a hit marks the session's ACCOUNT limited
 
 A proactive **usage poller** is available but **opt-in** — set
 `RDV_CLAUDE_USAGE_POLL_ENABLED=1` (see [`SETUP.md`](./SETUP.md)). When enabled it
-sweeps every Claude account about every 10 minutes, reading Anthropic's
-structured usage endpoint with that account's stored OAuth token: a free GET
-that sends no message and burns no quota. It is opt-in because enabling it makes
-the server contact a third party on a timer with stored user credentials, not
-because it costs anything. The sweep bounds its concurrency and backs off
-exponentially per account after a failure, so a revoked token is not retried
-every 10 minutes forever. A 429 with a usable `retry-after` is NOT treated as a
-failure: Anthropic rate-limits long-lived setup-token credentials on the usage
-endpoint to roughly one read per hour, so the sweep schedules that account's
-next attempt just past the reported reset (plus jitter) instead of the
-exponential ladder — the dominant path for healthy setup-token accounts. The
-once-planned `rdv` Stop-hook limit detector was never built.
+sweeps each account whose user has enabled usage tracking in Settings → Claude
+Accounts. The account then has two intentionally separate credentials:
+
+- a long-lived `claude setup-token` injected into Claude sessions as
+  `CLAUDE_CODE_OAUTH_TOKEN`; and
+- a usage-only OAuth access/refresh set captured through a second Claude login,
+  carrying the `user:profile` scope required by Anthropic's structured usage
+  endpoint.
+
+The short-lived usage access token is refreshed server-side from its encrypted
+refresh token when it is near expiry. Polling never falls back to the session
+setup-token: that credential class lacks `user:profile` and receives a 403 from
+the usage endpoint. An account without a usage credential is skipped without a
+request or failure backoff, and its session authentication and health remain
+unchanged. If Anthropic rejects the refresh token with 400/401, only the usage
+credential is cleared; the user can enable usage tracking again without
+re-adding the account.
+
+The usage request is a free GET that sends no message and burns no quota. The
+poller remains opt-in because it makes the server contact a third party on a
+timer with stored user credentials. The sweep bounds concurrency and backs off
+exponentially per account after ordinary failures. A 403 yields no observation.
+A 429 with a usable `retry-after` is not treated as an ordinary failure: the
+sweep schedules that account's next attempt just past the reported reset plus
+jitter, without escalating its failure counter. The once-planned `rdv` Stop-hook
+limit detector was never built.
 
 **Rotation is model-aware — but only when the poller is enabled**, since it is
 the only source of per-model `weekly_scoped` windows (stored per account in

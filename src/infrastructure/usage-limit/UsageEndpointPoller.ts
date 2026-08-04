@@ -3,12 +3,10 @@
  * ACCOUNT's usage headroom from the structured OAuth usage endpoint via the
  * isolated adapter (`anthropic-usage-adapter.fetchClaudeUsage`).
  *
- * The read burns no quota — a GET against `/api/oauth/usage`, no message send
- * — but it is NOT unthrottled: Anthropic rate-limits long-lived setup-token
- * credentials on that endpoint to ~1 request/hour (see the adapter docblock's
- * Throttling section). [remote-dev-u7df] A 429 there surfaces here as a typed
- * `UsageLimitRateLimited` signal carrying the reset time, which the sweep uses
- * to schedule the next attempt instead of blind backoff.
+ * The read burns no quota — a GET against `/api/oauth/usage`, no message send.
+ * The endpoint can still rate-limit requests; [remote-dev-u7df] a 429 surfaces
+ * here as a typed `UsageLimitRateLimited` signal carrying the reset time, which
+ * the sweep uses to schedule the next attempt instead of blind backoff.
  *
  * The poller is OPT-IN: it runs only with an explicit positive
  * `RDV_CLAUDE_USAGE_POLL_ENABLED` (see `poll-config.ts` for why default-off).
@@ -17,13 +15,11 @@
  *
  * ## Credential [remote-dev-n4x4.4]
  *
- * The poller reads the account's own OAuth token, decrypted through the single
- * ownership-scoped `resolveAccountEnv` operation in `claude-account-service`.
- * It previously read `<profile.configDir>/.claude/.credentials.json`, which does
- * NOT exist on macOS (Claude Code writes credentials to the Keychain) — that
- * dead path is why the poller was inert even when the flag was on. It is gone:
- * a poller enabled by default reading a dead path would be worse than one that
- * is honestly off.
+ * The poller uses the account's independent usage OAuth credential set: a
+ * short-lived access token plus a long-lived refresh token carrying the
+ * `user:profile` scope. The access token is refreshed server-side on demand.
+ * It never reads or falls back to the separate setup-token used for session
+ * injection.
  *
  * **Subscription accounts only.** [remote-dev-n4x4.1] The usage endpoint
  * describes claude.ai's rolling 5h/7d windows, which a raw API key does not
@@ -65,9 +61,8 @@ import { createLogger } from "@/lib/logger";
 const log = createLogger("UsageEndpointPoller");
 
 /**
- * Resolve an account into its session env (which carries the decrypted
- * `CLAUDE_CODE_OAUTH_TOKEN`). Injectable so tests never import the service —
- * and so no test fixture ever holds a real credential.
+ * Resolve a fresh usage access token for an account. Injectable so tests never
+ * touch a real credential or refresh endpoint.
  */
 export type AccountTokenReader = (
   accountId: string,
@@ -75,22 +70,14 @@ export type AccountTokenReader = (
 ) => Promise<string | null>;
 
 /**
- * Default reader: the ONE ownership-scoped account→credential operation.
+ * Default reader: the ONE ownership-scoped account→usage-credential operation.
  * Lazily imported so the container does not take a static infra→services edge.
  */
 const defaultTokenReader: AccountTokenReader = async (accountId, userId) => {
-  const { resolveAccountEnv, CLAUDE_OAUTH_TOKEN_ENV } = await import(
-    "@/services/claude-account-service"
+  const { getFreshUsageAccessToken } = await import(
+    "@/infrastructure/external/anthropic-oauth-refresh"
   );
-  const resolved = await resolveAccountEnv(accountId, userId);
-  if (!resolved.ok) {
-    log.debug("No usable credential for account; skipping poll", {
-      accountId,
-      reason: resolved.reason,
-    });
-    return null;
-  }
-  return resolved.env[CLAUDE_OAUTH_TOKEN_ENV] ?? null;
+  return getFreshUsageAccessToken(accountId, userId);
 };
 
 export class UsageEndpointPoller implements UsageLimitGateway {
@@ -121,7 +108,13 @@ export class UsageEndpointPoller implements UsageLimitGateway {
       }
 
       const token = await this.readAccountToken(accountId, userId);
-      if (!token) return null;
+      if (!token) {
+        log.debug(
+          "Usage poll skipped because no fresh usage credential was available",
+          { accountId }
+        );
+        return null;
+      }
 
       const result = await fetchClaudeUsage(token, kind);
       if (result.outcome === "rate-limited") {
@@ -129,10 +122,16 @@ export class UsageEndpointPoller implements UsageLimitGateway {
         // through typed so the sweep can align to it. [remote-dev-u7df]
         return { rateLimited: true, accountId, retryAt: result.retryAt };
       }
+      if (result.outcome === "forbidden") {
+        log.warn("Usage credential was forbidden by the usage endpoint", {
+          accountId,
+        });
+        return null;
+      }
       if (result.outcome !== "snapshot") return null;
 
       logScopedLimits(accountId, result.snapshot);
-      return snapshotToResult(accountId, result.snapshot);
+      return usageSnapshotToLimitDetectionResult(accountId, result.snapshot);
     } catch (error) {
       log.warn("Usage poll failed (best-effort)", {
         accountId,
@@ -179,8 +178,13 @@ function logScopedLimits(
   }
 }
 
-/** Normalize an adapter snapshot into a poller LimitDetectionResult. */
-function snapshotToResult(
+/**
+ * Normalize an already-validated adapter snapshot for persistence.
+ *
+ * Exported so the usage-credential capture flow can persist its validation
+ * snapshot immediately without issuing a second Anthropic request.
+ */
+export function usageSnapshotToLimitDetectionResult(
   accountId: string,
   snapshot: ClaudeUsageSnapshot
 ): LimitDetectionResult {

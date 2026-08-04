@@ -32,6 +32,15 @@
  * soon as the request resolves: it is never logged, never placed in a URL, and
  * never written to persisted state.
  *
+ * Both successful save routes also return the token-free account projection.
+ * A healthy account without usage tracking remains in this dialog for one
+ * optional second step: offer the separate usage sign-in that powers the 5h /
+ * 7d bars. "Not now" completes onboarding immediately. "Enable now" closes and
+ * resets Add Account before handing the selected account to the dashboard, so
+ * the reusable UsageTrackingDialog is never nested inside this modal. Invalid
+ * or unhealthy saves retain their existing diagnosis, and an account that
+ * already has usage tracking skips the offer.
+ *
  * Client component — uses console.error per the logging convention (the
  * structured logger is server-only).
  */
@@ -63,6 +72,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api-fetch";
+import type { ClaudeAccountSummary } from "@/types/claude-limits";
 
 type AddMode = "session" | "token";
 
@@ -83,6 +93,8 @@ interface AddAccountDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Called after an account was created or updated so the parent can refetch. */
   onAdded: () => void;
+  /** Called after this dialog closes when the fresh account chooses step two. */
+  onEnableUsage: (account: ClaudeAccountSummary) => void;
 }
 
 /** Read `{ error, code }` off a failed response without throwing on non-JSON. */
@@ -98,8 +110,13 @@ async function readError(
   }
 }
 
+/** Shown when a token was stored but rejected and no diagnosis came back. */
+const REJECTED_TOKEN_MESSAGE = "Claude did not report a healthy sign-in.";
+
 /** The slice of a successful save response the dialog acts on. */
 interface SaveOutcome {
+  /** Token-free account projection returned by both save routes. */
+  account?: ClaudeAccountSummary;
   /** False = Anthropic 401'd the token at save time. Null = indeterminate. */
   tokenValid?: boolean | null;
   /** Human-readable diagnosis, present exactly when `tokenValid` is false. */
@@ -110,12 +127,15 @@ export function AddAccountDialog({
   open,
   onOpenChange,
   onAdded,
+  onEnableUsage,
 }: AddAccountDialogProps) {
   const [mode, setMode] = useState<AddMode>("session");
   const [alias, setAlias] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [pendingUsageAccount, setPendingUsageAccount] =
+    useState<ClaudeAccountSummary | null>(null);
 
   // "Sign in here" path.
   const [projects, setProjects] = useState<ProjectOption[]>([]);
@@ -131,6 +151,7 @@ export function AddAccountDialog({
     setError(null);
     setNotice(null);
     setSetupSession(null);
+    setPendingUsageAccount(null);
     setBusy(false);
   }, []);
 
@@ -169,6 +190,36 @@ export function AddAccountDialog({
     },
     [onOpenChange, reset]
   );
+
+  function handleSaveOutcome(outcome: SaveOutcome) {
+    // The account row exists either way — even a dead token is stored — so the
+    // list always refreshes. A rejected token then shows its diagnosis here
+    // instead of closing the dialog as if the sign-in had worked.
+    onAdded();
+    if (
+      outcome.tokenValid === false ||
+      outcome.account?.authHealthy === false
+    ) {
+      setError(outcome.tokenError ?? REJECTED_TOKEN_MESSAGE);
+      return;
+    }
+    if (
+      outcome.account?.authHealthy &&
+      !outcome.account.usageCredential
+    ) {
+      setPendingUsageAccount(outcome.account);
+      return;
+    }
+    handleOpenChange(false);
+  }
+
+  function enableUsageNow() {
+    if (!pendingUsageAccount) return;
+    const account = pendingUsageAccount;
+    // Close and reset this dialog before the dashboard opens the next one.
+    handleOpenChange(false);
+    onEnableUsage(account);
+  }
 
   async function startSetupSession() {
     if (!projectId) {
@@ -231,15 +282,7 @@ export function AddAccountDialog({
         return;
       }
       const outcome = (await response.json()) as SaveOutcome;
-      if (outcome.tokenValid === false) {
-        // The account row was stored (unhealthy), so refresh the list — but
-        // show the diagnosis instead of closing as if the sign-in worked.
-        onAdded();
-        setError(outcome.tokenError ?? "Anthropic rejected the captured token.");
-        return;
-      }
-      onAdded();
-      handleOpenChange(false);
+      handleSaveOutcome(outcome);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to capture the account"
@@ -278,15 +321,7 @@ export function AddAccountDialog({
         return;
       }
       const outcome = (await response.json()) as SaveOutcome;
-      if (outcome.tokenValid === false) {
-        // Stored but dead: refresh the list, keep the dialog open with the
-        // diagnosis so the user can paste a full token.
-        onAdded();
-        setError(outcome.tokenError ?? "Anthropic rejected that token.");
-        return;
-      }
-      onAdded();
-      handleOpenChange(false);
+      handleSaveOutcome(outcome);
     } catch (err) {
       setToken("");
       setError(
@@ -303,189 +338,223 @@ export function AddAccountDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Add Claude account</DialogTitle>
+          <DialogTitle>
+            {pendingUsageAccount
+              ? "Enable usage tracking now?"
+              : "Add Claude account"}
+          </DialogTitle>
           <DialogDescription>
-            An account is one Claude subscription. Sessions pick an account at
-            launch; the token is stored encrypted and never shown again.
+            {pendingUsageAccount ? (
+              <>
+                A separate Claude sign-in enables the 5h and 7d usage bars. You
+                can do this later.
+              </>
+            ) : (
+              <>
+                An account is one Claude subscription. Sessions pick an account
+                at launch; the token is stored encrypted and never shown again.
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
 
-        {/* Path picker */}
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            disabled={!canUseSession}
-            onClick={() => {
-              setMode("session");
-              setError(null);
-              setNotice(null);
-            }}
-            className={cn(
-              "flex items-start gap-2 rounded-lg border p-3 text-left transition-all",
-              mode === "session"
-                ? "border-primary bg-primary/10"
-                : "border-border bg-card/40 hover:border-primary/50",
-              !canUseSession && "opacity-50 cursor-not-allowed"
-            )}
-          >
-            <TerminalIcon className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0">
-              <span className="block text-sm font-medium text-foreground">
-                Sign in here
-              </span>
-              <span className="block text-[11px] text-muted-foreground">
-                Runs the sign-in in a terminal session.
-              </span>
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setMode("token");
-              setError(null);
-              setNotice(null);
-            }}
-            className={cn(
-              "flex items-start gap-2 rounded-lg border p-3 text-left transition-all",
-              mode === "token"
-                ? "border-primary bg-primary/10"
-                : "border-border bg-card/40 hover:border-primary/50"
-            )}
-          >
-            <ClipboardPaste className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0">
-              <span className="block text-sm font-medium text-foreground">
-                Paste a token
-              </span>
-              <span className="block text-[11px] text-muted-foreground">
-                For remote or mobile use, with no local browser.
-              </span>
-            </span>
-          </button>
-        </div>
-
-        {/* Shared: optional label */}
-        <div className="space-y-2">
-          <Label htmlFor="claude-account-alias">Label (optional)</Label>
-          <Input
-            id="claude-account-alias"
-            value={alias}
-            onChange={(e) => setAlias(e.target.value)}
-            placeholder="e.g. Work Max"
-            className="bg-card/50 border-border"
-          />
-        </div>
-
-        {mode === "session" ? (
-          <div className="space-y-3">
-            <div className="space-y-2">
-              <Label>Run the sign-in in</Label>
-              <Select
-                value={projectId}
-                onValueChange={setProjectId}
-                disabled={busy || setupSession !== null}
+        {!pendingUsageAccount && (
+          <>
+            {/* Path picker */}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={!canUseSession}
+                onClick={() => {
+                  setMode("session");
+                  setError(null);
+                  setNotice(null);
+                }}
+                className={cn(
+                  "flex items-start gap-2 rounded-lg border p-3 text-left transition-all",
+                  mode === "session"
+                    ? "border-primary bg-primary/10"
+                    : "border-border bg-card/40 hover:border-primary/50",
+                  !canUseSession && "opacity-50 cursor-not-allowed"
+                )}
               >
-                <SelectTrigger className="bg-card/50 border-border">
-                  <SelectValue placeholder="Pick a project" />
-                </SelectTrigger>
-                <SelectContent>
-                  {projects.map((project) => (
-                    <SelectItem key={project.id} value={project.id}>
-                      {project.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                <TerminalIcon className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-foreground">
+                    Sign in here
+                  </span>
+                  <span className="block text-[11px] text-muted-foreground">
+                    Runs the sign-in in a terminal session.
+                  </span>
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("token");
+                  setError(null);
+                  setNotice(null);
+                }}
+                className={cn(
+                  "flex items-start gap-2 rounded-lg border p-3 text-left transition-all",
+                  mode === "token"
+                    ? "border-primary bg-primary/10"
+                    : "border-border bg-card/40 hover:border-primary/50"
+                )}
+              >
+                <ClipboardPaste className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-foreground">
+                    Paste a token
+                  </span>
+                  <span className="block text-[11px] text-muted-foreground">
+                    For remote or mobile use, with no local browser.
+                  </span>
+                </span>
+              </button>
             </div>
 
-            {setupSession && (
-              <div className="rounded-lg border border-border bg-card/60 p-3 space-y-2">
-                <p className="text-xs text-muted-foreground">
-                  A session was opened
-                  {setupSession.commandSent
-                    ? " and is already running:"
-                    : ". Run this in it:"}
+            {/* Shared: optional label */}
+            <div className="space-y-2">
+              <Label htmlFor="claude-account-alias">Label (optional)</Label>
+              <Input
+                id="claude-account-alias"
+                value={alias}
+                onChange={(e) => setAlias(e.target.value)}
+                placeholder="e.g. Work Max"
+                className="bg-card/50 border-border"
+              />
+            </div>
+
+            {mode === "session" ? (
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label>Run the sign-in in</Label>
+                  <Select
+                    value={projectId}
+                    onValueChange={setProjectId}
+                    disabled={busy || setupSession !== null}
+                  >
+                    <SelectTrigger className="bg-card/50 border-border">
+                      <SelectValue placeholder="Pick a project" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {projects.map((project) => (
+                        <SelectItem key={project.id} value={project.id}>
+                          {project.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {setupSession && (
+                  <div className="rounded-lg border border-border bg-card/60 p-3 space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      A session was opened
+                      {setupSession.commandSent
+                        ? " and is already running:"
+                        : ". Run this in it:"}
+                    </p>
+                    <code className="block rounded bg-muted/60 px-2 py-1 text-[11px] font-mono text-foreground">
+                      {setupSession.command}
+                    </code>
+                    <ol className="list-decimal pl-4 text-[11px] text-muted-foreground space-y-0.5">
+                      {setupSession.instructions.map((step) => (
+                        <li key={step}>{step}</li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="claude-account-token">Token</Label>
+                <Input
+                  id="claude-account-token"
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  placeholder="sk-ant-oat…"
+                  className="bg-card/50 border-border font-mono text-xs"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Run <code className="font-mono">claude setup-token</code> on
+                  any machine with a browser and paste the value it prints.
                 </p>
-                <code className="block rounded bg-muted/60 px-2 py-1 text-[11px] font-mono text-foreground">
-                  {setupSession.command}
-                </code>
-                <ol className="list-decimal pl-4 text-[11px] text-muted-foreground space-y-0.5">
-                  {setupSession.instructions.map((step) => (
-                    <li key={step}>{step}</li>
-                  ))}
-                </ol>
               </div>
             )}
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <Label htmlFor="claude-account-token">Token</Label>
-            <Input
-              id="claude-account-token"
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder="sk-ant-oat…"
-              className="bg-card/50 border-border font-mono text-xs"
-            />
-            <p className="text-[11px] text-muted-foreground">
-              Run <code className="font-mono">claude setup-token</code> on any
-              machine with a browser and paste the value it prints.
-            </p>
-          </div>
+
+            {notice && <p className="text-sm text-amber-400">{notice}</p>}
+            {error && <p className="text-sm text-destructive">{error}</p>}
+          </>
         )}
 
-        {notice && <p className="text-sm text-amber-400">{notice}</p>}
-        {error && <p className="text-sm text-destructive">{error}</p>}
-
         <DialogFooter>
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => handleOpenChange(false)}
-            disabled={busy}
-          >
-            Cancel
-          </Button>
-          {mode === "session" ? (
-            setupSession ? (
+          {pendingUsageAccount ? (
+            <>
               <Button
                 type="button"
-                onClick={() => void finishSetupSession()}
+                variant="ghost"
+                onClick={() => handleOpenChange(false)}
+              >
+                Not now
+              </Button>
+              <Button type="button" onClick={enableUsageNow}>
+                Enable now
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => handleOpenChange(false)}
                 disabled={busy}
               >
-                {busy && <Loader2 className="w-4 h-4 animate-spin" />}
-                Finish
+                Cancel
               </Button>
-            ) : (
-              <Button
-                type="button"
-                onClick={() => void startSetupSession()}
-                disabled={busy || !projectId}
-              >
-                {busy ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
+              {mode === "session" ? (
+                setupSession ? (
+                  <Button
+                    type="button"
+                    onClick={() => void finishSetupSession()}
+                    disabled={busy}
+                  >
+                    {busy && <Loader2 className="w-4 h-4 animate-spin" />}
+                    Finish
+                  </Button>
                 ) : (
-                  <Plus className="w-4 h-4" />
-                )}
-                Start sign-in
-              </Button>
-            )
-          ) : (
-            <Button
-              type="button"
-              onClick={() => void submitToken()}
-              disabled={busy || !token.trim()}
-            >
-              {busy ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                  <Button
+                    type="button"
+                    onClick={() => void startSetupSession()}
+                    disabled={busy || !projectId}
+                  >
+                    {busy ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4" />
+                    )}
+                    Start sign-in
+                  </Button>
+                )
               ) : (
-                <Plus className="w-4 h-4" />
+                <Button
+                  type="button"
+                  onClick={() => void submitToken()}
+                  disabled={busy || !token.trim()}
+                >
+                  {busy ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Plus className="w-4 h-4" />
+                  )}
+                  Add account
+                </Button>
               )}
-              Add account
-            </Button>
+            </>
           )}
         </DialogFooter>
       </DialogContent>

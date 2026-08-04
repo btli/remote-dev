@@ -3,20 +3,24 @@
 /**
  * One row of the Claude Accounts dashboard. [remote-dev-0yix / remote-dev-n4x4.6]
  *
- * Renders an ACCOUNT (a Claude subscription), not an agent profile: label
- * (alias → email → "Unnamed account"), email, organization, rate-limit tier,
- * auth health (`authHealthy` + `authMethod` + a relative `lastVerifiedAt`),
- * 5h / 7d utilization bars, a live reset countdown, a status badge, and pool
- * memberships.
+ * Renders an ACCOUNT (a Claude subscription or API key), not an agent profile:
+ * label (alias → email → "Unnamed account"), email, organization, rate-limit
+ * tier, auth health (`authHealthy` + `authMethod` + a relative
+ * `lastVerifiedAt`), 5h / 7d utilization bars, a live reset countdown, a
+ * status badge, and pool memberships.
  *
  * Actions: Verify (re-read identity via `claude auth status --json` plus the
  * server's network validity probe — when the response reports
  * `tokenValid: false` the row surfaces the `tokenError` diagnosis through its
  * error display instead of only flipping the health badge [remote-dev-307w]),
  * Rename (PATCH the alias), Remove (DELETE, behind a confirm), plus the "Mark
- * available" manual limit override for a limited account. Tokens are never
- * displayed or requested here — the account is token-free on the wire
- * (`hasToken` only).
+ * available" manual limit override for a limited account. A healthy
+ * subscription without a separate usage credential replaces both usage and
+ * status columns with the honest "Usage tracking off" state and hands the
+ * token-free account projection to the reusable setup flow. API-key accounts,
+ * credentialed subscriptions, and auth-unhealthy accounts preserve the prior
+ * bars/status display. Tokens are never displayed or requested here — the
+ * account is token-free on the wire (`hasToken` and `usageCredential` only).
  *
  * Presentational-ish — the parent owns the usage fetch, the live clock, and
  * the limit-state overlay; this row owns only its own action requests.
@@ -75,6 +79,8 @@ interface ClaudeAccountRowProps {
   /** All of the user's pools, to resolve membership ids → names. */
   pools: ClaudePoolSummary[];
   onMarkAvailable: (accountId: string) => Promise<void>;
+  /** Starts usage credential setup for this token-free account projection. */
+  onEnableUsage: (account: ClaudeUsageAccount) => void;
   /** Called after verify / rename / remove so the parent can refetch. */
   onChanged: () => void;
 }
@@ -131,6 +137,7 @@ export function ClaudeAccountRow({
   now,
   pools,
   onMarkAvailable,
+  onEnableUsage,
   onChanged,
 }: ClaudeAccountRowProps) {
   const [marking, setMarking] = useState(false);
@@ -143,6 +150,10 @@ export function ClaudeAccountRow({
   const [error, setError] = useState<string | null>(null);
 
   const limited = isLimitedNow(limitState);
+  const usageTrackingOff =
+    account.accountKind === "subscription" &&
+    account.authHealthy &&
+    !account.usageCredential;
   const countdown = formatResetCountdown(limitState.effectiveResetAt, now);
   const verifiedAge = formatRelativeAge(account.lastVerifiedAt, now);
 
@@ -338,21 +349,40 @@ export function ClaudeAccountRow({
         )}
       </div>
 
-      {/* Usage bars */}
-      <div className="grid grid-cols-2 gap-3">
-        <UsageBar label="5h" pct={limitState.window5hPct} />
-        <UsageBar label="7d" pct={limitState.window7dPct} />
-      </div>
-
-      {/* Status + countdown */}
-      <div className="flex flex-col gap-1 min-w-0">
-        <LimitStatusBadge state={limitState} now={now} />
-        {limited && countdown && (
-          <span className="text-[11px] text-muted-foreground tabular-nums">
-            resets in {countdown}
+      {/* Usage/status, or the honest missing-credential state. */}
+      {usageTrackingOff ? (
+        <div className="col-span-2 flex items-center justify-between gap-3">
+          <span className="text-xs text-muted-foreground">
+            Usage tracking off
           </span>
-        )}
-      </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => onEnableUsage(account)}
+            className="h-7 shrink-0 text-xs"
+          >
+            Enable usage tracking
+          </Button>
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <UsageBar label="5h" pct={limitState.window5hPct} />
+            <UsageBar label="7d" pct={limitState.window7dPct} />
+          </div>
+
+          {/* Status + countdown */}
+          <div className="flex flex-col gap-1 min-w-0">
+            <LimitStatusBadge state={limitState} now={now} />
+            {limited && countdown && (
+              <span className="text-[11px] text-muted-foreground tabular-nums">
+                resets in {countdown}
+              </span>
+            )}
+          </div>
+        </>
+      )}
 
       {/* Actions */}
       <div className="flex flex-col items-end gap-1">

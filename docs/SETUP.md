@@ -508,23 +508,29 @@ RDV_INSTANCE_SLUG=
 # Claude usage-limit poller — OFF unless you set it to "1" (or true/on/yes).
 # Unset, empty, or anything unrecognized leaves it off.
 #
-# What it does: every ~10 minutes, for each Claude ACCOUNT, the server issues a
-# free GET to Anthropic's structured usage endpoint using that account's stored
-# OAuth token. No message is sent and no quota is consumed. It is the ONLY
+# What it does: every ~10 minutes, the server considers each Claude subscription
+# account. It contacts Anthropic only for accounts whose separate usage OAuth
+# credential has been enabled in Settings → Claude Accounts. This credential
+# carries the required user:profile scope and is refreshed server-side; the
+# long-lived `claude setup-token` used to launch sessions is never used as a
+# fallback. Accounts without usage tracking are skipped and show no proactive
+# usage data. The GET sends no message and consumes no quota. It is the ONLY
 # source of per-model `weekly_scoped` windows — the data that lets account
 # rotation skip an account whose Fable/Opus/... weekly window is exhausted while
 # the subscription itself still reports "available". Subscription accounts only.
+#
+# Enabling an account's usage credential while this flag is off can save one
+# immediate validation snapshot, but no scheduled refresh follows. That reading
+# will go stale; the usage-tracking dialog reports the disabled polling state.
 #
 # Why it is opt-in rather than on: enabling it makes your server contact a third
 # party on a timer using stored user credentials. That is a choice an operator
 # should make deliberately, not inherit from an unchanged config file. Reactive
 # scrollback detection works without this flag and is always on.
 #
-# Expected cadence: Anthropic rate-limits long-lived `claude setup-token`
-# credentials on this endpoint to roughly ONE read per hour per token (429 +
-# retry-after). The sweep aligns each account's next poll to that reset, so
-# usage refreshes about hourly per account — the dashboard's 5h/7d bars are not
-# realtime, and the first data appears up to an hour after enabling.
+# A 429 with retry-after reschedules only that account just after the reported
+# reset plus jitter. Other failures use bounded per-account backoff. A missing
+# usage credential is a deliberate skip, not a polling failure.
 #
 # Uncomment to enable:
 # RDV_CLAUDE_USAGE_POLL_ENABLED=1

@@ -1,6 +1,16 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+const logger = vi.hoisted(() => ({
+  warn: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
+  debug: vi.fn(),
+  trace: vi.fn(),
+}));
+
+vi.mock("@/lib/logger", () => ({ createLogger: () => logger }));
+
 // ── Mocks (declared before importing the SUT) ──────────────────────────────
 
 vi.mock("@/db", () => ({
@@ -19,6 +29,15 @@ vi.mock("@/infrastructure/external/anthropic-usage-adapter", () => ({
   fetchClaudeUsage: vi.fn(),
 }));
 
+vi.mock("@/infrastructure/external/anthropic-oauth-refresh", () => ({
+  getFreshUsageAccessToken: vi.fn(),
+}));
+
+vi.mock("@/services/claude-account-service", () => ({
+  CLAUDE_OAUTH_TOKEN_ENV: "CLAUDE_CODE_OAUTH_TOKEN",
+  resolveAccountEnv: vi.fn(),
+}));
+
 const pollEnabled = { value: true };
 vi.mock("./poll-config", () => ({
   isUsagePollEnabled: () => pollEnabled.value,
@@ -26,17 +45,26 @@ vi.mock("./poll-config", () => ({
 
 import { db } from "@/db";
 import { fetchClaudeUsage } from "@/infrastructure/external/anthropic-usage-adapter";
+import { getFreshUsageAccessToken } from "@/infrastructure/external/anthropic-oauth-refresh";
+import { resolveAccountEnv } from "@/services/claude-account-service";
 import {
   isUsageLimitRateLimited,
   type LimitDetectionResult,
   type UsageLimitRateLimited,
 } from "@/application/ports/UsageLimitGateway";
-import { UsageEndpointPoller } from "./UsageEndpointPoller";
+import {
+  UsageEndpointPoller,
+  usageSnapshotToLimitDetectionResult,
+} from "./UsageEndpointPoller";
 
 const claudeAccountsFindFirst = db.query.claudeAccounts.findFirst as ReturnType<
   typeof vi.fn
 >;
 const fetchUsageMock = fetchClaudeUsage as unknown as ReturnType<typeof vi.fn>;
+const getFreshUsageAccessTokenMock = getFreshUsageAccessToken as ReturnType<
+  typeof vi.fn
+>;
+const resolveAccountEnvMock = resolveAccountEnv as ReturnType<typeof vi.fn>;
 
 /**
  * Stand-in for the account→credential resolution. Never a real token shape —
@@ -108,6 +136,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   pollEnabled.value = true;
   tokenReader = vi.fn().mockResolvedValue(TOKEN);
+  getFreshUsageAccessTokenMock.mockResolvedValue(TOKEN);
 });
 
 describe("UsageEndpointPoller.supports", () => {
@@ -125,6 +154,56 @@ describe("UsageEndpointPoller.supports", () => {
   });
 });
 
+describe("usageSnapshotToLimitDetectionResult", () => {
+  it("purely normalizes an already-validated snapshot for immediate persistence", () => {
+    const reset5h = new Date("2026-08-03T12:00:00Z");
+    const scopedReset = new Date("2026-08-09T00:00:00Z");
+
+    const result = usageSnapshotToLimitDetectionResult(
+      "acct-captured",
+      makeSnapshot({
+        window5hPct: 100,
+        window7dPct: 45,
+        resetAt5h: reset5h,
+        limits: [
+          {
+            kind: "weekly_scoped",
+            group: "weekly",
+            percent: 82,
+            severity: "elevated",
+            resetAt: scopedReset,
+            scopeModel: "Mythos",
+            scopeSurface: "code",
+            isActive: true,
+          },
+        ],
+      })
+    );
+
+    expect(result).toEqual({
+      accountId: "acct-captured",
+      isLimited: true,
+      resetAt5h: reset5h,
+      resetAt7d: null,
+      window5hPct: 100,
+      window7dPct: 45,
+      source: "poller",
+      windows: [
+        {
+          kind: "weekly_scoped",
+          group: "weekly",
+          percent: 82,
+          severity: "elevated",
+          resetsAt: scopedReset,
+          scopeModel: "Mythos",
+          scopeSurface: "code",
+          isActive: true,
+        },
+      ],
+    });
+  });
+});
+
 describe("UsageEndpointPoller.fetchLimitState", () => {
   it("returns null immediately when the flag is off (no DB/network)", async () => {
     pollEnabled.value = false;
@@ -139,6 +218,19 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
   });
 
   describe("subscription", () => {
+    it("uses only the fresh independent usage credential by default", async () => {
+      claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
+      fetchUsageMock.mockResolvedValue(
+        ok(makeSnapshot({ window5hPct: 20, window7dPct: 30 }))
+      );
+
+      await new UsageEndpointPoller().fetchLimitState(TARGET);
+
+      expect(getFreshUsageAccessTokenMock).toHaveBeenCalledWith("acct-1", "u1");
+      expect(resolveAccountEnvMock).not.toHaveBeenCalled();
+      expect(fetchUsageMock).toHaveBeenCalledWith(TOKEN, "subscription");
+    });
+
     it("reads the ACCOUNT's decrypted token, probes, and maps the 5h/7d snapshot", async () => {
       claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
       const reset5h = new Date("2025-06-13T15:00:00Z");
@@ -155,9 +247,8 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
       const poller = makePoller();
       const result = await poller.fetchLimitState(TARGET);
 
-      // [remote-dev-n4x4.4] The credential comes from the account (via
-      // resolveAccountEnv), NOT from a `.claude/.credentials.json` file — that
-      // path does not exist on macOS and left the poller permanently inert.
+      // The injected seam stands in for the account's independent usage OAuth
+      // credential; session setup-token resolution is deliberately separate.
       expect(tokenReader).toHaveBeenCalledWith("acct-1", "u1");
       expect(fetchUsageMock).toHaveBeenCalledWith(TOKEN, "subscription");
       expect(result).toEqual({
@@ -193,6 +284,10 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
 
       expect(result).toBeNull();
       expect(fetchUsageMock).not.toHaveBeenCalled();
+      expect(logger.debug).toHaveBeenCalledWith(
+        "Usage poll skipped because no fresh usage credential was available",
+        { accountId: "acct-1" }
+      );
     });
 
     it("returns null when the adapter reports no data", async () => {
@@ -205,9 +300,22 @@ describe("UsageEndpointPoller.fetchLimitState", () => {
       expect(result).toBeNull();
     });
 
+    it("returns null when the usage credential is forbidden", async () => {
+      claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
+      fetchUsageMock.mockResolvedValue({ outcome: "forbidden" });
+
+      const result = await makePoller().fetchLimitState(TARGET);
+
+      expect(result).toBeNull();
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Usage credential was forbidden by the usage endpoint",
+        { accountId: "acct-1" }
+      );
+    });
+
     it("passes a rate-limited outcome through as a typed signal, not null", async () => {
       // [remote-dev-u7df] The 429's retry-after is the only thing that names
-      // the quota reset — it must reach the sweep, which schedules the next
+      // the retry instant — it must reach the sweep, which schedules the next
       // attempt from it instead of exponential backoff.
       claudeAccountsFindFirst.mockResolvedValue({ accountKind: "subscription" });
       const retryAt = new Date(Date.now() + 3578_000);
