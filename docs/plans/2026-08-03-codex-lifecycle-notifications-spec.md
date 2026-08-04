@@ -1,13 +1,13 @@
 # Codex Lifecycle Status and Notifications — Specification
 
 **Date:** 2026-08-03
-**Status:** Proposed
+**Status:** Phase 1 implemented in PR #454; durable outbox/health UI remain follow-up work
 **Issue:** `remote-dev-dexs`
 **Implementation plan:** `docs/plans/2026-08-03-codex-lifecycle-notifications-plan.md`
 
 ## Summary
 
-Remote Dev treats Codex as a first-class agent at launch and resume time, but not at lifecycle time. Hook installation and validation explicitly return early for every provider except Claude. As a result, a Codex session cannot tell Remote Dev that a turn started, needs approval, is compacting, completed, or ended.
+Before this change, Remote Dev treated Codex as a first-class agent at launch and resume time, but not at lifecycle time. Hook installation and validation explicitly returned early for every provider except Claude. As a result, a Codex session could not tell Remote Dev that a turn started, needed approval, was compacting, completed, or ended.
 
 The fix is not a Codex-only collection of callbacks. Remote Dev should introduce one provider-neutral lifecycle ingestion path, adapt Claude and Codex payloads into that contract, and make tmux process exit an authoritative fallback. Lifecycle events must be durable, idempotent, ordered, observable, and safe to deliver more than once.
 
@@ -32,7 +32,10 @@ Codex also requires successful `Stop` and `SubagentStop` hooks to emit valid JSO
 
 ### 3. Process exit is not a durable error path
 
-The tmux `pane-exited` callback calls `/internal/agent-exit` without `#{pane_dead_status}`. The endpoint broadcasts an `agent_exited` message only to attached clients; it does not persist the status through `markAgentExited()`, broadcast `agent_activity_status`, or create an error/completion notification.
+The old tmux `pane-exited` callback called `/internal/agent-exit` without a
+reliable status or signal. The endpoint broadcast an `agent_exited` message only
+to attached clients; it did not persist the status through `markAgentExited()`,
+broadcast `agent_activity_status`, or create an error/completion notification.
 
 Consequences:
 
@@ -173,6 +176,17 @@ Constraints:
 
 ## Durable Idempotency and Ordering
 
+> **Phase 1 implementation note.** The complete normalized lifecycle ledger and
+> leased outbox below remain the target design tracked in follow-up issues. PR
+> #454 implements the immediately required guarantees with two smaller
+> transactional receipt tables (`agent_status_delivery` and
+> `notification_delivery`) plus `terminal_session.agent_exit_notification_at`
+> as durable pending intent. Status state and its receipt commit atomically;
+> exact retries can repair downstream notification storage without rewriting or
+> rebroadcasting stale state. Pending exit intent has no replay age cutoff, while
+> completed delivery receipts are retained for 30 days. PostgreSQL serializes
+> the empty coalescing-group boundary with a transaction advisory lock.
+
 Add an `agent_lifecycle_event` table with unique `(session_id, delivery_id)` and `(session_id, idempotency_key)` constraints. The table stores only the normalized, sanitized boundary event and its processing outcome. `delivery_id` absorbs transport retries; the server-derived idempotency key absorbs callbacks that have stable provider identity.
 
 Suggested columns:
@@ -199,7 +213,8 @@ The current arrival-time guard remains useful but is extended with source and ge
 1. Duplicate event keys are acknowledged without repeating a write or notification.
 2. Events from an older process generation never overwrite the current generation.
 3. `process_exited(error)` and `session_ended` are terminal within a generation.
-4. `subagent_finished` cannot resurrect `idle`, `ended`, or `error`.
+4. `subagent_finished` may replace only an active `running` or `subagent` state;
+   it cannot clear `waiting`, `compacting`, `idle`, `error`, or `ended`.
 5. A new `turn_started` with a new turn id may transition `idle` or `waiting` back to `running`.
 6. `running` from `PostToolUse` may clear `waiting` only within the same active turn.
 7. Provider `occurredAt` is diagnostic only; server `receivedAt` remains the ordering clock.
@@ -237,6 +252,8 @@ Codex hooks are written to the active `$CODEX_HOME/hooks.json`. Resolve that roo
 
 The PreToolUse handler inspects `tool_name` once rather than installing overlapping “running” and “attention” hook groups, which would race because Codex launches all matching hooks concurrently. `request_user_input` and any verified equivalent question tool map to `attention_required`; `PostToolUse` maps back to `running` after the response.
 
+Protected `git commit` and `git push` invocations are parsed across normal Git global options, shell separators/wrappers, and command-local identity overrides. The authenticated hook resolves its project from the owner-scoped session record and calls the owner-checked project policy endpoint before best-effort peer work. A policy lookup error, invalid response, or deadline expiry denies the protected command; it is never interpreted as approval.
+
 `SessionStart(source=compact)` is normalized as `compaction_finished`, because Codex runs it after compaction before the continuation request.
 
 ### Hook output codecs
@@ -267,7 +284,11 @@ Install rules:
 1. Parse the existing file. Invalid JSON is an error; never replace an invalid user file with a fresh object.
 2. Remove only entries containing the exact Remote Dev marker/version prefix.
 3. Preserve unknown top-level keys, hook events, matchers, and commands byte-for-byte where JSON semantics allow.
-4. Append deterministic Remote Dev entries.
+4. Insert deterministic Remote Dev entries once. Codex tracks trust with each
+   hook command's hash, so repair or upgrade must preserve every user hook
+   definition unchanged while replacing/removing only Remote Dev-owned entries.
+   Do not leave inert placeholder commands behind: each would be a new untrusted
+   hook with no lifecycle value.
 5. Write atomically through a same-directory temporary file and rename; use restrictive permissions.
 6. Skip the write when the semantic result is unchanged.
 7. Validate both new and resumed sessions.
@@ -276,7 +297,11 @@ Install rules:
 
 ## Trust, Capability, and Health
 
-Codex requires non-managed command hooks to be reviewed and trusted. Remote Dev must not write the trust store directly and must not automatically use `--dangerously-bypass-hook-trust`, because that flag bypasses trust for every enabled hook, not only Remote Dev hooks.
+Codex requires non-managed command hooks to be reviewed and trusted. The trust
+record is tied to a command hash (`trusted_hash`), not its group/array position.
+Remote Dev must not write the trust store directly and must not automatically
+use `--dangerously-bypass-hook-trust`, because that flag bypasses trust for every
+enabled hook, not only Remote Dev hooks.
 
 Health is multi-stage:
 
@@ -310,7 +335,13 @@ Processing rules:
 - Zero exit: persist `ended`, one passive `agent_exited` event, and WebSocket updates.
 - Unknown exit code: use liveness semantics (`agent_stuck`) only after confirming the pane/process is gone.
 - A duplicate PTY/tmux exit callback is absorbed by the process-generation idempotency key.
-- The liveness sweep remains a reconciliation backstop and routes findings through the same lifecycle service.
+- Exact callback notification delivery and liveness repair share a
+  `(session, generation)` critical section through durable notification storage.
+- The liveness sweep persists exit intent but does not immediately materialize a
+  notification. It gives the exact callback longer than its bounded transport
+  retry window, then repairs any still-undelivered intent on a later sweep. This
+  preserves focus-aware push policy and WebSocket notification delivery when the
+  callback is merely delayed.
 
 ## Notification Semantics
 
@@ -378,11 +409,21 @@ Diagnostics should show the active config path, desired/installed config version
 
 ## Rollout and Rollback
 
-1. Land contract, adapters, and tests behind `RDV_CODEX_HOOKS_ENABLED=0`.
-2. Enable in development and run generated-config plus live Codex smoke tests.
-3. Enable by default for Codex versions that report hooks stable/enabled.
+1. Land contract, adapters, and tests with an explicit
+   `RDV_CODEX_HOOKS_ENABLED=0` rollback.
+2. Run generated-config and isolated live Codex smoke tests.
+3. Enable by default after the supported Codex CLI reports hooks stable and the
+   live smoke demonstrates actual delivery.
 4. Keep Claude on its existing adapter until parity tests pass, then route Claude through the shared ingestion service without changing its installed wire format.
 5. Roll back by disabling the feature flag. Installer/uninstaller removes only Remote Dev Codex entries; user hooks remain.
+
+The Phase 1 implementation completed steps 1–3 with Codex CLI 0.146.0. Its live
+smoke delivered SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop,
+and SessionEnd through the installed configuration. PermissionRequest remains
+fixture-tested because non-interactive `codex exec` disables approvals. The
+authenticated, generation-bound tmux fallback is separately exercised against a
+real tmux server, including exact non-zero exit status and cross-session
+isolation.
 
 ## Acceptance Criteria
 

@@ -80,7 +80,7 @@ export class CreateSessionUseCase {
         });
         workingPath = result.worktreePath;
         worktreeBranch = result.branchName;
-        createdWorktree = true;
+        createdWorktree = result.created;
 
         // Copy .env files
         await this.worktreeGateway.copyEnvFiles(

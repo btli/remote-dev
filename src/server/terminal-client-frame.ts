@@ -11,8 +11,8 @@ export interface TerminalClientProtocolMessage {
 }
 
 export interface TerminalClientFrameHandlers {
-  onProtocolMessage(message: TerminalClientProtocolMessage): void;
-  onLegacyInput(data: string): void;
+  onProtocolMessage(message: TerminalClientProtocolMessage): void | Promise<void>;
+  onLegacyInput(data: string): void | Promise<void>;
 }
 
 function looksLikeControlFrame(raw: string): boolean {
@@ -32,25 +32,30 @@ function looksLikeControlFrame(raw: string): boolean {
 export function routeTerminalClientFrame(
   raw: string,
   handlers: TerminalClientFrameHandlers,
-): void {
+): Promise<void> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw) as unknown;
   } catch {
-    if (!looksLikeControlFrame(raw)) handlers.onLegacyInput(raw);
-    return;
+    return !looksLikeControlFrame(raw)
+      ? Promise.resolve(handlers.onLegacyInput(raw))
+      : Promise.resolve();
   }
 
   // Preserve the legacy handler's historical `null` behavior: accessing
   // `type` on parsed null used to fall through to raw PTY input.
   if (parsed === null) {
-    handlers.onLegacyInput(raw);
-    return;
+    return Promise.resolve(handlers.onLegacyInput(raw));
   }
-  if (typeof parsed !== "object" || Array.isArray(parsed)) return;
+  if (typeof parsed !== "object" || Array.isArray(parsed)) return Promise.resolve();
   try {
-    handlers.onProtocolMessage(parsed as TerminalClientProtocolMessage);
+    return Promise.resolve(
+      handlers.onProtocolMessage(parsed as TerminalClientProtocolMessage),
+    ).catch(() => {
+      // Async protocol errors are rejected, never reclassified as raw input.
+    });
   } catch {
-    // Protocol errors are rejected, never reclassified as raw terminal input.
+    // A synchronous handler failure is also a consumed control frame.
+    return Promise.resolve();
   }
 }

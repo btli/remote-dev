@@ -4,7 +4,7 @@
 import * as os from "node:os";
 import { db } from "@/db";
 import { terminalSessions, githubRepositories, apiKeys } from "@/db/schema";
-import { eq, and, asc, desc, inArray } from "drizzle-orm";
+import { eq, and, asc, desc, inArray, sql } from "drizzle-orm";
 import type {
   TerminalSession,
   CreateSessionInput,
@@ -32,6 +32,8 @@ import { githubAccountRepository, gitCredentialManager } from "@/infrastructure/
 import { GitHubAccountEnvironment } from "@/domain/value-objects/GitHubAccountEnvironment";
 import { requestedModelFromAgentFlags } from "@/domain/value-objects/ClaudeModelIdentity";
 import { createApiKey } from "@/services/api-key-service";
+import { buildAgentExitHookCommand } from "@/services/agent-exit-hook";
+import { prepareAgentLaunch } from "@/services/agent-launch-preparation";
 import { createLogger } from "@/lib/logger";
 import {
   buildClipboardSessionEnv,
@@ -632,8 +634,9 @@ export async function createSessionWithDedupFlag(
     }
   }
 
-  // Track the *actually used* worktree repo path + whether a worktree block
-  // ran, so the DB-insert failure cleanup below doesn't depend on the client
+  // Track the *actually used* worktree repo path + whether this invocation
+  // created (rather than reused) it, so rollback never deletes someone else's
+  // work and DB-insert cleanup doesn't depend on the client
   // sending `input.projectPath`. The folder-context block resolves the repo
   // path server-side (from folder preferences), so the old
   // `repoPath = input.projectPath` was null whenever the client omitted the
@@ -724,7 +727,7 @@ export async function createSessionWithDedupFlag(
     // Record the repo we created the worktree from (server-resolved, not
     // necessarily input.projectPath) so failure cleanup can remove it.
     resolvedWorktreeRepoPath = repoPath;
-    didCreateWorktree = true;
+    didCreateWorktree = result.created;
 
     // Update input for database record
     if (repoId) {
@@ -755,7 +758,7 @@ export async function createSessionWithDedupFlag(
     );
     workingPath = result.worktreePath;
     resolvedWorktreeRepoPath = input.projectPath;
-    didCreateWorktree = true;
+    didCreateWorktree = result.created;
   }
 
   // The startup command (when shell-typed plugins still want one) defaults
@@ -810,12 +813,13 @@ export async function createSessionWithDedupFlag(
     provider: effectiveAgentProvider,
     terminalType: input.terminalType,
   });
-  // Auto-create API key for agent runtimes so they can make authenticated API
-  // calls back to the API server (e.g. /internal/peers/*, /internal/tasks/*).
-  // Gated on isAgentRuntime — SSH sessions don't run agent hook scripts and
-  // would never use the key.
+  // Every lifecycle pane needs a session-bound key: agent hooks use it for
+  // status/peer calls and tmux's pane-died callback uses it to authenticate the
+  // authoritative process exit. This includes non-agent plugins that opt into
+  // exit events (for example SSH), because localhost alone is not an ownership
+  // boundary on a multi-user host.
   let agentApiKey: string | undefined;
-  if (isAgentRuntime) {
+  if (isAgentSession) {
     try {
       const keyName = `agent-session-${sessionId}`;
       // Delete any stale keys for this session before creating a new one
@@ -824,7 +828,23 @@ export async function createSessionWithDedupFlag(
       agentApiKey = keyResult.key;
     } catch (error) {
       log.error("Failed to create API key for agent session", { sessionId, error: String(error) });
-      // Non-fatal: agent can still work without API key
+      if (didCreateWorktree && resolvedWorktreeRepoPath && workingPath) {
+        await WorktreeService.removeWorktree(
+          resolvedWorktreeRepoPath,
+          workingPath,
+          true,
+        ).catch((cleanupError) => {
+          log.error("Failed to clean up worktree after callback-key failure", {
+            sessionId,
+            error: String(cleanupError),
+          });
+        });
+      }
+      throw new SessionServiceError(
+        "Failed to create the authenticated lifecycle callback key",
+        "AGENT_CALLBACK_SETUP_FAILED",
+        sessionId,
+      );
     }
   }
 
@@ -856,9 +876,80 @@ export async function createSessionWithDedupFlag(
     }
   }
 
+  /**
+   * Roll back resources allocated before a terminal_session row owns them.
+   * `killTmux` is intentionally unconditional when requested: tmux may have
+   * created the session and then failed while configuring one of its options.
+   */
+  const cleanupUnownedSessionResources = async (options: {
+    context: string;
+    killTmux?: boolean;
+    removeOwnedWorktree?: boolean;
+  }): Promise<void> => {
+    const cleanupPromises: Promise<void>[] = [];
+    if (options.killTmux) {
+      // Stop any process using the worktree before trying to detach/remove it.
+      await TmuxService.killSession(tmuxSessionName).catch((cleanupError) => {
+        log.error(`Failed to clean up tmux after ${options.context}`, {
+          sessionId,
+          tmuxSessionName,
+          error: String(cleanupError),
+        });
+      });
+    }
+    cleanupPromises.push(
+      db.delete(apiKeys).where(
+        and(
+          eq(apiKeys.userId, userId),
+          eq(apiKeys.name, `agent-session-${sessionId}`),
+        ),
+      ).then(() => undefined).catch((cleanupError) => {
+        log.error(`Failed to revoke lifecycle key after ${options.context}`, {
+          sessionId,
+          error: String(cleanupError),
+        });
+      }),
+    );
+    if (
+      options.removeOwnedWorktree !== false &&
+      didCreateWorktree &&
+      resolvedWorktreeRepoPath &&
+      workingPath
+    ) {
+      cleanupPromises.push(
+        WorktreeService.removeWorktree(
+          resolvedWorktreeRepoPath,
+          workingPath,
+          true,
+        ).then(() => undefined).catch((cleanupError) => {
+          log.error(`Failed to remove worktree after ${options.context}`, {
+            sessionId,
+            worktreePath: workingPath,
+            error: String(cleanupError),
+          });
+        }),
+      );
+    }
+    if (Object.keys(modelProxyEnv).length > 0) {
+      cleanupPromises.push(
+        import("@/services/model-proxy-token-service")
+          .then(({ revokeTokensForSession }) => revokeTokensForSession(sessionId))
+          .then(() => undefined)
+          .catch((cleanupError) => {
+            log.error(`Failed to revoke model-proxy token after ${options.context}`, {
+              sessionId,
+              error: String(cleanupError),
+            });
+          }),
+      );
+    }
+    await Promise.all(cleanupPromises);
+  };
+
   // Every local tmux session needs the session + terminal callback address for
-  // rdv clipboard copy/paste. Agent-only API credentials remain gated on
-  // isAgentRuntime, and SSH receives none of these host-local values.
+  // rdv clipboard copy/paste. SSH does not receive these host-local clipboard
+  // values, but lifecycle-capable panes still receive authenticated callback
+  // identity below so their pane-exit hook can report an exact generation.
   const localTerminalEnv: Record<string, string> =
     plugin.useTmux && terminalType !== "ssh"
       ? {
@@ -868,20 +959,29 @@ export async function createSessionWithDedupFlag(
             : { RDV_TERMINAL_PORT: process.env.TERMINAL_PORT ?? "6002" }),
         }
       : {};
+  const lifecycleEnv: Record<string, string> = isAgentSession
+    ? {
+        RDV_SESSION_ID: sessionId,
+        RDV_USER_ID: userId,
+        ...(isAgentRuntime ? { RDV_AGENT_PROVIDER: effectiveAgentProvider } : {}),
+        RDV_AGENT_GENERATION: "0",
+        ...(terminalSocket
+          ? { RDV_TERMINAL_SOCKET: terminalSocket }
+          : { RDV_TERMINAL_PORT: process.env.TERMINAL_PORT ?? "6002" }),
+        ...(agentApiKey ? { RDV_API_KEY: agentApiKey } : {}),
+        ...(isAgentRuntime
+          ? process.env.SOCKET_PATH
+            ? { RDV_API_SOCKET: process.env.SOCKET_PATH }
+            : { RDV_API_PORT: process.env.PORT ?? "6001" }
+          : {}),
+        ...(isAgentRuntime && effectiveProfileId
+          ? { RDV_PROFILE_ID: effectiveProfileId }
+          : {}),
+      }
+    : {};
   const rdvEnv: Record<string, string> = {
     ...localTerminalEnv,
-    ...(isAgentRuntime
-      ? {
-          ...(process.env.SOCKET_PATH
-            ? { RDV_API_SOCKET: process.env.SOCKET_PATH }
-            : { RDV_API_PORT: process.env.PORT ?? "6001" }),
-          ...(agentApiKey ? { RDV_API_KEY: agentApiKey } : {}),
-          // [remote-dev-3b3l] Expose the active profile id so future hooks / the
-          // usage poller can attribute agent output back to a profile. Rides
-          // `rdvEnv` (highest precedence) like the other RDV_* vars.
-          ...(effectiveProfileId ? { RDV_PROFILE_ID: effectiveProfileId } : {}),
-        }
-      : {}),
+    ...lifecycleEnv,
   };
 
   // Install agent hooks and MCP config BEFORE tmux session creation so the
@@ -903,7 +1003,29 @@ export async function createSessionWithDedupFlag(
       // override (e.g. `HOME=/foo claude`) so hooks could be installed in
       // the wrapped HOME directory. That path is gone with `startupCommand`
       // — wrapper aliases install their own configs.
-      await ensureAgentConfig(new Set([configDir]), effectiveAgentProvider, sessionId, rdvEnv);
+      // Use the same config-location variables that the launched CLI receives.
+      // Folder env intentionally wins over profile isolation, matching
+      // buildInitialEnv() below; RDV callback vars are added on top.
+      const hookEnv = {
+        ...(sessionConfig.environment ?? {}),
+        ...(profileEnv ?? {}),
+        ...(folderEnv ?? {}),
+        ...rdvEnv,
+      };
+      try {
+        await ensureAgentConfig(
+          new Set([configDir]),
+          effectiveAgentProvider,
+          sessionId,
+          hookEnv,
+        );
+      } catch (error) {
+        // Hook installation intentionally fails closed for invalid/unwritable
+        // user config. At this point the worktree and lifecycle key have
+        // already been provisioned, but no session row owns them yet.
+        await cleanupUnownedSessionResources({ context: "hook-install failure" });
+        throw error;
+      }
     }
   }
 
@@ -946,6 +1068,7 @@ export async function createSessionWithDedupFlag(
   // `useTmux` flag. File/browser sessions opt out — no shell command,
   // no PTY. `SessionConfig.useTmux` is kept in lock-step for callers
   // that still read from the returned config.
+  let deferredPaneOwnerLaunch: { command: string; env: Record<string, string> } | null = null;
   if (plugin.useTmux) {
     const gitCredentialEnv = await resolveGitCredentialEnv(sessionId, !!profile);
     const folderGitIdentityEnv = await resolveFolderGitIdentityEnv(userId, input.projectId);
@@ -1024,6 +1147,13 @@ export async function createSessionWithDedupFlag(
       }
       effectiveStartupCommand = verifiedCursorCommand;
     }
+    if (isAgentSession && effectiveStartupCommand) {
+      // Agent lifecycle creation deliberately starts with a bootstrap shell,
+      // so createSession receives no startupCommand. Add prompt suppression to
+      // that shell's actual spawn env before it can consume the later exec.
+      initialEnv.DISABLE_AUTO_UPDATE ??= "true";
+      initialEnv.DISABLE_UPDATE_PROMPT ??= "true";
+    }
     // [remote-dev-ipbo] Validate every candidate (the old HOME string fallback
     // was never checked) and always end on a real directory — createSession
     // now requires a cwd so `-c` is unconditionally passed to tmux.
@@ -1055,6 +1185,12 @@ export async function createSessionWithDedupFlag(
       }
     }
 
+    // Lifecycle sessions begin with a bootstrap shell. We install the
+    // authenticated pane-died hook now, persist the DB row below, and only then
+    // `exec` the real command so the agent owns the pane and even an immediate
+    // crash has a durable row to update.
+    const bootstrapOnly = isAgentSession && Boolean(effectiveStartupCommand);
+
     // Create the tmux session with initial environment for PTY spawn.
     // Info-level on purpose (remote-dev-ipbo): the dead-cwd incident was
     // invisible in logs — the cwd handed to tmux must be reconstructable.
@@ -1063,7 +1199,7 @@ export async function createSessionWithDedupFlag(
       await TmuxService.createSession(
         tmuxSessionName,
         effectiveCwd,
-        effectiveStartupCommand,
+        bootstrapOnly ? undefined : effectiveStartupCommand,
         Object.keys(initialEnv).length > 0 ? initialEnv : undefined,
         undefined, // historyLimit: default
         // Initial detached geometry (e.g. the wide Claude setup-token pane
@@ -1073,6 +1209,10 @@ export async function createSessionWithDedupFlag(
           : undefined
       );
     } catch (error) {
+      await cleanupUnownedSessionResources({
+        context: "tmux creation failure",
+        killTmux: true,
+      });
       if (error instanceof TmuxService.TmuxServiceError) {
         throw new SessionServiceError(
           `Failed to create tmux session: ${error.message}`,
@@ -1093,33 +1233,39 @@ export async function createSessionWithDedupFlag(
       }
     }
 
-    // Set up agent exit detection hook for agent-type sessions
-    // This allows the terminal server to be notified when the agent process exits
+    // Set up authenticated, session-local exit detection before launching the
+    // pane owner. remain-on-exit keeps the dead pane available for restart and
+    // pane-died exposes both pane_dead_status and pane_dead_signal reliably.
     if (isAgentSession) {
       try {
-        const exitUrl = `/internal/agent-exit?sessionId=${sessionId}`;
-        const curlCmd = terminalSocket
-          ? `curl --unix-socket '${terminalSocket}' -sS -X POST http://localhost${exitUrl}`
-          : `curl -sS -X POST http://localhost:${rdvEnv.RDV_TERMINAL_PORT}${exitUrl}`;
-        await TmuxService.setHook(
+        await TmuxService.configureAgentPaneLifecycle(
           tmuxSessionName,
-          "pane-exited",
-          `run-shell "${curlCmd} || true"`
+          buildAgentExitHookCommand({
+            sessionId,
+            tmuxSessionName,
+            generation: 0,
+            terminalSocket,
+            terminalPort: rdvEnv.RDV_TERMINAL_PORT,
+          }),
         );
       } catch (error) {
-        // Log but don't fail session creation - the session is already running
         log.error("Failed to set agent exit hook", { tmuxSessionName, error: String(error) });
+        await cleanupUnownedSessionResources({
+          context: "pane lifecycle setup failure",
+          killTmux: true,
+        });
+        throw new SessionServiceError(
+          "Failed to install the agent lifecycle callback",
+          "AGENT_CALLBACK_SETUP_FAILED",
+          sessionId,
+        );
       }
     }
-  }
 
-  // Track if we created a worktree so we can clean it up on failure. Both
-  // values are set inside the worktree blocks above (folder-context:
-  // server-resolved from folder preferences; explicit-path: the validated
-  // input.projectPath), so cleanup no longer silently skips when the client
-  // omits projectPath.
-  const createdWorktree = didCreateWorktree && branchName;
-  const repoPath = resolvedWorktreeRepoPath;
+    if (bootstrapOnly && effectiveStartupCommand) {
+      deferredPaneOwnerLaunch = { command: effectiveStartupCommand, env: initialEnv };
+    }
+  }
 
   // `terminalType`, `plugin` were resolved up-front; see the dedup +
   // plugin-delegation block near the top of createSession. [hgwo] The
@@ -1131,6 +1277,7 @@ export async function createSessionWithDedupFlag(
     : null;
 
   // Insert the database record - clean up tmux session and worktree if this fails
+  let insertedOwnSession = false;
   try {
     const now = new Date();
     const [session] = await db
@@ -1168,6 +1315,19 @@ export async function createSessionWithDedupFlag(
         updatedAt: now,
       })
       .returning();
+    insertedOwnSession = true;
+
+    if (deferredPaneOwnerLaunch) {
+      // Final strict repair at the process boundary. Earlier best-effort setup
+      // provides diagnostics; this prevents launching a provider that would be
+      // observably silent because its managed hook file could not be written.
+      await prepareAgentLaunch(deferredPaneOwnerLaunch.env);
+      await TmuxService.launchCommand(
+        tmuxSessionName,
+        deferredPaneOwnerLaunch.command,
+        { replaceShell: true },
+      );
+    }
 
     // Claim the project's registered ports for this live session. The runtime
     // port-proxy data-plane reads these claims to decide which ports are
@@ -1206,6 +1366,20 @@ export async function createSessionWithDedupFlag(
 
     return { session: mapDbSessionToSession(session), reused: false };
   } catch (error) {
+    if (insertedOwnSession) {
+      await db.delete(terminalSessions).where(
+        and(
+          eq(terminalSessions.id, sessionId),
+          eq(terminalSessions.userId, userId),
+        ),
+      ).catch((cleanupError) => {
+        log.error("Failed to remove session row after launch failure", {
+          sessionId,
+          error: String(cleanupError),
+        });
+      });
+      insertedOwnSession = false;
+    }
     // F7: race handling. When two concurrent createSession calls both pass
     // the initial SELECT (no existing match) and reach INSERT, the unique
     // index on (user_id, terminal_type, scope_key) makes one INSERT fail.
@@ -1236,46 +1410,25 @@ export async function createSessionWithDedupFlag(
           scopeKey: input.scopeKey,
         });
         // Clean up the tmux/worktree resources we allocated for the
-        // losing-side INSERT — the winner already owns its own. Mirrors the
-        // generic cleanup block below (same guard + .catch + log.error, run
-        // concurrently) so the race-recovery return path doesn't leak a
-        // worktree the loser may have created. Currently unreachable in
+        // losing-side INSERT — the winner already owns its own. The shared
+        // cleanup boundary keeps this return path from leaking a worktree the
+        // loser may have created. Currently unreachable in
         // practice (createWorktree sessions don't combine with scopeKey dedup),
         // but hardened to stay correct if they ever do. (remote-dev-u02r)
         //
         // SAFETY (codex finding 1): in a `scopeKey + createWorktree` race, the
         // loser can be handed the WINNER's worktree path — `createBranchWithWorktree`
-        // in worktree-service reuses an existing valid worktree when `git worktree
-        // add` fails and the target path is already a git repo (see "If the target
-        // path already exists as a valid git worktree, reuse it", ~line 466-471).
+        // in worktree-service can reuse the exact registered worktree when a
+        // concurrent `git worktree add` loses the race.
         // Force-removing that path would destroy the winner's ACTIVE worktree, so
         // skip removal when the winner row already points at the same path. The
         // session row stores the working path in `projectPath` (DB insert:
         // `projectPath: workingPath ?? null`).
-        const raceCleanup: Promise<void>[] = [
-          TmuxService.killSession(tmuxSessionName).catch(() => {
-            log.error("Failed to clean up orphaned tmux after race", {
-              tmuxSessionName,
-            });
-          }),
-        ];
-        if (
-          createdWorktree &&
-          repoPath &&
-          workingPath &&
-          existingAfterRace[0].projectPath !== workingPath
-        ) {
-          raceCleanup.push(
-            WorktreeService.removeWorktree(repoPath, workingPath, true)
-              .then(() => {}) // Discard result to match Promise<void> type
-              .catch(() => {
-                log.error("Failed to clean up orphaned worktree after race", {
-                  worktreePath: workingPath,
-                });
-              })
-          );
-        }
-        await Promise.all(raceCleanup);
+        await cleanupUnownedSessionResources({
+          context: "scope-key insert race",
+          killTmux: true,
+          removeOwnedWorktree: existingAfterRace[0].projectPath !== workingPath,
+        });
         return {
           session: mapDbSessionToSession(existingAfterRace[0]),
           reused: true,
@@ -1284,25 +1437,10 @@ export async function createSessionWithDedupFlag(
     }
 
     // SECURITY: Clean up orphaned resources if DB insert fails
-    const cleanupPromises: Promise<void>[] = [
-      // Clean up orphaned tmux session
-      TmuxService.killSession(tmuxSessionName).catch(() => {
-        log.error("Failed to clean up orphaned tmux session", { tmuxSessionName });
-      }),
-    ];
-
-    // Clean up orphaned worktree if we created one
-    if (createdWorktree && repoPath && workingPath) {
-      cleanupPromises.push(
-        WorktreeService.removeWorktree(repoPath, workingPath, true)
-          .then(() => {}) // Discard result to match Promise<void> type
-          .catch(() => {
-            log.error("Failed to clean up orphaned worktree", { worktreePath: workingPath });
-          })
-      );
-    }
-
-    await Promise.all(cleanupPromises);
+    await cleanupUnownedSessionResources({
+      context: "session persistence failure",
+      killTmux: true,
+    });
     throw error;
   }
 }
@@ -1508,7 +1646,8 @@ function supportsAgentLifecycle(session: TerminalSession): boolean {
 export async function markAgentExited(
   sessionId: string,
   userId: string,
-  exitCode: number | null
+  exitCode: number | null,
+  expectedGeneration?: number,
 ): Promise<TerminalSession | null> {
   const session = await getSession(sessionId, userId);
   if (!session || !supportsAgentLifecycle(session)) {
@@ -1522,18 +1661,24 @@ export async function markAgentExited(
       agentExitState: "exited",
       agentExitCode: exitCode,
       agentExitedAt: now,
+      agentExitNotificationAt: null,
       agentActivityStatus: exitCode != null && exitCode !== 0 ? "error" : "idle",
       // [remote-dev-1aa5] Stamp arrival time so a late stale hook write (older
       // statusAt) can't overwrite this authoritative lifecycle transition.
       agentActivityStatusAt: now.getTime(),
+      agentActivityOrder: now.getTime() * 1_000,
       updatedAt: now,
     })
-    .where(
-      and(
-        eq(terminalSessions.id, sessionId),
-        eq(terminalSessions.userId, userId)
-      )
-    )
+    .where(and(
+      eq(terminalSessions.id, sessionId),
+      eq(terminalSessions.userId, userId),
+      ...(expectedGeneration === undefined
+        ? []
+        : [
+            sql`COALESCE(${terminalSessions.agentRestartCount}, 0) = ${expectedGeneration}`,
+            sql`(${terminalSessions.agentExitState} IS NULL OR ${terminalSessions.agentExitState} IN ('running', 'restarting'))`,
+          ]),
+    ))
     .returning();
 
   return updated ? mapDbSessionToSession(updated) : null;
@@ -1552,21 +1697,28 @@ export async function markAgentRestarting(
   if (!session) return null;
   const plugin = TerminalTypeServerRegistry.get(session.terminalType);
   if (!plugin?.onSessionRestart) return null;
+  if (session.agentExitState !== "running" && session.agentExitState !== "exited") {
+    return null;
+  }
 
   const now = new Date();
   const [updated] = await db
     .update(terminalSessions)
     .set({
       agentExitState: "restarting",
+      agentExitNotificationAt: null,
       agentActivityStatus: "running",
       agentActivityStatusAt: now.getTime(),
+      agentActivityOrder: now.getTime() * 1_000,
       agentRestartCount: (session.agentRestartCount ?? 0) + 1,
       updatedAt: now,
     })
     .where(
       and(
         eq(terminalSessions.id, sessionId),
-        eq(terminalSessions.userId, userId)
+        eq(terminalSessions.userId, userId),
+        sql`COALESCE(${terminalSessions.agentRestartCount}, 0) = ${session.agentRestartCount ?? 0}`,
+        sql`${terminalSessions.agentExitState} IN ('running', 'exited')`,
       )
     )
     .returning();
@@ -1581,7 +1733,8 @@ export async function markAgentRestarting(
  */
 export async function markAgentRunning(
   sessionId: string,
-  userId: string
+  userId: string,
+  expectedGeneration?: number,
 ): Promise<TerminalSession | null> {
   const session = await getSession(sessionId, userId);
   if (!session || !supportsAgentLifecycle(session)) {
@@ -1589,23 +1742,34 @@ export async function markAgentRunning(
   }
 
   const now = new Date();
+  const runningUpdate = {
+    agentExitState: "running" as const,
+    agentExitCode: null,
+    agentExitedAt: null,
+    agentExitNotificationAt: null,
+    updatedAt: now,
+    ...(expectedGeneration === undefined
+      ? {
+          agentActivityStatus: "running" as const,
+          agentActivityStatusAt: now.getTime(),
+          agentActivityOrder: now.getTime() * 1_000,
+          lastActivityAt: now,
+        }
+      : {}),
+  };
   const [updated] = await db
     .update(terminalSessions)
-    .set({
-      agentExitState: "running",
-      agentExitCode: null,
-      agentExitedAt: null,
-      agentActivityStatus: "running",
-      agentActivityStatusAt: now.getTime(),
-      lastActivityAt: now,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(terminalSessions.id, sessionId),
-        eq(terminalSessions.userId, userId)
-      )
-    )
+    .set(runningUpdate)
+    .where(and(
+      eq(terminalSessions.id, sessionId),
+      eq(terminalSessions.userId, userId),
+      ...(expectedGeneration === undefined
+        ? []
+        : [
+            sql`COALESCE(${terminalSessions.agentRestartCount}, 0) = ${expectedGeneration}`,
+            sql`${terminalSessions.agentExitState} IN ('running', 'restarting')`,
+          ]),
+    ))
     .returning();
 
   return updated ? mapDbSessionToSession(updated) : null;
@@ -1744,6 +1908,11 @@ export async function resumeSession(
   // were installed.
   if (supportsAgentLifecycle(session)) {
     const agentProvider = (session.agentProvider ?? "claude") as AgentProviderType;
+    const resumeBinding = session.typeMetadata?.resumeBinding;
+    const resumeBindingEnv =
+      resumeBinding && typeof resumeBinding === "object" && !Array.isArray(resumeBinding)
+        ? (resumeBinding as { env?: Record<string, string> }).env ?? {}
+        : {};
     // [remote-dev-n4x4.6] Claude reads the real `~/.claude` (its
     // `CLAUDE_CONFIG_DIR` is deliberately unset), so refresh hooks THERE.
     // Other providers keep their per-profile config dir.
@@ -1757,25 +1926,47 @@ export async function resumeSession(
           ? (await AgentProfileService.getProfile(session.profileId, userId))
               ?.configDir
           : process.env.HOME;
+    // If an old profile row disappeared but the durable launch binding still
+    // identifies CODEX_HOME, that exact path is safe to repair. The installer
+    // uses CODEX_HOME directly; this fallback root is not written beneath.
+    const hookConfigDir =
+      configDir ?? (agentProvider === "codex" ? resumeBindingEnv.CODEX_HOME : undefined);
 
     // Refresh RDV + GitHub account env vars on resume (may be missing on older
     // sessions, or stale if the folder's account binding or OAuth token changed)
     try {
-      // Create a fresh API key for the resumed agent session
+      // Preserve the key already inherited by the live agent. Rotating it here
+      // invalidates callbacks from that process because changing tmux's session
+      // environment does not mutate an existing process environment. Only mint
+      // a replacement for pre-feature sessions that genuinely have no key.
       let agentApiKey: string | undefined;
       try {
-        const keyName = `agent-session-${sessionId}`;
-        // Delete stale keys before creating a fresh one
-        await db.delete(apiKeys).where(and(eq(apiKeys.userId, userId), eq(apiKeys.name, keyName)));
-        const keyResult = await createApiKey(userId, keyName);
-        agentApiKey = keyResult.key;
+        const existingTmuxEnv = await TmuxService.getSessionEnvironment(
+          session.tmuxSessionName,
+        );
+        agentApiKey = existingTmuxEnv.RDV_API_KEY;
+        if (!agentApiKey) {
+          const keyName = `agent-session-${sessionId}`;
+          await db.delete(apiKeys).where(
+            and(eq(apiKeys.userId, userId), eq(apiKeys.name, keyName)),
+          );
+          const keyResult = await createApiKey(userId, keyName);
+          agentApiKey = keyResult.key;
+        }
       } catch (error) {
-        log.error("Failed to create API key on resume", { sessionId, error: String(error) });
+        log.error("Failed to recover lifecycle API key on resume", {
+          sessionId,
+          error: String(error),
+        });
+        throw error;
       }
 
       const terminalSocket = process.env.TERMINAL_SOCKET;
       const rdvEnv: Record<string, string> = {
         RDV_SESSION_ID: sessionId,
+        RDV_USER_ID: userId,
+        RDV_AGENT_PROVIDER: agentProvider,
+        RDV_AGENT_GENERATION: String(session.agentRestartCount ?? 0),
         ...(terminalSocket
           ? { RDV_TERMINAL_SOCKET: terminalSocket }
           : { RDV_TERMINAL_PORT: process.env.TERMINAL_PORT ?? "6002" }),
@@ -1785,9 +1976,15 @@ export async function resumeSession(
         ...(agentApiKey ? { RDV_API_KEY: agentApiKey } : {}),
       };
 
-      if (configDir && agentProvider !== "none") {
+      if (hookConfigDir && agentProvider !== "none") {
         // On resume, refresh hooks/MCP config with current rdvEnv so peer MCP server gets env vars
-        await ensureAgentConfig(new Set([configDir]), agentProvider, sessionId, rdvEnv);
+        await ensureAgentConfig(
+          new Set([hookConfigDir]),
+          agentProvider,
+          sessionId,
+          { ...resumeBindingEnv, ...rdvEnv },
+          true,
+        );
       }
 
       let ghAccountEnv: Record<string, string> = {};
@@ -1879,8 +2076,32 @@ export async function resumeSession(
         ...clipboardResumeEnv,
         ...rdvEnv,
       });
+
+      await TmuxService.configureAgentPaneLifecycle(
+        session.tmuxSessionName,
+        buildAgentExitHookCommand({
+          sessionId,
+          tmuxSessionName: session.tmuxSessionName,
+          generation: session.agentRestartCount ?? 0,
+          terminalSocket,
+          terminalPort: rdvEnv.RDV_TERMINAL_PORT,
+        }),
+      );
     } catch (error) {
-      log.error("Failed to set env on resume", { sessionId, error: String(error) });
+      // Fail closed before flipping the DB row active. In particular, legacy
+      // multi-pane sessions have no owner marker; if tmux cannot identify one
+      // exact pane, both pane-died delivery and liveness reconciliation would
+      // otherwise be disabled while the UI misleadingly reports an active
+      // agent. The user can restart the agent or reduce it to one owner pane.
+      log.error("Failed to restore authenticated lifecycle on resume", {
+        sessionId,
+        error: String(error),
+      });
+      throw new SessionServiceError(
+        "Failed to restore authenticated agent lifecycle; resume was aborted. Restart the agent or close auxiliary panes and retry.",
+        "AGENT_CALLBACK_SETUP_FAILED",
+        sessionId,
+      );
     }
   }
 
@@ -1922,6 +2143,24 @@ export async function closeSession(
     );
   }
 
+  // Persist intentional closure before killing tmux. pane-died is asynchronous;
+  // marking lifecycle state closed first guarantees its callback is ignored and
+  // cannot create a false crash/completion notification for a user action.
+  await db
+    .update(terminalSessions)
+    .set({
+      status: "closed",
+      scopeKey: null,
+      agentExitState: supportsAgentLifecycle(session) ? "closed" : session.agentExitState,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(terminalSessions.id, sessionId),
+        eq(terminalSessions.userId, userId),
+      ),
+    );
+
   // Kill the tmux session — plugin decides whether one exists. Plugins
   // that opt out of tmux (file viewer, browser) skip this entirely. A
   // kill failure must NOT prevent the DB from being marked closed below;
@@ -1954,25 +2193,6 @@ export async function closeSession(
       error: String(error),
     });
   }
-
-  // Mark as closed in database. Null out scope_key at the same time so the
-  // partial UNIQUE index on (user_id, terminal_type, scope_key) frees the
-  // slot for a future create-session call with the same scope. Without this,
-  // the next "Open Settings" (or recordings/profiles) would fail the UNIQUE
-  // constraint because dedup skips closed rows but the index does not.
-  await db
-    .update(terminalSessions)
-    .set({
-      status: "closed",
-      scopeKey: null,
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(terminalSessions.id, sessionId),
-        eq(terminalSessions.userId, userId)
-      )
-    );
 
   // Release runtime port claims held by this session. closeSession only marks
   // status=closed (it does not delete the row), so the FK cascade never fires
@@ -2124,31 +2344,40 @@ function buildAgentCommand(
 /**
  * Install agent activity hooks in the agent's config.
  * Used by both createSession and resumeSession to keep agent config current.
- * Failures are logged but do not block session creation/resume.
+ * Installation failures propagate so a lifecycle pane is never launched with
+ * a silently missing managed hook file.
  * Installs to all provided config directories in parallel.
  */
 async function ensureAgentConfig(
   configDirs: Set<string>,
   provider: Exclude<AgentProviderType, "none">,
   sessionId: string,
-  rdvEnv?: Record<string, string>
+  rdvEnv?: Record<string, string>,
+  validateRuntime = false
 ): Promise<void> {
-  if (provider !== "claude") return;
+  if (provider !== "claude" && provider !== "codex") return;
 
   await Promise.all(
     [...configDirs].map((dir) =>
       AgentProfileService.installAgentHooks(dir, provider, rdvEnv)
-        .catch((e) => log.error("Failed to install agent hooks", { sessionId, dir, error: String(e) }))
     )
   );
 
-  // Validate hooks if env vars are available (session creation path)
-  if (rdvEnv && Object.keys(rdvEnv).length > 0) {
+  if (validateRuntime && rdvEnv && Object.keys(rdvEnv).length > 0) {
     const primaryDir = [...configDirs][0];
     if (primaryDir) {
       AgentProfileService.validateAgentHooks(primaryDir, provider, sessionId, rdvEnv)
         .then(async (result) => {
-          if (!result.valid) {
+          if (
+            !result.valid &&
+            result.runtimeTrust === "unknown" &&
+            result.configured &&
+            result.reachable
+          ) {
+            log.warn("Codex hooks installed; runtime trust awaits heartbeat", {
+              sessionId,
+            });
+          } else if (!result.valid) {
             log.error("Hook validation failed", { sessionId, error: result.error });
             // Notify user that hooks may not work correctly
             try {
@@ -2188,7 +2417,7 @@ async function createWorktreeWithErrorHandling(
   branchName: string,
   baseBranch: string | undefined,
   sessionId: string
-): Promise<{ worktreePath: string }> {
+): Promise<{ worktreePath: string; created: boolean }> {
   try {
     const result = await WorktreeService.createBranchWithWorktree(
       repoPath,

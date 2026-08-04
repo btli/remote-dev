@@ -20,10 +20,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const ORIGINAL_DATABASE_URL = process.env.DATABASE_URL;
 
 /** Construct a mocked `pg` module whose Pool.query is scriptable per call. */
-function mockPg(queryResults: Array<{ rows?: Array<{ c: number }>; throws?: boolean }>) {
+function mockPg(queryResults: Array<{
+  rows?: Array<{ c: number }>;
+  throws?: boolean;
+  pending?: boolean;
+}>) {
   const query = vi.fn();
   for (const r of queryResults) {
-    if (r.throws) {
+    if (r.pending) {
+      query.mockImplementationOnce(() => new Promise(() => undefined));
+    } else if (r.throws) {
       query.mockRejectedValueOnce(new Error('relation "drizzle.__drizzle_migrations" does not exist'));
     } else {
       query.mockResolvedValueOnce({ rows: r.rows ?? [] });
@@ -85,7 +91,7 @@ describe("waitForSchemaReady", () => {
     expect(end).toHaveBeenCalledTimes(1);
   });
 
-  it("fails open after the timeout without throwing (Postgres)", async () => {
+  it("fails closed after the timeout so the terminal listener stays unbound (Postgres)", async () => {
     vi.stubEnv("DATABASE_URL", "postgres://user:pass@localhost:5432/rdv");
     vi.resetModules();
 
@@ -95,8 +101,29 @@ describe("waitForSchemaReady", () => {
     const { Pool, end } = mockPg(Array.from({ length: 50 }, () => ({ rows: [{ c: 0 }] })));
     const { waitForSchemaReady } = await import("../schema-ready");
 
-    await expect(waitForSchemaReady({ timeoutMs: 250 })).resolves.toBeUndefined();
+    await expect(waitForSchemaReady({ timeoutMs: 250 })).rejects.toThrow(
+      "Timed out waiting for PostgreSQL schema",
+    );
     expect(Pool).toHaveBeenCalledTimes(1);
     expect(end).toHaveBeenCalledTimes(1);
   });
+
+  it("enforces the deadline when a PostgreSQL probe never settles", async () => {
+    vi.stubEnv("DATABASE_URL", "postgres://user:pass@blackhole.invalid:5432/rdv");
+    vi.resetModules();
+
+    const { Pool, end } = mockPg([{ pending: true }]);
+    const { waitForSchemaReady } = await import("../schema-ready");
+
+    const startedAt = Date.now();
+    await expect(waitForSchemaReady({ timeoutMs: 50 })).rejects.toThrow(
+      "Timed out waiting for PostgreSQL schema",
+    );
+    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(Pool).toHaveBeenCalledWith(expect.objectContaining({
+      connectionTimeoutMillis: 50,
+      query_timeout: 50,
+    }));
+    expect(end).toHaveBeenCalledTimes(1);
+  }, 1_000);
 });

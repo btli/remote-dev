@@ -10,16 +10,16 @@
  * Two independent guards:
  *
  *  1. **Monotonic arrival.** A write only wins when its server-arrival time
- *     (`incomingAt`) is newer-or-equal than the persisted one (`currentAt`), or
+ *     (`incomingAt`) is strictly newer than the persisted one (`currentAt`), or
  *     no arrival has been recorded yet. This kills the late-hook race where a
  *     slow SubagentStop "running" (5s timeout) lands after a newer Stop "idle"
  *     (15s timeout) and resurrects the stale status.
  *
- *  2. **Subagent-stop terminal-status protection.** A "running" write tagged
- *     `source=subagent-stop` must NOT overwrite a turn that already ended — i.e.
- *     a current DB status of 'idle' or 'ended'. A legitimately new turn
- *     re-asserts running via the PreToolUse hook immediately (untagged), so this
- *     only blocks the spurious resurrection.
+ *  2. **Subagent-stop status protection.** A "running" write tagged
+ *     `source=subagent-stop` may only replace an active 'running'/'subagent'
+ *     state (or initialize a null state). It must not clear waiting, compacting,
+ *     idle, error, or ended. A legitimately new turn re-asserts running via an
+ *     untagged prompt/tool hook, so this only blocks a stale child completion.
  */
 
 export interface StatusWriteDecisionInput {
@@ -35,21 +35,37 @@ export interface StatusWriteDecisionInput {
   source: string | null;
 }
 
+let lastArrivalOrder = 0;
+
+/**
+ * Allocate a safe-integer order token at request arrival, before authentication
+ * or any other await can invert completion order. Multiplying epoch-ms by 1000
+ * leaves room for same-millisecond arrivals while remaining below 2^53 until
+ * well beyond the expected lifetime of this schema.
+ */
+export function nextAgentStatusArrivalOrder(nowMs = Date.now()): number {
+  const wallClockFloor = nowMs * 1_000;
+  lastArrivalOrder = Math.max(wallClockFloor, lastArrivalOrder + 1);
+  return lastArrivalOrder;
+}
+
 /**
  * Returns true when the incoming write should be applied to the DB.
  * Mirrors the atomic SQL WHERE guard in `terminal.ts`.
  */
 export function shouldApplyStatusWrite(input: StatusWriteDecisionInput): boolean {
   // Guard 1: monotonic arrival ordering.
-  if (input.currentAt != null && input.incomingAt < input.currentAt) {
+  if (input.currentAt != null && input.incomingAt <= input.currentAt) {
     return false;
   }
 
-  // Guard 2: a subagent-stop "running" never resurrects a terminal status.
+  // Guard 2: a child completion may re-assert only an active parent state.
   if (
     input.source === "subagent-stop" &&
     input.status === "running" &&
-    (input.currentStatus === "idle" || input.currentStatus === "ended")
+    input.currentStatus !== null &&
+    input.currentStatus !== "running" &&
+    input.currentStatus !== "subagent"
   ) {
     return false;
   }

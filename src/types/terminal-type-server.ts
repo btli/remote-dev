@@ -71,7 +71,8 @@ export interface TerminalTypeServerPlugin {
    * exit-screen / restart flow when the tmux pane process exits.
    *
    * When true, SessionService:
-   *   - registers a tmux `pane-exited` hook that POSTs to /internal/agent-exit
+   *   - keeps the pane after exit and registers a tmux `pane-died` hook that
+   *     POSTs the process status/signal to /internal/agent-exit
    *   - initializes `agentExitState = "running"` on the DB row
    *   - on exit, the client renders this plugin's exit screen and offers
    *     a Restart action

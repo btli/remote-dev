@@ -93,6 +93,60 @@ async function fetchRemoteRefs(repoPath: string): Promise<boolean> {
 }
 
 /**
+ * Verify that an existing deterministic path is the exact worktree a retry is
+ * allowed to reuse. Merely being a Git repository is insufficient: the path
+ * must be registered by the requested repository and check out the requested
+ * local branch.
+ */
+async function isExpectedRegisteredWorktree(
+  repoPath: string,
+  targetPath: string,
+  branchName: string,
+): Promise<boolean> {
+  const listed = await execFileNoThrow("git", [
+    "-C",
+    repoPath,
+    "worktree",
+    "list",
+    "--porcelain",
+    "-z",
+  ]);
+  if (listed.exitCode !== 0) return false;
+
+  const fs = await getFs();
+  let expectedPath: string;
+  try {
+    expectedPath = fs.realpathSync(targetPath);
+  } catch {
+    return false;
+  }
+
+  let listedPath: string | null = null;
+  let listedBranch: string | null = null;
+  const matchesCurrent = (): boolean => {
+    if (!listedPath || listedBranch !== `refs/heads/${branchName}`) return false;
+    try {
+      return fs.realpathSync(listedPath) === expectedPath;
+    } catch {
+      return false;
+    }
+  };
+
+  // `-z` keeps paths unquoted, so spaces and non-ASCII characters cannot make
+  // the stable porcelain parser confuse field boundaries.
+  for (const field of listed.stdout.split("\0")) {
+    if (field.startsWith("worktree ")) {
+      if (matchesCurrent()) return true;
+      listedPath = field.slice("worktree ".length);
+      listedBranch = null;
+    } else if (field.startsWith("branch ")) {
+      listedBranch = field.slice("branch ".length);
+    }
+  }
+  return matchesCurrent();
+}
+
+/**
  * Get the root directory of a git repository
  */
 export async function getRepoRoot(path: string): Promise<string | null> {
@@ -375,14 +429,16 @@ export async function pruneWorktrees(repoPath: string): Promise<void> {
 }
 
 /**
- * Create a new branch and worktree for it
+ * Create a new branch and worktree for it, or reuse the same valid deterministic
+ * worktree left by an earlier retry. `created` is an ownership signal: callers
+ * may roll the path back only when it is true.
  */
 export async function createBranchWithWorktree(
   repoPath: string,
   branchName: string,
   baseBranch?: string,
   worktreePath?: string
-): Promise<{ branch: string; worktreePath: string }> {
+): Promise<{ branch: string; worktreePath: string; created: boolean }> {
   // Validate repo path first
   if (!(await isGitRepo(repoPath))) {
     throw new WorktreeServiceError(
@@ -458,16 +514,24 @@ export async function createBranchWithWorktree(
     return {
       branch: branchName,
       worktreePath: targetPath,
+      created: true,
     };
   } catch (error) {
     const err = error as Error & { stderr?: string };
     const stderr = err.stderr || err.message;
 
-    // If the target path already exists as a valid git worktree, reuse it.
-    // This handles retries where a previous attempt created the worktree
-    // but session creation failed afterwards (e.g., "Start Working" on an issue).
-    if (fs.existsSync(targetPath) && await isGitRepo(targetPath)) {
-      return { branch: branchName, worktreePath: targetPath };
+    // Reuse only the exact registered worktree + branch left by a previous
+    // retry. An unrelated repository or a worktree on another branch at this
+    // deterministic path must fail closed.
+    if (fs.existsSync(targetPath)) {
+      if (await isExpectedRegisteredWorktree(repoPath, targetPath, branchName)) {
+        return { branch: branchName, worktreePath: targetPath, created: false };
+      }
+      throw new WorktreeServiceError(
+        "Existing worktree path does not match the requested repository and branch",
+        "PATH_EXISTS",
+        targetPath,
+      );
     }
 
     // "a branch named 'X' already exists" — branch exists from a previous
@@ -479,7 +543,7 @@ export async function createBranchWithWorktree(
       try {
         const retryArgs = ["-C", repoPath, "worktree", "add", targetPath, branchName];
         await execFile("git", retryArgs);
-        return { branch: branchName, worktreePath: targetPath };
+        return { branch: branchName, worktreePath: targetPath, created: true };
       } catch (retryError) {
         const retryErr = retryError as Error & { stderr?: string };
         const retryStderr = retryErr.stderr || retryErr.message;
@@ -1004,7 +1068,7 @@ export async function createWorktreeWithEnv(
  * @param repoPath - Path to the main repository
  * @param branchName - New branch name
  * @param options - Additional options
- * @returns The branch, worktree path, and copy result
+ * @returns The branch, worktree path, ownership, and copy result
  */
 export async function createBranchWithWorktreeAndEnv(
   repoPath: string,
@@ -1017,6 +1081,7 @@ export async function createBranchWithWorktreeAndEnv(
 ): Promise<{
   branch: string;
   worktreePath: string;
+  created: boolean;
   envFilesCopied: CopyEnvFilesResult;
 }> {
   const { baseBranch, worktreePath, copyEnvFiles = true } = options;
@@ -1038,6 +1103,7 @@ export async function createBranchWithWorktreeAndEnv(
   return {
     branch: result.branch,
     worktreePath: result.worktreePath,
+    created: result.created,
     envFilesCopied: envResult,
   };
 }

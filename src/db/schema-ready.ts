@@ -28,9 +28,9 @@
  * `resolvePgMigrationsFolder()` + `readdirSync`, NOT hardcoded). This is
  * decoupled from any specific table name and proves ALL migrations ran.
  *
- * FAIL-OPEN: if the deadline passes without readiness we log loudly and RETURN
- * (never throw, never hang boot forever). Services then start as they do today —
- * never worse than the pre-fix behavior.
+ * FAIL-CLOSED: if the deadline passes without readiness we reject startup. The
+ * process supervisor can retry, but no DB-backed terminal or lifecycle endpoint
+ * is exposed against a schema that is known to be incomplete.
  */
 
 import { readdirSync } from "node:fs";
@@ -40,7 +40,7 @@ import { resolvePgMigrationsFolder } from "@/db/migrate";
 
 const log = createLogger("db/schema-ready");
 
-/** Default upper bound on how long we wait for the schema before failing open. */
+/** Default upper bound on how long we wait before failing startup closed. */
 const DEFAULT_TIMEOUT_MS = 120_000;
 
 /** Backoff bounds for the readiness poll loop. */
@@ -61,11 +61,35 @@ const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * Await an operation only while the startup deadline still has budget. The pg
+ * driver's timeout options protect the real socket/query; this second bound is
+ * intentional defense in depth for a driver call that never settles.
+ */
+function settleWithin<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error("PostgreSQL schema readiness probe timed out")),
+      Math.max(0, timeoutMs),
+    );
+    operation.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+/**
  * Block until the PostgreSQL schema is fully migrated. No-op on SQLite.
  *
  * On Postgres, polls `drizzle.__drizzle_migrations` until the applied-migration
- * row count reaches the number of committed migrations in `drizzle/pg/`. Fails
- * open (logs + returns) after `timeoutMs` so it can never wedge boot.
+ * row count reaches the number of committed migrations in `drizzle/pg/`. Rejects
+ * after `timeoutMs` so a supervisor retry cannot expose a partial schema.
  */
 export async function waitForSchemaReady(opts?: {
   timeoutMs?: number;
@@ -86,20 +110,36 @@ export async function waitForSchemaReady(opts?: {
 
   log.info("Waiting for PostgreSQL schema migration to complete...", { expected });
 
+  const startedAt = Date.now();
+  const deadline = startedAt + Math.max(0, timeoutMs);
+  // Bound the driver's own connection and query work as well as the outer
+  // readiness loop. Keeping each probe short also lets a recovered database be
+  // observed before the overall startup deadline expires.
+  const probeTimeoutMs = Math.max(1, Math.min(timeoutMs, MAX_POLL_DELAY_MS));
+
   // Dynamic import keeps `pg` + the node-postgres driver off the SQLite cold
   // path (it is only loaded when the backend is Postgres). Mirrors migrate.ts.
   const { Pool } = await import("pg");
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    connectionTimeoutMillis: probeTimeoutMs,
+    query_timeout: probeTimeoutMs,
+    statement_timeout: probeTimeoutMs,
+  });
 
-  const startedAt = Date.now();
   let delay = INITIAL_POLL_DELAY_MS;
   let applied = 0;
 
   try {
-    while (Date.now() - startedAt < timeoutMs) {
+    while (Date.now() < deadline) {
+      const remainingBeforeProbe = deadline - Date.now();
+      if (remainingBeforeProbe <= 0) break;
       try {
-        const res = await pool.query<{ c: number }>(
-          "SELECT count(*)::int AS c FROM drizzle.__drizzle_migrations"
+        const res = await settleWithin(
+          pool.query<{ c: number }>(
+            "SELECT count(*)::int AS c FROM drizzle.__drizzle_migrations",
+          ),
+          remainingBeforeProbe,
         );
         applied = res.rows[0]?.c ?? 0;
         if (applied >= expected) {
@@ -116,18 +156,30 @@ export async function waitForSchemaReady(opts?: {
         // keep waiting". Swallow and retry until the deadline.
       }
 
-      await sleep(delay);
+      const remainingAfterProbe = deadline - Date.now();
+      if (remainingAfterProbe <= 0) break;
+      await sleep(Math.min(delay, remainingAfterProbe));
       delay = Math.min(delay * 2, MAX_POLL_DELAY_MS);
     }
 
-    // Fail-open: deadline reached without readiness. Log loudly and return so
-    // services start as they do today (never worse than pre-fix).
-    log.error("Timed out waiting for PostgreSQL schema — starting services anyway", {
+    log.error("Timed out waiting for PostgreSQL schema — refusing terminal startup", {
       applied,
       expected,
       timeoutMs,
     });
+    throw new Error(
+      `Timed out waiting for PostgreSQL schema (${applied}/${expected} migrations applied)`,
+    );
   } finally {
-    await pool.end();
+    const close = pool.end();
+    const remaining = deadline - Date.now();
+    if (remaining > 0) {
+      await settleWithin(close, remaining).catch(() => undefined);
+    } else {
+      // A timed-out in-flight probe may keep Pool.end() pending until the pg
+      // driver's own bounded query timeout fires. Do not let cleanup silently
+      // extend the public startup deadline.
+      void close.catch(() => undefined);
+    }
   }
 }

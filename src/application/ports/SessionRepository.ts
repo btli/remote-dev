@@ -73,6 +73,19 @@ export interface SessionRepository {
    */
   saveMany(sessions: Session[]): Promise<void>;
 
+  /** Atomically claim the next agent generation for restart. */
+  claimAgentRestart(
+    id: string,
+    userId: string,
+    expectedGeneration: number,
+  ): Promise<Session | null>;
+
+  /** Complete only the claimed generation; never revive an exited process. */
+  completeAgentRestart(id: string, userId: string, generation: number): Promise<Session | null>;
+
+  /** Revert only the claimed generation after a launch failure. */
+  failAgentRestart(id: string, userId: string, generation: number): Promise<Session | null>;
+
   /**
    * Delete a session by ID.
    * Returns true if deleted, false if not found.

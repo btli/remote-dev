@@ -35,6 +35,9 @@ describe("SuspendSessionUseCase", () => {
         Promise.resolve(session)
       ),
       saveMany: vi.fn(),
+      claimAgentRestart: vi.fn(),
+      completeAgentRestart: vi.fn(),
+      failAgentRestart: vi.fn(),
       delete: vi.fn(),
       deleteMany: vi.fn(),
       updateTabOrders: vi.fn(),
@@ -47,9 +50,11 @@ describe("SuspendSessionUseCase", () => {
       createSession: vi.fn(),
       killSession: vi.fn(),
       sessionExists: vi.fn(),
+      getSessionPresence: vi.fn(),
+      stopSessionAndConfirmAbsent: vi.fn(),
       getSessionInfo: vi.fn(),
       listSessions: vi.fn(),
-      sendKeys: vi.fn(),
+      replaceAgentProcess: vi.fn(),
       detachSession: vi.fn().mockResolvedValue(undefined),
       generateSessionName: vi.fn(),
       // Environment management

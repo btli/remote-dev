@@ -59,6 +59,8 @@ export const {
   projectTasks,
   taskDependencies,
   notificationEvents,
+  notificationDeliveries,
+  agentStatusDeliveries,
   pushTokens,
   notificationPreferences,
   agentPeerMessages,

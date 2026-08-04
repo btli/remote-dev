@@ -14,6 +14,7 @@ if (!process.env.TERM) process.env.TERM = "xterm-256color";
 import { config } from "dotenv";
 import { createTerminalServer, shutdownTerminalConnections } from "./terminal.js";
 import { waitForSchemaReady } from "../db/schema-ready.js";
+import { startTerminalAfterSchemaReady } from "./terminal-startup-gate.js";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
 // [oyej] Agent-run scheduler (REAL agent launches; epic remote-dev-oyej).
 import { agentSchedulerOrchestrator } from "../services/agent-scheduler-orchestrator.js";
@@ -113,23 +114,37 @@ function runUsageOauthOrphanCleanup(): void {
 async function ensureRdvCli(): Promise<void> {
   try {
     const { stdout } = await execFile("rdv", ["--version"]);
-    log.info("rdv CLI found", { version: stdout.trim() });
+    // Version output alone only proves that *some* rdv binary is on PATH. A
+    // rolling upgrade can leave an older binary that predates Codex hooks and
+    // silently routes every callback into fallback mode.
+    await execFile("rdv", ["hook", "codex", "--help"], { timeout: 10_000 });
+    log.info("rdv CLI found with Codex hook support", { version: stdout.trim() });
   } catch {
-    // rdv not found, try to install from local crate
+    // rdv is missing or stale; try to install the exact local crate.
     const cratePath = resolve(PROJECT_ROOT, "crates", "rdv");
     try {
-      log.info("rdv CLI not found, installing from crates/rdv/...");
+      log.info("rdv CLI missing Codex hook support, installing from crates/rdv/...");
       await execFile("cargo", ["install", "--path", cratePath], { timeout: 300_000 });
       const { stdout } = await execFile("rdv", ["--version"]);
-      log.info("rdv CLI installed", { version: stdout.trim() });
+      await execFile("rdv", ["hook", "codex", "--help"], { timeout: 10_000 });
+      log.info("rdv CLI installed with Codex hook support", { version: stdout.trim() });
     } catch {
-      log.warn("rdv CLI not available (cargo not found or build failed), hooks will use curl fallback");
+      log.warn(
+        "rdv CLI with Codex hook support is unavailable; lifecycle hooks will use the policy-safe curl fallback"
+      );
     }
   }
 }
 
 async function startServer(): Promise<void> {
-  createTerminalServer(TERMINAL_SOCKET ? { socket: TERMINAL_SOCKET } : { port: TERMINAL_PORT });
+  // Postgres fresh-boot: the schema is applied by the Next.js process's
+  // migrate-on-boot (src/instrumentation.ts). Do not bind the terminal listener
+  // before it completes: lifecycle callbacks touch delivery tables immediately,
+  // and a short client retry window cannot bridge an arbitrarily delayed
+  // migration. A readiness failure rejects startup so the supervisor retries.
+  await startTerminalAfterSchemaReady(waitForSchemaReady, () =>
+    createTerminalServer(TERMINAL_SOCKET ? { socket: TERMINAL_SOCKET } : { port: TERMINAL_PORT })
+  );
 
   // Check rdv CLI availability (non-blocking, logs status)
   ensureRdvCli().catch((e) => log.warn("rdv CLI check failed", { error: String(e) }));
@@ -138,18 +153,6 @@ async function startServer(): Promise<void> {
   // Fire-and-forget AFTER the server is up so a slow `--help` probe never delays
   // boot; runResumeFlagDiagnostics swallows its own errors and never throws.
   void runResumeFlagDiagnostics();
-
-  // Postgres fresh-boot: the schema is applied by the Next.js process's
-  // migrate-on-boot (src/instrumentation.ts). Wait for it before starting the
-  // DB-touching services below, or they'd query tables that don't exist yet and
-  // wedge the terminal server unready until a restart (remote-dev-snap). No-op on
-  // SQLite. /health reports 503 (scheduler down) during the wait, so /api/readyz
-  // correctly shows not-ready until services start — it self-heals, no restart.
-  try {
-    await waitForSchemaReady();
-  } catch (error) {
-    log.error("Schema-ready wait failed", { error: String(error) });
-  }
 
   // WAL auto-truncate (SQLite only; no-op on Postgres). Keeps the WAL from
   // growing unbounded — a 2.1 GB WAL once amplified write contention into

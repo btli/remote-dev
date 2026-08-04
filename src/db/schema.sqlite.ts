@@ -338,9 +338,11 @@ export const terminalSessions = sqliteTable(
     agentExitState: text("agent_exit_state").$type<AgentExitState>(),
     agentExitCode: integer("agent_exit_code"),
     agentExitedAt: integer("agent_exited_at", { mode: "timestamp_ms" }),
+    agentExitNotificationAt: integer("agent_exit_notification_at", { mode: "timestamp_ms" }),
     agentRestartCount: integer("agent_restart_count").default(0),
     agentActivityStatus: text("agent_activity_status"),
     agentActivityStatusAt: integer("agent_activity_status_at"),
+    agentActivityOrder: integer("agent_activity_order"),
     typeMetadata: text("type_metadata"),
     scopeKey: text("scope_key"),
     parentSessionId: text("parent_session_id"),
@@ -1013,6 +1015,43 @@ export const notificationEvents = sqliteTable(
     index("notification_event_user_created_idx").on(table.userId, table.createdAt),
     index("notification_event_user_read_idx").on(table.userId, table.readAt),
     index("notification_event_coalesce_idx").on(table.userId, table.sessionId, table.coalesceKey, table.readAt),
+  ]
+);
+
+export const notificationDeliveries = sqliteTable(
+  "notification_delivery",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    notificationId: text("notification_id").references(() => notificationEvents.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("notification_delivery_created_idx").on(table.createdAt),
+  ]
+);
+
+export const agentStatusDeliveries = sqliteTable(
+  "agent_status_delivery",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    sessionId: text("session_id").notNull().references(() => terminalSessions.id, { onDelete: "cascade" }),
+    generation: integer("generation").notNull(),
+    deliveryId: text("delivery_id").notNull(),
+    status: text("status").notNull(),
+    source: text("source"),
+    statusAt: integer("status_at").notNull(),
+    arrivalOrder: integer("arrival_order").notNull(),
+    applied: integer("applied", { mode: "boolean" }).notNull().default(false),
+    notificationRequired: integer("notification_required", { mode: "boolean" }).notNull().default(false),
+    notificationProcessedAt: integer("notification_processed_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("agent_status_delivery_created_idx").on(table.createdAt),
+    index("agent_status_delivery_session_idx").on(table.sessionId, table.generation),
+    index("agent_status_delivery_notification_idx").on(table.applied, table.notificationRequired, table.notificationProcessedAt, table.createdAt),
   ]
 );
 

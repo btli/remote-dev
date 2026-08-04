@@ -14,30 +14,36 @@
  * schema). We instead read the migration SQL, strip the `"public".` qualifier so
  * object refs resolve via `search_path`, split on Drizzle's
  * `--> statement-breakpoint`, and execute each statement against a client whose
- * `search_path` is the isolated schema. Verified: 60 tables land in the test
- * schema, 0 in public.
+ * `search_path` is the isolated schema. Every committed migration is applied in
+ * filename order, so the isolated schema matches the generated schema rather
+ * than remaining frozen at the original 0000 baseline.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { Client } from "pg";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import * as pgSchema from "@/db/schema.pg";
 
-const MIGRATION_SQL_PATH = path.resolve(__dirname, "../../drizzle/pg/0000_nosy_groot.sql");
+const MIGRATIONS_FOLDER = path.resolve(__dirname, "../../drizzle/pg");
 
 /** Cached, schema-stripped DDL statements (read once per process). */
 let cachedStatements: string[] | undefined;
 
 function getDdlStatements(): string[] {
   if (!cachedStatements) {
-    const raw = readFileSync(MIGRATION_SQL_PATH, "utf8");
-    // Drop the `"public".` qualifier so refs resolve against the test schema's
-    // search_path; split into individual statements.
-    const stripped = raw.replaceAll('"public".', "");
-    cachedStatements = stripped
-      .split("--> statement-breakpoint")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const migrationFiles = readdirSync(MIGRATIONS_FOLDER)
+      .filter((name) => /^\d{4}_.+\.sql$/.test(name))
+      .sort();
+    cachedStatements = migrationFiles.flatMap((name) => {
+      const raw = readFileSync(path.join(MIGRATIONS_FOLDER, name), "utf8");
+      // Drop the `"public".` qualifier so refs resolve against the test
+      // schema's search_path; split into individual Drizzle statements.
+      return raw
+        .replaceAll('"public".', "")
+        .split("--> statement-breakpoint")
+        .map((statement) => statement.trim())
+        .filter(Boolean);
+    });
   }
   return cachedStatements;
 }

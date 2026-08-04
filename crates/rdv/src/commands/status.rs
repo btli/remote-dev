@@ -81,7 +81,9 @@ fn read_server_mode() -> Option<String> {
                 .join(".remote-dev")
         });
     let mode_file = base_dir.join("server/mode");
-    std::fs::read_to_string(mode_file).ok().map(|s| s.trim().to_string())
+    std::fs::read_to_string(mode_file)
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 fn format_relative_time(iso_time: &str) -> String {
@@ -111,15 +113,27 @@ fn format_relative_time(iso_time: &str) -> String {
     }
 }
 
-pub async fn run(args: StatusArgs, client: &Client, human: bool) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run(
+    args: StatusArgs,
+    client: &Client,
+    human: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
         Some(StatusCommand::Report { status }) => {
             let sid = match client.session_id() {
                 Some(s) => s,
                 None => return Ok(()), // No session context — skip silently.
             };
-            let query = [("sessionId", sid), ("status", status.as_str())];
-            let result = client.post_empty_with_query("/internal/agent-status", &query).await?;
+            let generation =
+                std::env::var("RDV_AGENT_GENERATION").unwrap_or_else(|_| "0".to_string());
+            let query = [
+                ("sessionId", sid),
+                ("generation", generation.as_str()),
+                ("status", status.as_str()),
+            ];
+            let result = client
+                .post_empty_with_query("/internal/agent-status", &query)
+                .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
         None => {
@@ -136,7 +150,10 @@ pub async fn run(args: StatusArgs, client: &Client, human: bool) -> Result<(), B
             // Sessions
             let resp: SessionsResponse = client.get("/api/sessions").await?;
             let sessions = resp.sessions;
-            let active = sessions.iter().filter(|s| s.status.as_deref() == Some("active")).count();
+            let active = sessions
+                .iter()
+                .filter(|s| s.status.as_deref() == Some("active"))
+                .count();
             let agents = sessions
                 .iter()
                 .filter(|s| s.terminal_type.as_deref() == Some("agent"))
@@ -148,7 +165,10 @@ pub async fn run(args: StatusArgs, client: &Client, human: bool) -> Result<(), B
                     .get_with_query("/api/tasks", &[("sessionId", &sid)])
                     .await
                     .unwrap_or_default();
-                let done = tasks.iter().filter(|t| t.status.as_deref() == Some("done")).count();
+                let done = tasks
+                    .iter()
+                    .filter(|t| t.status.as_deref() == Some("done"))
+                    .count();
                 Some((tasks.len(), tasks.len() - done, done))
             } else {
                 None

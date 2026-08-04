@@ -14,6 +14,7 @@ describe("RestartAgentUseCase", () => {
   let mockSessionRepository: SessionRepository;
   let mockTmuxGateway: TmuxGateway;
   let useCase: RestartAgentUseCase;
+  let claimedSession: Session | null;
 
   // Helper to create an agent session for testing
   const createAgentSession = (
@@ -47,6 +48,7 @@ describe("RestartAgentUseCase", () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    claimedSession = null;
 
     mockSessionRepository = {
       findById: vi.fn(),
@@ -56,6 +58,13 @@ describe("RestartAgentUseCase", () => {
       findByProject: vi.fn(),
       save: vi.fn().mockImplementation((session: Session) => Promise.resolve(session)),
       saveMany: vi.fn(),
+      claimAgentRestart: vi.fn(async (id: string, userId: string) => {
+        const loaded = await mockSessionRepository.findById(id, userId);
+        claimedSession = loaded?.markAgentRestarting() ?? null;
+        return claimedSession;
+      }),
+      completeAgentRestart: vi.fn(async () => claimedSession?.markAgentRunning() ?? null),
+      failAgentRestart: vi.fn(async () => claimedSession?.markAgentExited(null) ?? null),
       delete: vi.fn(),
       deleteMany: vi.fn(),
       updateTabOrders: vi.fn(),
@@ -68,9 +77,11 @@ describe("RestartAgentUseCase", () => {
       createSession: vi.fn(),
       killSession: vi.fn(),
       sessionExists: vi.fn().mockResolvedValue(true),
+      getSessionPresence: vi.fn().mockResolvedValue("present"),
+      stopSessionAndConfirmAbsent: vi.fn().mockResolvedValue(true),
       getSessionInfo: vi.fn(),
       listSessions: vi.fn(),
-      sendKeys: vi.fn().mockResolvedValue(undefined),
+      replaceAgentProcess: vi.fn().mockResolvedValue(undefined),
       detachSession: vi.fn(),
       generateSessionName: vi.fn(),
       setEnvironment: vi.fn().mockResolvedValue(undefined),
@@ -99,6 +110,14 @@ describe("RestartAgentUseCase", () => {
 
       expect(result.session.agentExitState).toBe("running");
       expect(result.wasRecreated).toBe(false);
+      expect(mockTmuxGateway.setEnvironment).toHaveBeenCalledWith(
+        exitedSession.tmuxSessionName.toString(),
+        expect.objectContaining({
+          get: expect.any(Function),
+        }),
+      );
+      const generationEnv = (mockTmuxGateway.setEnvironment as Mock).mock.calls[0][1];
+      expect(generationEnv.get("RDV_AGENT_GENERATION")).toBe("1");
     });
 
     it("sends the correct agent command", async () => {
@@ -112,7 +131,7 @@ describe("RestartAgentUseCase", () => {
 
       await useCase.execute(input);
 
-      expect(mockTmuxGateway.sendKeys).toHaveBeenCalledWith(
+      expect(mockTmuxGateway.replaceAgentProcess).toHaveBeenCalledWith(
         exitedSession.tmuxSessionName.toString(),
         "claude"
       );
@@ -132,7 +151,7 @@ describe("RestartAgentUseCase", () => {
 
       await useCase.execute(input);
 
-      expect(mockTmuxGateway.sendKeys).toHaveBeenCalledWith(
+      expect(mockTmuxGateway.replaceAgentProcess).toHaveBeenCalledWith(
         expect.any(String),
         "codex"
       );
@@ -164,8 +183,46 @@ describe("RestartAgentUseCase", () => {
 
       await useCase.execute(input);
 
-      // Should save twice: once for restarting state, once for running state
-      expect(mockSessionRepository.save).toHaveBeenCalledTimes(2);
+      expect(mockSessionRepository.claimAgentRestart).toHaveBeenCalledTimes(1);
+      expect(mockSessionRepository.completeAgentRestart).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the claim restarting through launch, then conditionally completes it", async () => {
+      const exitedSession = createAgentSession({ agentExitState: "exited" });
+      const events: string[] = [];
+      (mockSessionRepository.findById as Mock).mockResolvedValue(exitedSession);
+      (mockSessionRepository.claimAgentRestart as Mock).mockImplementation(async () => {
+        events.push("claim:restarting");
+        claimedSession = exitedSession.markAgentRestarting();
+        return claimedSession;
+      });
+      (mockSessionRepository.completeAgentRestart as Mock).mockImplementation(async () => {
+        events.push("complete:running");
+        return claimedSession!.markAgentRunning();
+      });
+      (mockTmuxGateway.replaceAgentProcess as Mock).mockImplementation(async () => {
+        events.push("launch");
+      });
+
+      await useCase.execute({
+        sessionId: "123e4567-e89b-12d3-a456-426614174000",
+        userId: "user-123",
+      });
+
+      expect(events).toEqual(["claim:restarting", "launch", "complete:running"]);
+    });
+
+    it("rejects a concurrent restart before touching tmux", async () => {
+      const exitedSession = createAgentSession({ agentExitState: "exited" });
+      (mockSessionRepository.findById as Mock).mockResolvedValue(exitedSession);
+      (mockSessionRepository.claimAgentRestart as Mock).mockResolvedValue(null);
+
+      await expect(useCase.execute({
+        sessionId: exitedSession.id,
+        userId: exitedSession.userId,
+      })).rejects.toMatchObject({ code: "INVALID_STATE" });
+      expect(mockTmuxGateway.getSessionPresence).not.toHaveBeenCalled();
+      expect(mockTmuxGateway.replaceAgentProcess).not.toHaveBeenCalled();
     });
   });
 
@@ -239,7 +296,7 @@ describe("RestartAgentUseCase", () => {
     it("throws RestartAgentError when tmux session no longer exists", async () => {
       const exitedSession = createAgentSession({ agentExitState: "exited" });
       (mockSessionRepository.findById as Mock).mockResolvedValue(exitedSession);
-      (mockTmuxGateway.sessionExists as Mock).mockResolvedValue(false);
+      (mockTmuxGateway.getSessionPresence as Mock).mockResolvedValue("absent");
 
       const input: RestartAgentInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -255,7 +312,7 @@ describe("RestartAgentUseCase", () => {
     it("reverts to exited state when tmux session is gone", async () => {
       const exitedSession = createAgentSession({ agentExitState: "exited" });
       (mockSessionRepository.findById as Mock).mockResolvedValue(exitedSession);
-      (mockTmuxGateway.sessionExists as Mock).mockResolvedValue(false);
+      (mockTmuxGateway.getSessionPresence as Mock).mockResolvedValue("absent");
 
       const input: RestartAgentInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -264,21 +321,55 @@ describe("RestartAgentUseCase", () => {
 
       await expect(useCase.execute(input)).rejects.toThrow();
 
-      // Should save restarting state, then revert to exited state
-      expect(mockSessionRepository.save).toHaveBeenCalledTimes(2);
-      expect(mockSessionRepository.save).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          agentExitState: "exited",
-        })
+      expect(mockSessionRepository.failAgentRestart).toHaveBeenCalledWith(
+        input.sessionId,
+        input.userId,
+        1,
       );
     });
   });
 
   describe("error handling - restart failed", () => {
+    it("retains the restart claim when tmux presence and containment are both uncertain", async () => {
+      const exitedSession = createAgentSession({ agentExitState: "exited" });
+      (mockSessionRepository.findById as Mock).mockResolvedValue(exitedSession);
+      (mockTmuxGateway.getSessionPresence as Mock).mockResolvedValue("unknown");
+      (mockTmuxGateway.stopSessionAndConfirmAbsent as Mock).mockResolvedValue(false);
+
+      await expect(useCase.execute({
+        sessionId: exitedSession.id,
+        userId: exitedSession.userId,
+      })).rejects.toMatchObject({ code: "RESTART_FAILED" });
+
+      expect(mockTmuxGateway.stopSessionAndConfirmAbsent).toHaveBeenCalledWith(
+        exitedSession.tmuxSessionName.toString(),
+      );
+      expect(mockTmuxGateway.replaceAgentProcess).not.toHaveBeenCalled();
+      expect(mockSessionRepository.failAgentRestart).not.toHaveBeenCalled();
+    });
+
+    it("marks the claim exited only after uncertain preflight is strictly contained", async () => {
+      const exitedSession = createAgentSession({ agentExitState: "exited" });
+      (mockSessionRepository.findById as Mock).mockResolvedValue(exitedSession);
+      (mockTmuxGateway.getSessionPresence as Mock).mockResolvedValue("unknown");
+      (mockTmuxGateway.stopSessionAndConfirmAbsent as Mock).mockResolvedValue(true);
+
+      await expect(useCase.execute({
+        sessionId: exitedSession.id,
+        userId: exitedSession.userId,
+      })).rejects.toMatchObject({ code: "TMUX_SESSION_GONE" });
+
+      expect(mockSessionRepository.failAgentRestart).toHaveBeenCalledWith(
+        exitedSession.id,
+        exitedSession.userId,
+        1,
+      );
+    });
+
     it("throws RestartAgentError when sendKeys fails", async () => {
       const exitedSession = createAgentSession({ agentExitState: "exited" });
       (mockSessionRepository.findById as Mock).mockResolvedValue(exitedSession);
-      (mockTmuxGateway.sendKeys as Mock).mockRejectedValue(new Error("Send failed"));
+      (mockTmuxGateway.replaceAgentProcess as Mock).mockRejectedValue(new Error("Send failed"));
 
       const input: RestartAgentInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -294,7 +385,7 @@ describe("RestartAgentUseCase", () => {
     it("reverts to exited state when sendKeys fails", async () => {
       const exitedSession = createAgentSession({ agentExitState: "exited" });
       (mockSessionRepository.findById as Mock).mockResolvedValue(exitedSession);
-      (mockTmuxGateway.sendKeys as Mock).mockRejectedValue(new Error("Send failed"));
+      (mockTmuxGateway.replaceAgentProcess as Mock).mockRejectedValue(new Error("Send failed"));
 
       const input: RestartAgentInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -303,13 +394,29 @@ describe("RestartAgentUseCase", () => {
 
       await expect(useCase.execute(input)).rejects.toThrow();
 
-      // Should save restarting state, then revert to exited state on failure
-      expect(mockSessionRepository.save).toHaveBeenCalledTimes(2);
-      expect(mockSessionRepository.save).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          agentExitState: "exited",
-        })
+      expect(mockSessionRepository.completeAgentRestart).not.toHaveBeenCalled();
+      expect(mockTmuxGateway.stopSessionAndConfirmAbsent).toHaveBeenCalledWith(
+        exitedSession.tmuxSessionName.toString(),
       );
+      expect(mockSessionRepository.failAgentRestart).toHaveBeenCalledWith(
+        input.sessionId,
+        input.userId,
+        1,
+      );
+    });
+
+    it("leaves an uncertain generation restarting when the failed launch cannot be stopped", async () => {
+      const exitedSession = createAgentSession({ agentExitState: "exited" });
+      (mockSessionRepository.findById as Mock).mockResolvedValue(exitedSession);
+      (mockTmuxGateway.replaceAgentProcess as Mock).mockRejectedValue(new Error("Send failed"));
+      (mockTmuxGateway.stopSessionAndConfirmAbsent as Mock).mockResolvedValue(false);
+
+      await expect(useCase.execute({
+        sessionId: exitedSession.id,
+        userId: exitedSession.userId,
+      })).rejects.toMatchObject({ code: "RESTART_FAILED" });
+
+      expect(mockSessionRepository.failAgentRestart).not.toHaveBeenCalled();
     });
   });
 });

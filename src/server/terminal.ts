@@ -9,9 +9,27 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import { promisify } from "node:util";
 import { STABLE_SPAWN_CWD } from "../lib/exec.js";
+import { stopTmuxSessionAndConfirmAbsentSync } from "./tmux-containment.js";
 import { validatePath, sanitizeCwdForDisplay } from "./validate-cwd.js";
 import { resolveSessionCwd, rowProjectPathForCwd } from "./resolve-session-cwd.js";
 import { classifyPaneCwd, computeServerAppDirMarkers } from "./detect-dead-pane-cwd.js";
+import {
+  agentExitStateUpdate,
+  agentExitTransition,
+  parseAgentExitCode,
+  parseAgentExitSignal,
+} from "./agent-exit-state.js";
+import {
+  agentStatusNotification,
+  authorizeAgentCallback,
+  classifyExitDelivery,
+  parseAgentDeliveryId,
+  parseAgentGeneration,
+  shouldBroadcastExitDelivery,
+} from "./agent-callback.js";
+import { nextAgentStatusArrivalOrder } from "./agent-status-ordering.js";
+import { applyAgentStatusDelivery } from "./agent-status-delivery.js";
+import { withAgentExitDeliveryLock } from "./agent-exit-delivery-lock.js";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
 // [oyej] Agent-run scheduler (REAL agent launches; epic remote-dev-oyej).
 import { agentSchedulerOrchestrator } from "../services/agent-scheduler-orchestrator.js";
@@ -1078,9 +1096,19 @@ const TMUX_KEY_MAP: Record<string, string> = {
   "Space": "Space",
 };
 
-/** Build an agent_exited event payload */
-function agentExitedEvent(sessionId: string, exitCode: number | null): Record<string, unknown> {
-  return { type: "agent_exited", sessionId, exitCode, exitedAt: new Date().toISOString() };
+/** Build an agent_exited event payload. */
+function agentExitedEvent(
+  sessionId: string,
+  exitCode: number | null,
+  signal: string | null = null,
+): Record<string, unknown> {
+  return {
+    type: "agent_exited",
+    sessionId,
+    exitCode,
+    signal,
+    exitedAt: new Date().toISOString(),
+  };
 }
 
 /** Broadcast a JSON message to all connected WebSocket clients */
@@ -1988,6 +2016,78 @@ async function parseRequestJson(req: IncomingMessage, res: ServerResponse): Prom
   }
 }
 
+interface AuthorizedAgentCallbackSession {
+  id: string;
+  userId: string;
+  name: string;
+  terminalType: string | null;
+  agentProvider: AgentProviderType | null;
+  agentRestartCount: number;
+  agentExitState: import("@/types/terminal-type").AgentExitState | null;
+  agentExitCode: number | null;
+  agentExitNotificationAt: Date | null;
+  agentActivityStatus: string | null;
+}
+
+function bearerToken(req: IncomingMessage): string | null {
+  const header = req.headers.authorization;
+  if (!header?.startsWith("Bearer ")) return null;
+  const token = header.slice("Bearer ".length).trim();
+  return token || null;
+}
+
+/** Authenticate a lifecycle callback and bind its key to the exact session. */
+async function authorizedAgentCallbackSession(
+  req: IncomingMessage,
+  sessionId: string,
+): Promise<AuthorizedAgentCallbackSession | null> {
+  const token = bearerToken(req);
+  if (!token) return null;
+
+  const [{ validateApiKey, getApiKey, touchApiKey }, { db }, { terminalSessions }, { eq }] =
+    await Promise.all([
+      import("@/services/api-key-service"),
+      import("@/db"),
+      import("@/db/schema"),
+      import("drizzle-orm"),
+    ]);
+  const validated = await validateApiKey(token);
+  if (!validated) return null;
+
+  const [key, session] = await Promise.all([
+    getApiKey(validated.keyId, validated.userId),
+    db.query.terminalSessions.findFirst({
+      where: eq(terminalSessions.id, sessionId),
+      columns: {
+        id: true,
+        userId: true,
+        name: true,
+        terminalType: true,
+        agentProvider: true,
+        agentRestartCount: true,
+        agentExitState: true,
+        agentExitCode: true,
+        agentExitNotificationAt: true,
+        agentActivityStatus: true,
+      },
+    }),
+  ]);
+  if (
+    !key ||
+    !session ||
+    !authorizeAgentCallback({
+      sessionId,
+      sessionUserId: session.userId,
+      validatedKey: { userId: key.userId, name: key.name },
+    })
+  ) {
+    return null;
+  }
+
+  void touchApiKey(validated.keyId).catch(() => undefined);
+  return session as AuthorizedAgentCallbackSession;
+}
+
 async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   const parsedUrl = new URL(req.url || "", "http://localhost");
   const pathname = parsedUrl.pathname;
@@ -2062,49 +2162,275 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     return true;
   }
 
-  // Handle agent exit notification from tmux hook
-  // Called when agent process exits: POST /internal/agent-exit?sessionId=xxx&exitCode=0
+  // Handle the authoritative process-exit notification from tmux's pane-died
+  // hook. The bearer key is bound to this exact session and the generation
+  // rejects delayed callbacks from processes killed during a restart.
   if (pathname === "/internal/agent-exit" && req.method === "POST") {
     const sessionId = query.sessionId as string;
-    const exitCode = query.exitCode ? parseInt(query.exitCode as string, 10) : null;
+    const rawExitCode = Array.isArray(query.exitCode) ? query.exitCode[0] : query.exitCode;
+    const exitCode = parseAgentExitCode(rawExitCode);
+    const signal = parseAgentExitSignal(query.signal);
+    const generation = parseAgentGeneration(query.generation);
 
-    if (!sessionId) {
-      sendJson(res, 400, { error: "Missing sessionId parameter" });
+    if (!sessionId || generation === null) {
+      sendJson(res, 400, { error: "Missing or invalid sessionId/generation parameter" });
+      return true;
+    }
+    if (exitCode === null && signal === null) {
+      sendJson(res, 400, { error: "Missing or invalid exitCode/signal parameter" });
+      return true;
+    }
+    // Hold one generation-level critical section from exact state persistence
+    // through focus-aware notification storage. The operation owns the lock;
+    // an impatient/disconnected client must not release it while work continues.
+    return withAgentExitDeliveryLock(sessionId, generation, async () => {
+    const statusAt = Date.now();
+    const activityOrder = nextAgentStatusArrivalOrder(statusAt);
+
+    let session: AuthorizedAgentCallbackSession;
+    try {
+      const authorized = await authorizedAgentCallbackSession(req, sessionId);
+      if (!authorized) {
+        sendJson(res, 401, { error: "Unauthorized lifecycle callback" });
+        return true;
+      }
+      session = authorized;
+    } catch (err) {
+      agentLog.error("Failed to authenticate agent exit", {
+        error: String(err),
+        sessionId,
+      });
+      sendJson(res, 503, { error: "Lifecycle authentication unavailable" });
       return true;
     }
 
-    agentLog.info("Session exited", { sessionId, exitCode: exitCode ?? "unknown" });
+    let disposition = classifyExitDelivery({
+      currentGeneration: session.agentRestartCount ?? 0,
+      suppliedGeneration: generation,
+      exitState: session.agentExitState,
+      exitCode: session.agentExitCode,
+      activityStatus: session.agentActivityStatus,
+    });
+    if (disposition === "ignore") {
+      agentLog.info("Ignored stale or intentional pane exit", {
+        sessionId,
+        generation,
+        currentGeneration: session.agentRestartCount ?? 0,
+        exitState: session.agentExitState,
+      });
+      sendJson(res, 202, { success: true, ignored: true, sessionId, generation });
+      return true;
+    }
 
-    // Notify all connected clients for this session
-    const clientCount = getConnectionsForSession(sessionId).length;
-    if (clientCount > 0) {
-      broadcastToSession(sessionId, agentExitedEvent(sessionId, exitCode));
-      agentLog.debug("Notified clients", { sessionId, clientCount });
-    } else {
-      agentLog.debug("No active WebSocket connections", { sessionId });
+    const { status, failed } = agentExitTransition(exitCode, signal);
+    agentLog.info("Session exited", {
+      sessionId,
+      generation,
+      exitCode: exitCode ?? "unknown",
+      signal,
+      status,
+    });
+
+    if (disposition === "apply" || disposition === "enrich") {
+      try {
+        const [{ db }, { terminalSessions }, { eq, and, sql }] = await Promise.all([
+          import("@/db"),
+          import("@/db/schema"),
+          import("drizzle-orm"),
+        ]);
+        const stateGuard = disposition === "enrich"
+          ? sql`${terminalSessions.agentExitState} = 'exited' AND ${terminalSessions.agentExitCode} IS NULL AND ${terminalSessions.agentActivityStatus} = 'idle'`
+          : sql`(${terminalSessions.agentExitState} IS NULL OR ${terminalSessions.agentExitState} IN ('running', 'restarting'))`;
+        const updated = await retryOnBusy(() =>
+          db
+            .update(terminalSessions)
+            .set(agentExitStateUpdate(exitCode, signal, statusAt, activityOrder))
+            .where(
+              and(
+                eq(terminalSessions.id, sessionId),
+                eq(terminalSessions.userId, session.userId),
+                sql`COALESCE(${terminalSessions.agentRestartCount}, 0) = ${generation}`,
+                stateGuard,
+              ),
+            )
+            .returning({ id: terminalSessions.id }),
+        );
+        if (updated.length === 0) {
+          const latest = await db.query.terminalSessions.findFirst({
+            where: and(
+              eq(terminalSessions.id, sessionId),
+              eq(terminalSessions.userId, session.userId),
+            ),
+            columns: {
+              agentRestartCount: true,
+              agentExitState: true,
+              agentExitCode: true,
+              agentActivityStatus: true,
+            },
+          });
+          disposition = latest
+            ? classifyExitDelivery({
+                currentGeneration: latest.agentRestartCount ?? 0,
+                suppliedGeneration: generation,
+                exitState: latest.agentExitState,
+                exitCode: latest.agentExitCode,
+                activityStatus: latest.agentActivityStatus,
+              })
+            : "ignore";
+          if (disposition === "ignore") {
+            sendJson(res, 202, { success: true, ignored: true, sessionId, generation });
+            return true;
+          }
+          if (disposition === "apply" || disposition === "enrich") {
+            sendJson(res, 503, { error: "Lifecycle exit raced with another state transition" });
+            return true;
+          }
+        }
+      } catch (err) {
+        agentLog.error("Failed to persist agent exit", {
+          error: String(err),
+          sessionId,
+          generation,
+          exitCode: exitCode ?? "unknown",
+          signal,
+        });
+        // curl treats 503 as retryable. Do not broadcast a state the durable DB
+        // failed to record.
+        sendJson(res, 503, { error: "Failed to persist lifecycle exit" });
+        return true;
+      }
+    }
+
+    // Create the durable notification before broadcasting. The deterministic
+    // delivery id makes retries safe if the first request persisted state but
+    // lost its response or failed later in the pipeline.
+    if (session.terminalType === "agent" || session.terminalType === "loop") {
+      try {
+        const {
+          ensureAgentExitNotification,
+          markAgentExitNotificationDelivered,
+        } = await import(
+          "@/services/agent-exit-notification-service"
+        );
+        const notification = session.agentExitNotificationAt && disposition === "retry"
+          ? null
+          : await ensureAgentExitNotification({
+          id: sessionId,
+          userId: session.userId,
+          name: session.name,
+          generation,
+          exitCode,
+          signal,
+          failed,
+          focused: isSessionFocusedByUser(session.userId, sessionId),
+          enrichExisting: disposition === "enrich",
+        });
+        await markAgentExitNotificationDelivered({
+          id: sessionId,
+          userId: session.userId,
+          generation,
+        });
+        if (notification) {
+          broadcastToUser(session.userId, {
+            type: "notification",
+            notification: {
+              ...notification,
+              createdAt: notification.createdAt instanceof Date
+                ? notification.createdAt.toISOString()
+                : notification.createdAt,
+              updatedAt: notification.updatedAt instanceof Date
+                ? notification.updatedAt.toISOString()
+                : notification.updatedAt,
+              readAt: notification.readAt instanceof Date
+                ? notification.readAt.toISOString()
+                : notification.readAt,
+            },
+          });
+        }
+      } catch (err) {
+        agentLog.error("Failed to create agent exit notification", {
+          error: String(err),
+          sessionId,
+          generation,
+        });
+        sendJson(res, 503, { error: "Failed to persist lifecycle notification" });
+        return true;
+      }
+    }
+
+    // A retry may be the first attempt that made it past notification storage.
+    // Re-broadcasting an absolute state is harmless and closes the response-loss
+    // window where the durable exit committed but connected clients saw nothing.
+    if (shouldBroadcastExitDelivery(disposition)) {
+      const clientCount = getConnectionsForSession(sessionId).length;
+      if (clientCount > 0) {
+        broadcastToSession(sessionId, agentExitedEvent(sessionId, exitCode, signal));
+        agentLog.debug("Notified clients", { sessionId, clientCount });
+      }
+      broadcastToUser(session.userId, {
+        type: "agent_activity_status",
+        sessionId,
+        status,
+        statusAt,
+      });
     }
 
     // [n6uc] Refresh tree metadata after exit (dev servers may have stopped →
-    // ports/dirty change). Fire-and-forget, scoped to the session's owner.
-    void (async () => {
-      try {
-        const { db } = await import("@/db");
-        const { terminalSessions } = await import("@/db/schema");
-        const { eq } = await import("drizzle-orm");
-        const row = await db.query.terminalSessions.findFirst({
-          where: eq(terminalSessions.id, sessionId),
-          columns: { userId: true },
-        });
-        if (row?.userId) await broadcastSessionMetadata(sessionId, row.userId);
-      } catch (err) {
-        agentLog.warn("session_metadata refresh failed", {
-          error: String(err),
-          sessionId,
-        });
-      }
-    })();
+    // ports/dirty change). Fire-and-forget, scoped to the authenticated owner.
+    void broadcastSessionMetadata(sessionId, session.userId).catch((err) => {
+      agentLog.warn("session_metadata refresh failed", {
+        error: String(err),
+        sessionId,
+      });
+    });
 
-    sendJson(res, 200, { success: true, sessionId, exitCode });
+    sendJson(res, 200, {
+      success: true,
+      sessionId,
+      generation,
+      exitCode,
+      signal,
+    });
+    return true;
+    });
+  }
+
+  // Authenticated, non-mutating hook validation. Unlike the historical
+  // validation probe, this never writes a synthetic "running" transition or
+  // clears a real waiting/idle/subagent state.
+  if (pathname === "/internal/agent-hook-health" && req.method === "GET") {
+    const sessionId = query.sessionId as string;
+    const generation = parseAgentGeneration(query.generation);
+    if (!sessionId || generation === null) {
+      sendJson(res, 400, {
+        error: "Missing or invalid sessionId/generation parameter",
+      });
+      return true;
+    }
+    try {
+      const session = await authorizedAgentCallbackSession(req, sessionId);
+      if (!session) {
+        sendJson(res, 401, { error: "Unauthorized lifecycle callback" });
+        return true;
+      }
+      if (
+        generation !== (session.agentRestartCount ?? 0) ||
+        (session.agentExitState !== null &&
+          session.agentExitState !== "running" &&
+          session.agentExitState !== "restarting")
+      ) {
+        sendJson(res, 409, { error: "Lifecycle generation is not active" });
+        return true;
+      }
+      sendJson(res, 200, { ok: true, sessionId, generation });
+    } catch (error) {
+      agentStatusLog.error("Hook health validation failed", {
+        sessionId,
+        generation,
+        error: String(error),
+      });
+      sendJson(res, 503, { error: "Lifecycle validation unavailable" });
+    }
     return true;
   }
 
@@ -2114,94 +2440,130 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
   if (pathname === "/internal/agent-status" && req.method === "POST") {
     const sessionId = query.sessionId as string;
     const status = query.status as string;
+    const generation = parseAgentGeneration(query.generation);
+    const suppliedDeliveryId = query.deliveryId;
+    const deliveryId = suppliedDeliveryId === undefined
+      ? null
+      : parseAgentDeliveryId(suppliedDeliveryId);
     // [remote-dev-1aa5c] Source tag. The SubagentStop hook posts "running" when a
-    // Task subagent finishes, but the parent turn may already have ended (a clean
-    // Stop wrote "idle"/"ended"). A subagent-stop "running" must NOT resurrect a
-    // turn that already ended — a legitimately new turn re-asserts running via
-    // PreToolUse immediately.
+    // Task subagent finishes, but the parent may already be waiting, compacting,
+    // idle, failed, or ended. A subagent-stop "running" may only replace an
+    // active running/subagent state; a legitimately new turn re-asserts running
+    // through an untagged prompt/tool hook.
     const source = (query.source as string | undefined) ?? null;
 
-    if (!sessionId || !status) {
-      sendJson(res, 400, { error: "Missing sessionId or status parameter" });
+    const validStatuses = new Set([
+      "running",
+      "waiting",
+      "idle",
+      "error",
+      "compacting",
+      "ended",
+      "subagent",
+    ]);
+    if (
+      !sessionId ||
+      generation === null ||
+      !validStatuses.has(status) ||
+      (suppliedDeliveryId !== undefined && deliveryId === null)
+    ) {
+      sendJson(res, 400, { error: "Missing or invalid sessionId/generation/status parameter" });
+      return true;
+    }
+    // Capture immutable order before authentication or any other await. A slow
+    // older request must not acquire a newer timestamp when auth completes.
+    const statusAt = Date.now();
+    const arrivalOrder = nextAgentStatusArrivalOrder(statusAt);
+    const effectiveDeliveryId = deliveryId ?? `legacy-${randomUUID()}`;
+
+    let session: AuthorizedAgentCallbackSession;
+    try {
+      const authorized = await authorizedAgentCallbackSession(req, sessionId);
+      if (!authorized) {
+        sendJson(res, 401, { error: "Unauthorized lifecycle callback" });
+        return true;
+      }
+      session = authorized;
+    } catch (err) {
+      agentStatusLog.error("Failed to authenticate activity status", {
+        error: String(err),
+        sessionId,
+      });
+      sendJson(res, 503, { error: "Lifecycle authentication unavailable" });
       return true;
     }
 
-    // [remote-dev-1aa5b] Server-arrival epoch ms — the monotonic ordering key.
-    // Captured at request arrival so a slow/late hook write carries an older
-    // timestamp than a newer one and the WHERE guard below rejects it.
-    const statusAt = Date.now();
+    if (
+      generation !== (session.agentRestartCount ?? 0) ||
+      (session.agentExitState !== null &&
+        session.agentExitState !== "running" &&
+        session.agentExitState !== "restarting")
+    ) {
+      sendJson(res, 202, {
+        success: true,
+        ignored: true,
+        sessionId,
+        generation,
+      });
+      return true;
+    }
 
-    // [remote-dev-1aa5a] AWAIT the DB persist BEFORE broadcasting. The old
-    // fire-and-forget order let a focus-triggered refreshSessions read the DB
-    // mid-flight and roll the live cache back to a stale "running". On persist
-    // failure we still broadcast (best-effort liveness) and log the error.
-    let persistOk = false;
+    let statusDelivery: Awaited<ReturnType<typeof applyAgentStatusDelivery>>;
     try {
-      const [{ db }, { terminalSessions }, { eq, and, sql }] = await Promise.all([
-        import("@/db"),
-        import("@/db/schema"),
-        import("drizzle-orm"),
-      ]);
-      // Monotonic WHERE guard: only write when this arrival is newer-or-equal
-      // than the persisted one (or none recorded yet). A subagent-stop "running"
-      // additionally refuses to overwrite a terminal 'idle'/'ended' status.
-      // This atomic SQL mirrors the (unit-tested) predicate in
-      // `@/server/agent-status-ordering` (shouldApplyStatusWrite) — keep them in
-      // lockstep.
-      const guards = [
-        eq(terminalSessions.id, sessionId),
-        sql`(${terminalSessions.agentActivityStatusAt} IS NULL OR ${terminalSessions.agentActivityStatusAt} <= ${statusAt})`,
-      ];
-      if (source === "subagent-stop" && status === "running") {
-        guards.push(sql`(${terminalSessions.agentActivityStatus} IS NULL OR ${terminalSessions.agentActivityStatus} NOT IN ('idle', 'ended'))`);
-      }
-      await retryOnBusy(() =>
-        db
-          .update(terminalSessions)
-          .set({ agentActivityStatus: status, agentActivityStatusAt: statusAt })
-          .where(and(...guards))
-      );
-      persistOk = true;
+      statusDelivery = await applyAgentStatusDelivery({
+        sessionId,
+        userId: session.userId,
+        generation,
+        deliveryId: effectiveDeliveryId,
+        status: status as import("@/types/terminal-type").AgentActivityStatus,
+        source,
+        notificationRequired: agentStatusNotification(status, session.agentProvider) !== null,
+        statusAt,
+        arrivalOrder,
+      });
     } catch (err) {
       agentStatusLog.error("Failed to persist activity status", { error: String(err), sessionId, status });
+      sendJson(res, 503, { error: "Failed to persist activity status" });
+      return true;
     }
 
-    // Broadcast to all clients so any connected client can update the sidebar
-    // indicator. Carries statusAt so the client cache can apply monotonic
-    // ordering too; clients ignore the broadcast's ordering only when missing
-    // (older servers). Always broadcast — even if persist failed — so live
-    // viewers still see the transition.
-    broadcastToClients({ type: "agent_activity_status", sessionId, status, statusAt });
-    if (!persistOk) {
-      agentStatusLog.warn("Broadcast activity status without persistence", { sessionId, status });
+    if (statusDelivery.disposition === "ignore") {
+      sendJson(res, 202, { success: true, ignored: true, sessionId, generation });
+      return true;
     }
+    // A lower-fidelity shell fallback can retry the same delivery identity with
+    // a different status. Downstream repair must use the first accepted receipt
+    // semantics, not the retry request, or a committed waiting notification can
+    // be skipped when the fallback reports running.
+    const acceptedStatus = statusDelivery.status;
 
-    // [n6uc] Refresh live tree metadata (dirty/ports/attention) on every status
-    // transition, scoped to the session's owner. Fire-and-forget.
-    void (async () => {
-      try {
-        const { db } = await import("@/db");
-        const { terminalSessions } = await import("@/db/schema");
-        const { eq } = await import("drizzle-orm");
-        const row = await db.query.terminalSessions.findFirst({
-          where: eq(terminalSessions.id, sessionId),
-          columns: { userId: true },
-        });
-        if (row?.userId) await broadcastSessionMetadata(sessionId, row.userId);
-      } catch (err) {
+    if (statusDelivery.disposition === "apply") {
+      broadcastToUser(session.userId, {
+        type: "agent_activity_status",
+        sessionId,
+        status: acceptedStatus,
+        statusAt: statusDelivery.statusAt,
+      });
+
+      // [n6uc] Refresh live tree metadata (dirty/ports/attention) once per
+      // accepted delivery, scoped to the session's owner.
+      void broadcastSessionMetadata(sessionId, session.userId).catch((err) => {
         agentStatusLog.warn("session_metadata refresh failed", {
           error: String(err),
           sessionId,
         });
-      }
-    })();
+      });
+    }
 
     // [remote-dev-3b3l] Reactive usage-limit scan on idle/ended. When a Claude
     // agent session with a profile goes quiet, scan its recent scrollback for
     // the "usage limit reached" phrase; on a hit, record + broadcast + relaunch.
     // Fire-and-forget; `scanSessionScrollbackForLimit` self-guards on
     // provider/profile/already-limited and never throws.
-    if (status === "idle" || status === "ended") {
+    if (
+      statusDelivery.disposition === "apply" &&
+      (acceptedStatus === "idle" || acceptedStatus === "ended")
+    ) {
       void (async () => {
         try {
           const { db } = await import("@/db");
@@ -2230,48 +2592,64 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       })();
     }
 
-    // [y5ch.3] Create an in-app notification only for waiting/error statuses
-    // (idle/ended/running/compacting/subagent never reach this branch — a clean
-    // stop is passive and produces no notification). Severity is explicit:
-    // waiting → actionable, error → error. Focus-awareness (y5ch.4) and
-    // coalescing/push-gating (y5ch.5/.10) are handled by createNotification.
-    if (status === "waiting" || status === "error") {
-      Promise.all([import("@/db"), import("@/db/schema"), import("drizzle-orm"), import("@/services/notification-service")])
-        .then(async ([{ db }, { terminalSessions }, { eq }, NotificationService]) => {
-          // Look up session for name and userId
-          const session = await db.query.terminalSessions.findFirst({
-            where: eq(terminalSessions.id, sessionId),
-            columns: { name: true, userId: true },
-          });
-          if (!session) return;
-          const isWaiting = status === "waiting";
-          const notification = await NotificationService.createNotification({
-            userId: session.userId,
-            sessionId,
-            sessionName: session.name,
-            type: isWaiting ? "agent_waiting" : "agent_error",
-            severity: isWaiting ? "actionable" : "error",
-            title: isWaiting ? "Agent waiting for input" : "Agent encountered an error",
-            body: `Session "${session.name}" needs attention`,
-            meta: { deepLinkSessionId: sessionId, cta: { label: "Open session", action: "open_session" } },
-            focused: isSessionFocusedByUser(session.userId, sessionId),
-          });
-          if (!notification) return; // coalesced or suppressed
-          // Broadcast notification to clients for real-time update
-          broadcastToClients({
+    // Persist human-relevant lifecycle records. Waiting/error require attention;
+    // a clean Stop is a passive agent_complete record (stored in-app but below
+    // the default push threshold). Focus-awareness and coalescing/push-gating
+    // remain centralized in createNotification.
+    if (statusDelivery.notificationRequired) {
+      try {
+        // Validate ownership and materialize the notification under one
+        // session-row lock. A newer status cannot land between those steps and
+        // leave behind a stale actionable notification. Processing is marked
+        // only after that transaction, leaving durable repair intent if this
+        // process crashes or returns 503 in between.
+        const { deliverAgentStatusNotification } = await import(
+          "@/services/agent-status-notification-service"
+        );
+        const materialized = await deliverAgentStatusNotification({
+          receiptId: statusDelivery.receiptId,
+          userId: session.userId,
+          sessionId,
+          sessionName: session.name,
+          provider: session.agentProvider,
+          status: acceptedStatus,
+          focused: isSessionFocusedByUser(session.userId, sessionId),
+        });
+        if (!materialized.current) {
+          sendJson(res, 200, { success: true, generation, staleNotification: true });
+          return true;
+        }
+        const notification = materialized.notification;
+        if (notification) {
+          broadcastToUser(session.userId, {
             type: "notification",
             notification: {
               ...notification,
-              createdAt: notification.createdAt instanceof Date ? notification.createdAt.toISOString() : notification.createdAt,
-              updatedAt: notification.updatedAt instanceof Date ? notification.updatedAt.toISOString() : notification.updatedAt,
-              readAt: notification.readAt instanceof Date ? notification.readAt.toISOString() : notification.readAt,
+              createdAt: notification.createdAt instanceof Date
+                ? notification.createdAt.toISOString()
+                : notification.createdAt,
+              updatedAt: notification.updatedAt instanceof Date
+                ? notification.updatedAt.toISOString()
+                : notification.updatedAt,
+              readAt: notification.readAt instanceof Date
+                ? notification.readAt.toISOString()
+                : notification.readAt,
             },
           });
-        })
-        .catch((err) => agentStatusLog.error("Failed to create notification", { error: String(err) }));
+        }
+      } catch (err) {
+        agentStatusLog.error("Failed to create notification", {
+          error: String(err),
+          sessionId,
+          generation,
+          status,
+        });
+        sendJson(res, 503, { error: "Failed to persist activity notification" });
+        return true;
+      }
     }
 
-    sendJson(res, 200, { success: true });
+    sendJson(res, 200, { success: true, generation });
     return true;
   }
 
@@ -3910,11 +4288,14 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
   // running/waiting sessions whose agent process died and emits exactly one
   // agent_stuck notification each. Lives here because the terminal server owns
   // tmux; in multi-instance/supervisor mode each instance sweeps its own.
-  setInterval(() => {
+  const runLivenessSweep = () => {
     import("@/services/session-liveness-service")
       .then((svc) => svc.reconcileLiveness())
       .catch((err) => log.error("Liveness sweep failed", { error: String(err) }));
-  }, 30_000);
+  };
+  runLivenessSweep();
+  const livenessSweepTimer = setInterval(runLivenessSweep, 30_000);
+  livenessSweepTimer.unref();
 
   // Stable client engagement outlives transient socket gaps, but must not
   // retain an unbounded set of sessions after tmux is killed out-of-band.
@@ -4372,9 +4753,9 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       cleanupConnection(connectionId);
     });
 
-    const handleMessage = (message: RawData): void => {
-      routeTerminalClientFrame(message.toString(), {
-        onProtocolMessage: (msg) => {
+    const handleMessage = async (message: RawData): Promise<void> => {
+      await routeTerminalClientFrame(message.toString(), {
+        onProtocolMessage: async (msg) => {
           switch (msg.type) {
           case "input":
             if (typeof msg.data !== "string") break;
@@ -4504,7 +4885,20 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             const restartPrimaryConnection = connections.get(
               sessionPrimaryConnection.get(sessionId) ?? "",
             );
+            let claimedRestartGeneration: number | null = null;
+            let initialTerminationUncertain = false;
+            let restartConnectionsDetached = false;
             try {
+              // Advance the durable generation before terminating the old pane.
+              // Its pane-died callback carries the previous generation and is
+              // therefore acknowledged without overwriting the restart.
+              const { markAgentRestarting } = await import("@/services/session-service");
+              const restarting = await markAgentRestarting(sessionId, userId);
+              if (!restarting) {
+                throw new Error("Failed to mark agent generation restarting");
+              }
+              claimedRestartGeneration = restarting.agentRestartCount ?? 0;
+
               // Destroy PTYs for ALL connections to this session before
               // killing the tmux session, so their onExit handlers see the
               // connection already removed and skip the stale-exit path.
@@ -4513,29 +4907,24 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
                 connections.delete(other.connectionId);
               }
               safeDestroyPty(connection.pty);
+              restartConnectionsDetached = true;
 
               // Use synchronous kill so the session is fully gone before we
               // recreate it — avoids a race between async kill and sync create.
-              let tmuxSessionConfirmedGone = false;
-              try {
-                execFileSync("tmux", ["kill-session", "-t", tmuxSessionName], { stdio: "pipe", cwd: STABLE_SPAWN_CWD });
-                tmuxSessionConfirmedGone = true;
-              } catch {
-                // A failed kill is safe to treat as gone only when tmux confirms
-                // the session no longer exists (it may already have died).
-                tmuxSessionConfirmedGone = tmuxSessionConfirmedAbsent(
-                  tmuxSessionName,
-                );
+              const tmuxSessionConfirmedGone = stopTmuxSessionAndConfirmAbsentSync(
+                tmuxSessionName,
+              );
+              if (!tmuxSessionConfirmedGone) {
+                initialTerminationUncertain = true;
+                throw new Error("Could not confirm the previous agent process stopped");
               }
-              if (tmuxSessionConfirmedGone) {
-                clearSessionControllerState(
-                  sessionId,
-                  tmuxSize,
-                  primaryPromotions,
-                );
-                clientInstanceFocusRecency.clearSession(sessionId);
-                clipboardBroker.clearSession(sessionId);
-              }
+              clearSessionControllerState(
+                sessionId,
+                tmuxSize,
+                primaryPromotions,
+              );
+              clientInstanceFocusRecency.clearSession(sessionId);
+              clipboardBroker.clearSession(sessionId);
               // Re-validate the connect-time cwd — the directory may have been
               // deleted (e.g. a worktree removed) since this WS attached.
               const recreatedCwd = validatePath(cwd) ?? os.homedir();
@@ -4620,7 +5009,12 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
               // the relaunch resolves so the UI (hgwo.7) can badge it.
               void import("@/server/agent-relaunch")
                 .then(({ relaunchAgentInTmux }) =>
-                  relaunchAgentInTmux(sessionId, tmuxSessionName, recreatedCwd),
+                  relaunchAgentInTmux(
+                    sessionId,
+                    tmuxSessionName,
+                    recreatedCwd,
+                    claimedRestartGeneration ?? undefined,
+                  ),
                 )
                 .then(({ resumed }) => {
                   broadcastToSession(sessionId, {
@@ -4635,17 +5029,50 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
                     sessionId, error: String(e),
                   });
                   broadcastToSession(sessionId, {
+                    type: "agent_activity_status",
+                    sessionId,
+                    status: "error",
+                    statusAt: Date.now(),
+                  });
+                  broadcastToSession(sessionId, {
                     type: "error",
-                    message: `Failed to restart agent: ${String(e)}`,
+                    message: `Agent restart failed: ${String(e)}`,
                   });
                 });
             } catch (error) {
               agentLog.error("Failed to restart agent session", { connectionId, sessionId, error: String(error) });
+              if (claimedRestartGeneration !== null) {
+                const processStopped = initialTerminationUncertain
+                  ? false
+                  : stopTmuxSessionAndConfirmAbsentSync(tmuxSessionName);
+                if (processStopped) {
+                  try {
+                    const { markAgentExited } = await import("@/services/session-service");
+                    await markAgentExited(
+                      sessionId,
+                      userId,
+                      1,
+                      claimedRestartGeneration,
+                    );
+                  } catch (stateError) {
+                    agentLog.error("Failed to revert claimed restart generation", {
+                      sessionId,
+                      generation: claimedRestartGeneration,
+                      error: String(stateError),
+                    });
+                  }
+                } else {
+                  agentLog.error("Retaining restart claim after uncertain tmux termination", {
+                    sessionId,
+                    generation: claimedRestartGeneration,
+                  });
+                }
+              }
               // Other connections were removed from `connections` but may still
               // be in `sessionConnections`. Clean up the orphaned entries so
               // session-level state is properly released.
               const connSet = sessionConnections.get(sessionId);
-              if (connSet) {
+              if (restartConnectionsDetached && connSet) {
                 for (const other of otherConns) {
                   connSet.delete(other.connectionId);
                   if (other.ws.readyState === WebSocket.OPEN) {
@@ -4657,7 +5084,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
                   }
                 }
               }
-              cleanupConnection(connectionId);
+              if (restartConnectionsDetached) cleanupConnection(connectionId);
               ws.send(JSON.stringify({
                 type: "error",
                 message: `Failed to restart agent: ${(error as Error).message}`,
@@ -4672,8 +5099,21 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         },
       });
     };
+    let messageQueue = Promise.resolve();
     bufferedMessages.activate({
-      message: handleMessage,
+      // WebSocket EventEmitter callbacks are not awaited. Serialize them so
+      // two restart_agent messages cannot interleave kill/create/relaunch.
+      message: (message) => {
+        messageQueue = messageQueue
+          .then(() => handleMessage(message))
+          .catch((error) => {
+            log.error("Serialized terminal message failed", {
+              connectionId,
+              sessionId,
+              error: String(error),
+            });
+          });
+      },
       close: () => {
         log.debug("WebSocket closed", { connectionId, sessionId });
         if (!connections.has(connectionId)) return;

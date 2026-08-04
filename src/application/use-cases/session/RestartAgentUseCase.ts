@@ -130,27 +130,65 @@ export class RestartAgentUseCase {
       );
     }
 
-    // Mark as restarting
-    let restartingSession = session.markAgentRestarting();
-    restartingSession = await this.sessionRepository.save(restartingSession);
-
-    // Check if tmux session still exists
-    const tmuxName = session.tmuxSessionName.toString();
-    const tmuxExists = await this.tmuxGateway.sessionExists(tmuxName);
-
-    if (!tmuxExists) {
-      // Tmux session is gone - revert to exited state and throw error
-      // The session should be recreated via CreateSessionUseCase
-      try {
-        const revertedSession = restartingSession.markAgentExited(null);
-        await this.sessionRepository.save(revertedSession);
-      } catch {
-        log.error("Failed to revert session state after tmux gone", { sessionId: input.sessionId });
-      }
+    // Claim the next generation with a DB compare-and-set. REST and WS restart
+    // requests can arrive concurrently from different processes; exactly one
+    // may kill/replace the pane.
+    const restartingSession = await this.sessionRepository.claimAgentRestart(
+      input.sessionId,
+      input.userId,
+      session.agentRestartCount,
+    );
+    if (!restartingSession) {
       throw new RestartAgentError(
-        `Tmux session ${tmuxName} no longer exists. Session must be recreated.`,
-        "TMUX_SESSION_GONE",
-        input.sessionId
+        "Another restart or lifecycle transition already won",
+        "INVALID_STATE",
+        input.sessionId,
+      );
+    }
+    const generation = restartingSession.agentRestartCount;
+
+    // Probe without conflating a timeout/permission/daemon error with absence.
+    // If the probe is ambiguous, quarantine the possibly-live old process
+    // before changing the generation to an exited state.
+    const tmuxName = session.tmuxSessionName.toString();
+    const tmuxPresence = await this.tmuxGateway.getSessionPresence(tmuxName);
+    let confirmedAbsent = tmuxPresence === "absent";
+    if (tmuxPresence === "unknown") {
+      confirmedAbsent = await this.tmuxGateway.stopSessionAndConfirmAbsent(tmuxName);
+    }
+
+    if (tmuxPresence !== "present") {
+      if (confirmedAbsent) {
+        // The session is definitely gone (or was strictly contained), so the
+        // claimed generation can safely become exited and be recreated.
+        try {
+          await this.sessionRepository.failAgentRestart(
+            input.sessionId,
+            input.userId,
+            generation,
+          );
+        } catch {
+          log.error("Failed to revert session state after tmux gone", {
+            sessionId: input.sessionId,
+          });
+        }
+        throw new RestartAgentError(
+          `Tmux session ${tmuxName} no longer exists. Session must be recreated.`,
+          "TMUX_SESSION_GONE",
+          input.sessionId,
+        );
+      }
+
+      // Leave the generation restarting: liveness includes that state and can
+      // retry containment after the transient tmux failure clears.
+      log.error("Retaining restart claim after uncertain tmux preflight", {
+        sessionId: input.sessionId,
+        generation,
+      });
+      throw new RestartAgentError(
+        `Unable to confirm or contain tmux session ${tmuxName}`,
+        "RESTART_FAILED",
+        input.sessionId,
       );
     }
 
@@ -160,7 +198,20 @@ export class RestartAgentUseCase {
     // (was: bare command with no flags). Falls back to a fresh relaunch when
     // the provider has no resume support or no native id is known.
     let resumed = false;
+    let runningSession: Session | null = null;
     try {
+      // Update generation before killing/respawning the old pane. Its installed
+      // hook still carries the previous generation and is therefore ignored;
+      // the gateway installs a new hook after respawn and before launch.
+      await this.tmuxGateway.setEnvironment(
+        tmuxName,
+        TmuxEnvironment.create({
+          RDV_AGENT_GENERATION: String(restartingSession.agentRestartCount),
+          RDV_AGENT_PROVIDER: session.agentProvider ?? "claude",
+          DISABLE_AUTO_UPDATE: "true",
+          DISABLE_UPDATE_PROMPT: "true",
+        }),
+      );
       const provider =
         AGENT_PROVIDERS.find((p) => p.id === (session.agentProvider ?? "claude")) ??
         AGENT_PROVIDERS.find((p) => p.id === "claude")!;
@@ -236,16 +287,43 @@ export class RestartAgentUseCase {
         provider: provider.id,
         resumed,
       });
-      // sendKeys submits with Enter (carriage return) — Claude TUI needs \r.
-      await this.tmuxGateway.sendKeys(tmuxName, agentCommand);
+      await this.tmuxGateway.replaceAgentProcess(tmuxName, agentCommand);
+      runningSession = await this.sessionRepository.completeAgentRestart(
+        input.sessionId,
+        input.userId,
+        generation,
+      );
+      // An immediate replacement exit legitimately wins the CAS above.
+      runningSession ??= await this.sessionRepository.findById(input.sessionId, input.userId);
+      if (!runningSession) throw new Error("session disappeared while completing restart");
     } catch (error) {
-      // Revert session to exited state on failure to avoid stuck "restarting" state
+      // A failure can happen before or after the gateway replaces the pane. Do
+      // not publish `exited` while an old or partially launched process may
+      // still be alive under an untrusted generation: first quarantine the
+      // whole agent tmux session. If tmux cannot confirm that stop, retain the
+      // `restarting` claim for the liveness reconciler instead of lying about
+      // the process state.
+      let processStopped = false;
       try {
-        const revertedSession = restartingSession.markAgentExited(null);
-        await this.sessionRepository.save(revertedSession);
-      } catch {
-        // Log but don't mask original error
-        log.error("Failed to revert session state after restart failure", { sessionId: input.sessionId });
+        processStopped = await this.tmuxGateway.stopSessionAndConfirmAbsent(tmuxName);
+      } catch (stopError) {
+        log.error("Failed to confirm agent process stopped after restart failure", {
+          sessionId: input.sessionId,
+          error: String(stopError),
+        });
+      }
+      if (processStopped) {
+        try {
+          await this.sessionRepository.failAgentRestart(input.sessionId, input.userId, generation);
+        } catch {
+          // Log but don't mask original error
+          log.error("Failed to revert session state after restart failure", { sessionId: input.sessionId });
+        }
+      } else {
+        log.error("Retaining restart claim until liveness can reconcile uncertain process", {
+          sessionId: input.sessionId,
+          generation,
+        });
       }
       throw new RestartAgentError(
         `Failed to send restart command: ${(error as Error).message}`,
@@ -254,12 +332,8 @@ export class RestartAgentUseCase {
       );
     }
 
-    // Mark as running
-    const runningSession = restartingSession.markAgentRunning();
-    const savedSession = await this.sessionRepository.save(runningSession);
-
     return {
-      session: savedSession,
+      session: runningSession,
       wasRecreated: false,
       resumed,
     };
