@@ -576,6 +576,35 @@ async function verifyLaunchdSpawned(
   }
 }
 
+/**
+ * verifyLaunchdSpawned + one kickstart recovery attempt (remote-dev-bgz8).
+ * Production evidence (2026-08-04): in the pended-nondemand-spawn state,
+ * `launchctl bootstrap` is accepted but the job is NEVER spawned — and a
+ * running `caffeinate -is` does NOT clear the state. `launchctl kickstart`
+ * DOES force a spawn (the watchdog's restart actuation used it successfully
+ * twice, spawning generations 5 and 6). So before declaring the spawn pended,
+ * kickstart the job (plain kickstart, NOT `-k` — there is no running instance
+ * to kill) and re-run the verification poll once.
+ */
+async function verifyLaunchdSpawnedWithKickstart(
+  deps: ReturnType<typeof supervisionDeps>,
+  label: string,
+): Promise<boolean> {
+  if (await verifyLaunchdSpawned(deps, label)) return true;
+  logDeploy(
+    `launchd custody: ${label} spawn pended after bootstrap (runs=0); ` +
+      "attempting `launchctl kickstart` recovery (remote-dev-bgz8)",
+  );
+  const res = deps.exec(["launchctl", "kickstart", `gui/${deps.uid()}/${label}`]);
+  if (res.exitCode !== 0) {
+    logError(
+      `launchd custody: launchctl kickstart gui/${deps.uid()}/${label} exited ${res.exitCode} ` +
+        `(${res.stderr.trim() || "no stderr"}); re-verifying anyway`,
+    );
+  }
+  return verifyLaunchdSpawned(deps, label);
+}
+
 /** The distinct pended-spawn error message (remote-dev-bgz8). */
 function launchdPendedSpawnMessage(label: string): string {
   return (
@@ -756,7 +785,7 @@ function createLaunchdCustody(): LaunchdCustody {
         // process, so an idle-pended spawn fails DISTINCTLY here instead of
         // surfacing as a generic health-check timeout (remote-dev-bgz8). The
         // journal survives, so finalize()/watchdog recovery still backstop.
-        if (!(await verifyLaunchdSpawned(deps, PROD_LABEL))) {
+        if (!(await verifyLaunchdSpawnedWithKickstart(deps, PROD_LABEL))) {
           throw new LaunchdPendedSpawnError(PROD_LABEL);
         }
         // Deploy restarts are actuations too [F12]: ledger + escalation math
@@ -863,7 +892,7 @@ function createLaunchdCustody(): LaunchdCustody {
             // accepted but never spawned must fail DISTINCTLY (and skip the
             // health wait, which cannot succeed) rather than burn the health
             // budget on a job that will never come up (remote-dev-bgz8).
-            if (!(await verifyLaunchdSpawned(deps, PROD_LABEL))) {
+            if (!(await verifyLaunchdSpawnedWithKickstart(deps, PROD_LABEL))) {
               const msg = launchdPendedSpawnMessage(PROD_LABEL);
               logError(`launchd custody: finalize — ${msg}; journal retained for watchdog custody recovery`);
               notifyEscalation(deps, paths, `deploy finalize: ${msg}; journal retained`);
