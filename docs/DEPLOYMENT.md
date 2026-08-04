@@ -364,10 +364,17 @@ except `deploy:setup`).
 
 ### Watchdog
 
-`deploy-setup.sh` installs a **launchd** agent on macOS
-(`~/Library/LaunchAgents/dev.remote.app.watchdog.plist`) that runs every 5 minutes
-to keep the servers up. On Linux it is not auto-installed; add a cron entry instead
-(the script prints the exact line, `*/5 * * * * bash …/watchdog.sh`). Logs land in
+`deploy-setup.sh` delegates to the canonical supervision installer (see
+[Supervision](#6-supervision-single-owner-launchd-custody) below), which installs a
+**launchd** agent on macOS (`~/Library/LaunchAgents/dev.remote.app.watchdog.plist`)
+that runs **every 60 seconds**. The shell script (`scripts/watchdog.sh`) is a thin
+curl-probe shim: it checks `/api/healthz` + `/login` on `nextjs.sock` and `/health`
+on `terminal.sock` (all must be 200; a missing socket counts as failure, with no
+dev-TCP fallback), and on any failed tick delegates to
+`bun scripts/rdv-supervision.ts watchdog-act <reason>` — which owns ALL actuation
+(grace counting, deploy suppression, flap fast-path, launchctl kickstart, ledgers,
+escalation) under the supervision control lock. On Linux it is not auto-installed;
+add a cron entry instead (`* * * * * bash …/watchdog.sh`). Logs land in
 `~/.remote-dev/logs/watchdog.log`; deploy logs in `~/.remote-dev/deploy/deploy.log`.
 Uninstall with `bash scripts/deploy-setup.sh --uninstall-watchdog`.
 
@@ -394,9 +401,121 @@ Servers are spawned `detached: true` so each is its own process-group leader; th
 is what lets both the deploy script and `rdv:stop` cleanly group-kill the entire
 tree (wrapper + real server) instead of leaking the grandchild on every restart.
 
+> **Prod is launchd-supervised** (next section): on a host with the
+> `dev.remote.app.prod` job installed, the prod `rdv` commands **delegate to
+> launchd** (`kickstart`/`bootstrap`/`bootout`) instead of spawning/killing
+> processes themselves. Dev mode is unchanged.
+
 ---
 
-## 6. Known issues / operator gotchas
+## 6. Supervision (single-owner launchd custody)
+
+Self-hosted macOS prod (`dev.bryanli.net`) is supervised by **one** launchd job —
+`dev.remote.app.prod` (KeepAlive) — which runs
+`bun scripts/rdv.ts start prod --launchd-child` (the marker is optional; see
+"Both plists work" below). That wrapper is the ONLY code path
+that spawns the prod servers. Everything else follows the **single-owner rule**:
+
+- **Nothing kills a process or unlinks a socket it cannot prove it owns.** The
+  wrapper writes an immutable per-generation manifest
+  (`~/.remote-dev/server/generations/<gen>.json`: wrapper/next/terminal
+  `{pid, pgid, startTimeNs}` + socket `{dev, ino}`) and flips the atomic
+  `current-generation` pointer only once both children and sockets are recorded.
+  Signals go to manifest-verified PGIDs only (identity = `sysctl kern.proc.pid`
+  start time; a recycled pid is refused); unlinks require a dev/ino match against
+  your own manifest. Children (`standalone-server.js`, the terminal server) never
+  unlink their sockets — the wrapper reclaims paths before spawn and cleans up on
+  shutdown.
+- **Every other actor delegates.** `rdv restart prod` = control-locked
+  `launchctl kickstart -k`; `rdv stop` = desired-state `stopped` + `bootout`
+  (never undone by the watchdog); `rdv start prod` is idempotent on a healthy
+  stack. The real-start path is taken on launchd **provenance** (ppid 1 +
+  `XPC_SERVICE_NAME` matching the job label); a `--launchd-child` flag *without*
+  provenance is treated as forged and gets the delegation logic instead.
+  Unknown launchd state always **fails closed** with remediation text.
+- **Both plists work — merge and install are independently orderable.** Because
+  provenance alone is sufficient, the supervision code runs correctly whether
+  launchd starts it from the **legacy** hand-authored plist (no
+  `--launchd-child`) or the **canonical** one. Merging the branch is therefore
+  safe on its own with no installer run required, and `install-supervision.sh`
+  is a pure upgrade you can run in any later maintenance window. A legacy-plist
+  start logs a one-line upgrade warning in the wrapper banner (and so in
+  `~/.remote-dev/logs/nextjs.log`). Requiring the marker would have been a
+  rollout hazard: a launchd start from the legacy plist would fall through to
+  `kickstart -k` of its own job and loop forever, with prod never coming up.
+- **Deploys hold custody via bootout/bootstrap.** `deploy.ts` writes
+  `~/.remote-dev/deploy/custody-journal.json` *before* bootout (owner identity,
+  `priorLoaded`, restore slot, phase) and sets desired-state `maintenance`; on
+  success it bootstraps, sets `running`, and clears the journal. If the deploy
+  process dies after bootout, the watchdog classifies the custody as **abandoned**
+  (owner dead, deploy lock free, desired ≠ stopped) and restores prod from the
+  journal (restore slot → bootstrap → desired `running` → escalation
+  notification).
+- **Restart-rate escalation.** Every actuation appends to
+  `~/.remote-dev/deploy/restart-ledger`; every wrapper start appends to
+  `generation-ledger` (so native crash loops count too, without renewing the
+  watchdog's 120 s post-restart grace window). ≥ 3 combined entries in an hour
+  still restarts but raises an `ESCALATION` log line, a macOS notification, and a
+  best-effort in-app notification.
+
+### Installer
+
+`scripts/install-supervision.ts` (shim: `install-supervision.sh`) is the one
+transactional installer for both plists, rendered from the repo-canonical
+templates in `scripts/service-config/` (`dev.remote.app.prod.plist`,
+`dev.remote.watchdog.plist`). It takes the supervision control lock, refuses
+while a deploy is live, `plutil -lint`s the renders, **no-ops when nothing
+changed**, and arms a restore trap *before* anything destructive — a failure
+mid-transaction restores the previous plists and re-bootstraps only the jobs
+that were loaded before. `install.sh` (macOS branch) and `deploy-setup.sh`
+delegate here.
+
+```bash
+bash scripts/install-supervision.sh              # install/upgrade supervision
+bun run rdv doctor-supervision                   # inspect supervision state
+bun run rdv doctor-supervision --force-reclaim   # operator-consented reclaim
+```
+
+### Drills
+
+After (re)installing, run the rollout drills **in order** in a maintenance
+window; stop at the first failure:
+
+1. **Status truthfulness** — `rdv status` shows the launchd line, desired state,
+   and identity-verified generation PIDs (`STARTING` while a young generation's
+   socket is still binding; `UNREACHABLE (socket unlinked — flap suspected)` only
+   past the grace window).
+2. **Delegated restart** — `bun run rdv:restart prod`: single next-server
+   invariant holds, a `restart-ledger` entry appears, recovery ≤ 30 s.
+3. **Deploy smoke** — a no-op deploy: `custody-journal.json` appears at bootout
+   and is gone after the health gate.
+4. **SIGKILL next-server** — KeepAlive respawns ≤ 60 s; `generation-ledger`
+   entry appears.
+5. **SIGKILL terminal server** — watchdog restores within ~3 min.
+6. **Socket unlink** (the 2026-08-03 outage repro — only after 1–5 pass) — the
+   gen-keyed 2-tick flap fast-path reclaims and kickstarts.
+7. **SIGKILL a deploy after bootout** (no-op deploy) — the watchdog's
+   custody-journal recovery restores prod.
+8. **≥ 3 restarts in an hour** — escalation fires (log + notification) while
+   still restarting.
+
+### Known limitations (shipped deliberately, tracked)
+
+Cross-review raised these four after the final remediation round. Each is
+**not reachable on the current prod host** (`dev.bryanli.net`) or is a
+narrowing rather than a hole, so they ship as filed follow-ups rather than
+blockers. They are listed here so the gaps are documented, not implied fixed.
+
+| bd | Gap | Why it ships |
+|---|---|---|
+| `remote-dev-spsn` | The custody journal's `phase` is written once at bootout and not advanced through activation/health/state-publication, and `restorePending` is written after the bootstrap it describes rather than before. A crash between those points recovers with a slightly stale phase. | Recovery is still driven by the journal's `slot` + `priorLoaded`, which are correct from the first write; the phase only sharpens an operator message. |
+| `remote-dev-as74` | The installer does not retire a **legacy two-job** launchd layout (`dev.remote.app` + `dev.remote.app.terminal`) if one is still installed from before the single-owner design. | Verified not present on this host — only `dev.remote.app.prod` and `dev.remote.app.watchdog` are installed. Relevant only to a machine upgrading from the pre-2026-08 layout. |
+| `remote-dev-u1d3` | The installer's SIGINT/SIGTERM rollback is not serialized against the forward transaction: a signal arriving mid-step can run restore concurrently with the step it is undoing. | Requires signalling the installer during its own (short, interactive, maintenance-window) run. |
+| `remote-dev-58ox` | Job-absent deploy custody transitions do not take the control lock, and the ledger dedupe window has timestamp edge cases at its boundary. | The job-absent path is unreachable while the prod plist is installed (it is); the dedupe edge only shifts an escalation threshold by one event. |
+
+---
+
+## 7. Known issues / operator gotchas
 
 These are **real, observed** production behaviors. Treat them as operational cautions.
 

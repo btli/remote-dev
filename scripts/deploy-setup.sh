@@ -116,28 +116,16 @@ cd "$PROJECT_ROOT" && bun run scripts/deploy.ts --init
 # ─────────────────────────────────────────────────────────────────────────────
 
 if [[ "$OS" == "Darwin" ]]; then
-  log "Installing watchdog launchd service..."
-
-  LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
-  mkdir -p "$LAUNCH_AGENTS_DIR"
-
-  PLIST_SRC="$SCRIPT_DIR/service-config/dev.remote.watchdog.plist"
-  PLIST_DEST="$LAUNCH_AGENTS_DIR/dev.remote.app.watchdog.plist"
-
-  # Unload if already loaded
-  launchctl unload "$PLIST_DEST" 2>/dev/null || true
-
-  sed \
-    -e "s|__PROJECT_ROOT__|$PROJECT_ROOT|g" \
-    -e "s|__DATA_DIR__|$DATA_DIR|g" \
-    -e "s|__HOME__|$HOME|g" \
-    "$PLIST_SRC" > "$PLIST_DEST"
-
-  launchctl load -w "$PLIST_DEST"
-  ok "Watchdog service installed (checks every 5 minutes)"
+  # The watchdog (and the prod supervision job it actuates) are installed by
+  # the ONE canonical transactional installer (remote-dev-7fsq §3.8) — no more
+  # ad-hoc sed/load here, so the installed plists can never drift from the
+  # repo templates [F15, F16].
+  log "Installing supervision (prod job + watchdog) via install-supervision..."
+  bash "$SCRIPT_DIR/install-supervision.sh" --project-root "$PROJECT_ROOT" --data-dir "$DATA_DIR"
+  ok "Supervision installed (watchdog checks every 60 seconds)"
 else
-  warn "Watchdog service: only macOS (launchd) is currently supported"
-  warn "On Linux, add a cron job: */5 * * * * bash $SCRIPT_DIR/watchdog.sh"
+  warn "Supervision/watchdog: only macOS (launchd) is currently supported"
+  warn "On Linux, add a cron job: * * * * * bash $SCRIPT_DIR/watchdog.sh"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Repo-canonical prod LaunchAgent (remote-dev-7fsq — Spec v3 §3.4 [F8, F15]).
+  Rendered + installed transactionally by scripts/install-supervision.ts —
+  do NOT hand-edit the installed copy in ~/Library/LaunchAgents.
+
+  launchd is the SOLE process owner of the prod stack: KeepAlive restarts the
+  wrapper on crash; every other actor delegates via launchctl
+  (kickstart/bootout/bootstrap) under the supervision control lock.
+
+  The `-\-launchd-child` argv is the wrapper marker; rdv.ts additionally
+  verifies launchd provenance (ppid==1 + XPC_SERVICE_NAME) before taking the
+  real start path, so a forged flag gets the delegation logic instead [R1].
+
+  ExitTimeOut 30 bounds the wrapper's concurrent PGID shutdown of both
+  children; ThrottleInterval 30 spaces KeepAlive respawns (crash loops still
+  escalate via the generation ledger [R12]).
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>dev.remote.app.prod</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>__BUN__</string>
+		<string>__PROJECT_ROOT__/scripts/rdv.ts</string>
+		<string>start</string>
+		<string>prod</string>
+		<string>--launchd-child</string>
+	</array>
+
+	<key>WorkingDirectory</key>
+	<string>__PROJECT_ROOT__</string>
+
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:__HOME__/.bun/bin:__HOME__/.local/bin</string>
+		<key>HOME</key>
+		<string>__HOME__</string>
+		<key>RDV_DATA_DIR</key>
+		<string>__DATA_DIR__</string>
+	</dict>
+
+	<key>KeepAlive</key>
+	<true/>
+
+	<key>RunAtLoad</key>
+	<true/>
+
+	<key>ExitTimeOut</key>
+	<integer>30</integer>
+
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+
+	<key>StandardOutPath</key>
+	<string>__DATA_DIR__/logs/launchd.prod.log</string>
+
+	<key>StandardErrorPath</key>
+	<string>__DATA_DIR__/logs/launchd.prod.err</string>
+</dict>
+</plist>
