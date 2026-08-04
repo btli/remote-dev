@@ -137,11 +137,16 @@ To use Kimi, install its CLI and authenticate once as the same OS user that
 runs Remote Dev:
 
 ```bash
-npm install -g @moonshot-ai/kimi-code
+curl -LsSf https://code.kimi.com/install.sh | bash   # native installer (recommended)
+# or: npm install -g @moonshot-ai/kimi-code
 
 kimi --version
 kimi login   # OAuth device-code flow
 ```
+
+With the native installer the binary lives at `~/.kimi-code/bin/kimi`; Remote Dev
+probes that well-known location as well as `PATH`, so detection works even
+though launchd services don't source shell rc files.
 
 Authentication is OAuth (`kimi login`) or an API key in `config.toml`; no
 environment variable is required. After installation, check **Settings → Agents**,

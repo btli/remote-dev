@@ -87,7 +87,7 @@ commands and documentation links:
 | `antigravity` | _CLI install currently unavailable — the documented `https://google.dev/antigravity/install` installer URL is 404 (TBD)_ | https://antigravity.google/docs/cli-overview |
 | `opencode` | `npm install -g opencode-ai` | https://opencode.ai/docs/ |
 | `cursor` | `curl https://cursor.com/install -fsS \| bash` | https://cursor.com/docs/cli/overview |
-| `kimi` | `npm install -g @moonshot-ai/kimi-code` | https://www.kimi.com/code/docs/en/ |
+| `kimi` | `curl -LsSf https://code.kimi.com/install.sh \| bash` (or `npm install -g @moonshot-ai/kimi-code`) | https://www.kimi.com/code/docs/en/ |
 
 > **Package names ≠ binary names.** The npm packages `@openai/codex` and
 > `opencode-ai` install the binaries `codex` and `opencode` respectively (the
@@ -174,11 +174,18 @@ For a local Remote Dev installation, install and authenticate the CLI on the
 host that runs the terminal server:
 
 ```bash
-npm install -g @moonshot-ai/kimi-code
+curl -LsSf https://code.kimi.com/install.sh | bash   # native installer (recommended)
+# or: npm install -g @moonshot-ai/kimi-code
 
 kimi --version
 kimi login   # OAuth device-code flow
 ```
+
+The native installer drops the binary at `$KIMI_CODE_HOME/bin/kimi` (default
+`~/.kimi-code/bin/kimi`) and only adds that directory to `PATH` via shell rc
+files — which a launchd-spawned server never sources. Detection therefore
+probes the well-known location as well as `PATH`, so a native install is
+reported as installed even when `kimi` is not on the server's `PATH`.
 
 Authentication is OAuth (`kimi login`) or an API key in `config.toml`; no
 environment variable is required. The golden dev-env image already installs

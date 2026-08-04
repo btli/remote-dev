@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { chmod, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it, expect, vi } from "vitest";
@@ -13,6 +13,7 @@ import {
   checkRequiredEnvVars,
   matchesProviderIdentity,
   resolveVerifiedProviderExecutable,
+  verifyCLIExecution,
 } from "./agent-cli-service";
 
 const tempDirs: string[] = [];
@@ -111,7 +112,7 @@ describe("AgentCLIService", () => {
       expect(status).toMatchObject({
         provider: "cursor",
         installed: false,
-        path: agentPath,
+        path: await realpath(agentPath),
         error: "Executable 'agent' is not the Cursor Agent CLI",
       });
     });
@@ -133,6 +134,61 @@ describe("AgentCLIService", () => {
         path: await realpath(agentPath),
         version: "1.2.3",
       });
+    });
+  });
+
+  describe("kimi native-installer detection", () => {
+    it("detects kimi at $KIMI_CODE_HOME/bin/kimi when PATH lacks it (launchd-style env)", async () => {
+      const kimiHome = await mkdtemp(join(tmpdir(), "remote-dev-kimi-home-"));
+      tempDirs.push(kimiHome);
+      const binDir = join(kimiHome, "bin");
+      await mkdir(binDir, { recursive: true });
+      const kimiPath = join(binDir, "kimi");
+      await writeFile(kimiPath, "#!/bin/sh\necho '0.31.1'\n");
+      await chmod(kimiPath, 0o755);
+      // Simulate the server process env: the native installer only adds
+      // ~/.kimi-code/bin to PATH via shell rc files, which launchd never sources.
+      vi.stubEnv("KIMI_CODE_HOME", kimiHome);
+      vi.stubEnv("PATH", "/usr/bin:/bin");
+
+      const status = await checkCLIStatus("kimi");
+
+      expect(status).toMatchObject({
+        provider: "kimi",
+        installed: true,
+        version: "0.31.1",
+        path: await realpath(kimiPath),
+      });
+    });
+
+    it("verifyCLIExecution also resolves the native-installer location", async () => {
+      const kimiHome = await mkdtemp(join(tmpdir(), "remote-dev-kimi-home-"));
+      tempDirs.push(kimiHome);
+      const binDir = join(kimiHome, "bin");
+      await mkdir(binDir, { recursive: true });
+      const kimiPath = join(binDir, "kimi");
+      await writeFile(kimiPath, "#!/bin/sh\necho '0.31.1'\n");
+      await chmod(kimiPath, 0o755);
+      vi.stubEnv("PATH", "/usr/bin:/bin");
+
+      const result = await verifyCLIExecution("kimi", {
+        KIMI_CODE_HOME: kimiHome,
+      });
+
+      expect(result).toEqual({ success: true });
+    });
+
+    it("reports not installed when neither PATH nor the fallback location has kimi", async () => {
+      const emptyHome = await mkdtemp(join(tmpdir(), "remote-dev-kimi-empty-"));
+      tempDirs.push(emptyHome);
+      vi.stubEnv("KIMI_CODE_HOME", emptyHome);
+      vi.stubEnv("PATH", "/usr/bin:/bin");
+
+      const status = await checkCLIStatus("kimi");
+
+      expect(status.provider).toBe("kimi");
+      expect(status.installed).toBe(false);
+      expect(status.error).toContain("not found");
     });
   });
 
@@ -175,6 +231,7 @@ describe("AgentCLIService", () => {
 
     it("returns installation instructions for kimi", () => {
       const instructions = getInstallInstructions("kimi");
+      expect(instructions).toContain("curl -LsSf https://code.kimi.com/install.sh | bash");
       expect(instructions).toContain("npm install -g");
       expect(instructions).toContain("@moonshot-ai/kimi-code");
     });

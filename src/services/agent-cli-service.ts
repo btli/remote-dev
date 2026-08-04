@@ -8,7 +8,8 @@
 import { execFile } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { delimiter, isAbsolute, resolve } from "node:path";
+import { homedir } from "node:os";
+import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import {
   AGENT_PROVIDERS,
@@ -76,6 +77,52 @@ async function resolveExecutablePath(
       if ((await stat(canonical)).isFile()) return canonical;
     } catch {
       // Try the next PATH entry.
+    }
+  }
+  return null;
+}
+
+/**
+ * Well-known executable locations for CLIs whose native installer does not
+ * put the binary on the server process's PATH. Kimi's installer
+ * (`curl -LsSf https://code.kimi.com/install.sh | bash`) drops the binary at
+ * `$KIMI_CODE_HOME/bin/kimi` (default `~/.kimi-code/bin/kimi`) and only adds
+ * that dir to PATH via shell rc files — which a launchd-spawned server never
+ * sources, so a PATH-only probe reports "Not installed" on a working install.
+ */
+function providerFallbackExecutables(
+  provider: AgentCLIProvider,
+  env: NodeJS.ProcessEnv,
+): string[] {
+  if (provider === "kimi") {
+    const kimiHome = env.KIMI_CODE_HOME || join(homedir(), ".kimi-code");
+    return [join(kimiHome, "bin", process.platform === "win32" ? "kimi.exe" : "kimi")];
+  }
+  return [];
+}
+
+/**
+ * Resolve a provider's executable: PATH first (same as the user's shell),
+ * then the provider's well-known installer locations. Returns the canonical
+ * absolute path, or null when the CLI is genuinely absent.
+ */
+async function resolveInstalledExecutable(
+  provider: AgentCLIProvider,
+  command: string,
+  env?: NodeJS.ProcessEnv,
+  cwd = process.cwd(),
+): Promise<string | null> {
+  const fromPath = await resolveExecutablePath(command, env, cwd);
+  if (fromPath) return fromPath;
+
+  const mergedEnv = { ...process.env, ...env };
+  for (const candidate of providerFallbackExecutables(provider, mergedEnv)) {
+    try {
+      await access(candidate, fsConstants.X_OK);
+      const canonical = await realpath(candidate);
+      if ((await stat(canonical)).isFile()) return canonical;
+    } catch {
+      // Try the next fallback location.
     }
   }
   return null;
@@ -172,12 +219,23 @@ export async function checkCLIStatus(
   }
 
   try {
-    // Try to get the path using 'which'
-    const { stdout: path } = await execFileAsync("which", [command]);
-    const trimmedPath = path.trim();
+    // Resolve the executable: PATH first, then well-known installer
+    // locations (e.g. Kimi's native installer drops the binary at
+    // ~/.kimi-code/bin/kimi, which launchd-spawned servers don't have on
+    // PATH — see providerFallbackExecutables).
+    const resolvedPath = await resolveInstalledExecutable(provider, command);
+    if (!resolvedPath) {
+      return {
+        provider,
+        installed: false,
+        command,
+        error: `CLI '${command}' not found in PATH or well-known install locations`,
+      };
+    }
+
     const verifiedExecutable = await resolveVerifiedProviderExecutable(
       provider,
-      provider === "cursor" ? trimmedPath : command,
+      resolvedPath,
     );
 
     if (!verifiedExecutable) {
@@ -185,7 +243,7 @@ export async function checkCLIStatus(
         provider,
         installed: false,
         command,
-        path: trimmedPath,
+        path: resolvedPath,
         error: `Executable '${command}' is not the Cursor Agent CLI`,
       };
     }
@@ -214,14 +272,14 @@ export async function checkCLIStatus(
       installed: true,
       version,
       command,
-      path: provider === "cursor" ? verifiedExecutable : trimmedPath,
+      path: verifiedExecutable,
     };
   } catch {
     return {
       provider,
       installed: false,
       command,
-      error: `CLI '${command}' not found in PATH`,
+      error: `CLI '${command}' not found in PATH or well-known install locations`,
     };
   }
 }
@@ -305,7 +363,9 @@ bun install -g opencode-ai`,
     cursor: `# Install Cursor CLI
 curl https://cursor.com/install -fsS | bash`,
 
-    kimi: `# Install Kimi Code CLI
+    kimi: `# Install Kimi Code CLI (native installer, recommended)
+curl -LsSf https://code.kimi.com/install.sh | bash
+# Or with npm
 npm install -g @moonshot-ai/kimi-code`,
   };
 
@@ -349,17 +409,21 @@ export async function verifyCLIExecution(
 
   try {
     // Merge with current environment
-    const fullEnv = { ...process.env, ...env };
+    const fullEnv = { ...process.env, ...env } as NodeJS.ProcessEnv;
 
-    const verifiedExecutable = await resolveVerifiedProviderExecutable(
-      provider,
-      command,
-      fullEnv as NodeJS.ProcessEnv,
-    );
+    // Cursor needs its identity fingerprint; other providers resolve via
+    // PATH plus well-known installer locations (e.g. ~/.kimi-code/bin).
+    const verifiedExecutable =
+      provider === "cursor"
+        ? await resolveVerifiedProviderExecutable(provider, command, fullEnv)
+        : await resolveInstalledExecutable(provider, command, fullEnv);
     if (!verifiedExecutable) {
       return {
         success: false,
-        error: `Executable '${command}' is not the Cursor Agent CLI`,
+        error:
+          provider === "cursor"
+            ? `Executable '${command}' is not the Cursor Agent CLI`
+            : `CLI '${command}' not found in PATH or well-known install locations`,
       };
     }
 
