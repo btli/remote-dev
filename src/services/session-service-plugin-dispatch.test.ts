@@ -754,6 +754,30 @@ describe("SessionService.createSession — plugin dispatch", () => {
     );
   });
 
+  it("leaves a legacy multi-pane agent suspended when its owner pane is ambiguous", async () => {
+    const plugin: TerminalTypeServerPlugin = {
+      ...makeFakePlugin("agentlike", { useTmux: true, shellCommand: "codex" }),
+      onSessionExit: () => ({
+        showExitScreen: true,
+        canRestart: true,
+        autoClose: false,
+      }),
+    };
+    TerminalTypeServerRegistry.register(plugin);
+    hoisted.state.closeSessionRow = makeDbRow({
+      id: "resume-legacy-split",
+      terminalType: "agentlike",
+      agentProvider: "codex",
+      status: "suspended",
+    });
+    tmuxConfigureLifecycle.mockRejectedValueOnce(
+      new Error("Failed to resolve one agent pane for rdv-resume-legacy-split"),
+    );
+
+    await expect(resumeSession("resume-legacy-split", "user-1"))
+      .rejects.toMatchObject({ code: "AGENT_CALLBACK_SETUP_FAILED" });
+  });
+
   it("does NOT thread any folder-level wrapper command into plugin input (regression for removed startupCommand mechanism)", async () => {
     // Even if a (hypothetical) future preference shape leaked a
     // `startupCommand` into the resolved prefs, the service must not

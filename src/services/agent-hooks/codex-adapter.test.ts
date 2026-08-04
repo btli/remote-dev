@@ -270,6 +270,31 @@ esac
     expect(second).toBe(first);
   });
 
+  it("preserves a user command that merely mentions the ownership marker", async () => {
+    const configRoot = await makeConfigRoot();
+    const codexDir = join(configRoot, ".codex");
+    const path = join(codexDir, "hooks.json");
+    const userCommand =
+      'printf "%s\\n" "remote-dev:codex-hooks:v1" && run-user-hook';
+    await mkdir(codexDir, { recursive: true });
+    await writeFile(path, `${JSON.stringify({
+      hooks: {
+        PreToolUse: [{
+          matcher: "Bash",
+          hooks: [{ type: "command", command: userCommand }],
+        }],
+      },
+    }, null, 2)}\n`);
+
+    await installCodexHooks(configRoot);
+    let installed = await readFile(path, "utf8");
+    expect(installed).toContain("run-user-hook");
+
+    await uninstallCodexHooks(configRoot);
+    installed = await readFile(path, "utf8");
+    expect(installed).toContain("run-user-hook");
+  });
+
   it("refreshes a dedicated managed group without changing surrounding user hooks", async () => {
     const configRoot = await makeConfigRoot();
     const codexDir = join(configRoot, ".codex");

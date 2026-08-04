@@ -31,7 +31,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isRemoteDevCommand(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  return typeof value.command === "string" && value.command.includes(CODEX_HOOK_MARKER_PREFIX);
+  if (value.type !== "command" || typeof value.command !== "string") return false;
+  const command = value.command.trimEnd();
+  const hasOwnedSuffix = new RegExp(
+    `# ${CODEX_HOOK_MARKER_PREFIX}\\d+$`,
+  ).test(command);
+  if (!hasOwnedSuffix) return false;
+
+  // Current managed commands have a stable delivery preamble. The narrow
+  // single-command form recognizes pre-release v0 installs. Do not treat a
+  // wrapper or arbitrary user command as owned merely because it quotes the
+  // public marker text somewhere in its body.
+  const isCurrentManagedShape =
+    command.startsWith("_RDV_DELIVERY=$(uuidgen ") &&
+    command.includes('export RDV_HOOK_DELIVERY_ID="$_RDV_DELIVERY"; ') &&
+    command.includes("if command -v rdv >/dev/null 2>&1; then rdv hook codex ");
+  const isLegacyManagedShape = new RegExp(
+    `^rdv hook codex [a-z0-9-]+ # ${CODEX_HOOK_MARKER_PREFIX}\\d+$`,
+  ).test(command);
+  return isCurrentManagedShape || isLegacyManagedShape;
 }
 
 function withoutRemoteDevHooks(groups: unknown[]): unknown[] {

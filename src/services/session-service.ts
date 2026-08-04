@@ -1958,6 +1958,7 @@ export async function resumeSession(
           sessionId,
           error: String(error),
         });
+        throw error;
       }
 
       const terminalSocket = process.env.TERMINAL_SOCKET;
@@ -2087,7 +2088,20 @@ export async function resumeSession(
         }),
       );
     } catch (error) {
-      log.error("Failed to set env on resume", { sessionId, error: String(error) });
+      // Fail closed before flipping the DB row active. In particular, legacy
+      // multi-pane sessions have no owner marker; if tmux cannot identify one
+      // exact pane, both pane-died delivery and liveness reconciliation would
+      // otherwise be disabled while the UI misleadingly reports an active
+      // agent. The user can restart the agent or reduce it to one owner pane.
+      log.error("Failed to restore authenticated lifecycle on resume", {
+        sessionId,
+        error: String(error),
+      });
+      throw new SessionServiceError(
+        "Failed to restore authenticated agent lifecycle; resume was aborted. Restart the agent or close auxiliary panes and retry.",
+        "AGENT_CALLBACK_SETUP_FAILED",
+        sessionId,
+      );
     }
   }
 
