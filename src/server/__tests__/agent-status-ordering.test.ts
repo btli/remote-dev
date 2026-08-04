@@ -5,7 +5,7 @@
  * `shouldApplyStatusWrite` is the single source of truth for the atomic SQL
  * WHERE guard in terminal.ts's /internal/agent-status handler:
  *   - an older (out-of-order) write is rejected
- *   - a subagent-stop "running" never resurrects a terminal 'idle'/'ended'
+ *   - subagent-stop "running" only replaces an active running/subagent state
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -96,6 +96,21 @@ describe("shouldApplyStatusWrite", () => {
         })
       ).toBe(false);
     });
+
+    it.each(["waiting", "error", "compacting"])(
+      "rejects a subagent-stop running over a current '%s'",
+      (currentStatus) => {
+        expect(
+          shouldApplyStatusWrite({
+            incomingAt: 5000,
+            currentAt: 1000,
+            currentStatus,
+            status: "running",
+            source: "subagent-stop",
+          }),
+        ).toBe(false);
+      },
+    );
 
     it("ALLOWS a subagent-stop running when the turn is still active", () => {
       // Mid-turn the parent status is 'running'/'subagent' — the subagent-stop

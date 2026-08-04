@@ -203,6 +203,83 @@ esac
     );
   });
 
+  it("preserves request_user_input attention when the rdv bridge fails after reading stdin", async () => {
+    const configRoot = await makeConfigRoot();
+    const binDir = join(configRoot, "bin");
+    const curlCapturePath = join(configRoot, "curl-args");
+    const rdvCapturePath = join(configRoot, "rdv-payload");
+    await mkdir(binDir, { recursive: true });
+    const scripts: Record<string, string> = {
+      rdv: `#!/bin/sh\ncat > "${rdvCapturePath}"\nexit 1\n`,
+      uuidgen: "#!/bin/sh\nprintf delivery-question-fallback\n",
+      tmux: "#!/bin/sh\nexit 1\n",
+      curl: `#!/bin/sh\nprintf '%s\\n' "$*" > "${curlCapturePath}"\n`,
+    };
+    await Promise.all(
+      Object.entries(scripts).map(async ([name, script]) => {
+        const path = join(binDir, name);
+        await writeFile(path, script);
+        await chmod(path, 0o755);
+      }),
+    );
+    await installCodexHooks(configRoot);
+    const parsed = JSON.parse(await readFile(join(configRoot, ".codex", "hooks.json"), "utf8")) as {
+      hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
+    };
+    const payload = JSON.stringify({
+      tool_name: "request_user_input",
+      tool_input: { questions: [{ question: "Continue?" }] },
+    });
+
+    const result = spawnSync("/bin/sh", ["-c", parsed.hooks.PreToolUse[0]!.hooks[0]!.command], {
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        RDV_SESSION_ID: "session-1",
+        RDV_AGENT_GENERATION: "4",
+        RDV_API_KEY: "key-1",
+        RDV_TERMINAL_SOCKET: "",
+        RDV_TERMINAL_PORT: "7777",
+      },
+      input: payload,
+    });
+
+    expect(result.status).toBe(0);
+    expect(await readFile(rdvCapturePath, "utf8")).toBe(payload);
+    expect(await readFile(curlCapturePath, "utf8")).toContain(
+      "status=waiting&deliveryId=delivery-question-fallback",
+    );
+
+    const ordinaryPayload = JSON.stringify({
+      tool_name: "mcp__example__forward",
+      tool_input: {
+        tool_name: "request_user_input",
+      },
+    });
+    const ordinaryResult = spawnSync(
+      "/bin/sh",
+      ["-c", parsed.hooks.PreToolUse[0]!.hooks[0]!.command],
+      {
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+          RDV_SESSION_ID: "session-1",
+          RDV_AGENT_GENERATION: "4",
+          RDV_API_KEY: "key-1",
+          RDV_TERMINAL_SOCKET: "",
+          RDV_TERMINAL_PORT: "7777",
+        },
+        input: ordinaryPayload,
+      },
+    );
+
+    expect(ordinaryResult.status).toBe(0);
+    expect(await readFile(rdvCapturePath, "utf8")).toBe(ordinaryPayload);
+    expect(await readFile(curlCapturePath, "utf8")).toContain(
+      "status=running&deliveryId=delivery-question-fallback",
+    );
+  });
+
   it("preserves user hooks and replaces only Remote Dev-owned entries", async () => {
     const configRoot = await makeConfigRoot();
     const codexDir = join(configRoot, ".codex");

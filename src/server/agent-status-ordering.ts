@@ -15,11 +15,11 @@
  *     slow SubagentStop "running" (5s timeout) lands after a newer Stop "idle"
  *     (15s timeout) and resurrects the stale status.
  *
- *  2. **Subagent-stop terminal-status protection.** A "running" write tagged
- *     `source=subagent-stop` must NOT overwrite a turn that already ended — i.e.
- *     a current DB status of 'idle' or 'ended'. A legitimately new turn
- *     re-asserts running via the PreToolUse hook immediately (untagged), so this
- *     only blocks the spurious resurrection.
+ *  2. **Subagent-stop status protection.** A "running" write tagged
+ *     `source=subagent-stop` may only replace an active 'running'/'subagent'
+ *     state (or initialize a null state). It must not clear waiting, compacting,
+ *     idle, error, or ended. A legitimately new turn re-asserts running via an
+ *     untagged prompt/tool hook, so this only blocks a stale child completion.
  */
 
 export interface StatusWriteDecisionInput {
@@ -59,11 +59,13 @@ export function shouldApplyStatusWrite(input: StatusWriteDecisionInput): boolean
     return false;
   }
 
-  // Guard 2: a subagent-stop "running" never resurrects a terminal status.
+  // Guard 2: a child completion may re-assert only an active parent state.
   if (
     input.source === "subagent-stop" &&
     input.status === "running" &&
-    (input.currentStatus === "idle" || input.currentStatus === "ended")
+    input.currentStatus !== null &&
+    input.currentStatus !== "running" &&
+    input.currentStatus !== "subagent"
   ) {
     return false;
   }

@@ -119,7 +119,7 @@ export async function applyAgentStatusDelivery(
     ];
     if (input.source === "subagent-stop" && input.status === "running") {
       guards.push(
-        sql`(${terminalSessions.agentActivityStatus} IS NULL OR ${terminalSessions.agentActivityStatus} NOT IN ('idle', 'ended'))`,
+        sql`(${terminalSessions.agentActivityStatus} IS NULL OR ${terminalSessions.agentActivityStatus} IN ('running', 'subagent'))`,
       );
     }
 

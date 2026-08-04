@@ -739,8 +739,8 @@ function curlCmd(path: string, opts = "", prefix = ""): string {
 
 function curlForStatus(status: string, source?: string): string {
   // [remote-dev-1aa5c] Optional &source tag lets the server apply the
-  // subagent-stop ordering rule (a subagent-stop "running" must not resurrect a
-  // turn that already ended). Kept consistent with the rdv CLI hook path.
+  // subagent-stop ordering rule (child completion can only replace an active
+  // running/subagent state). Kept consistent with the rdv CLI hook path.
   const sourceParam = source ? `&source=${source}` : "";
   return (
     TMUX_ENV_PREAMBLE +

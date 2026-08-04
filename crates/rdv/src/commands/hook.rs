@@ -267,10 +267,10 @@ async fn report_status(client: &Client, status: &str) {
 /// Report an agent activity status with an optional `source` tag.
 ///
 /// [remote-dev-1aa5c] The SubagentStop hook posts "running" with
-/// `source=subagent-stop` so the server refuses to let it resurrect a turn that
-/// already ended (a clean Stop wrote "idle"/"ended"). A legitimately new turn
-/// re-asserts running via PreToolUse immediately. Kept consistent with the curl
-/// fallback (`curlForStatus(status, "subagent-stop")`).
+/// `source=subagent-stop` so the server only lets it replace an active
+/// running/subagent state, never waiting, compacting, idle, error, or ended. A
+/// legitimately new turn re-asserts running through an untagged hook. Kept
+/// consistent with the curl fallback (`curlForStatus(status, "subagent-stop")`).
 async fn report_status_with_source(client: &Client, status: &str, source: Option<&str>) {
     if let Err(error) = deliver_status_with_source(client, status, source).await {
         eprintln!("warning: failed to report {status} status: {error}");

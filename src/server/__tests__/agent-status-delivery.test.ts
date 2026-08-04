@@ -195,4 +195,40 @@ describe("applyAgentStatusDelivery", () => {
       agent_activity_status_at: 1_000,
     });
   });
+
+  it("does not let a late subagent-stop overwrite an error", async () => {
+    const { applyAgentStatusDelivery } = await import("../agent-status-delivery");
+
+    expect((await applyAgentStatusDelivery({
+      sessionId: "s1",
+      userId: "u1",
+      generation: 0,
+      deliveryId: "error-1",
+      status: "error",
+      source: null,
+      notificationRequired: true,
+      statusAt: 1_000,
+      arrivalOrder: 1_000_000,
+    })).disposition).toBe("apply");
+
+    expect((await applyAgentStatusDelivery({
+      sessionId: "s1",
+      userId: "u1",
+      generation: 0,
+      deliveryId: "late-subagent-stop",
+      status: "running",
+      source: "subagent-stop",
+      notificationRequired: false,
+      statusAt: 2_000,
+      arrivalOrder: 2_000_000,
+    })).disposition).toBe("ignore");
+
+    const session = await rawClient.execute(
+      "SELECT agent_activity_status, agent_activity_status_at FROM terminal_session WHERE id = 's1'",
+    );
+    expect(session.rows[0]).toMatchObject({
+      agent_activity_status: "error",
+      agent_activity_status_at: 1_000,
+    });
+  });
 });

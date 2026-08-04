@@ -2446,10 +2446,10 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       ? null
       : parseAgentDeliveryId(suppliedDeliveryId);
     // [remote-dev-1aa5c] Source tag. The SubagentStop hook posts "running" when a
-    // Task subagent finishes, but the parent turn may already have ended (a clean
-    // Stop wrote "idle"/"ended"). A subagent-stop "running" must NOT resurrect a
-    // turn that already ended — a legitimately new turn re-asserts running via
-    // PreToolUse immediately.
+    // Task subagent finishes, but the parent may already be waiting, compacting,
+    // idle, failed, or ended. A subagent-stop "running" may only replace an
+    // active running/subagent state; a legitimately new turn re-asserts running
+    // through an untagged prompt/tool hook.
     const source = (query.source as string | undefined) ?? null;
 
     const validStatuses = new Set([

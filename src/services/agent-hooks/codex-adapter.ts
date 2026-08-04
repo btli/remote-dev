@@ -42,10 +42,19 @@ function isRemoteDevCommand(value: unknown): boolean {
   // single-command form recognizes pre-release v0 installs. Do not treat a
   // wrapper or arbitrary user command as owned merely because it quotes the
   // public marker text somewhere in its body.
-  const isCurrentManagedShape =
+  const hasCurrentPreamble =
     command.startsWith("_RDV_DELIVERY=$(uuidgen ") &&
-    command.includes('export RDV_HOOK_DELIVERY_ID="$_RDV_DELIVERY"; ') &&
-    command.includes("if command -v rdv >/dev/null 2>&1; then rdv hook codex ");
+    command.includes('export RDV_HOOK_DELIVERY_ID="$_RDV_DELIVERY"; ');
+  const hasDirectDispatch = command.includes(
+    "if command -v rdv >/dev/null 2>&1; then rdv hook codex ",
+  );
+  const hasPayloadAwarePreToolDispatch =
+    command.includes('_RDV_PAYLOAD=$(cat); _RDV_RC=127; ') &&
+    command.includes(
+      `printf '%s' "$_RDV_PAYLOAD" | rdv hook codex pre-tool-use`,
+    );
+  const isCurrentManagedShape =
+    hasCurrentPreamble && (hasDirectDispatch || hasPayloadAwarePreToolDispatch);
   const isLegacyManagedShape = new RegExp(
     `^rdv hook codex [a-z0-9-]+ # ${CODEX_HOOK_MARKER_PREFIX}\\d+$`,
   ).test(command);
@@ -174,6 +183,27 @@ function commandHook(event: string, fallbackStatus: string, timeout: number, sou
   return { hooks: [{ type: "command", command, timeout }] };
 }
 
+/**
+ * PreToolUse is the one event whose fallback status depends on its payload.
+ * Capture stdin once so an rdv bridge that reads the payload and then fails
+ * cannot erase request_user_input's waiting classification before curl retry.
+ */
+function preToolUseHook(): HookGroup {
+  const attentionClassifier =
+    'const p=JSON.parse(require("fs").readFileSync(0,"utf8"));' +
+    'process.exit(["request_user_input","functions.request_user_input","AskUserQuestion"].includes(p.tool_name)?0:1)';
+  const command =
+    DELIVERY_ID_PREAMBLE +
+    '_RDV_PAYLOAD=$(cat); _RDV_RC=127; ' +
+    `if command -v rdv >/dev/null 2>&1; then printf '%s' "$_RDV_PAYLOAD" | rdv hook codex pre-tool-use; _RDV_RC=$?; fi; ` +
+    'if [ "$_RDV_RC" -ne 0 ]; then _RDV_FALLBACK_STATUS=running; _RDV_JSON_RUNTIME=; ' +
+    'if command -v bun >/dev/null 2>&1; then _RDV_JSON_RUNTIME=bun; ' +
+    'elif command -v node >/dev/null 2>&1; then _RDV_JSON_RUNTIME=node; fi; ' +
+    `if [ -n "$_RDV_JSON_RUNTIME" ]; then if printf '%s' "$_RDV_PAYLOAD" | "$_RDV_JSON_RUNTIME" -e '${attentionClassifier}'; then _RDV_FALLBACK_STATUS=waiting; fi; fi; ` +
+    `${curlStatus("${_RDV_FALLBACK_STATUS}")}; fi # ${CODEX_HOOK_MARKER}`;
+  return { hooks: [{ type: "command", command, timeout: 10 }] };
+}
+
 function desiredHooks(): Record<string, HookGroup> {
   return {
     SessionStart: {
@@ -181,7 +211,7 @@ function desiredHooks(): Record<string, HookGroup> {
       matcher: "startup|resume|clear|compact",
     },
     UserPromptSubmit: commandHook("prompt-submit", "running", 5),
-    PreToolUse: commandHook("pre-tool-use", "running", 10),
+    PreToolUse: preToolUseHook(),
     PermissionRequest: commandHook("permission-request", "waiting", 5),
     PostToolUse: commandHook("post-tool-use", "running", 10),
     PreCompact: {

@@ -213,7 +213,8 @@ The current arrival-time guard remains useful but is extended with source and ge
 1. Duplicate event keys are acknowledged without repeating a write or notification.
 2. Events from an older process generation never overwrite the current generation.
 3. `process_exited(error)` and `session_ended` are terminal within a generation.
-4. `subagent_finished` cannot resurrect `idle`, `ended`, or `error`.
+4. `subagent_finished` may replace only an active `running` or `subagent` state;
+   it cannot clear `waiting`, `compacting`, `idle`, `error`, or `ended`.
 5. A new `turn_started` with a new turn id may transition `idle` or `waiting` back to `running`.
 6. `running` from `PostToolUse` may clear `waiting` only within the same active turn.
 7. Provider `occurredAt` is diagnostic only; server `receivedAt` remains the ordering clock.
