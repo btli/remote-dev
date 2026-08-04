@@ -208,7 +208,6 @@ fn shell_command(payload: &serde_json::Value) -> Option<String> {
 fn javascript_exec_commands(source: &str) -> Result<Vec<String>, String> {
     let bytes = source.as_bytes();
     let mut commands = Vec::new();
-    let mut dispatch_count = 0;
     let mut index = 0;
 
     while index < bytes.len() {
@@ -243,56 +242,225 @@ fn javascript_exec_commands(source: &str) -> Result<Vec<String>, String> {
             index += 1;
         }
         let identifier = &source[start..index];
-        if identifier == "exec_command" {
-            dispatch_count += 1;
+        if identifier == "tools" {
+            let property = skip_javascript_trivia(source, index)?;
+            if bytes.get(property) != Some(&b'.') {
+                return Err(
+                    "functions.exec aliases or dynamically indexes the tools object".to_string(),
+                );
+            }
             continue;
         }
-        if identifier != "cmd" {
-            continue;
+        match identifier {
+            "exec_command" => {
+                let value = javascript_call_string_property(source, index, "cmd", true)?
+                    .expect("required JavaScript cmd property was checked");
+                commands.push(value);
+            }
+            "write_stdin" => {
+                if let Some(value) = javascript_call_string_property(source, index, "chars", false)?
+                {
+                    if !value.is_empty() {
+                        commands.push(value);
+                    }
+                }
+            }
+            _ => {}
         }
-        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
-            index += 1;
-        }
-        if bytes.get(index) != Some(&b':') {
-            continue;
-        }
-        index += 1;
-        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
-            index += 1;
-        }
-        if !matches!(bytes.get(index), Some(b'\'' | b'"' | b'`')) {
-            return Err(
-                "functions.exec uses a dynamic cmd value that cannot be inspected".to_string(),
-            );
-        }
-        let (next, value) = skip_javascript_string(bytes, index)?;
-        let mut expression_end = next;
-        while expression_end < bytes.len() && bytes[expression_end].is_ascii_whitespace() {
-            expression_end += 1;
-        }
-        if !matches!(bytes.get(expression_end), Some(b',' | b'}')) {
-            return Err(
-                "functions.exec cmd must be one complete, non-concatenated string literal"
-                    .to_string(),
-            );
-        }
-        commands.push(value);
-        index = next;
     }
 
-    if dispatch_count != commands.len() {
+    if looks_like_protected_git(source)
+        && !commands
+            .iter()
+            .any(|command| looks_like_protected_git(command))
+    {
         return Err(
-            "functions.exec shell dispatches do not each have one inspectable literal cmd"
-                .to_string(),
-        );
-    }
-    if commands.is_empty() && looks_like_protected_git(source) {
-        return Err(
-            "functions.exec contains a protected Git command outside a literal cmd field"
+            "functions.exec contains protected Git text outside a direct inspectable shell dispatch"
                 .to_string(),
         );
     }
     Ok(commands)
+}
+
+fn skip_javascript_trivia(source: &str, mut index: usize) -> Result<usize, String> {
+    let bytes = source.as_bytes();
+    loop {
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+        if bytes.get(index) == Some(&b'/') && bytes.get(index + 1) == Some(&b'/') {
+            index += 2;
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            continue;
+        }
+        if bytes.get(index) == Some(&b'/') && bytes.get(index + 1) == Some(&b'*') {
+            let Some(end) = source[index + 2..].find("*/") else {
+                return Err("functions.exec contains an unterminated comment".to_string());
+            };
+            index += end + 4;
+            continue;
+        }
+        return Ok(index);
+    }
+}
+
+/// Validate one direct nested tool call and extract the only property that can
+/// carry shell input. The argument must be an inline object so a decoy `cmd`
+/// elsewhere, a spread override, or a shorthand/dynamic value cannot satisfy
+/// inspection for a different call.
+fn javascript_call_string_property(
+    source: &str,
+    identifier_end: usize,
+    property: &str,
+    required: bool,
+) -> Result<Option<String>, String> {
+    let bytes = source.as_bytes();
+    let mut index = skip_javascript_trivia(source, identifier_end)?;
+    if bytes.get(index) != Some(&b'(') {
+        return Err(format!(
+            "functions.exec references {property}'s shell dispatcher indirectly"
+        ));
+    }
+    index = skip_javascript_trivia(source, index + 1)?;
+    if bytes.get(index) != Some(&b'{') {
+        return Err(format!(
+            "functions.exec {property} dispatch must use an inline object literal"
+        ));
+    }
+
+    index += 1;
+    let mut brace_depth = 1_usize;
+    let mut bracket_depth = 0_usize;
+    let mut paren_depth = 0_usize;
+    let mut expecting_key = true;
+    let mut found = None;
+
+    loop {
+        index = skip_javascript_trivia(source, index)?;
+        let Some(byte) = bytes.get(index).copied() else {
+            return Err("functions.exec contains an unterminated tool argument object".to_string());
+        };
+
+        if brace_depth == 1 && bracket_depth == 0 && paren_depth == 0 && expecting_key {
+            if byte == b'}' {
+                index += 1;
+                break;
+            }
+            if bytes.get(index..index + 3) == Some(&b"..."[..]) {
+                return Err(
+                    "functions.exec shell dispatch objects may not contain spreads".to_string(),
+                );
+            }
+            if byte == b'[' {
+                return Err(
+                    "functions.exec shell dispatch objects may not use computed keys".to_string(),
+                );
+            }
+
+            let (after_key, key) = if matches!(byte, b'\'' | b'"' | b'`') {
+                skip_javascript_string(bytes, index)?
+            } else if byte.is_ascii_alphabetic() || matches!(byte, b'_' | b'$') {
+                let start = index;
+                index += 1;
+                while index < bytes.len()
+                    && (bytes[index].is_ascii_alphanumeric() || matches!(bytes[index], b'_' | b'$'))
+                {
+                    index += 1;
+                }
+                (index, source[start..index].to_string())
+            } else {
+                return Err(
+                    "functions.exec shell dispatch object has an unsupported property key"
+                        .to_string(),
+                );
+            };
+
+            let after_key = skip_javascript_trivia(source, after_key)?;
+            if bytes.get(after_key) == Some(&b':') {
+                index = skip_javascript_trivia(source, after_key + 1)?;
+                if key == property {
+                    if found.is_some() {
+                        return Err(format!(
+                            "functions.exec shell dispatch contains duplicate {property} properties"
+                        ));
+                    }
+                    if !matches!(bytes.get(index), Some(b'\'' | b'"' | b'`')) {
+                        return Err(format!(
+                            "functions.exec uses a dynamic {property} value that cannot be inspected"
+                        ));
+                    }
+                    let (next, value) = skip_javascript_string(bytes, index)?;
+                    let expression_end = skip_javascript_trivia(source, next)?;
+                    if !matches!(bytes.get(expression_end), Some(b',' | b'}')) {
+                        return Err(format!(
+                            "functions.exec {property} must be one complete, non-concatenated string literal"
+                        ));
+                    }
+                    found = Some(value);
+                    index = next;
+                }
+                expecting_key = false;
+                continue;
+            }
+
+            if key == property {
+                return Err(format!(
+                    "functions.exec uses a shorthand or dynamic {property} value"
+                ));
+            }
+            if !matches!(bytes.get(after_key), Some(b',' | b'}')) {
+                return Err(
+                    "functions.exec shell dispatch object uses an unsupported method property"
+                        .to_string(),
+                );
+            }
+            index = after_key;
+            expecting_key = false;
+            continue;
+        }
+
+        if matches!(byte, b'\'' | b'"' | b'`') {
+            index = skip_javascript_string(bytes, index)?.0;
+            continue;
+        }
+        match byte {
+            b'{' => brace_depth += 1,
+            b'}' => {
+                if brace_depth == 1 && bracket_depth == 0 && paren_depth == 0 {
+                    index += 1;
+                    break;
+                }
+                brace_depth = brace_depth.saturating_sub(1);
+            }
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b'(' => paren_depth += 1,
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b',' if brace_depth == 1 && bracket_depth == 0 && paren_depth == 0 => {
+                expecting_key = true;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+
+    index = skip_javascript_trivia(source, index)?;
+    if bytes.get(index) == Some(&b',') {
+        index = skip_javascript_trivia(source, index + 1)?;
+    }
+    if bytes.get(index) != Some(&b')') {
+        return Err(
+            "functions.exec shell dispatch must have exactly one object argument".to_string(),
+        );
+    }
+    if required && found.is_none() {
+        return Err(format!(
+            "functions.exec shell dispatch is missing a literal {property} property"
+        ));
+    }
+    Ok(found)
 }
 
 fn skip_javascript_string(bytes: &[u8], start: usize) -> Result<(usize, String), String> {
@@ -832,12 +1000,131 @@ fn git_alias(config: &str) -> Option<(String, String)> {
         .map(|alias| (alias.to_string(), value.to_string()))
 }
 
+#[derive(Clone, Copy)]
+enum GitIdentitySource {
+    CurrentEnvironment,
+    PreservedAuthor,
+    UninspectablePayload,
+}
+
+fn guarded_git_subcommand(subcommand: &str) -> Option<(GitGuardOperation, GitIdentitySource)> {
+    match subcommand {
+        "push" => Some((
+            GitGuardOperation::Push,
+            GitIdentitySource::CurrentEnvironment,
+        )),
+        "commit" | "commit-tree" | "merge" | "notes" | "revert" | "stash" | "tag" => Some((
+            GitGuardOperation::Commit,
+            GitIdentitySource::CurrentEnvironment,
+        )),
+        "am" | "cherry-pick" | "pull" | "rebase" => Some((
+            GitGuardOperation::Commit,
+            GitIdentitySource::PreservedAuthor,
+        )),
+        "fast-import" | "filter-branch" | "mktag" => Some((
+            GitGuardOperation::Commit,
+            GitIdentitySource::UninspectablePayload,
+        )),
+        _ => None,
+    }
+}
+
+fn mark_author_uninspectable(identity: &mut GitIdentityOverrides) {
+    identity.author_name = Some(String::new());
+    identity.author_email = Some(String::new());
+    identity.author_name_from_env = true;
+    identity.author_email_from_env = true;
+}
+
+fn mark_identity_uninspectable(identity: &mut GitIdentityOverrides) {
+    mark_author_uninspectable(identity);
+    identity.committer_name = Some(String::new());
+    identity.committer_email = Some(String::new());
+    identity.committer_name_from_env = true;
+    identity.committer_email_from_env = true;
+}
+
+fn apply_explicit_commit_author(value: &str, identity: &mut GitIdentityOverrides) {
+    let value = value.trim();
+    let parsed = value
+        .strip_suffix('>')
+        .and_then(|without_end| without_end.rsplit_once('<'))
+        .map(|(name, email)| (name.trim(), email.trim()))
+        .filter(|(name, email)| !name.is_empty() && !email.is_empty());
+    if let Some((name, email)) = parsed {
+        identity.author_name = Some(name.to_string());
+        identity.author_email = Some(email.to_string());
+        identity.author_name_from_env = true;
+        identity.author_email_from_env = true;
+    } else {
+        // Git also accepts an author search pattern and resolves it from an
+        // existing commit. That result cannot be known without executing Git.
+        mark_author_uninspectable(identity);
+    }
+}
+
+fn apply_commit_identity_options(
+    args: &[String],
+    identity: &mut GitIdentityOverrides,
+) -> Result<(), String> {
+    let baseline_author = (
+        identity.author_name.clone(),
+        identity.author_email.clone(),
+        identity.author_name_from_env,
+        identity.author_email_from_env,
+    );
+    let mut index = 0;
+    while index < args.len() {
+        let option = args[index].as_str();
+        if matches!(option, ";" | "&&" | "||" | "|" | "&" | "(" | ")") {
+            break;
+        }
+        match option {
+            "--author" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "git commit --author is missing its value".to_string())?;
+                apply_explicit_commit_author(value, identity);
+            }
+            value if value.starts_with("--author=") => {
+                apply_explicit_commit_author(value.trim_start_matches("--author="), identity);
+            }
+            "-C" | "-c" | "--reuse-message" | "--reedit-message" => {
+                index += 1;
+                if index >= args.len() {
+                    return Err(format!("git commit option {option} is missing its commit"));
+                }
+                mark_author_uninspectable(identity);
+            }
+            value if (value.starts_with("-C") || value.starts_with("-c")) && value.len() > 2 => {
+                mark_author_uninspectable(identity);
+            }
+            value
+                if value.starts_with("--reuse-message=")
+                    || value.starts_with("--reedit-message=") =>
+            {
+                mark_author_uninspectable(identity);
+            }
+            "--amend" => mark_author_uninspectable(identity),
+            "--reset-author" => {
+                identity.author_name = baseline_author.0.clone();
+                identity.author_email = baseline_author.1.clone();
+                identity.author_name_from_env = baseline_author.2;
+                identity.author_email_from_env = baseline_author.3;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    Ok(())
+}
+
 fn safe_git_subcommand(subcommand: &str) -> bool {
     matches!(
         subcommand,
         "add"
             | "annotate"
-            | "am"
             | "apply"
             | "archive"
             | "bisect"
@@ -846,7 +1133,6 @@ fn safe_git_subcommand(subcommand: &str) -> bool {
             | "bugreport"
             | "bundle"
             | "checkout"
-            | "cherry-pick"
             | "clean"
             | "clone"
             | "column"
@@ -874,27 +1160,21 @@ fn safe_git_subcommand(subcommand: &str) -> bool {
             | "ls-remote"
             | "ls-tree"
             | "maintenance"
-            | "merge"
             | "merge-base"
             | "mergetool"
-            | "mktag"
             | "mktree"
             | "mv"
             | "name-rev"
-            | "notes"
             | "pack-objects"
             | "prune"
-            | "pull"
             | "range-diff"
             | "read-tree"
             | "reflog"
-            | "rebase"
             | "remote"
             | "repack"
             | "replace"
             | "reset"
             | "restore"
-            | "revert"
             | "rev-list"
             | "rev-parse"
             | "rm"
@@ -902,11 +1182,9 @@ fn safe_git_subcommand(subcommand: &str) -> bool {
             | "show-branch"
             | "sparse-checkout"
             | "status"
-            | "stash"
             | "submodule"
             | "switch"
             | "symbolic-ref"
-            | "tag"
             | "update-index"
             | "update-ref"
             | "var"
@@ -926,13 +1204,13 @@ fn looks_like_protected_git(command: &str) -> bool {
         .filter(|word| !word.is_empty())
         .map(String::from)
         .collect();
-    words
-        .iter()
-        .any(|word| matches!(word.as_str(), "git-push" | "git-commit"))
-        || words.iter().any(|word| word == "git")
-            && words
-                .iter()
-                .any(|word| matches!(word.as_str(), "push" | "commit"))
+    words.iter().any(|word| {
+        word.strip_prefix("git-")
+            .is_some_and(|subcommand| guarded_git_subcommand(subcommand).is_some())
+    }) || words.iter().any(|word| word == "git")
+        && words
+            .iter()
+            .any(|word| guarded_git_subcommand(word).is_some())
 }
 
 /// Parse protected Git invocations from a shell command without executing it.
@@ -960,10 +1238,15 @@ fn parse_git_guard_requests_inner(
 
     for (git_index, token) in tokens.iter().enumerate() {
         let executable = command_token(token);
-        let direct_operation = match executable {
-            "git-push" => Some(GitGuardOperation::Push),
-            "git-commit" => Some(GitGuardOperation::Commit),
+        let direct_subcommand = match executable {
             "git" => None,
+            value
+                if value
+                    .strip_prefix("git-")
+                    .is_some_and(|subcommand| guarded_git_subcommand(subcommand).is_some()) =>
+            {
+                value.strip_prefix("git-")
+            }
             _ => continue,
         };
         let segment_start = shell_segment_start(&tokens, git_index);
@@ -981,7 +1264,19 @@ fn parse_git_guard_requests_inner(
         let mut identity = inherited_identity.clone();
         apply_prefix_identity(prefix, &mut identity)?;
 
-        if let Some(operation) = direct_operation {
+        if let Some(subcommand) = direct_subcommand {
+            let (operation, source) = guarded_git_subcommand(subcommand)
+                .expect("direct guarded Git subcommand was checked above");
+            match source {
+                GitIdentitySource::CurrentEnvironment => {}
+                GitIdentitySource::PreservedAuthor => mark_author_uninspectable(&mut identity),
+                GitIdentitySource::UninspectablePayload => {
+                    mark_identity_uninspectable(&mut identity)
+                }
+            }
+            if subcommand == "commit" {
+                apply_commit_identity_options(&tokens[git_index + 1..], &mut identity)?;
+            }
             requests.push(identity.request(operation));
             continue;
         }
@@ -1037,11 +1332,25 @@ fn parse_git_guard_requests_inner(
                 value => {
                     let subcommand =
                         value.trim_matches(|ch: char| matches!(ch, ';' | '&' | '|' | '(' | ')'));
-                    operation = match subcommand {
-                        "push" => Some(GitGuardOperation::Push),
-                        "commit" => Some(GitGuardOperation::Commit),
-                        safe if safe_git_subcommand(safe) => None,
-                        alias => {
+                    operation = match guarded_git_subcommand(subcommand) {
+                        Some((operation, source)) => {
+                            match source {
+                                GitIdentitySource::CurrentEnvironment => {}
+                                GitIdentitySource::PreservedAuthor => {
+                                    mark_author_uninspectable(&mut identity)
+                                }
+                                GitIdentitySource::UninspectablePayload => {
+                                    mark_identity_uninspectable(&mut identity)
+                                }
+                            }
+                            if subcommand == "commit" {
+                                apply_commit_identity_options(&tokens[index + 1..], &mut identity)?;
+                            }
+                            Some(operation)
+                        }
+                        None if safe_git_subcommand(subcommand) => None,
+                        None => {
+                            let alias = subcommand;
                             let Some((_, expansion)) =
                                 aliases.iter().rev().find(|(name, _)| name == alias)
                             else {
@@ -2477,6 +2786,55 @@ mod codex_tests {
             "tool_input": "const cmd = [\"g\" + \"it\", \"pu\" + \"sh\"].join(\" \" ); await tools.exec_command({cmd});"
         }))
         .is_err());
+        assert!(shell_commands(&json!({
+            "tool_name": "functions.exec",
+            "tool_input": "const decoy = {cmd: \"echo safe\"}; await tools.exec_command(dynamicRequest);"
+        }))
+        .is_err());
+        assert!(shell_commands(&json!({
+            "tool_name": "functions.exec",
+            "tool_input": "const hidden = \"git push\"; await tools.exec_command({cmd: \"echo safe\"}); await run(hidden);"
+        }))
+        .is_err());
+        assert!(shell_commands(&json!({
+            "tool_name": "functions.exec",
+            "tool_input": "await tools.exec_command({cmd: \"echo safe\", ...dynamicRequest});"
+        }))
+        .is_err());
+        assert!(shell_commands(&json!({
+            "tool_name": "functions.exec",
+            "tool_input": "const run = tools.exec_command; await run({cmd: \"git push\"});"
+        }))
+        .is_err());
+        assert!(shell_commands(&json!({
+            "tool_name": "functions.exec",
+            "tool_input": "await tools[\"exec_command\"]({cmd: \"git push\"});"
+        }))
+        .is_err());
+        assert_eq!(
+            shell_commands(&json!({
+                "tool_name": "functions.exec",
+                "tool_input": "await tools.write_stdin({session_id: 7, chars: \"git push\\n\"});"
+            }))
+            .unwrap(),
+            vec!["git push\n"],
+        );
+        assert!(shell_commands(&json!({
+            "tool_name": "functions.exec",
+            "tool_input": "await tools.write_stdin({session_id: 7, chars});"
+        }))
+        .is_err());
+        assert!(shell_commands(&json!({
+            "tool_name": "functions.exec",
+            "tool_input": "await tools.write_stdin(request);"
+        }))
+        .is_err());
+        assert!(shell_commands(&json!({
+            "tool_name": "functions.exec",
+            "tool_input": "await tools.write_stdin({session_id: 7});"
+        }))
+        .unwrap()
+        .is_empty());
     }
 
     #[test]
@@ -2539,6 +2897,32 @@ mod codex_tests {
             split_identity[0].proposed_committer_email.as_deref(),
             Some("real@example.com")
         );
+        let explicit_author =
+            parse_git_guard_requests("git commit --author='Real Name <real@example.com>' -m leak")
+                .unwrap();
+        assert_eq!(
+            explicit_author[0].proposed_author_name.as_deref(),
+            Some("Real Name")
+        );
+        assert_eq!(
+            explicit_author[0].proposed_author_email.as_deref(),
+            Some("real@example.com")
+        );
+        for command in [
+            "git commit -C HEAD",
+            "git commit -c HEAD",
+            "git commit --reuse-message=HEAD",
+            "git commit --reedit-message HEAD",
+            "git commit --amend --no-edit",
+        ] {
+            let request = parse_git_guard_requests(command).unwrap();
+            assert_eq!(request[0].proposed_author_name.as_deref(), Some(""));
+            assert_eq!(request[0].proposed_author_email.as_deref(), Some(""));
+        }
+        let reset_author =
+            parse_git_guard_requests("git commit --amend --reset-author --no-edit").unwrap();
+        assert_eq!(reset_author[0].proposed_author_name, None);
+        assert_eq!(reset_author[0].proposed_author_email, None);
     }
 
     #[test]
@@ -2620,9 +3004,49 @@ mod codex_tests {
         );
         assert!(parse_git_guard_requests("printf 'git push'").is_err());
         assert!(parse_git_guard_requests("printf 'push\\n' | xargs git").is_err());
+        assert!(parse_git_guard_requests("printf 'cherry-pick HEAD~1\\n' | xargs git").is_err());
+        assert!(parse_git_guard_requests("printf 'HEAD~1\\n' | xargs git-cherry-pick").is_err());
         assert!(parse_git_guard_requests("git push && printf 'push\\n' | xargs git").is_err());
         assert!(parse_git_guard_requests("command xargs git push").is_err());
         assert!(parse_git_guard_requests("custom-wrapper git push").is_err());
+        for command in [
+            "git am patch.mbox",
+            "git cherry-pick HEAD~1",
+            "git merge topic",
+            "git pull --rebase",
+            "git rebase main",
+            "git revert HEAD",
+            "git tag -a release -m release",
+            "git notes add -m note",
+            "git stash push",
+            "git mktag",
+        ] {
+            let requests = parse_git_guard_requests(command).unwrap();
+            assert_eq!(requests.len(), 1, "{command}");
+            assert_eq!(
+                requests[0].operation,
+                GitGuardOperation::Commit,
+                "{command}"
+            );
+        }
+        for command in [
+            "git am patch.mbox",
+            "git cherry-pick HEAD~1",
+            "git pull --rebase",
+            "git rebase main",
+        ] {
+            let request = parse_git_guard_requests(command).unwrap();
+            assert_eq!(
+                request[0].proposed_author_name.as_deref(),
+                Some(""),
+                "{command}"
+            );
+            assert_eq!(
+                request[0].proposed_author_email.as_deref(),
+                Some(""),
+                "{command}"
+            );
+        }
         assert!(parse_git_guard_requests("git status").unwrap().is_empty());
         assert!(parse_git_guard_requests("git ship").is_err());
         assert!(parse_git_guard_requests("git -C 'unterminated push").is_err());

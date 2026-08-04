@@ -205,4 +205,49 @@ describe("Claude lifecycle hook installation", () => {
     ]);
     expect(JSON.stringify(settings.hooks.Stop)).toContain("rdv hook claude stop");
   });
+
+  it("preserves user-authored rdv hook commands that are not managed lifecycle handlers", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rdv-claude-install-"));
+    tempDirs.push(root);
+    const claudeDir = join(root, ".claude");
+    const settingsPath = join(claudeDir, "settings.json");
+    await mkdir(claudeDir);
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        hooks: {
+          Stop: [
+            {
+              matcher: "user-notify",
+              hooks: [
+                {
+                  type: "command",
+                  command: "rdv hook notify deploy --body done",
+                },
+              ],
+            },
+            {
+              hooks: [
+                { type: "command", command: "rdv hook claude stop" },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+
+    await installAgentHooks(root, "claude", {});
+    const settings = JSON.parse(await readFile(settingsPath, "utf8")) as {
+      hooks: { Stop: Array<{ matcher?: string; hooks: Array<{ command: string }> }> };
+    };
+    expect(
+      settings.hooks.Stop.find((group) => group.matcher === "user-notify")?.hooks,
+    ).toEqual([
+      { type: "command", command: "rdv hook notify deploy --body done" },
+    ]);
+    expect(
+      settings.hooks.Stop.flatMap((group) => group.hooks)
+        .filter((hook) => hook.command === "rdv hook claude stop"),
+    ).toEqual([]);
+  });
 });

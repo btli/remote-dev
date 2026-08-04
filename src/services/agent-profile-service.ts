@@ -660,35 +660,72 @@ function mapDbToProfile(record: typeof agentProfiles.$inferSelect): AgentProfile
 // Agent Hooks Installation
 // ============================================================================
 
-/** Marker substrings used to identify RDV hooks (for deduplication).
- *  Uses the specific shell idiom from rdvOrCurlCommand() to avoid matching
- *  user-written hooks that happen to invoke rdv directly. */
+/** Exact managed lifecycle invocations accepted from pre-marker releases. */
+const MANAGED_CLAUDE_HOOK_INVOCATIONS = [
+  "rdv hook pre-tool-use",
+  "rdv hook pre-compact",
+  "rdv hook notification",
+  "rdv hook stop",
+  "rdv hook claude stop",
+  "rdv hook subagent-stop",
+  "rdv hook post-tool-use",
+  "rdv hook session-end",
+] as const;
+
+/** Private shell shapes used to identify RDV hooks for deduplication. */
+const CLAUDE_HOOK_MARKER = "# remote-dev:claude-hooks:v1";
 const RDV_HOOK_MARKER = "if command -v rdv";
-const RDV_HOOK_DIRECT_MARKER = "rdv hook ";
 const LEGACY_ACTIVITY_HOOK_MARKER = "/internal/agent-status";
 const LEGACY_TODO_HOOK_MARKER = "/internal/agent-todos";
 
 /** Check if one concrete handler is RDV-owned by inspecting its command. */
-function isDirectRdvHook(entry: unknown, markers: string[]): boolean {
+function isDirectRdvHook(entry: unknown): boolean {
   if (typeof entry !== "object" || entry === null) return false;
   const obj = entry as Record<string, unknown>;
   const command = obj.command;
+  if (typeof command !== "string") return false;
+
+  const trimmed = command.trim();
+  const managedInvocation = MANAGED_CLAUDE_HOOK_INVOCATIONS.some(
+    (invocation) => trimmed === invocation ||
+      command.includes(`${invocation};`) ||
+      command.includes(`${invocation} )`) ||
+      command.includes(`${invocation}\n`),
+  );
+  if (
+    managedInvocation &&
+    command.trimEnd().endsWith(CLAUDE_HOOK_MARKER) &&
+    command.startsWith(DELIVERY_ID_PREAMBLE)
+  ) {
+    return true;
+  }
+  if (
+    managedInvocation &&
+    (command.startsWith(DELIVERY_ID_PREAMBLE) ||
+      trimmed.startsWith(RDV_HOOK_MARKER))
+  ) {
+    return true;
+  }
+  if (MANAGED_CLAUDE_HOOK_INVOCATIONS.some((invocation) => trimmed === invocation)) {
+    return true;
+  }
   return (
-    typeof command === "string" &&
-    markers.some((marker) => command.includes(marker))
+    /(?:^|[^A-Za-z0-9_])curl(?:\s|$)/.test(command) &&
+    (command.includes(LEGACY_ACTIVITY_HOOK_MARKER) ||
+      command.includes(LEGACY_TODO_HOOK_MARKER))
   );
 }
 
 /** Filter out RDV hooks matching any of the given markers (preserves user hooks) */
-function withoutRdvHooks(arr: unknown[], markers: string[]): unknown[] {
+function withoutRdvHooks(arr: unknown[]): unknown[] {
   return arr.flatMap((entry) => {
-    if (isDirectRdvHook(entry, markers)) return [];
+    if (isDirectRdvHook(entry)) return [];
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
       return [entry];
     }
     const group = entry as Record<string, unknown>;
     if (!Array.isArray(group.hooks)) return [entry];
-    const hooks = group.hooks.filter((handler) => !isDirectRdvHook(handler, markers));
+    const hooks = group.hooks.filter((handler) => !isDirectRdvHook(handler));
     if (hooks.length === group.hooks.length) return [entry];
     if (hooks.length === 0) return [];
     return [{ ...group, hooks }];
@@ -705,7 +742,7 @@ function rdvOrCurlCommand(rdvCmd: string, curlFallback: string): string {
     DELIVERY_ID_PREAMBLE +
     `if command -v rdv >/dev/null 2>&1; then ${rdvCmd}; _RDV_RC=$?; ` +
     `if [ "$_RDV_RC" -eq 2 ]; then exit 2; elif [ "$_RDV_RC" -ne 0 ]; then ${curlFallback}; fi; ` +
-    `else ${curlFallback}; fi`
+    `else ${curlFallback}; fi ${CLAUDE_HOOK_MARKER}`
   );
 }
 
@@ -776,7 +813,7 @@ export function buildClaudeStatusHookCommand(
       'if [ -n "$_RDV_OUT" ]; then printf \'%s\\n\' "$_RDV_OUT"; ' +
       curlForStatus("running", source) + "; else " +
       curlForStatus("idle", source) + "; fi; " +
-      'if [ "$_RDV_RC" -eq 2 ]; then exit 2; fi; exit 0'
+      `if [ "$_RDV_RC" -eq 2 ]; then exit 2; fi; exit 0 ${CLAUDE_HOOK_MARKER}`
     );
   }
   return (
@@ -784,7 +821,7 @@ export function buildClaudeStatusHookCommand(
     TMUX_ENV_PREAMBLE +
     invokeRdv +
     curlForStatus(status, source) + "; " +
-    'if [ "$_RDV_RC" -eq 2 ]; then exit 2; fi; exit 0'
+    `if [ "$_RDV_RC" -eq 2 ]; then exit 2; fi; exit 0 ${CLAUDE_HOOK_MARKER}`
   );
 }
 
@@ -958,8 +995,6 @@ export async function installAgentHooks(
   // This keeps launch-time repair byte-preserving for partially malformed user
   // settings, including events Remote Dev does not currently install.
   for (const event of Object.keys(existingHooks)) hookGroups(event);
-  const hookMarkers = [RDV_HOOK_MARKER, RDV_HOOK_DIRECT_MARKER, LEGACY_ACTIVITY_HOOK_MARKER, LEGACY_TODO_HOOK_MARKER];
-
   const existingPreToolUse = hookGroups("PreToolUse");
   const existingPreCompact = hookGroups("PreCompact");
   const existingNotification = hookGroups("Notification");
@@ -970,18 +1005,18 @@ export async function installAgentHooks(
 
   // Clean up legacy SessionStart RDV hooks from older installations
   const existingSessionStart = hookGroups("SessionStart");
-  const cleanedSessionStart = withoutRdvHooks(existingSessionStart, hookMarkers);
+  const cleanedSessionStart = withoutRdvHooks(existingSessionStart);
 
   // Strip old RDV hooks (if any) and append current version
   const mergedHooks = {
     ...existingHooks,
-    PreToolUse: [...withoutRdvHooks(existingPreToolUse, hookMarkers), preToolUseHook],
-    PreCompact: [...withoutRdvHooks(existingPreCompact, hookMarkers), preCompactHook],
-    PostToolUse: [...withoutRdvHooks(existingPostToolUse, hookMarkers), postToolUseBashHook],
-    Notification: [...withoutRdvHooks(existingNotification, hookMarkers), notificationHook],
-    Stop: [...withoutRdvHooks(existingStop, hookMarkers), stopHook],
-    SubagentStop: [...withoutRdvHooks(existingSubagentStop, hookMarkers), subagentStopHook],
-    SessionEnd: [...withoutRdvHooks(existingSessionEnd, hookMarkers), sessionEndHook],
+    PreToolUse: [...withoutRdvHooks(existingPreToolUse), preToolUseHook],
+    PreCompact: [...withoutRdvHooks(existingPreCompact), preCompactHook],
+    PostToolUse: [...withoutRdvHooks(existingPostToolUse), postToolUseBashHook],
+    Notification: [...withoutRdvHooks(existingNotification), notificationHook],
+    Stop: [...withoutRdvHooks(existingStop), stopHook],
+    SubagentStop: [...withoutRdvHooks(existingSubagentStop), subagentStopHook],
+    SessionEnd: [...withoutRdvHooks(existingSessionEnd), sessionEndHook],
     // Remove legacy SessionStart RDV hooks (replaced by PreToolUse)
     ...(cleanedSessionStart.length > 0 ? { SessionStart: cleanedSessionStart } : { SessionStart: undefined }),
   };

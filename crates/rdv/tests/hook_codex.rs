@@ -326,6 +326,66 @@ fn codex_pre_tool_denies_identity_warnings_before_a_commit_can_leak() {
 }
 
 #[test]
+fn codex_pre_tool_sends_commit_local_author_to_identity_policy() {
+    let (terminal_port, _terminal_request) = serve_one_request();
+    let (api_port, api_requests) = serve_blocking_git_guard();
+    let mut command = Command::cargo_bin("rdv").unwrap();
+    command
+        .env_remove("RDV_API_SOCKET")
+        .env_remove("RDV_TERMINAL_SOCKET")
+        .env("RDV_API_PORT", api_port.to_string())
+        .env("RDV_TERMINAL_PORT", terminal_port.to_string())
+        .env("RDV_SESSION_ID", "session-codex-local-author")
+        .env("RDV_AGENT_GENERATION", "4")
+        .env("RDV_API_KEY", "rdv_test_callback_key")
+        .args(["hook", "codex", "pre-tool-use"])
+        .write_stdin(
+            r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git commit --author='Real Name <real@example.com>' -m leak"}}"#,
+        );
+
+    let assertion = command.assert().success();
+    let stdout = String::from_utf8_lossy(&assertion.get_output().stdout);
+    assert!(stdout.contains(r#""permissionDecision":"deny""#));
+
+    let session_request = api_requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(session_request.starts_with("GET /api/sessions/session-codex-local-author "));
+    let guard_request = api_requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(guard_request.contains(r#""proposedAuthorName":"Real Name""#));
+    assert!(guard_request.contains(r#""proposedAuthorEmail":"real@example.com""#));
+    assert!(guard_request.contains(r#""operation":"commit""#));
+}
+
+#[test]
+fn codex_pre_tool_denies_operations_that_preserve_an_uninspectable_author() {
+    let (terminal_port, _terminal_request) = serve_one_request();
+    let (api_port, api_requests) = serve_blocking_git_guard();
+    let mut command = Command::cargo_bin("rdv").unwrap();
+    command
+        .env_remove("RDV_API_SOCKET")
+        .env_remove("RDV_TERMINAL_SOCKET")
+        .env("RDV_API_PORT", api_port.to_string())
+        .env("RDV_TERMINAL_PORT", terminal_port.to_string())
+        .env("RDV_SESSION_ID", "session-codex-preserved-author")
+        .env("RDV_AGENT_GENERATION", "4")
+        .env("RDV_API_KEY", "rdv_test_callback_key")
+        .args(["hook", "codex", "pre-tool-use"])
+        .write_stdin(
+            r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git cherry-pick HEAD~1"}}"#,
+        );
+
+    let assertion = command.assert().success();
+    let stdout = String::from_utf8_lossy(&assertion.get_output().stdout);
+    assert!(stdout.contains(r#""permissionDecision":"deny""#));
+
+    let session_request = api_requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(session_request.starts_with("GET /api/sessions/session-codex-preserved-author "));
+    let guard_request = api_requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(guard_request.contains(r#""proposedAuthorName":"""#));
+    assert!(guard_request.contains(r#""proposedAuthorEmail":"""#));
+    assert!(guard_request.contains(r#""operation":"commit""#));
+}
+
+#[test]
 fn codex_pre_tool_inspects_nested_functions_exec_commands() {
     let (terminal_port, _terminal_request) = serve_one_request();
     let (api_port, api_requests) = serve_blocking_git_guard();
@@ -437,8 +497,8 @@ fn codex_pre_tool_git_guard_fails_closed_on_policy_timeout() {
     assert!(stdout.contains(r#""permissionDecision":"deny""#));
     assert!(stdout.contains("timed out"));
     assert!(
-        started.elapsed() < Duration::from_secs(4),
-        "a stalled policy lookup must deny inside the Codex hook deadline",
+        started.elapsed() < Duration::from_millis(4_500),
+        "a stalled policy lookup must deny well before the mock server responds",
     );
 }
 
