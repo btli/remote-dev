@@ -128,8 +128,24 @@ const RUNTIME_NODE =
 
 const EXTERNAL_URL =
   process.env.DEPLOY_EXTERNAL_URL || "https://dev.bryanli.net";
-const HEALTH_CHECK_TIMEOUT_MS = 90_000;
+// Socket/HTTP health wait budget (forward AND rollback health checks). Next.js
+// cold start on this host takes 2-3 minutes, so the old 90s budget expired
+// while prod was actually coming up healthy and misreported the deploy as a
+// CRITICAL rollback failure (remote-dev-jmav). Overridable for slower hosts.
+const HEALTH_CHECK_TIMEOUT_MS = (() => {
+  const raw = process.env.DEPLOY_HEALTH_TIMEOUT_MS;
+  const parsed = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 300_000;
+})();
 const HEALTH_CHECK_INTERVAL_MS = 3_000;
+// Short budget for the FINAL re-probe done just before declaring the CRITICAL
+// rollback failure — catches a socket that bound moments after the main wait
+// expired (the exact 13s-late bind of the 2026-08-03 incident, remote-dev-jmav).
+const HEALTH_FINAL_REPROBE_TIMEOUT_MS = 30_000;
+// How long to poll `launchctl print` for an actual spawned pid after a
+// bootstrap. launchd can accept a bootstrap yet never spawn the job when the
+// system has idled into the "pended nondemand spawn" state (remote-dev-bgz8).
+const LAUNCHD_SPAWN_VERIFY_TIMEOUT_MS = 20_000;
 const SSR_PROBE_TIMEOUT_MS = 30_000;
 
 const PROCESS_STOP_TIMEOUT_MS = 10_000;
@@ -269,6 +285,32 @@ const FLOCK_LOG: FlockLog = {
 // passes its locked fd as the child's fd 3 (Bun.spawn stdio index 3); the env var
 // names that descriptor so the child can adopt it.
 const CHILD_LOCK_FD = 3;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Keep-awake (remote-dev-bgz8)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Hold a power assertion for the lifetime of this deploy process. An overnight
+// webhook deploy on a Mac that has idled for hours can hit launchd's "pended
+// nondemand spawn" state, where bootstrap succeeds but the job (and even the
+// watchdog's StartInterval) never fires — the 2026-08-04 outage. `caffeinate
+// -is` prevents idle/system sleep, and `-w <pid>` ties the assertion to this
+// process so it drops automatically on exit (no cleanup needed). Best-effort:
+// a missing caffeinate must never block a deploy.
+function startKeepAwakeAssertion(): void {
+  try {
+    const proc = spawn({
+      cmd: ["caffeinate", "-is", "-w", String(process.pid)],
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    proc.unref();
+    logDeploy(`Keep-awake: caffeinate -is -w ${process.pid} (pid ${proc.pid}) — guards against idle-pended launchd spawns`);
+  } catch (err) {
+    logDeploy(`WARNING: could not spawn caffeinate (non-fatal, system may idle mid-deploy): ${String(err)}`);
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Process management
@@ -509,6 +551,51 @@ function restartViaRdvAsync(): void {
 /** How long finalize() waits for a loaded prod job to actually serve. */
 const FINALIZE_HEALTH_TIMEOUT_MS = 60_000;
 
+/**
+ * Verify launchd ACTUALLY SPAWNED the prod job after a successful bootstrap.
+ * `launchctl bootstrap` can return 0 while launchd defers the spawn forever —
+ * observed 2026-08-04 (remote-dev-bgz8): after hours of system idle, the job
+ * showed `runs = 0` / `state = not running` with the watchdog's StartInterval
+ * equally "pended nondemand spawn", so nothing ever came up and the failure
+ * surfaced as a generic health-check timeout + a rollback that also never
+ * spawned. Poll `launchctl print` for a live `pid = ` line so this failure
+ * mode gets its own DISTINCT, explicit error instead.
+ */
+async function verifyLaunchdSpawned(
+  deps: ReturnType<typeof supervisionDeps>,
+  label: string,
+): Promise<boolean> {
+  const deadline = Date.now() + LAUNCHD_SPAWN_VERIFY_TIMEOUT_MS;
+  for (;;) {
+    const res = deps.exec(["launchctl", "print", `gui/${deps.uid()}/${label}`]);
+    if (res.exitCode === 0 && /^\s*pid = \d+/m.test(res.stdout)) {
+      return true;
+    }
+    if (Date.now() >= deadline) return false;
+    await Bun.sleep(1_000);
+  }
+}
+
+/** The distinct pended-spawn error message (remote-dev-bgz8). */
+function launchdPendedSpawnMessage(label: string): string {
+  return (
+    `launchd did not spawn ${label} within ${Math.round(LAUNCHD_SPAWN_VERIFY_TIMEOUT_MS / 1000)}s of bootstrap ` +
+    "(runs=0) — system may be idle/asleep (pended nondemand spawn); the health wait cannot succeed"
+  );
+}
+
+/**
+ * Distinct error class so callers that would otherwise fall through into a
+ * health wait (rollbackTo) can recognize the pended spawn and skip the wait —
+ * it can never succeed when launchd hasn't spawned the job.
+ */
+class LaunchdPendedSpawnError extends Error {
+  constructor(label: string) {
+    super(launchdPendedSpawnMessage(label));
+    this.name = "LaunchdPendedSpawnError";
+  }
+}
+
 interface LaunchdCustody {
   stop(phase: string, restoreSlot: Slot): Promise<void>;
   start(): Promise<void>;
@@ -665,6 +752,13 @@ function createLaunchdCustody(): LaunchdCustody {
           // recovery restores it [R4].
           throw new Error(`launchctl bootstrap ${PROD_LABEL} failed after deploy`);
         }
+        // Bootstrap accepted ≠ job spawned: verify launchd actually started a
+        // process, so an idle-pended spawn fails DISTINCTLY here instead of
+        // surfacing as a generic health-check timeout (remote-dev-bgz8). The
+        // journal survives, so finalize()/watchdog recovery still backstop.
+        if (!(await verifyLaunchdSpawned(deps, PROD_LABEL))) {
+          throw new LaunchdPendedSpawnError(PROD_LABEL);
+        }
         // Deploy restarts are actuations too [F12]: ledger + escalation math
         // + the last-restart grace stamp (so the watchdog defers rather than
         // instantly restarting a warming post-deploy stack).
@@ -763,6 +857,16 @@ function createLaunchdCustody(): LaunchdCustody {
                   "watchdog custody recovery",
               );
               notifyEscalation(deps, paths, "deploy finalize: bootstrap failed; journal retained");
+              return false;
+            }
+            // Same pended-spawn guard as custody.start(): a bootstrap launchd
+            // accepted but never spawned must fail DISTINCTLY (and skip the
+            // health wait, which cannot succeed) rather than burn the health
+            // budget on a job that will never come up (remote-dev-bgz8).
+            if (!(await verifyLaunchdSpawned(deps, PROD_LABEL))) {
+              const msg = launchdPendedSpawnMessage(PROD_LABEL);
+              logError(`launchd custody: finalize — ${msg}; journal retained for watchdog custody recovery`);
+              notifyEscalation(deps, paths, `deploy finalize: ${msg}; journal retained`);
               return false;
             }
             recordActuation(deps, paths, "deploy", "finalize-bootstrap");
@@ -1523,13 +1627,17 @@ function httpGetOverSocket(
   });
 }
 
-async function healthCheckLocal(): Promise<boolean> {
-  logDeploy("Health check: waiting for sockets...");
+async function healthCheckLocal(
+  timeoutMs: number = HEALTH_CHECK_TIMEOUT_MS,
+): Promise<boolean> {
+  logDeploy(
+    `Health check: waiting for sockets (budget ${Math.round(timeoutMs / 1000)}s)...`,
+  );
 
   // Wait for sockets to appear
   const [nextReady, terminalReady] = await Promise.all([
-    waitForSocket(NEXTJS_SOCKET, HEALTH_CHECK_TIMEOUT_MS),
-    waitForSocket(TERMINAL_SOCKET, HEALTH_CHECK_TIMEOUT_MS),
+    waitForSocket(NEXTJS_SOCKET, timeoutMs),
+    waitForSocket(TERMINAL_SOCKET, timeoutMs),
   ]);
 
   if (!nextReady) {
@@ -1544,7 +1652,7 @@ async function healthCheckLocal(): Promise<boolean> {
   logDeploy("Health check: sockets ready, checking HTTP...");
 
   // Wait for HTTP to respond
-  const deadline = Date.now() + HEALTH_CHECK_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       // Read local API key for authenticated request
@@ -2134,10 +2242,27 @@ async function rollbackTo(slot: Slot, custody: LaunchdCustody): Promise<boolean>
     // Keep going into the health check (it will fail loudly); finalize()
     // retries the bootstrap and the watchdog recovery backstops [R4].
     logError(`CRITICAL: custody start during rollback failed: ${String(err)}`);
+    if (err instanceof LaunchdPendedSpawnError) {
+      // launchd never spawned the job (idle-pended, remote-dev-bgz8): the
+      // health wait can never succeed, so don't burn the budget disguising
+      // the pended spawn as a generic rollback health-check failure.
+      logError("Skipping rollback health wait — launchd never spawned the job, so the wait cannot succeed.");
+      return false;
+    }
   }
   await Bun.sleep(5000);
 
-  const localHealthy = await healthCheckLocal();
+  let localHealthy = await healthCheckLocal();
+  if (!localHealthy) {
+    // FINAL re-probe before the CRITICAL declaration: on 2026-08-03 the
+    // Next.js socket bound ~13s after the main wait expired, so the deploy
+    // declared a rollback failure while prod was actually healthy
+    // (remote-dev-jmav). One short re-probe catches that late bind.
+    logDeploy(
+      `Rollback health check timed out — final re-probe (${Math.round(HEALTH_FINAL_REPROBE_TIMEOUT_MS / 1000)}s) before declaring failure...`,
+    );
+    localHealthy = await healthCheckLocal(HEALTH_FINAL_REPROBE_TIMEOUT_MS);
+  }
   if (localHealthy) {
     logDeploy(`Rollback to ${slot} successful`);
   } else {
@@ -2515,20 +2640,28 @@ if (import.meta.main) {
     // Rollback runs IN-PROCESS under the flock (no deploy-src spawn). A
     // `--skip-lock` rollback (unusual) adopts an inherited fd.
     ensureDirs();
+    startKeepAwakeAssertion();
     exitCode = skipLock
       ? await runWithAdoptedFlock(() => rollback())
       : await runWithDeployFlock(() => rollback());
   } else if (skipLock) {
     // The FRESH deploy-src child: adopt the inherited flock (fd 3) and run the
     // actual deploy body. The PARENT already bootstrapped deploy-src + holds the
-    // flock; we re-pin the PID file to ourselves on adoption.
+    // flock; we re-pin the PID file to ourselves on adoption. The keep-awake
+    // assertion rides THIS pid too — the parent's assertion covers us anyway
+    // (it awaits our exit), but an old parent orchestrator without the
+    // assertion may spawn a fresh child that has it.
     ensureDirs();
+    startKeepAwakeAssertion();
     exitCode = await runWithAdoptedFlock(() => deploy());
   } else {
     // The DEFAULT PROJECT_ROOT entry (manual run OR webhook spawn): acquire the
     // flock, bootstrap deploy-src, and spawn the fresh origin/master orchestrator
-    // with --skip-lock + fd 3.
+    // with --skip-lock + fd 3. Keep-awake spans the whole orchestration: this
+    // process awaits the deploy-src child, so `-w <our pid>` covers the child's
+    // build + migration + health gates as well (remote-dev-bgz8).
     ensureDirs();
+    startKeepAwakeAssertion();
     exitCode = await runWithDeployFlock((lock) => runForwardDeployUnderLock(lock));
   }
   process.exit(exitCode);

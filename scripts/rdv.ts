@@ -603,6 +603,34 @@ function failClosed(reason: string): never {
 }
 
 /**
+ * Hold a power assertion for the lifetime of this prod wrapper. A Mac that
+ * idles for hours can put launchd into the "pended nondemand spawn" state,
+ * where bootstrap/StartInterval jobs are accepted but never spawned — the
+ * 2026-08-04 overnight-deploy outage (remote-dev-bgz8). While prod is supposed
+ * to be supervised the box must never idle into that state, so the
+ * provenance-verified launchd child pins `caffeinate -is` (no idle/system
+ * sleep) with `-w <wrapper pid>`, tying the assertion to the wrapper's
+ * lifetime — it drops automatically when the wrapper exits, no cleanup needed.
+ * Best-effort: a missing caffeinate is logged, never fatal.
+ */
+function startKeepAwakeAssertion(): void {
+  try {
+    const proc = spawn({
+      cmd: ["caffeinate", "-is", "-w", String(process.pid)],
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    proc.unref();
+    console.log(
+      `Keep-awake: caffeinate -is -w ${process.pid} (pid ${proc.pid}) — guards against idle-pended launchd spawns`,
+    );
+  } catch (err) {
+    console.warn(`WARNING: could not spawn caffeinate (non-fatal, system may idle while supervised): ${String(err)}`);
+  }
+}
+
+/**
  * Build the delegation-decision input. A CORRUPT desired-state file [R5]:
  *   - "tolerate": commands that atomically REWRITE the file (`start prod`,
  *     `stop`) treat it as unset — the rewrite is the repair.
@@ -705,6 +733,9 @@ async function startProd(launchdChildFlag: boolean): Promise<void> {
         // plist unnoticed.
         console.warn(`\nWARNING: ${LEGACY_PLIST_WARNING}`);
       }
+      // Keep the box out of the idle state that pends launchd spawns for as
+      // long as this supervised wrapper lives (remote-dev-bgz8).
+      startKeepAwakeAssertion();
       await runProdWrapper(deps, paths, null, undefined, decision.legacyPlist);
       return;
     }
