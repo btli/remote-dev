@@ -440,16 +440,21 @@ export async function reconcileLiveness(): Promise<number> {
   const suspendedCleared = await reconcileSuspendedSessions();
   const cleared = activeCleared + suspendedCleared;
   const repairedNotifications = await reconcileExitNotifications();
+  const { reconcileAgentStatusNotifications } = await import(
+    "@/services/agent-status-notification-service"
+  );
+  const repairedStatusNotifications = await reconcileAgentStatusNotifications();
   const { pruneLifecycleDeliveryReceipts } = await import(
     "@/services/notification-service"
   );
   await pruneLifecycleDeliveryReceipts();
-  if (cleared > 0) {
+  if (cleared > 0 || repairedNotifications > 0 || repairedStatusNotifications > 0) {
     log.info("Liveness sweep cleared sessions", {
       cleared,
       active: activeCleared,
       suspended: suspendedCleared,
       repairedNotifications,
+      repairedStatusNotifications,
     });
   }
   return cleared;

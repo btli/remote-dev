@@ -672,6 +672,46 @@ describe("SessionService.createSession — plugin dispatch", () => {
     expect(dbState.inserted).toHaveLength(0);
   });
 
+  it("rolls back every owned resource when tmux creation fails", async () => {
+    TerminalTypeServerRegistry.clear();
+    TerminalTypeServerRegistry.register(
+      makeFakePlugin("agent", { useTmux: true, shellCommand: "codex" }),
+    );
+    TerminalTypeServerRegistry.setDefaultType("agent");
+    hoisted.isGitRepo.mockResolvedValue(true);
+    hoisted.getFolderPreferences.mockResolvedValue({ localRepoPath: "/repo" });
+    hoisted.createBranchWithWorktree.mockResolvedValue({
+      worktreePath: "/repo/worktrees/fix-tmux-failure",
+      created: true,
+    });
+    tmuxCreate.mockRejectedValueOnce(new Error("tmux option setup failed"));
+
+    await expect(createSession("user-1", {
+      name: "Codex tmux rollback",
+      terminalType: "agent",
+      agentProvider: "codex",
+      autoLaunchAgent: true,
+      createWorktree: true,
+      projectId: "project-1",
+      worktreeType: "fix",
+      featureDescription: "tmux-failure",
+    })).rejects.toThrow("tmux option setup failed");
+
+    // createSession may fail after `tmux new-session` but while applying its
+    // options, so rollback must kill the possibly-partial tmux unconditionally.
+    expect(tmuxKill).toHaveBeenCalledTimes(1);
+    expect(tmuxKill).toHaveBeenCalledWith(expect.stringMatching(/^rdv-/));
+    // One delete removes a stale same-name key before minting; the second
+    // revokes the newly minted lifecycle key during rollback.
+    expect(dbDeleteWhere).toHaveBeenCalledTimes(2);
+    expect(hoisted.removeWorktree).toHaveBeenCalledWith(
+      "/repo",
+      "/repo/worktrees/fix-tmux-failure",
+      true,
+    );
+    expect(dbState.inserted).toHaveLength(0);
+  });
+
   it("repairs Codex hooks in the durable CODEX_HOME when resuming a session", async () => {
     const plugin: TerminalTypeServerPlugin = {
       ...makeFakePlugin("agentlike", { useTmux: true, shellCommand: "codex" }),

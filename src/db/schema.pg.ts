@@ -1043,11 +1043,14 @@ export const agentStatusDeliveries = pgTable(
     statusAt: bigint("status_at", { mode: "number" }).notNull(),
     arrivalOrder: bigint("arrival_order", { mode: "number" }).notNull(),
     applied: boolean("applied").notNull().default(false),
+    notificationRequired: boolean("notification_required").notNull().default(false),
+    notificationProcessedAt: timestamp("notification_processed_at", { withTimezone: true, mode: "date" }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
   },
   (table) => [
     index("agent_status_delivery_created_idx").on(table.createdAt),
     index("agent_status_delivery_session_idx").on(table.sessionId, table.generation),
+    index("agent_status_delivery_notification_idx").on(table.applied, table.notificationRequired, table.notificationProcessedAt, table.createdAt),
   ]
 );
 

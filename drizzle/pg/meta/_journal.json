@@ -134,6 +134,13 @@
       "when": 1785802769580,
       "tag": "0018_sturdy_white_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1785804490719,
+      "tag": "0019_colorful_the_initiative",
+      "breakpoints": true
     }
   ]
 }

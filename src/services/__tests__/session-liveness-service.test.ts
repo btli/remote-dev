@@ -78,6 +78,7 @@ function isExitRepairQuery(where: unknown): boolean {
 
 const createNotification =
   vi.fn<(input: Record<string, unknown>) => Promise<{ id: string }>>(async () => ({ id: "n1" }));
+const reconcileAgentStatusNotifications = vi.fn(async () => 0);
 
 // tmux pane-pid probe: execFileAsync("tmux", ["list-panes", "-t", name, "-F",
 // "#{pane_pid}"], { cwd }) — accept both the (cmd, args, cb) and
@@ -204,6 +205,10 @@ vi.mock("@/services/notification-service", () => ({
   pruneLifecycleDeliveryReceipts: vi.fn(async () => undefined),
 }));
 
+vi.mock("@/services/agent-status-notification-service", () => ({
+  reconcileAgentStatusNotifications,
+}));
+
 beforeEach(() => {
   state.candidates = [];
   state.suspendedCandidates = [];
@@ -220,6 +225,7 @@ beforeEach(() => {
   state.rejectUpdates = false;
   state.notificationMarks = 0;
   createNotification.mockClear();
+  reconcileAgentStatusNotifications.mockClear();
   vi.resetModules();
 });
 
@@ -228,6 +234,14 @@ async function loadService() {
 }
 
 describe("reconcileLiveness", () => {
+  it("repairs pending status notifications on every startup/periodic sweep", async () => {
+    const { reconcileLiveness } = await loadService();
+
+    await expect(reconcileLiveness()).resolves.toBe(0);
+
+    expect(reconcileAgentStatusNotifications).toHaveBeenCalledTimes(1);
+  });
+
   it("persists a dead PID without preempting the exact exit callback", async () => {
     state.candidates = [
       { id: "s1", name: "main", userId: "u1", tmuxSessionName: "rdv-s1", agentActivityStatus: "running" },

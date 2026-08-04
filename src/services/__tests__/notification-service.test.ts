@@ -79,6 +79,8 @@ async function createSchema() {
     status_at integer NOT NULL,
     arrival_order integer NOT NULL,
     applied integer DEFAULT 0 NOT NULL,
+    notification_required integer DEFAULT 0 NOT NULL,
+    notification_processed_at integer,
     created_at integer NOT NULL
   )`);
   await rawClient.execute(`CREATE TABLE IF NOT EXISTS terminal_session (
@@ -536,6 +538,8 @@ describe("createNotification — coalescing (y5ch.5)", () => {
       { sql: "INSERT INTO notification_delivery (id, user_id, created_at) VALUES (?, ?, ?)", args: ["new-n", "u1", recent] },
       { sql: "INSERT INTO agent_status_delivery (id, user_id, session_id, generation, delivery_id, status, status_at, arrival_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", args: ["old-s", "u1", "s1", 0, "old", "running", old, old, old] },
       { sql: "INSERT INTO agent_status_delivery (id, user_id, session_id, generation, delivery_id, status, status_at, arrival_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", args: ["new-s", "u1", "s1", 0, "new", "running", recent, recent, recent] },
+      { sql: "INSERT INTO agent_status_delivery (id, user_id, session_id, generation, delivery_id, status, status_at, arrival_order, applied, notification_required, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", args: ["old-pending", "u1", "s1", 0, "pending", "waiting", old, old, 1, 1, old] },
+      { sql: "INSERT INTO agent_status_delivery (id, user_id, session_id, generation, delivery_id, status, status_at, arrival_order, applied, notification_required, notification_processed_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", args: ["old-processed", "u1", "s1", 0, "processed", "waiting", old, old, 1, 1, old, old] },
     ], "write");
 
     await svc.pruneLifecycleDeliveryReceipts(now);
@@ -543,6 +547,6 @@ describe("createNotification — coalescing (y5ch.5)", () => {
     const notifications = await rawClient.execute("SELECT id FROM notification_delivery ORDER BY id");
     const statuses = await rawClient.execute("SELECT id FROM agent_status_delivery ORDER BY id");
     expect(notifications.rows.map((row) => row.id)).toEqual(["new-n"]);
-    expect(statuses.rows.map((row) => row.id)).toEqual(["new-s"]);
+    expect(statuses.rows.map((row) => row.id)).toEqual(["new-s", "old-pending"]);
   });
 });

@@ -2,7 +2,7 @@ import { db } from "@/db";
 import { agentStatusDeliveries, terminalSessions } from "@/db/schema";
 import { agentStatusDeliveryId } from "@/server/agent-callback";
 import type { AgentActivityStatus } from "@/types/terminal-type";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 
 export interface AgentStatusDeliveryInput {
   sessionId: string;
@@ -11,6 +11,8 @@ export interface AgentStatusDeliveryInput {
   deliveryId: string;
   status: AgentActivityStatus;
   source: string | null;
+  /** Whether this accepted semantic status requires durable notification work. */
+  notificationRequired: boolean;
   /** Epoch milliseconds captured synchronously at HTTP request arrival. */
   statusAt: number;
   /** Strict monotonic token captured beside statusAt, before authentication. */
@@ -26,6 +28,7 @@ export interface AgentStatusDeliveryResult {
   /** Canonical semantics from the first request accepted for this identity. */
   status: AgentActivityStatus;
   source: string | null;
+  notificationRequired: boolean;
 }
 
 /** True only while the receipt still owns the session's visible activity state. */
@@ -83,6 +86,7 @@ export async function applyAgentStatusDelivery(
         statusAt: input.statusAt,
         arrivalOrder: input.arrivalOrder,
         applied: false,
+        notificationRequired: input.notificationRequired,
       })
       .onConflictDoNothing({ target: agentStatusDeliveries.id })
       .returning();
@@ -102,6 +106,7 @@ export async function applyAgentStatusDelivery(
         statusAt: receipt.statusAt,
         status: receipt.status as AgentActivityStatus,
         source: receipt.source,
+        notificationRequired: receipt.notificationRequired,
       };
     }
 
@@ -141,8 +146,25 @@ export async function applyAgentStatusDelivery(
       statusAt: input.statusAt,
       status: input.status,
       source: input.source,
+      notificationRequired: input.notificationRequired,
     };
   });
+}
+
+/** Mark durable notification intent handled after its idempotent transaction. */
+export async function markAgentStatusNotificationProcessed(
+  receiptId: string,
+  processedAt = new Date(),
+): Promise<void> {
+  await db
+    .update(agentStatusDeliveries)
+    .set({ notificationProcessedAt: processedAt })
+    .where(and(
+      eq(agentStatusDeliveries.id, receiptId),
+      eq(agentStatusDeliveries.applied, true),
+      eq(agentStatusDeliveries.notificationRequired, true),
+      isNull(agentStatusDeliveries.notificationProcessedAt),
+    ));
 }
 
 /** Re-check before materializing attention so a newer status can obsolete it. */

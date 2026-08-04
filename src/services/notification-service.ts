@@ -5,7 +5,7 @@ import {
   notificationEvents,
   terminalSessions,
 } from "@/db/schema";
-import { eq, and, desc, isNull, inArray, count, gt, sql, type SQL } from "drizzle-orm";
+import { eq, and, or, desc, isNull, isNotNull, inArray, count, gt, sql, type SQL } from "drizzle-orm";
 import type {
   NotificationEvent,
   CreateNotificationInput,
@@ -466,7 +466,16 @@ export async function pruneLifecycleDeliveryReceipts(now = new Date()): Promise<
     { label: "prune notification delivery receipts" },
   );
   await withBusyRetry(
-    () => db.delete(agentStatusDeliveries).where(ltDate(agentStatusDeliveries.createdAt, cutoff)),
+    () => db.delete(agentStatusDeliveries).where(and(
+      ltDate(agentStatusDeliveries.createdAt, cutoff),
+      // Never prune an applied notification intent before its callback or the
+      // periodic repair path has completed the idempotent materialization.
+      or(
+        eq(agentStatusDeliveries.applied, false),
+        eq(agentStatusDeliveries.notificationRequired, false),
+        isNotNull(agentStatusDeliveries.notificationProcessedAt),
+      ),
+    )),
     { label: "prune agent status delivery receipts" },
   );
 }

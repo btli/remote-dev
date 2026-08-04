@@ -2517,6 +2517,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
         deliveryId: effectiveDeliveryId,
         status: status as import("@/types/terminal-type").AgentActivityStatus,
         source,
+        notificationRequired: agentStatusNotification(status, session.agentProvider) !== null,
         statusAt,
         arrivalOrder,
       });
@@ -2595,31 +2596,25 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     // a clean Stop is a passive agent_complete record (stored in-app but below
     // the default push threshold). Focus-awareness and coalescing/push-gating
     // remain centralized in createNotification.
-    const statusNotification = agentStatusNotification(acceptedStatus, session.agentProvider);
-    if (statusNotification) {
+    if (statusDelivery.notificationRequired) {
       try {
         // Validate ownership and materialize the notification under one
         // session-row lock. A newer status cannot land between those steps and
-        // leave behind a stale actionable notification.
-        const NotificationService = await import("@/services/notification-service");
-        const materialized = await NotificationService.createNotificationForAgentStatus(
-          statusDelivery.receiptId,
-          {
-            userId: session.userId,
-            sessionId,
-            sessionName: session.name,
-            type: statusNotification.type,
-            severity: statusNotification.severity,
-            title: statusNotification.title,
-            body: `Session "${session.name}" ${statusNotification.bodySuffix}`,
-            meta: {
-              deepLinkSessionId: sessionId,
-              cta: { label: "Open session", action: "open_session" },
-              ...(statusNotification.result ? { result: statusNotification.result } : {}),
-            },
-            focused: isSessionFocusedByUser(session.userId, sessionId),
-          },
+        // leave behind a stale actionable notification. Processing is marked
+        // only after that transaction, leaving durable repair intent if this
+        // process crashes or returns 503 in between.
+        const { deliverAgentStatusNotification } = await import(
+          "@/services/agent-status-notification-service"
         );
+        const materialized = await deliverAgentStatusNotification({
+          receiptId: statusDelivery.receiptId,
+          userId: session.userId,
+          sessionId,
+          sessionName: session.name,
+          provider: session.agentProvider,
+          status: acceptedStatus,
+          focused: isSessionFocusedByUser(session.userId, sessionId),
+        });
         if (!materialized.current) {
           sendJson(res, 200, { success: true, generation, staleNotification: true });
           return true;

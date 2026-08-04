@@ -1044,11 +1044,14 @@ export const agentStatusDeliveries = sqliteTable(
     statusAt: integer("status_at").notNull(),
     arrivalOrder: integer("arrival_order").notNull(),
     applied: integer("applied", { mode: "boolean" }).notNull().default(false),
+    notificationRequired: integer("notification_required", { mode: "boolean" }).notNull().default(false),
+    notificationProcessedAt: integer("notification_processed_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
   },
   (table) => [
     index("agent_status_delivery_created_idx").on(table.createdAt),
     index("agent_status_delivery_session_idx").on(table.sessionId, table.generation),
+    index("agent_status_delivery_notification_idx").on(table.applied, table.notificationRequired, table.notificationProcessedAt, table.createdAt),
   ]
 );
 

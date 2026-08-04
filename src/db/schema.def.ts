@@ -1125,11 +1125,18 @@ export const schema: SchemaDefinition = [
       { field: "statusAt", dbName: "status_at", kind: "bigint", notNull: true },
       { field: "arrivalOrder", dbName: "arrival_order", kind: "bigint", notNull: true },
       { field: "applied", dbName: "applied", kind: "boolean", notNull: true, default: { kind: "value", value: "false" } },
+      // Durable intent for status-derived notification storage. The callback
+      // marks processing only after the idempotent notification transaction;
+      // startup/periodic repair drains any older applied intent left behind by
+      // a crash between those commits.
+      { field: "notificationRequired", dbName: "notification_required", kind: "boolean", notNull: true, default: { kind: "value", value: "false" } },
+      { field: "notificationProcessedAt", dbName: "notification_processed_at", kind: "timestampMs" },
       { field: "createdAt", dbName: "created_at", kind: "timestampMs", notNull: true, default: { kind: "fn", fn: "now" } },
     ],
     indexes: [
       { name: "agent_status_delivery_created_idx", columns: ["createdAt"] },
       { name: "agent_status_delivery_session_idx", columns: ["sessionId","generation"] },
+      { name: "agent_status_delivery_notification_idx", columns: ["applied","notificationRequired","notificationProcessedAt","createdAt"] },
     ],
   },
   {

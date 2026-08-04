@@ -93,6 +93,60 @@ async function fetchRemoteRefs(repoPath: string): Promise<boolean> {
 }
 
 /**
+ * Verify that an existing deterministic path is the exact worktree a retry is
+ * allowed to reuse. Merely being a Git repository is insufficient: the path
+ * must be registered by the requested repository and check out the requested
+ * local branch.
+ */
+async function isExpectedRegisteredWorktree(
+  repoPath: string,
+  targetPath: string,
+  branchName: string,
+): Promise<boolean> {
+  const listed = await execFileNoThrow("git", [
+    "-C",
+    repoPath,
+    "worktree",
+    "list",
+    "--porcelain",
+    "-z",
+  ]);
+  if (listed.exitCode !== 0) return false;
+
+  const fs = await getFs();
+  let expectedPath: string;
+  try {
+    expectedPath = fs.realpathSync(targetPath);
+  } catch {
+    return false;
+  }
+
+  let listedPath: string | null = null;
+  let listedBranch: string | null = null;
+  const matchesCurrent = (): boolean => {
+    if (!listedPath || listedBranch !== `refs/heads/${branchName}`) return false;
+    try {
+      return fs.realpathSync(listedPath) === expectedPath;
+    } catch {
+      return false;
+    }
+  };
+
+  // `-z` keeps paths unquoted, so spaces and non-ASCII characters cannot make
+  // the stable porcelain parser confuse field boundaries.
+  for (const field of listed.stdout.split("\0")) {
+    if (field.startsWith("worktree ")) {
+      if (matchesCurrent()) return true;
+      listedPath = field.slice("worktree ".length);
+      listedBranch = null;
+    } else if (field.startsWith("branch ")) {
+      listedBranch = field.slice("branch ".length);
+    }
+  }
+  return matchesCurrent();
+}
+
+/**
  * Get the root directory of a git repository
  */
 export async function getRepoRoot(path: string): Promise<string | null> {
@@ -466,11 +520,18 @@ export async function createBranchWithWorktree(
     const err = error as Error & { stderr?: string };
     const stderr = err.stderr || err.message;
 
-    // If the target path already exists as a valid git worktree, reuse it.
-    // This handles retries where a previous attempt created the worktree
-    // but session creation failed afterwards (e.g., "Start Working" on an issue).
-    if (fs.existsSync(targetPath) && await isGitRepo(targetPath)) {
-      return { branch: branchName, worktreePath: targetPath, created: false };
+    // Reuse only the exact registered worktree + branch left by a previous
+    // retry. An unrelated repository or a worktree on another branch at this
+    // deterministic path must fail closed.
+    if (fs.existsSync(targetPath)) {
+      if (await isExpectedRegisteredWorktree(repoPath, targetPath, branchName)) {
+        return { branch: branchName, worktreePath: targetPath, created: false };
+      }
+      throw new WorktreeServiceError(
+        "Existing worktree path does not match the requested repository and branch",
+        "PATH_EXISTS",
+        targetPath,
+      );
     }
 
     // "a branch named 'X' already exists" — branch exists from a previous

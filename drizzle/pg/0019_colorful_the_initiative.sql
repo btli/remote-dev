@@ -1,0 +1,3 @@
+ALTER TABLE "agent_status_delivery" ADD COLUMN "notification_required" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "agent_status_delivery" ADD COLUMN "notification_processed_at" timestamp with time zone;--> statement-breakpoint
+CREATE INDEX "agent_status_delivery_notification_idx" ON "agent_status_delivery" USING btree ("applied","notification_required","notification_processed_at","created_at");

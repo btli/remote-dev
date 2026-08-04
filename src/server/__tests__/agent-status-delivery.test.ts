@@ -35,6 +35,8 @@ async function createSchema() {
     status_at integer NOT NULL,
     arrival_order integer NOT NULL,
     applied integer DEFAULT 0 NOT NULL,
+    notification_required integer DEFAULT 0 NOT NULL,
+    notification_processed_at integer,
     created_at integer NOT NULL
   )`);
 }
@@ -67,6 +69,7 @@ describe("applyAgentStatusDelivery", () => {
       deliveryId: "newer",
       status: "running",
       source: null,
+      notificationRequired: false,
       statusAt: 2_000,
       arrivalOrder: 2_000_000,
     });
@@ -77,6 +80,7 @@ describe("applyAgentStatusDelivery", () => {
       deliveryId: "older",
       status: "waiting",
       source: null,
+      notificationRequired: true,
       statusAt: 1_000,
       arrivalOrder: 1_000_000,
     });
@@ -102,6 +106,7 @@ describe("applyAgentStatusDelivery", () => {
       deliveryId: "wait-1",
       status: "waiting",
       source: null,
+      notificationRequired: true,
       statusAt: 1_000,
       arrivalOrder: 1_000_000,
     } as const;
@@ -111,6 +116,7 @@ describe("applyAgentStatusDelivery", () => {
       ...waiting,
       deliveryId: "run-1",
       status: "running",
+      notificationRequired: false,
       statusAt: 2_000,
       arrivalOrder: 2_000_000,
     })).disposition).toBe("apply");
@@ -142,6 +148,7 @@ describe("applyAgentStatusDelivery", () => {
       deliveryId: "commit-then-503",
       status: "waiting",
       source: null,
+      notificationRequired: true,
       statusAt: 1_000,
       arrivalOrder: 1_000_000,
     });
@@ -152,6 +159,7 @@ describe("applyAgentStatusDelivery", () => {
       deliveryId: "commit-then-503",
       status: "running",
       source: null,
+      notificationRequired: false,
       statusAt: 2_000,
       arrivalOrder: 2_000_000,
     });
@@ -161,18 +169,24 @@ describe("applyAgentStatusDelivery", () => {
       isCurrent: true,
       status: "waiting",
       source: null,
+      notificationRequired: true,
     });
     expect(fallback).toMatchObject({
       disposition: "retry",
       isCurrent: true,
       status: "waiting",
       source: null,
+      notificationRequired: true,
     });
     const receipts = await rawClient.execute({
-      sql: "SELECT status, applied FROM agent_status_delivery WHERE delivery_id = ?",
+      sql: "SELECT status, applied, notification_required FROM agent_status_delivery WHERE delivery_id = ?",
       args: ["commit-then-503"],
     });
-    expect(receipts.rows).toEqual([{ status: "waiting", applied: 1 }]);
+    expect(receipts.rows).toEqual([{
+      status: "waiting",
+      applied: 1,
+      notification_required: 1,
+    }]);
     const session = await rawClient.execute(
       "SELECT agent_activity_status, agent_activity_status_at FROM terminal_session WHERE id = 's1'",
     );

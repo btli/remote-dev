@@ -876,6 +876,76 @@ export async function createSessionWithDedupFlag(
     }
   }
 
+  /**
+   * Roll back resources allocated before a terminal_session row owns them.
+   * `killTmux` is intentionally unconditional when requested: tmux may have
+   * created the session and then failed while configuring one of its options.
+   */
+  const cleanupUnownedSessionResources = async (options: {
+    context: string;
+    killTmux?: boolean;
+    removeOwnedWorktree?: boolean;
+  }): Promise<void> => {
+    const cleanupPromises: Promise<void>[] = [];
+    if (options.killTmux) {
+      // Stop any process using the worktree before trying to detach/remove it.
+      await TmuxService.killSession(tmuxSessionName).catch((cleanupError) => {
+        log.error(`Failed to clean up tmux after ${options.context}`, {
+          sessionId,
+          tmuxSessionName,
+          error: String(cleanupError),
+        });
+      });
+    }
+    cleanupPromises.push(
+      db.delete(apiKeys).where(
+        and(
+          eq(apiKeys.userId, userId),
+          eq(apiKeys.name, `agent-session-${sessionId}`),
+        ),
+      ).then(() => undefined).catch((cleanupError) => {
+        log.error(`Failed to revoke lifecycle key after ${options.context}`, {
+          sessionId,
+          error: String(cleanupError),
+        });
+      }),
+    );
+    if (
+      options.removeOwnedWorktree !== false &&
+      didCreateWorktree &&
+      resolvedWorktreeRepoPath &&
+      workingPath
+    ) {
+      cleanupPromises.push(
+        WorktreeService.removeWorktree(
+          resolvedWorktreeRepoPath,
+          workingPath,
+          true,
+        ).then(() => undefined).catch((cleanupError) => {
+          log.error(`Failed to remove worktree after ${options.context}`, {
+            sessionId,
+            worktreePath: workingPath,
+            error: String(cleanupError),
+          });
+        }),
+      );
+    }
+    if (Object.keys(modelProxyEnv).length > 0) {
+      cleanupPromises.push(
+        import("@/services/model-proxy-token-service")
+          .then(({ revokeTokensForSession }) => revokeTokensForSession(sessionId))
+          .then(() => undefined)
+          .catch((cleanupError) => {
+            log.error(`Failed to revoke model-proxy token after ${options.context}`, {
+              sessionId,
+              error: String(cleanupError),
+            });
+          }),
+      );
+    }
+    await Promise.all(cleanupPromises);
+  };
+
   // Every local tmux session needs the session + terminal callback address for
   // rdv clipboard copy/paste. SSH does not receive these host-local clipboard
   // values, but lifecycle-capable panes still receive authenticated callback
@@ -953,48 +1023,7 @@ export async function createSessionWithDedupFlag(
         // Hook installation intentionally fails closed for invalid/unwritable
         // user config. At this point the worktree and lifecycle key have
         // already been provisioned, but no session row owns them yet.
-        const cleanupPromises: Promise<void>[] = [
-          db.delete(apiKeys).where(
-            and(
-              eq(apiKeys.userId, userId),
-              eq(apiKeys.name, `agent-session-${sessionId}`),
-            ),
-          ).then(() => undefined).catch((cleanupError) => {
-            log.error("Failed to revoke lifecycle key after hook-install failure", {
-              sessionId,
-              error: String(cleanupError),
-            });
-          }),
-        ];
-        if (didCreateWorktree && resolvedWorktreeRepoPath && workingPath) {
-          cleanupPromises.push(
-            WorktreeService.removeWorktree(
-              resolvedWorktreeRepoPath,
-              workingPath,
-              true,
-            ).then(() => undefined).catch((cleanupError) => {
-              log.error("Failed to remove worktree after hook-install failure", {
-                sessionId,
-                worktreePath: workingPath,
-                error: String(cleanupError),
-              });
-            }),
-          );
-        }
-        if (Object.keys(modelProxyEnv).length > 0) {
-          cleanupPromises.push(
-            import("@/services/model-proxy-token-service")
-              .then(({ revokeTokensForSession }) => revokeTokensForSession(sessionId))
-              .then(() => undefined)
-              .catch((cleanupError) => {
-                log.error("Failed to revoke model-proxy token after hook-install failure", {
-                  sessionId,
-                  error: String(cleanupError),
-                });
-              }),
-          );
-        }
-        await Promise.all(cleanupPromises);
+        await cleanupUnownedSessionResources({ context: "hook-install failure" });
         throw error;
       }
     }
@@ -1180,6 +1209,10 @@ export async function createSessionWithDedupFlag(
           : undefined
       );
     } catch (error) {
+      await cleanupUnownedSessionResources({
+        context: "tmux creation failure",
+        killTmux: true,
+      });
       if (error instanceof TmuxService.TmuxServiceError) {
         throw new SessionServiceError(
           `Failed to create tmux session: ${error.message}`,
@@ -1217,20 +1250,10 @@ export async function createSessionWithDedupFlag(
         );
       } catch (error) {
         log.error("Failed to set agent exit hook", { tmuxSessionName, error: String(error) });
-        await TmuxService.killSession(tmuxSessionName).catch(() => undefined);
-        if (didCreateWorktree && resolvedWorktreeRepoPath && workingPath) {
-          await WorktreeService.removeWorktree(
-            resolvedWorktreeRepoPath,
-            workingPath,
-            true,
-          ).catch(() => undefined);
-        }
-        await db.delete(apiKeys).where(
-          and(
-            eq(apiKeys.userId, userId),
-            eq(apiKeys.name, `agent-session-${sessionId}`),
-          ),
-        ).catch(() => undefined);
+        await cleanupUnownedSessionResources({
+          context: "pane lifecycle setup failure",
+          killTmux: true,
+        });
         throw new SessionServiceError(
           "Failed to install the agent lifecycle callback",
           "AGENT_CALLBACK_SETUP_FAILED",
@@ -1243,14 +1266,6 @@ export async function createSessionWithDedupFlag(
       deferredPaneOwnerLaunch = { command: effectiveStartupCommand, env: initialEnv };
     }
   }
-
-  // Track if we created a worktree so we can clean it up on failure. Both
-  // values are set inside the worktree blocks above (folder-context:
-  // server-resolved from folder preferences; explicit-path: the validated
-  // input.projectPath), so cleanup no longer silently skips when the client
-  // omits projectPath.
-  const createdWorktree = didCreateWorktree && branchName;
-  const repoPath = resolvedWorktreeRepoPath;
 
   // `terminalType`, `plugin` were resolved up-front; see the dedup +
   // plugin-delegation block near the top of createSession. [hgwo] The
@@ -1395,56 +1410,25 @@ export async function createSessionWithDedupFlag(
           scopeKey: input.scopeKey,
         });
         // Clean up the tmux/worktree resources we allocated for the
-        // losing-side INSERT — the winner already owns its own. Mirrors the
-        // generic cleanup block below (same guard + .catch + log.error, run
-        // concurrently) so the race-recovery return path doesn't leak a
-        // worktree the loser may have created. Currently unreachable in
+        // losing-side INSERT — the winner already owns its own. The shared
+        // cleanup boundary keeps this return path from leaking a worktree the
+        // loser may have created. Currently unreachable in
         // practice (createWorktree sessions don't combine with scopeKey dedup),
         // but hardened to stay correct if they ever do. (remote-dev-u02r)
         //
         // SAFETY (codex finding 1): in a `scopeKey + createWorktree` race, the
         // loser can be handed the WINNER's worktree path — `createBranchWithWorktree`
-        // in worktree-service reuses an existing valid worktree when `git worktree
-        // add` fails and the target path is already a git repo (see "If the target
-        // path already exists as a valid git worktree, reuse it", ~line 466-471).
+        // in worktree-service can reuse the exact registered worktree when a
+        // concurrent `git worktree add` loses the race.
         // Force-removing that path would destroy the winner's ACTIVE worktree, so
         // skip removal when the winner row already points at the same path. The
         // session row stores the working path in `projectPath` (DB insert:
         // `projectPath: workingPath ?? null`).
-        const raceCleanup: Promise<void>[] = [
-          TmuxService.killSession(tmuxSessionName).catch(() => {
-            log.error("Failed to clean up orphaned tmux after race", {
-              tmuxSessionName,
-            });
-          }),
-          db.delete(apiKeys).where(
-            and(
-              eq(apiKeys.userId, userId),
-              eq(apiKeys.name, `agent-session-${sessionId}`),
-            ),
-          ).then(() => undefined).catch(() => {
-            log.error("Failed to clean up lifecycle API key after race", {
-              sessionId,
-            });
-          }),
-        ];
-        if (
-          createdWorktree &&
-          repoPath &&
-          workingPath &&
-          existingAfterRace[0].projectPath !== workingPath
-        ) {
-          raceCleanup.push(
-            WorktreeService.removeWorktree(repoPath, workingPath, true)
-              .then(() => {}) // Discard result to match Promise<void> type
-              .catch(() => {
-                log.error("Failed to clean up orphaned worktree after race", {
-                  worktreePath: workingPath,
-                });
-              })
-          );
-        }
-        await Promise.all(raceCleanup);
+        await cleanupUnownedSessionResources({
+          context: "scope-key insert race",
+          killTmux: true,
+          removeOwnedWorktree: existingAfterRace[0].projectPath !== workingPath,
+        });
         return {
           session: mapDbSessionToSession(existingAfterRace[0]),
           reused: true,
@@ -1453,33 +1437,10 @@ export async function createSessionWithDedupFlag(
     }
 
     // SECURITY: Clean up orphaned resources if DB insert fails
-    const cleanupPromises: Promise<void>[] = [
-      // Clean up orphaned tmux session
-      TmuxService.killSession(tmuxSessionName).catch(() => {
-        log.error("Failed to clean up orphaned tmux session", { tmuxSessionName });
-      }),
-      db.delete(apiKeys).where(
-        and(
-          eq(apiKeys.userId, userId),
-          eq(apiKeys.name, `agent-session-${sessionId}`),
-        ),
-      ).then(() => undefined).catch(() => {
-        log.error("Failed to clean up lifecycle API key", { sessionId });
-      }),
-    ];
-
-    // Clean up orphaned worktree if we created one
-    if (createdWorktree && repoPath && workingPath) {
-      cleanupPromises.push(
-        WorktreeService.removeWorktree(repoPath, workingPath, true)
-          .then(() => {}) // Discard result to match Promise<void> type
-          .catch(() => {
-            log.error("Failed to clean up orphaned worktree", { worktreePath: workingPath });
-          })
-      );
-    }
-
-    await Promise.all(cleanupPromises);
+    await cleanupUnownedSessionResources({
+      context: "session persistence failure",
+      killTmux: true,
+    });
     throw error;
   }
 }
