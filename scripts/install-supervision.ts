@@ -29,6 +29,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { homedir } from "os";
+import { resolveStableBunPath } from "./bun-path";
 import {
   PROD_LABEL,
   WATCHDOG_LABEL,
@@ -56,8 +57,8 @@ function argValue(flag: string): string | undefined {
 const PROJECT_ROOT = argValue("--project-root") || process.env.DEPLOY_PROJECT_ROOT || join(import.meta.dir, "..");
 const DATA_DIR = argValue("--data-dir") || process.env.RDV_DATA_DIR || join(homedir(), ".remote-dev");
 const HOME = process.env.HOME || homedir();
-/** The bun binary launchd should exec (this very runtime). */
-const BUN_PATH = process.execPath;
+/** The bun binary launchd should exec — a stable path that survives upgrades. */
+const BUN_PATH = resolveStableBunPath(process.execPath);
 
 /** How long to wait for prod probes after bootstrap before declaring failure. */
 const PROBE_READY_TIMEOUT_MS = 180_000;
@@ -321,4 +322,6 @@ async function main(): Promise<number> {
   }
 }
 
-process.exit(await main());
+if (import.meta.main) {
+  process.exit(await main());
+}
