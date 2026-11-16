@@ -1548,6 +1548,42 @@ describe("doctorSupervision --force-reclaim", () => {
     expect(w.killCalls.filter(([pid]) => pid < 0)).toEqual([]);
     expect(w.fs.unlinked).toEqual([]);
   });
+
+  it("reclaims the POINTER generation when it is dead (recycled wrapper pid) — the one that blocks a start", async () => {
+    const w = makeWorld();
+    writeManifest(w.deps, w.paths, makeManifest({ gen: 43, phase: "stopping" }));
+    flipCurrentGen(w.deps, w.paths, 43);
+    w.procs.set(100, "unrelated-daemon-start"); // recycled wrapper; children dead
+
+    const code = await doctorSupervision(w.deps, w.paths, { forceReclaim: true });
+
+    expect(code).toBe(0);
+    expect(listGenerations(w.deps, w.paths)).not.toContain(43);
+    expect(w.fs.existsSync(join(w.paths.generationsArchiveDir, "43.json"))).toBe(true);
+    expect(w.killCalls.filter(([, sig]) => sig !== 0)).toEqual([]);
+    expect(w.logs.join("\n")).toContain("current generation 43 has no verified-alive process");
+  });
+
+  it("leaves a LIVE pointer generation untouched and says so", async () => {
+    const w = makeWorld();
+    writeManifest(w.deps, w.paths, makeManifest({ gen: 523 }));
+    flipCurrentGen(w.deps, w.paths, 523);
+    w.procs.set(100, "111");
+    w.procs.set(200, "222");
+    w.procs.set(300, "333");
+    w.fs.stats.set("/data/run/nextjs.sock", { dev: 5, ino: 50, isSocket: true });
+    w.fs.stats.set("/data/run/terminal.sock", { dev: 5, ino: 51, isSocket: true });
+    w.socketHolders.set("/data/run/nextjs.sock", [200]);
+    w.socketHolders.set("/data/run/terminal.sock", [300]);
+
+    const code = await doctorSupervision(w.deps, w.paths, { forceReclaim: true });
+
+    expect(code).toBe(0);
+    expect(w.killCalls.filter(([, sig]) => sig !== 0)).toEqual([]);
+    expect(listGenerations(w.deps, w.paths)).toContain(523);
+    expect(w.fs.unlinked).toEqual([]);
+    expect(w.logs.join("\n")).toContain("current generation 523 is LIVE");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1596,6 +1632,66 @@ describe("pgroupOccupied / procEntryFullyDead", () => {
     w.procs.set(201, "grandchild");
     w.pgids.set(201, 200);
     expect(procEntryFullyDead(w.deps, id)).toBe(false);
+  });
+});
+
+describe("recycled pids after a reboot", () => {
+  /** Real (non-probe) signals sent to a pid or its process group. */
+  const signalsTo = (w: FakeWorld, pid: number) =>
+    w.killCalls.filter(([target, sig]) => (target === pid || target === -pid) && sig !== 0);
+
+  it("archives a prior generation whose wrapper pid was recycled and whose children are dead", async () => {
+    const w = makeWorld();
+    writeManifest(w.deps, w.paths, makeManifest({ gen: 43, phase: "stopping" }));
+    // pid 100 now belongs to an unrelated daemon: kill(100,0) and kill(-100,0)
+    // succeed, but its start time differs from the recorded one.
+    w.procs.set(100, "unrelated-daemon-start");
+
+    const res = await reclaimPriorGenerations(w.deps, w.paths, { currentGen: null });
+
+    expect(res.unresolvedGens).toEqual([]);
+    expect(res.archivedGens).toContain(43);
+    expect(signalsTo(w, 100)).toEqual([]);
+    expect(w.procs.has(100)).toBe(true);
+  });
+
+  it("archives a prior generation whose child pid (its own pgroup leader) was recycled", async () => {
+    const w = makeWorld();
+    writeManifest(w.deps, w.paths, makeManifest({ gen: 43, phase: "stopping" }));
+    w.procs.set(200, "unrelated-daemon-start"); // occupies pid 200 and pgid 200
+
+    const res = await reclaimPriorGenerations(w.deps, w.paths, { currentGen: null });
+
+    expect(res.unresolvedGens).toEqual([]);
+    expect(res.archivedGens).toContain(43);
+    expect(signalsTo(w, 200)).toEqual([]);
+    expect(w.procs.has(200)).toBe(true);
+  });
+
+  it("keeps a recycled child UNRESOLVED when its recorded pgid is not its own pid", async () => {
+    const w = makeWorld();
+    writeManifest(
+      w.deps,
+      w.paths,
+      makeManifest({ gen: 43, phase: "stopping", next: { pid: 200, pgid: 250, startTimeNs: "222" } }),
+    );
+    w.procs.set(200, "unrelated-daemon-start");
+
+    const res = await reclaimPriorGenerations(w.deps, w.paths, { currentGen: null });
+
+    expect(res.unresolvedGens.map((u) => u.gen)).toContain(43);
+    expect(res.archivedGens).not.toContain(43);
+  });
+
+  it("keeps a generation UNRESOLVED when the wrapper identity is unavailable", async () => {
+    const w = makeWorld();
+    writeManifest(w.deps, w.paths, makeManifest({ gen: 43, phase: "stopping" }));
+    w.identityUnavailablePids.add(100);
+
+    const res = await reclaimPriorGenerations(w.deps, w.paths, { currentGen: null });
+
+    expect(res.unresolvedGens.map((u) => u.gen)).toContain(43);
+    expect(res.archivedGens).not.toContain(43);
   });
 });
 

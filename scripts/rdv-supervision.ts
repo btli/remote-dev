@@ -579,7 +579,12 @@ export function pgroupOccupied(deps: SupervisionDeps, pgid: number): boolean {
  * descendant — e.g. the real node server under a dead `bun run tsx` leader.
  */
 export function procEntryFullyDead(deps: SupervisionDeps, id: ProcId): boolean {
-  return procIdentityState(deps, id) === "dead" && !pgroupOccupied(deps, id.pgid);
+  const state = procIdentityState(deps, id);
+  // XNU's forkproc never hands out a pid still in use as a pgrp id, so a recycled
+  // leader of its own group (pgid === pid) means that group had already emptied:
+  // whoever occupies pgid P now is the new process, not a survivor of ours.
+  if (state === "alive-different-identity" && id.pgid === id.pid) return true;
+  return state === "dead" && !pgroupOccupied(deps, id.pgid);
 }
 
 /**
@@ -843,10 +848,13 @@ export function readAllLiveManifests(
  * DEAD + group EMPTY (procEntryFullyDead — detached fresh pgroups). The
  * wrapper entry requires leader-dead only: its pgroup may be shared with an
  * unrelated long-lived parent (a shell/launchd context), so group occupancy
- * there is not evidence of a surviving server.
+ * there is not evidence of a surviving server. A RECYCLED wrapper pid
+ * ("alive-different-identity") is positive proof the recorded wrapper is gone,
+ * so it counts as dead; "identity-unavailable" never does.
  */
 export function manifestFullyDead(deps: SupervisionDeps, m: GenerationManifest): boolean {
-  if (procIdentityState(deps, m.wrapper) !== "dead") return false;
+  const wrapperState = procIdentityState(deps, m.wrapper);
+  if (wrapperState !== "dead" && wrapperState !== "alive-different-identity") return false;
   for (const child of [m.next, m.terminal]) {
     if (child && !procEntryFullyDead(deps, child)) return false;
   }
@@ -2868,6 +2876,27 @@ export async function watchdogAct(
 // doctor-supervision [--force-reclaim]
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The current-pointer generation, if any of its recorded processes (wrapper,
+ * next, terminal) is identity-verified ALIVE. Re-read at call time so the
+ * caller decides under its own lock. null = no pointer, no intact manifest, or
+ * nothing verifiably alive (dead, recycled or unreadable identities).
+ */
+export function liveCurrentGeneration(
+  deps: SupervisionDeps,
+  paths: SupervisionPaths,
+): { gen: number; detail: string } | null {
+  const { gen, manifest } = currentGenerationState(deps, paths);
+  if (gen === null || !manifest) return null;
+  const live: string[] = [];
+  for (const slot of ["wrapper", "next", "terminal"] as const) {
+    const id = manifest[slot];
+    if (id && verifyProcIdentity(deps, id)) live.push(`${slot} pid ${id.pid} VERIFIED-ALIVE`);
+  }
+  if (live.length === 0) return null;
+  return { gen, detail: live.join(", ") };
+}
+
 export async function doctorSupervision(
   deps: SupervisionDeps,
   paths: SupervisionPaths,
@@ -2923,7 +2952,21 @@ export async function doctorSupervision(
       // supervision residue too — invalidate it so it can never authorize a
       // foreground start later.
       clearDeployRestartToken(deps, paths);
-      const res = await reclaimPriorGenerations(deps, paths, { currentGen: gen, force: true });
+      // The pointer generation is exempt ONLY while one of its recorded
+      // processes is identity-verified alive — exactly the processes reclaim
+      // would SIGTERM. Otherwise it is reclaimed like any prior generation,
+      // mirroring `rdv start prod` (currentGen: null), which it would block.
+      const exemptGen = liveCurrentGeneration(deps, paths);
+      if (exemptGen) {
+        deps.log(
+          `force-reclaim: current generation ${exemptGen.gen} is LIVE (${exemptGen.detail}); leaving it untouched`,
+        );
+      } else if (gen !== null) {
+        deps.log(
+          `force-reclaim: current generation ${gen} has no verified-alive process; reclaiming it with the prior generations`,
+        );
+      }
+      const res = await reclaimPriorGenerations(deps, paths, { currentGen: exemptGen?.gen ?? null, force: true });
       // Operator consent extends to corrupt manifests: their files are moved
       // aside (never deleted) so a fresh start cannot trip on them again.
       for (const corrupt of res.corruptGens) {
